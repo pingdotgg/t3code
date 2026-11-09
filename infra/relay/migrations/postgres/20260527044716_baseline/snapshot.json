@@ -1,52 +1,415 @@
 {
-  "version": "8",
+  "type": "base",
+  "version": "9",
   "dialect": "postgres",
   "id": "ad620f05-3fd1-43b8-a3ca-d4c02543d892",
   "prevIds": ["00000000-0000-0000-0000-000000000000"],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_agent_activity_rows"],
+      "writes": [
+        "s|tbl|public.relay_agent_activity_rows",
+        "n|tbl|public.relay_agent_activity_rows",
+        "e|tbl|public.relay_agent_activity_rows",
+        "n|rel|public.relay_agent_activity_rows",
+        "n|type|public.relay_agent_activity_rows",
+        "n|rel|public.relay_agent_activity_rows_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_delivery_attempts"],
+      "writes": [
+        "s|tbl|public.relay_delivery_attempts",
+        "n|tbl|public.relay_delivery_attempts",
+        "e|tbl|public.relay_delivery_attempts",
+        "n|rel|public.relay_delivery_attempts",
+        "n|type|public.relay_delivery_attempts",
+        "n|rel|public.relay_delivery_attempts_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_dpop_proofs"],
+      "writes": [
+        "s|tbl|public.relay_dpop_proofs",
+        "n|tbl|public.relay_dpop_proofs",
+        "e|tbl|public.relay_dpop_proofs",
+        "n|rel|public.relay_dpop_proofs",
+        "n|type|public.relay_dpop_proofs",
+        "n|rel|public.relay_dpop_proofs_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_environment_credentials"],
+      "writes": [
+        "s|tbl|public.relay_environment_credentials",
+        "n|tbl|public.relay_environment_credentials",
+        "e|tbl|public.relay_environment_credentials",
+        "n|rel|public.relay_environment_credentials",
+        "n|type|public.relay_environment_credentials",
+        "n|rel|public.relay_environment_credentials_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_environment_links"],
+      "writes": [
+        "s|tbl|public.relay_environment_links",
+        "n|tbl|public.relay_environment_links",
+        "e|tbl|public.relay_environment_links",
+        "n|rel|public.relay_environment_links",
+        "n|type|public.relay_environment_links",
+        "n|rel|public.relay_environment_links_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_live_activities"],
+      "writes": [
+        "s|tbl|public.relay_live_activities",
+        "n|tbl|public.relay_live_activities",
+        "e|tbl|public.relay_live_activities",
+        "n|rel|public.relay_live_activities",
+        "n|type|public.relay_live_activities",
+        "n|rel|public.relay_live_activities_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_mobile_devices"],
+      "writes": [
+        "s|tbl|public.relay_mobile_devices",
+        "n|tbl|public.relay_mobile_devices",
+        "e|tbl|public.relay_mobile_devices",
+        "n|rel|public.relay_mobile_devices",
+        "n|type|public.relay_mobile_devices",
+        "n|rel|public.relay_mobile_devices_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_agent_activity_rows",
+        "idx_relay_agent_activity_rows_updated"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_agent_activity_rows_updated",
+        "n|idx|public.idx_relay_agent_activity_rows_updated",
+        "e|idx|public.idx_relay_agent_activity_rows_updated",
+        "n|rel|public.idx_relay_agent_activity_rows_updated"
+      ],
+      "reads": [
+        "n|tbl|public.relay_agent_activity_rows",
+        "n|sch|public",
+        "n|col|public.relay_agent_activity_rows.updated_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_delivery_attempts",
+        "idx_relay_delivery_attempts_environment"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_delivery_attempts_environment",
+        "n|idx|public.idx_relay_delivery_attempts_environment",
+        "e|idx|public.idx_relay_delivery_attempts_environment",
+        "n|rel|public.idx_relay_delivery_attempts_environment"
+      ],
+      "reads": [
+        "n|tbl|public.relay_delivery_attempts",
+        "n|sch|public",
+        "n|col|public.relay_delivery_attempts.environment_id",
+        "n|col|public.relay_delivery_attempts.thread_id",
+        "n|col|public.relay_delivery_attempts.created_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_delivery_attempts",
+        "idx_relay_delivery_attempts_source_job"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_delivery_attempts_source_job",
+        "n|idx|public.idx_relay_delivery_attempts_source_job",
+        "e|idx|public.idx_relay_delivery_attempts_source_job",
+        "n|rel|public.idx_relay_delivery_attempts_source_job"
+      ],
+      "reads": [
+        "n|tbl|public.relay_delivery_attempts",
+        "n|sch|public",
+        "n|col|public.relay_delivery_attempts.source_job_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_dpop_proofs",
+        "idx_relay_dpop_proofs_expires_at"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_dpop_proofs_expires_at",
+        "n|idx|public.idx_relay_dpop_proofs_expires_at",
+        "e|idx|public.idx_relay_dpop_proofs_expires_at",
+        "n|rel|public.idx_relay_dpop_proofs_expires_at"
+      ],
+      "reads": [
+        "n|tbl|public.relay_dpop_proofs",
+        "n|sch|public",
+        "n|col|public.relay_dpop_proofs.expires_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_credentials",
+        "idx_relay_environment_credentials_hash"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_credentials_hash",
+        "n|idx|public.idx_relay_environment_credentials_hash",
+        "e|idx|public.idx_relay_environment_credentials_hash",
+        "n|rel|public.idx_relay_environment_credentials_hash"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_credentials",
+        "n|sch|public",
+        "n|col|public.relay_environment_credentials.credential_hash"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_credentials",
+        "idx_relay_environment_credentials_environment"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_credentials_environment",
+        "n|idx|public.idx_relay_environment_credentials_environment",
+        "e|idx|public.idx_relay_environment_credentials_environment",
+        "n|rel|public.idx_relay_environment_credentials_environment"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_credentials",
+        "n|sch|public",
+        "n|col|public.relay_environment_credentials.environment_id",
+        "n|col|public.relay_environment_credentials.revoked_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_credentials",
+        "idx_relay_environment_credentials_environment_key"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_credentials_environment_key",
+        "n|idx|public.idx_relay_environment_credentials_environment_key",
+        "e|idx|public.idx_relay_environment_credentials_environment_key",
+        "n|rel|public.idx_relay_environment_credentials_environment_key"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_credentials",
+        "n|sch|public",
+        "n|col|public.relay_environment_credentials.environment_id",
+        "n|col|public.relay_environment_credentials.environment_public_key",
+        "n|col|public.relay_environment_credentials.revoked_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_links",
+        "idx_relay_environment_links_environment"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_links_environment",
+        "n|idx|public.idx_relay_environment_links_environment",
+        "e|idx|public.idx_relay_environment_links_environment",
+        "n|rel|public.idx_relay_environment_links_environment"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_links",
+        "n|sch|public",
+        "n|col|public.relay_environment_links.environment_id",
+        "n|col|public.relay_environment_links.revoked_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_live_activities",
+        "idx_relay_live_activities_user"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_live_activities_user",
+        "n|idx|public.idx_relay_live_activities_user",
+        "e|idx|public.idx_relay_live_activities_user",
+        "n|rel|public.idx_relay_live_activities_user"
+      ],
+      "reads": [
+        "n|tbl|public.relay_live_activities",
+        "n|sch|public",
+        "n|col|public.relay_live_activities.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_live_activities",
+        "idx_relay_live_activities_activity_push_token"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_live_activities_activity_push_token",
+        "n|idx|public.idx_relay_live_activities_activity_push_token",
+        "e|idx|public.idx_relay_live_activities_activity_push_token",
+        "n|rel|public.idx_relay_live_activities_activity_push_token"
+      ],
+      "reads": [
+        "n|tbl|public.relay_live_activities",
+        "n|sch|public",
+        "n|col|public.relay_live_activities.activity_push_token"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_mobile_devices",
+        "idx_relay_mobile_devices_user"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_mobile_devices_user",
+        "n|idx|public.idx_relay_mobile_devices_user",
+        "e|idx|public.idx_relay_mobile_devices_user",
+        "n|rel|public.idx_relay_mobile_devices_user"
+      ],
+      "reads": [
+        "n|tbl|public.relay_mobile_devices",
+        "n|sch|public",
+        "n|col|public.relay_mobile_devices.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_mobile_devices",
+        "idx_relay_mobile_devices_push_token"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_mobile_devices_push_token",
+        "n|idx|public.idx_relay_mobile_devices_push_token",
+        "e|idx|public.idx_relay_mobile_devices_push_token",
+        "n|rel|public.idx_relay_mobile_devices_push_token"
+      ],
+      "reads": [
+        "n|tbl|public.relay_mobile_devices",
+        "n|sch|public",
+        "n|col|public.relay_mobile_devices.push_token"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_mobile_devices",
+        "idx_relay_mobile_devices_push_to_start_token"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_mobile_devices_push_to_start_token",
+        "n|idx|public.idx_relay_mobile_devices_push_to_start_token",
+        "e|idx|public.idx_relay_mobile_devices_push_to_start_token",
+        "n|rel|public.idx_relay_mobile_devices_push_to_start_token"
+      ],
+      "reads": [
+        "n|tbl|public.relay_mobile_devices",
+        "n|sch|public",
+        "n|col|public.relay_mobile_devices.push_to_start_token"
+      ]
+    }
+  ],
   "ddl": [
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_agent_activity_rows",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_delivery_attempts",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_dpop_proofs",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_environment_credentials",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_environment_links",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "relay_live_activities",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
       "isRlsEnabled": false,
-      "name": "relay_mobile_devices",
-      "entityType": "tables",
-      "schema": "public"
+      "entityType": "tables"
     },
     {
+      "schema": "public",
+      "name": "relay_mobile_devices",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "environment_id",
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": true,
@@ -54,12 +417,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "environment_public_key",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -67,12 +430,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_public_key",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "thread_id",
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": true,
@@ -80,12 +443,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "thread_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "state_json",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": true,
@@ -93,25 +456,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "state_json",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -119,12 +469,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "created_at",
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "id",
       "type": "varchar(36)",
       "typeSchema": null,
       "notNull": true,
@@ -132,77 +495,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_delivery_attempts",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
-    },
-    {
-      "type": "varchar(255)",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
-    },
-    {
-      "type": "varchar(191)",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
-    },
-    {
-      "type": "varchar(191)",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "thread_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
-    },
-    {
-      "type": "varchar(255)",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "device_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -210,12 +508,77 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "user_id",
+      "type": "varchar(255)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "environment_id",
+      "type": "varchar(191)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "thread_id",
+      "type": "varchar(191)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "device_id",
+      "type": "varchar(255)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "kind",
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "source_job_id",
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -223,12 +586,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "source_job_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "token_suffix",
       "type": "varchar(16)",
       "typeSchema": null,
       "notNull": false,
@@ -236,12 +599,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "token_suffix",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "apns_status",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -249,12 +612,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "apns_status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "apns_reason",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -262,12 +625,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "apns_reason",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "apns_id",
       "type": "varchar(128)",
       "typeSchema": null,
       "notNull": false,
@@ -275,12 +638,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "apns_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "transport_error",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -288,12 +651,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "transport_error",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
+      "name": "thumbprint",
       "type": "varchar(128)",
       "typeSchema": null,
       "notNull": true,
@@ -301,12 +664,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "thumbprint",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
+      "name": "jti",
       "type": "varchar(255)",
       "typeSchema": null,
       "notNull": true,
@@ -314,12 +677,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "jti",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
+      "name": "iat",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -327,25 +690,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "iat",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_dpop_proofs",
       "name": "expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -353,12 +703,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -366,12 +716,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "credential_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "credential_id",
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "environment_id",
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": true,
@@ -379,12 +742,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "environment_public_key",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -392,12 +755,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_public_key",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "credential_hash",
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": true,
@@ -405,12 +768,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "credential_hash",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "revoked_at",
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -418,25 +781,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "revoked_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_environment_credentials",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -444,25 +794,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_credentials",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_credentials"
-    },
-    {
-      "type": "varchar(191)",
+      "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": true,
@@ -470,12 +820,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "environment_id",
+      "type": "varchar(191)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "environment_label",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -483,25 +846,12 @@
       "default": "'T3 Environment'",
       "generated": null,
       "identity": null,
-      "name": "environment_label",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "environment_public_key",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -509,12 +859,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "endpoint_http_base_url",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -522,12 +872,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "endpoint_ws_base_url",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "endpoint_ws_base_url",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "endpoint_provider_kind",
       "type": "varchar(32)",
       "typeSchema": null,
       "notNull": true,
@@ -535,25 +898,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "endpoint_provider_kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
-      "type": "boolean",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "true",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "notifications_enabled",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
       "type": "boolean",
       "typeSchema": null,
       "notNull": true,
@@ -561,12 +911,25 @@
       "default": "true",
       "generated": null,
       "identity": null,
-      "name": "live_activities_enabled",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "live_activities_enabled",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "managed_tunnels_enabled",
       "type": "boolean",
       "typeSchema": null,
       "notNull": true,
@@ -574,12 +937,12 @@
       "default": "false",
       "generated": null,
       "identity": null,
-      "name": "managed_tunnels_enabled",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "created_by_device_id",
       "type": "varchar(191)",
       "typeSchema": null,
       "notNull": false,
@@ -587,12 +950,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "created_by_device_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "revoked_at",
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -600,25 +963,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "revoked_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -626,25 +976,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_environment_links",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_environment_links"
-    },
-    {
-      "type": "varchar(255)",
+      "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
       "type": "varchar(255)",
       "typeSchema": null,
       "notNull": true,
@@ -652,12 +1002,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "device_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "device_id",
+      "type": "varchar(255)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "activity_push_token",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -665,25 +1028,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "activity_push_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "remote_start_queued_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -691,12 +1041,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "remote_started_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -704,12 +1054,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "ended_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "ended_at",
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "last_aggregate_json",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": false,
@@ -717,12 +1080,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "last_aggregate_json",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "last_live_activity_delivery_at",
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -730,25 +1093,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "last_live_activity_delivery_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -756,25 +1106,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
-      "type": "varchar(255)",
+      "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_mobile_devices",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
-    },
-    {
       "type": "varchar(255)",
       "typeSchema": null,
       "notNull": true,
@@ -782,12 +1132,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "device_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "device_id",
+      "type": "varchar(255)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "platform",
       "type": "varchar(16)",
       "typeSchema": null,
       "notNull": true,
@@ -795,12 +1158,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "platform",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "ios_major_version",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -808,12 +1171,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "ios_major_version",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "app_version",
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": false,
@@ -821,25 +1184,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "app_version",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_mobile_devices",
       "name": "push_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -847,12 +1197,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "push_to_start_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "push_to_start_token",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "preferences_json",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": true,
@@ -860,25 +1223,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "preferences_json",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
-      "type": "varchar(64)",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "relay_mobile_devices",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
-    },
-    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -886,12 +1236,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "updated_at",
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "idx_relay_agent_activity_rows_updated",
       "nameExplicit": true,
       "columns": [
         {
@@ -907,12 +1270,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_agent_activity_rows_updated",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "idx_relay_delivery_attempts_environment",
       "nameExplicit": true,
       "columns": [
         {
@@ -942,12 +1305,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_delivery_attempts_environment",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_delivery_attempts",
+      "name": "idx_relay_delivery_attempts_source_job",
       "nameExplicit": true,
       "columns": [
         {
@@ -963,12 +1326,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_delivery_attempts_source_job",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_delivery_attempts"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
+      "name": "idx_relay_dpop_proofs_expires_at",
       "nameExplicit": true,
       "columns": [
         {
@@ -984,12 +1347,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_dpop_proofs_expires_at",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "idx_relay_environment_credentials_hash",
       "nameExplicit": true,
       "columns": [
         {
@@ -1005,12 +1368,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_environment_credentials_hash",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "idx_relay_environment_credentials_environment",
       "nameExplicit": true,
       "columns": [
         {
@@ -1033,12 +1396,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_environment_credentials_environment",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_credentials",
+      "name": "idx_relay_environment_credentials_environment_key",
       "nameExplicit": true,
       "columns": [
         {
@@ -1068,12 +1431,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_environment_credentials_environment_key",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_environment_credentials"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "idx_relay_environment_links_environment",
       "nameExplicit": true,
       "columns": [
         {
@@ -1096,12 +1459,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_environment_links_environment",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "idx_relay_live_activities_user",
       "nameExplicit": true,
       "columns": [
         {
@@ -1117,12 +1480,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_live_activities_user",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_live_activities",
+      "name": "idx_relay_live_activities_activity_push_token",
       "nameExplicit": true,
       "columns": [
         {
@@ -1138,12 +1501,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_live_activities_activity_push_token",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_live_activities"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "idx_relay_mobile_devices_user",
       "nameExplicit": true,
       "columns": [
         {
@@ -1159,12 +1522,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_mobile_devices_user",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "idx_relay_mobile_devices_push_token",
       "nameExplicit": true,
       "columns": [
         {
@@ -1180,12 +1543,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_mobile_devices_push_token",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "idx_relay_mobile_devices_push_to_start_token",
       "nameExplicit": true,
       "columns": [
         {
@@ -1201,67 +1564,63 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "idx_relay_mobile_devices_push_to_start_token",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "relay_agent_activity_rows",
+      "name": "relay_agent_activity_rows_pkey",
       "columns": ["environment_id", "environment_public_key", "thread_id"],
       "nameExplicit": false,
-      "name": "relay_agent_activity_rows_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "relay_agent_activity_rows"
+      "entityType": "pks"
     },
     {
+      "schema": "public",
+      "table": "relay_dpop_proofs",
+      "name": "relay_dpop_proofs_pkey",
       "columns": ["thumbprint", "jti"],
       "nameExplicit": false,
-      "name": "relay_dpop_proofs_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "relay_dpop_proofs"
+      "entityType": "pks"
     },
     {
+      "schema": "public",
+      "table": "relay_environment_links",
+      "name": "relay_environment_links_pkey",
       "columns": ["user_id", "environment_id"],
       "nameExplicit": false,
-      "name": "relay_environment_links_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "relay_environment_links"
+      "entityType": "pks"
     },
     {
-      "columns": ["user_id", "device_id"],
-      "nameExplicit": false,
+      "schema": "public",
+      "table": "relay_live_activities",
       "name": "relay_live_activities_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "relay_live_activities"
-    },
-    {
       "columns": ["user_id", "device_id"],
       "nameExplicit": false,
-      "name": "relay_mobile_devices_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "relay_mobile_devices"
+      "entityType": "pks"
     },
     {
-      "columns": ["id"],
+      "schema": "public",
+      "table": "relay_mobile_devices",
+      "name": "relay_mobile_devices_pkey",
+      "columns": ["user_id", "device_id"],
       "nameExplicit": false,
-      "name": "relay_delivery_attempts_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "relay_delivery_attempts",
+      "name": "relay_delivery_attempts_pkey",
+      "columns": ["id"],
+      "nameExplicit": false,
       "entityType": "pks"
     },
     {
-      "columns": ["credential_id"],
-      "nameExplicit": false,
-      "name": "relay_environment_credentials_pkey",
       "schema": "public",
       "table": "relay_environment_credentials",
+      "name": "relay_environment_credentials_pkey",
+      "columns": ["credential_id"],
+      "nameExplicit": false,
       "entityType": "pks"
     }
-  ],
-  "renames": []
+  ]
 }

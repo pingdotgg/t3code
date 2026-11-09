@@ -27,8 +27,8 @@ the constructor:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
-+import * as S3 from "alchemy/AWS/S3";
+import * as AWS from "@alchemy.run/aws";
++import * as S3 from "@alchemy.run/aws/S3";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 +import { HttpServerRequest } from "effect/http/HttpServerRequest";
@@ -222,7 +222,7 @@ explicitly are the ones you actually have a recovery for
 
 Bindings declare a capability; **runtime layers** implement it.
 For S3 those are `S3.PutObjectHttp` and `S3.GetObjectHttp` — both
-ship in `alchemy/AWS/S3` and depend only on the AWS SDK and the
+ship in `@alchemy.run/aws/S3` and depend only on the AWS SDK and the
 ambient credentials. Provide them at the bottom of the function:
 
 ```diff lang="typescript"
@@ -259,8 +259,8 @@ redeploys the function bundle.
 
 ```typescript
 // test/integ.test.ts
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpBody from "effect/http/HttpBody";
