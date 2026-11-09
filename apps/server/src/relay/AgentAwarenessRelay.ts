@@ -128,7 +128,13 @@ function shouldPublishAgentAwarenessEvent(
     case "provider-session.detached":
     case "provider-turn.updated":
     case "turn-item.updated":
-      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+      return (
+        isTurnItemPayload(event.payload) &&
+        (turnItemUpdateCanEndBackgroundWork(event.payload) ||
+          // A subagent's secret or link card waits on the user through its parent.
+          event.payload.type === "secret_request" ||
+          event.payload.type === "link_request")
+      );
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":

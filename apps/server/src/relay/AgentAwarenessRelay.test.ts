@@ -375,26 +375,64 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("publishes the parent as needing input while its subagent waits on a secret card", () =>
+  it.effect("publishes the parent as needing input when its subagent raises a secret card", () =>
     Effect.gen(function* () {
+      const now = DateTime.makeUnsafe(NOW);
       const child = waitingChild({
         pendingRuntimeRequest: {
           id: RuntimeRequestId.make("child-secret-card"),
           kind: "user_input",
-          createdAt: DateTime.makeUnsafe(NOW),
+          createdAt: now,
           blocking: true,
           userOnly: true,
         },
       });
       const parent = shell({ status: "completed" });
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const pulls = yield* Queue.unbounded<void>();
       const { relay, publications } = yield* makeTestRelay({
         readShell: (threadId) => Effect.succeed(threadId === child.id ? child : parent),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
       });
-      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const runId = RunId.make("run:child-secret-card");
+      // Recording a secret card emits only this event for the child.
+      yield* Queue.offer(events, {
+        id: EventId.make("event:child-secret-card"),
+        type: "turn-item.updated",
+        threadId: CHILD_THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("child-secret-card"),
+          threadId: CHILD_THREAD_ID,
+          runId,
+          nodeId: NodeId.make("node:child-secret-card"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: "SMS code",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "secret_request",
+          label: "SMS code",
+          reason: "The agent needs the code.",
+          secretStatus: "pending",
+        },
+      });
+      yield* Queue.take(pulls);
+      yield* relay.drain;
       assert.equal(publications.length, 1);
       assert.isTrue(publications[0]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
       assert.equal(publications[0]?.state?.phase, "waiting_for_input");
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("republishes a completed parent for its waiting child after a relink", () =>
