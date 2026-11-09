@@ -326,52 +326,71 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect(
-    "can enable unsupported usage while failed probes still keep their cache lifetime",
-    () =>
+  it.effect.each(["ownership", "settings"] as const)(
+    "paces unsupported accounts while %s changes and expired deadlines permit new reads",
+    (change) =>
       Effect.scoped(
         Effect.gen(function* () {
           const reads = yield* Ref.make(0);
+          const owner = yield* Ref.make("api-key");
+          const settings = yield* Ref.make({ enabled: true, credential: "api-key" });
           const limits = yield* Ref.make<ServerProvider["usageLimits"]>({
             checkedAt: refreshedSnapshot.checkedAt,
             windows: [],
             unavailable: { reason: "unsupported" },
           });
           const snapshot = Ref.get(limits).pipe(
-            Effect.map((usageLimits) => ({ ...refreshedSnapshot, usageLimits })),
+            Effect.flatMap((usageLimits) =>
+              Ref.get(owner).pipe(
+                Effect.map((usageRefreshKey) => ({
+                  ...refreshedSnapshot,
+                  auth: { ...refreshedSnapshot.auth, usageRefreshKey },
+                  usageLimits,
+                })),
+              ),
+            ),
           );
           const provider = yield* makeManagedServerProvider({
             resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-            getSettings: Effect.succeed({ enabled: true }),
+            getSettings: Ref.get(settings),
             streamSettings: Stream.empty,
-            haveSettingsChanged: () => false,
+            haveSettingsChanged: (previous, next) => previous.credential !== next.credential,
             initialSnapshot: () => snapshot,
             checkProvider: snapshot,
+            getUsageRefreshKey: Ref.get(owner),
             checkUsageLimits: Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(Ref.get(limits))),
           });
           yield* provider.refresh;
           yield* provider.refreshUsage!;
           assert.strictEqual(yield* Ref.get(reads), 1);
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 1);
+          assert.strictEqual((yield* provider.getSnapshot).usageLimits?.refreshAfter, 300_000);
+          yield* TestClock.adjust("5 minutes");
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 2);
           const good = {
             checkedAt: refreshedSnapshot.checkedAt,
             windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 25 }],
           } as const;
           yield* Ref.set(limits, good);
+          if (change === "ownership") yield* Ref.set(owner, "subscription");
+          else yield* Ref.set(settings, { enabled: true, credential: "subscription" });
           yield* provider.refreshUsage!;
-          assert.strictEqual(yield* Ref.get(reads), 2);
+          assert.strictEqual(yield* Ref.get(reads), 3);
           yield* Ref.set(limits, {
             checkedAt: refreshedSnapshot.checkedAt,
             windows: [],
             unavailable: { reason: "probeFailed" },
           });
           yield* provider.refreshUsage!;
-          assert.strictEqual(yield* Ref.get(reads), 2);
+          assert.strictEqual(yield* Ref.get(reads), 3);
           yield* TestClock.adjust("5 minutes");
           yield* provider.refreshUsage!;
-          assert.strictEqual(yield* Ref.get(reads), 3);
+          assert.strictEqual(yield* Ref.get(reads), 4);
           assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
             ...good,
-            refreshAfter: 600_000,
+            refreshAfter: 900_000,
             stale: true,
           });
         }),

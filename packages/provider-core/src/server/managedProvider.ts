@@ -169,16 +169,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const accountReset = yield* UsageAccountReset;
     if (
       accountReset ||
+      input.haveSettingsChanged(previousSettings, nextSettings) ||
       (options?.usageRefreshKey !== undefined &&
         options.usageRefreshKey !== current.auth.usageRefreshKey)
     )
       usageRefreshAfter = 0;
     const now = yield* Clock.currentTimeMillis;
     const pollingUsage =
-      (yield* UsagePolling) &&
-      ((yield* UsageAfterReset) ||
-        now >= usageRefreshAfter ||
-        current.usageLimits?.unavailable?.reason === "unsupported");
+      (yield* UsagePolling) && ((yield* UsageAfterReset) || now >= usageRefreshAfter);
     const probedSnapshot =
       pollingUsage &&
       input.checkUsageLimits &&
@@ -332,7 +330,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                   (usageRefreshKey === undefined ||
                     usageRefreshKey === current.auth.usageRefreshKey) &&
                   (yield* Clock.currentTimeMillis) < usageRefreshAfter &&
-                  current.usageLimits?.unavailable?.reason !== "unsupported" &&
                   !(yield* UsageAfterReset) &&
                   !(yield* UsageAccountReset) &&
                   !input.haveSettingsChanged(yield* Ref.get(settingsRef), settings)
