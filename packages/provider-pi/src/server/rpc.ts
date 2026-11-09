@@ -158,11 +158,12 @@ const PI_STDERR_MAX_STACK_FRAMES = 3;
 // `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `fatal: …`
 const PI_STDERR_ERROR_LINE = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 const PI_STDERR_SECRET_KEY =
-  /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+  /((?<![\w-])["']?[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/giu;
 
 function redactPiStderrLine(line: string): string {
   const redacted = line
-    .replace(/(\bhttps?:\/\/)[^\s/@]+@/giu, "$1[redacted]@")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ")
+    .replace(/(\b[a-z][a-z\d+.-]*:\/\/)[^\s/@"'<>]+@/giu, "$1[redacted]@")
     .replace(/(\bhttps?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [redacted]")
     .replace(PI_STDERR_SECRET_KEY, "$1[redacted]")
@@ -303,18 +304,22 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
   let nextRequestId = 0;
 
-  /** Returns whether this error is the one that brought the transport down. */
+  let transportFailed = false;
   const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
-    const claimed = yield* Deferred.fail(transportDown, error);
-    if (!claimed) return false;
+    if (transportFailed) return;
+    transportFailed = true;
+    // Log before waking callers, which may immediately close the connection scope.
+    if (error.operation === "read" && error.detail !== undefined) {
+      yield* Effect.logWarning("Pi process closed stdout.", { detail: error.detail });
+    }
+    yield* Deferred.fail(transportDown, error);
     for (const [key, pending] of pendingRequests) {
       pendingRequests.delete(key);
       yield* Deferred.fail(pending.deferred, error);
     }
     yield* Queue.fail(outgoing, error);
     yield* Queue.fail(events, error);
-    return true;
-  });
+  }, Effect.uninterruptible);
 
   const routeRecord =
     /* Protocol records and writes include streaming deltas; avoid a span per record. */
@@ -410,9 +415,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           { concurrency: "unbounded" },
         );
         const detail = describePiStdoutClosure(Option.getOrUndefined(maybeExitCode), stderrTail);
-        if (yield* failTransport(new PiRpcError({ operation: "read", detail }))) {
-          yield* Effect.logWarning("Pi process closed stdout.", { detail });
-        }
+        yield* failTransport(new PiRpcError({ operation: "read", detail }));
       }),
     }),
     Effect.forkIn(scope),
