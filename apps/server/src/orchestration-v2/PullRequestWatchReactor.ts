@@ -56,6 +56,8 @@ const FINGERPRINT_REREAD_MS = 30 * 60_000;
 const NOTIFICATION_LAG_MS = 5 * 60_000;
 /** Notifications may not report review-thread comment edits, so reread at least this often. */
 const NOTIFIED_REREAD_CEILING_MS = 2 * 60 * 60_000;
+/** A sign-in, `gh` install or token change can make notifications readable again. */
+const NOTIFICATIONS_RETRY_MS = 60 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
 
@@ -627,7 +629,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const notificationsUnreadable = new Set<string>();
+  const notificationsUnreadableAt = new Map<string, number>();
 
   const repositoryOf = (group: WatchGroup) => {
     const { projectId, host, repository } = referenceOf(group);
@@ -646,7 +648,7 @@ export const make = Effect.gen(function* () {
       if (
         last === undefined ||
         !notificationsCanGate(last, now) ||
-        notificationsUnreadable.has(repository)
+        now - (notificationsUnreadableAt.get(repository) ?? -Infinity) < NOTIFICATIONS_RETRY_MS
       ) {
         continue;
       }
@@ -663,7 +665,8 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.tap((notifications) =>
             Effect.sync(() => {
-              if (notifications === null) notificationsUnreadable.add(repository);
+              if (notifications === null) notificationsUnreadableAt.set(repository, now);
+              else notificationsUnreadableAt.delete(repository);
             }),
           ),
           Effect.catchCause((cause) =>

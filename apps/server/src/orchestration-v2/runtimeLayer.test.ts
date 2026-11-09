@@ -8940,6 +8940,7 @@ const watchCostScenarios = [
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
   { name: "notifications unavailable", notificationsReadable: false, saves: 0 },
+  { name: "notifications readable again", notificationsReadableFrom: 60, saves: 32 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
 
@@ -9064,7 +9065,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                 }),
               notifications: ({ since }) =>
                 Effect.map(Clock.currentTimeMillis, (now) => {
-                  if (!notificationsReadable) {
+                  if (!notificationsReadable || now < at(scenario.notificationsReadableFrom ?? 0)) {
                     cost.core += 1;
                     return null;
                   }
