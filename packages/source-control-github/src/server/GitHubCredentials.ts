@@ -31,7 +31,7 @@ import * as GitHubClient from "../shared/definition.ts";
 export const GH_PROCESS_CONCURRENCY = { key: "gh", limit: 4 } as const;
 
 /** A gh wrapper (a mise shim, say) can print its own lines before gh's output. */
-export const lastGhOutputLine = (stdout: string) => stdout.trim().split("\n").pop()?.trim() ?? "";
+const lastGhOutputLine = (stdout: string) => stdout.trim().split("\n").pop()?.trim() ?? "";
 
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);

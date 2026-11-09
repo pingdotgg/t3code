@@ -1,13 +1,14 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isAbsolutePath } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 
-import { GH_PROCESS_CONCURRENCY, lastGhOutputLine } from "./GitHubCredentials.ts";
+import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+
+const SOCKET_KEY = "http_unix_socket=";
 
 export const layer = Layer.effect(
   HttpClient.HttpClient,
@@ -19,18 +20,25 @@ export const layer = Layer.effect(
       .run({
         operation: "GitHubHttpClient.config",
         command: "gh",
-        args: ["config", "get", "http_unix_socket"],
+        // `config get` prints nothing when unset, so a wrapper's own line could pass for the value.
+        args: ["config", "list"],
         cwd,
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
         concurrency: GH_PROCESS_CONCURRENCY,
       })
       .pipe(
-        Effect.map((output) => lastGhOutputLine(output.stdout)),
+        Effect.map(
+          (output) =>
+            output.stdout
+              .split("\n")
+              .findLast((line) => line.startsWith(SOCKET_KEY))
+              ?.slice(SOCKET_KEY.length)
+              .trim() ?? "",
+        ),
         Effect.orElseSucceed(() => ""),
       );
-    // gh dials the value as a filesystem path, and our cwd is not the user's shell's.
-    if (!isAbsolutePath(socketPath)) return fallback;
+    if (socketPath === "") return fallback;
 
     const agent = yield* NodeHttpClient.makeAgent({ socketPath, keepAlive: false });
     const client = yield* NodeHttpClient.makeNodeHttp.pipe(
