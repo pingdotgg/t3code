@@ -1,5 +1,7 @@
 import type { LineAnnotation, SelectedLineRange } from "@pierre/diffs";
 
+import type { ReviewCommentContext } from "~/reviewCommentContext";
+
 export interface FileCommentAnnotationEntry {
   id: string;
   kind: "draft" | "comment";
@@ -51,4 +53,43 @@ export function remapFileCommentAnnotations(
       }),
     },
   }));
+}
+
+export function appendFileCommentEntry(
+  annotations: ReadonlyArray<FileCommentLineAnnotation>,
+  entry: FileCommentAnnotationEntry,
+): FileCommentLineAnnotation[] {
+  const existingIndex = annotations.findIndex(
+    (annotation) => annotation.lineNumber === entry.endLine,
+  );
+  if (existingIndex < 0) {
+    return [...annotations, { lineNumber: entry.endLine, metadata: { entries: [entry] } }];
+  }
+  return annotations.map((annotation, index) =>
+    index === existingIndex
+      ? { ...annotation, metadata: { entries: [...annotation.metadata.entries, entry] } }
+      : annotation,
+  );
+}
+
+export function fileCommentAnnotationsFromReviewComments(
+  reviewComments: ReadonlyArray<ReviewCommentContext>,
+  relativePath: string,
+): FileCommentLineAnnotation[] {
+  return reviewComments
+    .filter(
+      (comment) =>
+        comment.sectionId === `file:${relativePath}` && comment.filePath === relativePath,
+    )
+    .reduce<FileCommentLineAnnotation[]>(
+      (annotations, comment) =>
+        appendFileCommentEntry(annotations, {
+          id: comment.id,
+          kind: "comment",
+          startLine: comment.startIndex + 1,
+          endLine: comment.endIndex + 1,
+          text: comment.text,
+        }),
+      [],
+    );
 }
