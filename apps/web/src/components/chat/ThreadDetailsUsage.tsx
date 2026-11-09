@@ -15,7 +15,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -32,8 +32,9 @@ import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
+// The trailing column is only as wide as the section's longest reset label, so meters fill the row.
 const USAGE_ROW_CLASS =
-  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_2.75rem] items-center gap-x-2 ps-3 pe-2 text-meta";
+  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_2.25rem_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -73,7 +74,21 @@ export function ThreadDetailsUsage({
           tooltip={notice ?? "No usage windows reported."}
         />
       ) : (
-        limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+        <div
+          className="contents"
+          style={
+            {
+              "--usage-trailing": `${Math.max(
+                0,
+                ...limits.windows.map((window) => resetLabel(window, now)?.length ?? 0),
+              )}ch`,
+            } as CSSProperties
+          }
+        >
+          {limits.windows.map((window) => (
+            <LimitRow key={window.id} window={window} now={now} />
+          ))}
+        </div>
       )}
     </ThreadDetailsSection>
   );
@@ -121,7 +136,7 @@ export function ThreadDetailsContext({
         <div
           className={cn(
             USAGE_ROW_CLASS,
-            "h-8 grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_1.5rem]",
+            "h-8",
           )}
         >
           <CollapsibleTrigger
@@ -186,6 +201,19 @@ export function ThreadDetailsContext({
   );
 }
 
+function resetLabel(window: ServerProviderUsageWindow, now: number): string | null {
+  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const remainingMs = resetsAt - now;
+  if (!(remainingMs > 0)) return null;
+  return isWeeklyWindow(window)
+    ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(resetsAt)
+    : formatDuration(remainingMs);
+}
+
+function isWeeklyWindow(window: ServerProviderUsageWindow): boolean {
+  return (window.windowDurationMins ?? 0) >= 24 * 60 || /week/i.test(window.label);
+}
+
 function LimitRow({
   window,
   now,
@@ -199,13 +227,8 @@ function LimitRow({
   const elapsed = elapsedShare(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
-  const weekly = (window.windowDurationMins ?? 0) >= 24 * 60 || /week/i.test(window.label);
-  const reset =
-    remainingMs > 0
-      ? weekly
-        ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(resetsAt)
-        : formatDuration(remainingMs)
-      : null;
+  const weekly = isWeeklyWindow(window);
+  const reset = resetLabel(window, now);
   return (
     <UsageRow
       label={window.label}
@@ -313,7 +336,7 @@ function UsageRow({
             {value}
           </span>
         </TooltipTrigger>
-        {fill !== null ? <span className="flex min-w-0">{trailing}</span> : null}
+        {fill !== null ? <span className="flex justify-end">{trailing}</span> : null}
       </div>
       <TooltipPopup side="left" sideOffset={16}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>
