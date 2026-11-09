@@ -87,6 +87,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as DeviceService from "../device/DeviceService.ts";
+import * as DeviceHost from "../device/DeviceHost.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -349,6 +351,58 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
     ),
   ),
 );
+const layerDeviceLifecycleTest = Layer.effect(
+  DeviceService.DeviceService,
+  Effect.gen(function* () {
+    const ready: DeviceHost.DeviceHostAgentReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      agentDevice: null,
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+      run: () => Effect.die("Device cleanup must not run host commands"),
+      releaseAgentSession: () => Effect.void,
+      devices: {
+        list: Effect.succeed({
+          devices: [
+            {
+              id: "phone",
+              name: "iPhone",
+              platform: "ios",
+              version: "26",
+              booted: true,
+              physical: false,
+            },
+          ],
+          detail: undefined,
+        }),
+        boot: () => Effect.die("Device is already booted"),
+        attach: () => Effect.void,
+        shutdown: () => Effect.die("Thread cleanup must keep the device booted"),
+        screenshot: () => Effect.die("Unused screenshot"),
+      },
+    };
+    const host = DeviceHost.DeviceHost.of({
+      id: "local",
+      label: "Local",
+      summary: Effect.succeed({
+        id: "local",
+        label: "Local",
+        kind: "local",
+        hubInstalled: true,
+        agentDeviceInstalled: true,
+        platforms: [{ platform: "ios", available: true }],
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.succeed(ready),
+      current: Effect.succeed(ready),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    });
+    return yield* DeviceService.makeWithHosts(new Map([[host.id, host]]));
+  }),
+).pipe(Layer.provide(NodeCrypto.layer));
+
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
   Layer.provideMerge(layerScheduledTasksTest),
   Layer.provide(
@@ -357,6 +411,7 @@ const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
       Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
     ),
   ),
+  Layer.provideMerge(layerDeviceLifecycleTest),
 );
 
 const layerProjectDeletionTest = Layer.mergeAll(
@@ -400,6 +455,111 @@ const layerProjectDeletionTest = Layer.mergeAll(
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
+  it.effect.each([
+    "thread.settle",
+    "thread.auto-settle",
+    "thread.archive",
+    "thread.delete",
+  ] as const)("releases devices without powering them off on %s", (type) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const devices = yield* DeviceService.DeviceService;
+      yield* devices.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make(`device-cleanup:${type}`);
+      const otherThreadId = ThreadId.make(`device-surviving:${type}`);
+      for (const id of [threadId, otherThreadId]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`device-create:${id}`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: id,
+          projectId: ProjectId.make("device-lifecycle-project"),
+          title: "Device lifecycle",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* devices.open({ threadId: id, deviceId: "phone", platform: "ios" });
+      }
+      const otherSessions = yield* devices.sessionsForThread(otherThreadId);
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const command =
+        type === "thread.auto-settle"
+          ? {
+              type,
+              commandId: CommandId.make(`device-cleanup-command:${type}`),
+              threadId,
+              snapshotAt: before.thread.updatedAt,
+            }
+          : {
+              type,
+              commandId: CommandId.make(`device-cleanup-command:${type}`),
+              threadId,
+            };
+      yield* orchestrator.dispatch(command);
+      yield* worker.drain();
+      assert.deepEqual(yield* devices.sessionsForThread(threadId), []);
+      assert.deepEqual(yield* devices.sessionsForThread(otherThreadId), otherSessions);
+      assert.isTrue((yield* devices.state).devices[0]?.booted);
+      yield* orchestrator.dispatch(command);
+      yield* worker.drain();
+      assert.deepEqual(yield* devices.sessionsForThread(otherThreadId), otherSessions);
+      if (type === "thread.settle" || type === "thread.auto-settle") {
+        yield* orchestrator.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make(`device-unsettle:${type}`),
+          threadId,
+          reason: "user",
+        });
+        yield* devices.open({ threadId, deviceId: "phone", platform: "ios" });
+        assert.lengthOf(yield* devices.sessionsForThread(threadId), 1);
+      }
+    }),
+  );
+
+  it.effect("preserves devices reopened after settlement while cleanup is queued", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const devices = yield* DeviceService.DeviceService;
+      yield* devices.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("device-delayed-cleanup");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("device-delayed-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("device-lifecycle-project"),
+        title: "Delayed device cleanup",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* devices.open({ threadId, deviceId: "phone", platform: "ios" });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("device-delayed-settle"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("device-delayed-unsettle"),
+        threadId,
+        reason: "user",
+      });
+      const reopened = yield* devices.open({ threadId, deviceId: "phone", platform: "ios" });
+      yield* worker.drain();
+      assert.deepEqual(yield* devices.sessionsForThread(threadId), [reopened]);
+    }),
+  );
+
   it.effect.each(["thread", "project"] as const)(
     "deleting a %s removes its thread-bound automations through the effect worker",
     (deletion) =>

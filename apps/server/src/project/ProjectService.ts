@@ -31,6 +31,7 @@ import {
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -164,6 +165,7 @@ export class ProjectService extends Context.Service<
 >()("t3/project/ProjectService") {}
 
 export const make = Effect.gen(function* () {
+  const devices = yield* Effect.serviceOption(DeviceService.DeviceService);
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -444,6 +446,9 @@ export const make = Effect.gen(function* () {
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      deviceSessionIds: Option.isSome(devices)
+        ? yield* devices.value.sessionIdsForThread(threadId)
+        : [],
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
       now,
       idAllocator,

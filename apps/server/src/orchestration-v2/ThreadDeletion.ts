@@ -21,6 +21,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
+  readonly deviceSessionIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error> {
@@ -225,6 +226,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     commandId: command.commandId,
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
+  });
+  effects.push({
+    id: `effect:${command.commandId}:device.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: {
+      type: "device.cleanup",
+      sessionIds: input.deviceSessionIds,
+    },
   });
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {

@@ -51,6 +51,7 @@ import {
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -197,7 +198,10 @@ export class DeviceService extends Context.Service<
       input: DeviceOpenInput,
       context?: DeviceHost.DeviceOpenContext,
     ) => Effect.Effect<DeviceSession, DeviceError>;
-    readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
+    readonly close: (
+      input: DeviceCloseInput,
+      options?: { readonly sessionIds: ReadonlyArray<string> },
+    ) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
@@ -235,6 +239,8 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceAgentReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
+    /** Opaque cleanup identities, renewed on every open. */
+    readonly sessionIdsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<string>>;
   }
 >()("t3/device/DeviceService") {}
 
@@ -279,6 +285,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
+  const sessionIds = new WeakMap<DeviceSession, string>();
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -853,6 +861,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               hostLabel: host.label,
               reason: "Device support was turned off while the device was opening.",
             });
+          sessionIds.set(session, yield* random.uuidV4());
           yield* publish((current) => ({
             ...current,
             sessions: [
@@ -897,7 +906,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
-    function* (input) {
+    function* (input, options) {
       // Open publishes under the same lock; an old close must not release a reopened claim.
       const closing = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
@@ -906,7 +915,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             (session) =>
               session.threadId === input.threadId &&
               (input.hostId === undefined || session.hostId === input.hostId) &&
-              (input.deviceId === undefined || session.deviceId === input.deviceId),
+              (input.deviceId === undefined || session.deviceId === input.deviceId) &&
+              (options === undefined ||
+                options.sessionIds.some((id) => id === sessionIds.get(session))),
           );
           const ending = input.shutdown
             ? state.sessions.filter((session) =>
@@ -1226,6 +1237,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       agentReadinessIfSupported,
       currentReadiness,
       sessionsForThread,
+      sessionIdsForThread: Effect.fn("DeviceService.sessionIdsForThread")(function* (threadId) {
+        return (yield* sessionsForThread(threadId))
+          .map((session) => sessionIds.get(session))
+          .filter((id) => id !== undefined);
+      }),
     }),
     setHostStatus,
     withLifecycleLock: lifecycleLock.withPermit,

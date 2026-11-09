@@ -180,6 +180,7 @@ it.effect("cancels active work without reviving a run while disposing delegated 
       ],
     };
     const plan = yield* planThreadDeletion({
+      deviceSessionIds: [],
       command,
       projection,
       attachmentIds: projection.messages.flatMap((message) =>
@@ -267,6 +268,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
       })),
     };
     const plan = yield* planThreadDeletion({
+      deviceSessionIds: [],
       command,
       projection,
       attachmentIds: projection.messages.flatMap((message) =>
@@ -293,6 +295,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
+        { type: "device.cleanup", sessionIds: [] },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
     );

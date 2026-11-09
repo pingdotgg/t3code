@@ -141,6 +141,7 @@ import {
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1099,6 +1100,12 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const devices = yield* Effect.serviceOption(DeviceService.DeviceService);
+  const captureDeviceSessions = Effect.fn("orchestrationV2.captureDeviceSessions")(function* (
+    threadId: ThreadId,
+  ) {
+    return Option.isSome(devices) ? yield* devices.value.sessionIdsForThread(threadId) : [];
+  });
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -4502,6 +4509,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
         { concurrency: 1, discard: true },
       );
+    }
+
+    if (command.type === "thread.archive" || command.type === "thread.settle") {
+      const sessionIds = yield* captureDeviceSessions(command.threadId);
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:device.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "device.cleanup", sessionIds },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
     }
 
     if (command.type === "thread.archive") {
@@ -13496,6 +13516,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             planThreadDeletion({
               command: deletion,
               projection,
+              deviceSessionIds: yield* captureDeviceSessions(deletion.threadId),
               attachmentIds: yield* projectionStore
                 .getThreadAttachmentIds(deletion.threadId)
                 .pipe(mapDispatchError(command)),
