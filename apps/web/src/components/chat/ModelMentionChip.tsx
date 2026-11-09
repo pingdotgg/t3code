@@ -115,10 +115,10 @@ export function ModelMentionChip(props: {
       accessibleLabel={`Model ${presentation.label}`}
       copyMarkdown={props.source}
     >
-      <div className="space-y-1 p-2 text-sm">
-        <p className="font-medium">{presentation.label}</p>
+      <div className="space-y-1 p-2 text-body">
+        <p className="text-label">{presentation.label}</p>
         <p className="text-muted-foreground">{presentation.providerLabel}</p>
-        <p className="font-mono text-xs text-muted-foreground">{props.source}</p>
+        <p className="font-mono text-meta text-muted-foreground">{props.source}</p>
       </div>
     </ContextChipPopover>
   );
