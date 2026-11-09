@@ -21,8 +21,10 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -666,6 +668,9 @@ it.effect.each([false, true])("groups shutdown commits with rollback=%s", (fail)
           runOnce: Effect.succeed(false),
           nextClaimableAt: Effect.succeedNone,
           drain: () => Effect.succeed(0),
+          awaitRuntimeResponseWork: Effect.void,
+          runRuntimeResponseOnce: Effect.succeed(false),
+          nextRuntimeResponseClaimableAt: Effect.succeedNone,
         }),
       ),
       Effect.provideService(EventSink.EventSinkV2, {
@@ -2897,6 +2902,246 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("delivers runtime answers while every worker waits on a turn start", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const lanes = yield* Effect.forEach(["a", "b"], (key) =>
+        Effect.gen(function* () {
+          return {
+            threadId: ThreadId.make(`thread:foundation-startup-answer:${key}`),
+            started: yield* Deferred.make<void>(),
+            answered: yield* Deferred.make<void>(),
+          };
+        }),
+      );
+      const layerExecutor = Layer.succeed(
+        EffectWorker.OrchestrationEffectExecutorV2,
+        EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: (effect) => {
+            const lane = lanes.find((candidate) => candidate.threadId === effect.threadId);
+            if (lane === undefined) return Effect.die(`Missing lane for ${effect.threadId}`);
+            switch (effect.request.type) {
+              // Session initialization waits for the user's answer to a startup question.
+              case "provider-turn.start":
+                return Deferred.succeed(lane.started, undefined).pipe(
+                  Effect.andThen(Deferred.await(lane.answered)),
+                );
+              case "runtime-request.respond":
+                return Deferred.succeed(lane.answered, undefined).pipe(Effect.asVoid);
+              default:
+                return Effect.die(`Unexpected ${effect.request.type}`);
+            }
+          },
+        }),
+      );
+      const layerWorker = EffectWorker.layerWithOptions({ workerId: "startup-answer-worker" }).pipe(
+        Layer.provide(
+          Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
+        ),
+      );
+      const starts = lanes.map(({ threadId }) => ({
+        id: `effect:${threadId}:start`,
+        commandId: CommandId.make(`command:${threadId}:start`),
+        threadId,
+        request: { type: "provider-turn.start" as const, runId: RunId.make(`run:${threadId}`) },
+      }));
+      const answers = lanes.map(({ threadId }) => ({
+        id: `effect:${threadId}:answer`,
+        commandId: CommandId.make(`command:${threadId}:answer`),
+        threadId,
+        request: {
+          type: "runtime-request.respond" as const,
+          providerSessionId: ProviderSessionId.make(`provider-session:${threadId}`),
+          requestId: RuntimeRequestId.make(`runtime-request:${threadId}`),
+          answers: { resume: "Resume" },
+        },
+      }));
+
+      yield* Effect.gen(function* () {
+        yield* EffectWorker.runDaemonWithOptions({ concurrency: lanes.length }).pipe(
+          Effect.forkScoped,
+        );
+        yield* outbox.enqueue(starts);
+        yield* outbox.notifyAvailable(starts.length);
+        yield* Effect.forEach(lanes, ({ started }) => Deferred.await(started), { discard: true });
+
+        yield* outbox.enqueue(answers);
+        yield* outbox.notifyAvailable(answers.length);
+        const settled = [...starts, ...answers].map(({ id }) => id);
+        yield* Effect.forEach(settled, (id) => outbox.awaitSettled(id), { discard: true });
+        for (const id of settled) {
+          assert.equal(Option.getOrUndefined(yield* outbox.get(id))?.status, "succeeded");
+        }
+      }).pipe(Effect.provide(layerWorker), Effect.scoped);
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
+  );
+
+  it.effect("claims runtime answers beside a turn start, one at a time and behind rollback", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const workerId = "answer-lane-worker";
+      const threadId = ThreadId.make("thread:foundation-answer-lane");
+      const commandId = CommandId.make("command:foundation-answer-lane");
+      const answer = (key: string) => ({
+        id: `effect:foundation-answer-lane:${key}`,
+        commandId,
+        threadId,
+        request: {
+          type: "runtime-request.respond" as const,
+          providerSessionId: ProviderSessionId.make("provider-session:foundation-answer-lane"),
+          requestId: RuntimeRequestId.make(`runtime-request:foundation-answer-lane:${key}`),
+          answers: { resume: "Resume" },
+        },
+      });
+      const rollback = (key: string) => ({
+        id: `effect:foundation-answer-lane:${key}`,
+        commandId,
+        threadId,
+        request: {
+          type: "provider-thread.rollback" as const,
+          providerThreadId: ProviderThreadId.make("provider-thread:foundation-answer-lane"),
+          checkpointId: CheckpointId.make("checkpoint:foundation-answer-lane"),
+          scopeId: CheckpointScopeId.make("scope:foundation-answer-lane"),
+        },
+      });
+      const claim = (runtimeResponsesOnly = false) =>
+        outbox
+          .claimNext({ workerId, runtimeResponsesOnly })
+          .pipe(Effect.map((claimed) => Option.getOrUndefined(claimed)?.id));
+      const succeed = (effectId: string) => outbox.succeed({ effectId, workerId });
+
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-answer-lane:a-start",
+          commandId,
+          threadId,
+          request: { type: "provider-turn.start", runId: RunId.make("run:foundation-answer-lane") },
+        },
+        answer("b-answer"),
+        answer("c-answer"),
+      ]);
+      assert.equal(yield* claim(), "effect:foundation-answer-lane:a-start");
+      assert.equal(yield* claim(true), "effect:foundation-answer-lane:b-answer");
+      assert.isUndefined(yield* claim());
+      yield* succeed("effect:foundation-answer-lane:b-answer");
+      assert.equal(yield* claim(), "effect:foundation-answer-lane:c-answer");
+      yield* succeed("effect:foundation-answer-lane:c-answer");
+
+      yield* outbox.enqueue([rollback("d-rollback"), answer("e-answer")]);
+      assert.isUndefined(yield* claim());
+      yield* succeed("effect:foundation-answer-lane:a-start");
+      assert.isUndefined(yield* claim(true));
+      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt));
+      assert.isTrue(Option.isNone(yield* outbox.nextRuntimeResponseClaimableAt));
+      assert.equal(yield* claim(), "effect:foundation-answer-lane:d-rollback");
+      assert.isUndefined(yield* claim());
+      yield* succeed("effect:foundation-answer-lane:d-rollback");
+      assert.equal(yield* claim(true), "effect:foundation-answer-lane:e-answer");
+
+      yield* outbox.enqueue([rollback("f-rollback")]);
+      assert.isUndefined(yield* claim());
+      yield* succeed("effect:foundation-answer-lane:e-answer");
+      assert.equal(yield* claim(), "effect:foundation-answer-lane:f-rollback");
+      yield* succeed("effect:foundation-answer-lane:f-rollback");
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
+  );
+
+  it.effect.each(
+    (
+      [
+        {
+          type: "provider-session.detach",
+          providerSessionId: ProviderSessionId.make("provider-session:answer-order"),
+        },
+        {
+          type: "provider-turn.interrupt",
+          providerSessionId: ProviderSessionId.make("provider-session:answer-order"),
+          providerThreadId: ProviderThreadId.make("provider-thread:answer-order"),
+          providerTurnId: ProviderTurnId.make("provider-turn:answer-order"),
+        },
+        {
+          type: "provider-turn.steer",
+          providerSessionId: ProviderSessionId.make("provider-session:answer-order"),
+          providerThreadId: ProviderThreadId.make("provider-thread:answer-order"),
+          providerTurnId: ProviderTurnId.make("provider-turn:answer-order"),
+          messageId: MessageId.make("message:answer-order"),
+        },
+        {
+          type: "provider-turn.restart",
+          providerSessionId: ProviderSessionId.make("provider-session:answer-order"),
+          providerThreadId: ProviderThreadId.make("provider-thread:answer-order"),
+          providerTurnId: ProviderTurnId.make("provider-turn:answer-order"),
+          interruptedAttemptId: RunAttemptId.make("attempt:answer-order"),
+          runId: RunId.make("run:answer-order"),
+        },
+        {
+          type: "checkpoint.capture",
+          runId: RunId.make("run:answer-order"),
+          scopeId: CheckpointScopeId.make("scope:answer-order"),
+        },
+        { type: "provider-turn.start", runId: RunId.make("run:answer-order") },
+      ] as const satisfies ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2>
+    ).flatMap((request) =>
+      [false, true].flatMap((answerFirst) =>
+        [false, true]
+          .filter((running) => answerFirst || !running || request.type !== "provider-turn.start")
+          .map((running) => ({ type: request.type, request, answerFirst, running })),
+      ),
+    ),
+  )(
+    "orders $type with answers (answerFirst=$answerFirst, running=$running)",
+    ({ request, answerFirst, running }) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const workerId = "answer-order-worker";
+        const commandId = CommandId.make("command:answer-order");
+        const threadId = ThreadId.make("thread:answer-order");
+        const answer = {
+          type: "runtime-request.respond" as const,
+          providerSessionId: ProviderSessionId.make("provider-session:answer-order"),
+          requestId: RuntimeRequestId.make("runtime-request:answer-order"),
+          answers: { resume: "Resume" },
+        };
+        const first = {
+          id: "effect:answer-order:a-first",
+          commandId,
+          threadId,
+          request: answerFirst ? answer : request,
+          // Retry backoff must remain an ordering barrier too.
+          ...(running ? {} : { availableAt: DateTime.add(yield* DateTime.now, { hours: 1 }) }),
+        };
+        yield* outbox.enqueue([first]);
+        if (running) {
+          assert.equal(Option.getOrUndefined(yield* outbox.claimNext({ workerId }))?.id, first.id);
+        }
+        yield* outbox.enqueue([
+          {
+            id: "effect:answer-order:b-second",
+            commandId,
+            threadId,
+            request: answerFirst ? request : answer,
+          },
+        ]);
+        assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId })));
+        assert.isTrue(
+          Option.isNone(yield* outbox.claimNext({ workerId, runtimeResponsesOnly: true })),
+        );
+        assert.equal(
+          Option.isNone(yield* outbox.nextRuntimeResponseClaimableAt),
+          running || !answerFirst,
+        );
+        if (!running) {
+          yield* TestClock.adjust("1 hour");
+          assert.equal(Option.getOrUndefined(yield* outbox.claimNext({ workerId }))?.id, first.id);
+        }
+        yield* outbox.succeed({ effectId: first.id, workerId });
+        assert.equal(
+          Option.getOrUndefined(yield* outbox.claimNext({ workerId }))?.id,
+          "effect:answer-order:b-second",
+        );
+      }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
+  );
+
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -3293,6 +3538,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runOnce: Effect.succeed(false),
             nextClaimableAt: Effect.succeedNone,
             drain: () => Effect.succeed(0),
+            awaitRuntimeResponseWork: Effect.void,
+            runRuntimeResponseOnce: Effect.succeed(false),
+            nextRuntimeResponseClaimableAt: Effect.succeedNone,
           }),
         ),
       );
@@ -3510,6 +3758,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runOnce: Effect.succeed(false),
             nextClaimableAt: Effect.succeedNone,
             drain: () => Effect.succeed(0),
+            awaitRuntimeResponseWork: Effect.void,
+            runRuntimeResponseOnce: Effect.succeed(false),
+            nextRuntimeResponseClaimableAt: Effect.succeedNone,
           }),
         ),
       );

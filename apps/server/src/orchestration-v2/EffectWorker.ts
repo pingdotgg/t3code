@@ -620,8 +620,14 @@ export interface OrchestrationEffectWorkerV2Shape {
     Option.Option<DateTime.Utc>,
     OrchestrationEffectWorkerError
   >;
+  /** Runtime-response-only claims, so answers still reach a turn start that holds every worker. */
+  readonly awaitRuntimeResponseWork: Effect.Effect<void>;
+  readonly runRuntimeResponseOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly nextRuntimeResponseClaimableAt: OrchestrationEffectWorkerV2Shape["nextClaimableAt"];
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
+
+type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]>[0], "workerId">;
 
 export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
@@ -739,10 +745,8 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
-          const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, excludeRestartContinuations }),
-          );
+        function* (claim: ClaimFilter = {}) {
+          const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, ...claim }));
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
               ? "error"
@@ -841,7 +845,7 @@ export const layerWithOptions = (
           }
           return true;
         },
-        (effect, _excludeRestartContinuations?: boolean) =>
+        (effect, _claim?: ClaimFilter) =>
           effect.pipe(
             Effect.mapError((cause) =>
               isOrchestrationEffectWorkerError(cause)
@@ -851,11 +855,10 @@ export const layerWithOptions = (
           ),
       );
 
-      return OrchestrationEffectWorkerV2.of({
-        awaitWork: outbox.awaitAvailable,
-        runOnce: runOnce(),
-        runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+      const nextClaimableAt = (
+        deadline: Effect.Effect<Option.Option<DateTime.Utc>, EffectOutbox.EffectOutboxError>,
+      ) =>
+        deadline.pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -863,7 +866,16 @@ export const layerWithOptions = (
                 cause,
               }),
           ),
-        ),
+        );
+
+      return OrchestrationEffectWorkerV2.of({
+        awaitWork: outbox.awaitAvailable,
+        runOnce: runOnce(),
+        runRecoveryOnce: runOnce({ excludeRestartContinuations: true }),
+        nextClaimableAt: nextClaimableAt(outbox.nextClaimableAt),
+        awaitRuntimeResponseWork: outbox.awaitRuntimeResponseAvailable,
+        runRuntimeResponseOnce: runOnce({ runtimeResponsesOnly: true }),
+        nextRuntimeResponseClaimableAt: nextClaimableAt(outbox.nextRuntimeResponseClaimableAt),
         drain: Effect.fn("EffectWorker.drain")(function* (maxEffects = Number.MAX_SAFE_INTEGER) {
           let completed = 0;
           while (completed < maxEffects && (yield* runOnce())) {
@@ -899,9 +911,11 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
-      const runWorker = Effect.gen(function* () {
+      const runWorker = Effect.fnUntraced(function* (
+        lane: Pick<OrchestrationEffectWorkerV2Shape, "awaitWork" | "runOnce" | "nextClaimableAt">,
+      ) {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const outcome = yield* lane.runOnce.pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -919,7 +933,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             continue;
           }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
+          const nextClaimableAt = yield* lane.nextClaimableAt.pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning(
                 "Failed to read the next orchestration effect deadline",
@@ -936,14 +950,22 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             },
           });
           yield* Effect.raceFirst(
-            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            lane.awaitWork.pipe(Effect.as("notified" as const)),
             Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
           );
         }
       });
 
+      // One extra worker serves only runtime responses; ordinary workers claim them too.
       return yield* Effect.all(
-        Array.from({ length: concurrency }, () => runWorker),
+        [
+          ...Array.from({ length: concurrency }, () => runWorker(worker)),
+          runWorker({
+            awaitWork: worker.awaitRuntimeResponseWork,
+            runOnce: worker.runRuntimeResponseOnce,
+            nextClaimableAt: worker.nextRuntimeResponseClaimableAt,
+          }),
+        ],
         {
           concurrency: "unbounded",
           discard: true,
