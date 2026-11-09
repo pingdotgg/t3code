@@ -10185,6 +10185,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* flushHeldAssistantText(context);
               }
               context.assistant.cardSeen = false;
+              context.assistant.cardReplies = [];
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
                 context.steeredLedgerUsage,
