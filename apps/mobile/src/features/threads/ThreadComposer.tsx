@@ -298,6 +298,8 @@ const FOLLOW_UP_ACTION_LABEL = {
   restart: "Restart turn",
 } as const;
 
+const SEND_MENU_LONG_PRESS_MS = 250;
+
 const FOLLOW_UP_ACTION_SUBTITLE = {
   queue: "Run after the current turn",
   steer: "Interrupt what the agent is doing",
@@ -332,6 +334,7 @@ function SendActionButton(props: {
     <Menu
       accessibilityLabel="Choose how to send this message"
       shouldOpenOnLongPress
+      longPressDuration={SEND_MENU_LONG_PRESS_MS}
       actions={actions.map((action) => ({
         id: action,
         title: FOLLOW_UP_ACTION_LABEL[action],
