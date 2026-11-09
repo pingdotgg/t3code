@@ -35,7 +35,11 @@ import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  shouldShowComposerTasks,
+} from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
@@ -3673,8 +3677,14 @@ export default function ChatView(props: ChatViewProps) {
                       ) : null}
                       {hasQueuedTurns ? queuedRunsControl : null}
                       {composerTasks?.type === "todo_list" &&
-                      (isWorking ||
-                        composerTasks.steps.some((step) => step.status !== "completed")) ? (
+                      shouldShowComposerTasks({
+                        steps: composerTasks.steps,
+                        planRunSettled: isLatestRunSettled(
+                          activeActivityRun ?? activeLatestRun,
+                          activeRuntime,
+                        ),
+                        isSendBusy,
+                      }) ? (
                         <ComposerTaskStatus
                           key={composerTasks.planId}
                           steps={composerTasks.steps}
