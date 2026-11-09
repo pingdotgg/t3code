@@ -1913,3 +1913,130 @@ it.effect(
       }
     }),
 );
+
+const fjHttpProtocolError = `Error: error sending request for url (https://forgejo.local:3000/api/v1/user?)
+Caused by:
+   0: client error (Connect)
+   1: received corrupt message of type InvalidContentType`;
+
+it.effect.each([
+  { remote: "", error: fjHttpProtocolError, status: "unknown", httpWorks: true },
+  {
+    remote: "git@forgejo.local:maria/project.git",
+    error: fjHttpProtocolError,
+    status: "unknown",
+    httpWorks: true,
+  },
+  {
+    remote: "https://forgejo.local:3000/maria/project.git",
+    error: fjHttpProtocolError,
+    status: "unknown",
+    httpWorks: true,
+  },
+  {
+    remote: "http://forgejo.local:3000/maria/project.git",
+    error: fjHttpProtocolError,
+    status: "authenticated",
+    httpWorks: true,
+  },
+  {
+    remote: "",
+    error: "invalid peer certificate: UnknownIssuer",
+    status: "unauthenticated",
+    httpWorks: true,
+  },
+  { remote: "", error: "request timed out", status: "unauthenticated", httpWorks: true },
+  { remote: "", error: "connection refused", status: "unauthenticated", httpWorks: true },
+  { remote: "", error: "401 Unauthorized", status: "unauthenticated", httpWorks: true },
+  {
+    remote: "",
+    error: fjHttpProtocolError.replace("forgejo.local:3000", "other.local:3000"),
+    status: "unauthenticated",
+    httpWorks: true,
+  },
+  {
+    remote: "http://forgejo.local:3000/maria/project.git",
+    error: fjHttpProtocolError,
+    status: "unauthenticated",
+    httpWorks: false,
+  },
+])(
+  "reports HTTP-only fj discovery without downgrading ($remote, $error, HTTP works: $httpWorks)",
+  ({ remote, error, status, httpWorks }) => {
+    const probes: string[] = [];
+    const requests: string[] = [];
+    const explicitlyHttp = remote.startsWith("http://");
+    const authenticated = status === "authenticated";
+    return Effect.gen(function* () {
+      const cli = yield* ForgejoCli.make;
+      const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
+        Effect.provideService(ForgejoCli.ForgejoCli, cli),
+      );
+      assert.strictEqual(spec.type, "managed-cli");
+      if (spec.type !== "managed-cli") return;
+      const result = yield* spec.probe("/no-repository");
+      assert.strictEqual(result.executable, "fj");
+      assert.strictEqual(result.auth.status, status);
+      assert.deepStrictEqual(
+        result.auth.account,
+        authenticated ? Option.some("maria") : Option.none(),
+      );
+      assert.deepStrictEqual(probes, [
+        explicitlyHttp ? "http://forgejo.local:3000" : "https://forgejo.local:3000",
+        ...(authenticated ? ["http://forgejo.local:3000"] : []),
+      ]);
+      assert.deepStrictEqual(
+        requests,
+        authenticated ? ["http://forgejo.local:3000/api/v1/user"] : [],
+      );
+    }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: () => Effect.succeed(true),
+          readFileString: () =>
+            Effect.succeed(
+              encodeJson({
+                hosts: { "forgejo.local:3000": { type: "Application", token: "test-token" } },
+              }),
+            ),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(request.url);
+          assert.strictEqual(request.headers.authorization, "token test-token");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response('{"login":"maria"}')),
+          );
+        }),
+      ),
+      Effect.provide(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              if (input.command === "git") return Effect.succeed(processOutput(remote));
+              assert.strictEqual(input.command, "fj");
+              assert.strictEqual(input.cwd, "/home/maria");
+              if (input.args[0] === "version") return Effect.succeed(processOutput("fj 0.7.0"));
+              assert.strictEqual(input.args[0], "--host");
+              assert.strictEqual(input.args[2], "whoami");
+              const url = input.args[1]!;
+              probes.push(url);
+              return Effect.succeed(
+                processOutput("", {
+                  exitCode: ChildProcessSpawner.ExitCode(
+                    url.startsWith("http://") && httpWorks ? 0 : 1,
+                  ),
+                  stderr: url.startsWith("http://") ? "401 Unauthorized" : error,
+                }),
+              );
+            },
+          },
+        }),
+      ),
+    );
+  },
+);
