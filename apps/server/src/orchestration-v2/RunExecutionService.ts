@@ -1510,6 +1510,7 @@ export const layer: Layer.Layer<
           idleFlushWake = undefined;
           return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
         });
+        // Per-tick ingestion avoids adding a span for every idle wake.
         const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
           // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
           // to a millisecond earlier; trusting it would keep the finished wake and never re-arm.
