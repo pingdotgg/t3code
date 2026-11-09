@@ -4,7 +4,7 @@ import {
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, PencilIcon, QuoteIcon, ReplyIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -20,17 +20,12 @@ import {
   assistantCitationHash,
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
-import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
-import { ContextChipPopover } from "../contextChipParts";
-import { Button } from "../ui/button";
-import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
-import { observeResize } from "~/lib/observeResize";
 import { textDirection } from "~/textDirection";
 
 function citationSourceLinkProps(
@@ -53,57 +48,50 @@ function citationSourceLinkProps(
   };
 }
 
-/** A quoted response at the top of a sent message, like a chat app's reply preview. */
+/** A quoted response inside a message. Clicking it goes to the source; its comment follows as text. */
 export function AssistantCitationEmbed({ citation }: { citation: AssistantCitation }) {
   const navigate = useNavigate();
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
   const flat = (text: string) => text.replace(/\s+/g, " ");
-  const { comment: _comment, ...quoted } = citation;
-  const card = (
-    <Link
-      {...citationSourceLinkProps(citation, navigate)}
-      data-thread-find-ignore
-      aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
-      className="flex min-w-0 flex-col gap-0.5 rounded-lg border-s-2 border-primary bg-black/5 px-2.5 py-1.5 text-start text-inherit no-underline hover:bg-black/8 focus-visible:outline-2 focus-visible:outline-ring dark:bg-white/6 dark:hover:bg-white/10"
-    >
-      <span className="flex items-center gap-1 text-xs font-medium text-primary">
-        {wholeResponse ? <ReplyIcon className="size-3" /> : <QuoteIcon className="size-3" />}
-        {wholeResponse ? "Response" : "Quote"}
-      </span>
-      <span
-        className="line-clamp-3 text-sm text-muted-foreground wrap-break-word"
-        dir={textDirection(citation.text)}
-      >
-        {wholeResponse ? (
-          flat(citation.text)
-        ) : (
-          <>
-            {citation.prefix ? `…${flat(citation.prefix)}` : null}
-            <mark className="rounded-sm bg-primary/15 text-foreground">{flat(citation.text)}</mark>
-            {citation.suffix ? `${flat(citation.suffix)}…` : null}
-          </>
-        )}
-      </span>
-    </Link>
-  );
-  if (!citation.comment) return card;
+  const { comment, ...quoted } = citation;
   return (
     <>
-      {card}
-      <p className="text-sm" dir={textDirection(citation.comment)}>
-        {citation.comment}
-      </p>
+      <Link
+        {...citationSourceLinkProps(citation, navigate)}
+        data-thread-find-ignore
+        aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+        // The message's markdown styles colour and underline links; a quote is neither.
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+      >
+        <span className="line-clamp-2" dir={textDirection(citation.text)}>
+          {wholeResponse ? (
+            flat(citation.text)
+          ) : (
+            <>
+              {citation.prefix ? `…${flat(citation.prefix)}` : null}
+              <mark className="rounded-sm bg-foreground/12 px-0.5 text-foreground">
+                {flat(citation.text)}
+              </mark>
+              {citation.suffix ? `${flat(citation.suffix)}…` : null}
+            </>
+          )}
+        </span>
+      </Link>
+      {comment ? (
+        <span className="mt-1.5 block" dir={textDirection(comment)}>
+          {comment}
+        </span>
+      ) : null}
     </>
   );
 }
 
+/** The citation chip in the composer, with its comment editor. */
 export function AssistantCitationChip({
   citation,
-  composer = false,
   commentEditor,
 }: {
   citation: AssistantCitation;
-  composer?: boolean;
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -188,27 +176,6 @@ export function AssistantCitationChip({
       </ContextChipLabel>
     </Link>
   );
-  if (!composer) {
-    return (
-      <ContextChipPopover
-        kind="citation"
-        icon={<QuoteIcon />}
-        label={label}
-        accessibleLabel={`Quoted assistant text: ${label}`}
-        copyMarkdown={serializeAssistantCitation(citation)}
-      >
-        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
-          <AssistantCitationQuote citation={citation} />
-          <PopoverClose
-            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
-          >
-            <ArrowUpRightIcon aria-hidden="true" />
-            Go to source
-          </PopoverClose>
-        </div>
-      </ContextChipPopover>
-    );
-  }
   return (
     <ContextChip
       kind="citation"
@@ -309,36 +276,5 @@ export function AssistantCitationChip({
         </Popover>
       ) : null}
     </ContextChip>
-  );
-}
-
-function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
-  const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = (element: HTMLElement) => {
-    const top = element.scrollTop > 1;
-    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
-    setFade((current) =>
-      current.top === top && current.bottom === bottom ? current : { top, bottom },
-    );
-  };
-  const observeFade = (element: HTMLDivElement | null) =>
-    element ? observeResize(element, () => updateFade(element)) : undefined;
-  return (
-    <div
-      ref={observeFade}
-      onScroll={(event) => updateFade(event.currentTarget)}
-      className={cn(
-        "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",
-        getVirtualizedScrollFadeClassName(fade),
-      )}
-    >
-      <blockquote
-        className="border-l-2 border-border pl-3 text-muted-foreground"
-        dir={textDirection(citation.text)}
-      >
-        {citation.text}
-      </blockquote>
-      {citation.comment ? <p dir={textDirection(citation.comment)}>{citation.comment}</p> : null}
-    </div>
   );
 }
