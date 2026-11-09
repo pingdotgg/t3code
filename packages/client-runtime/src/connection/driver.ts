@@ -147,15 +147,14 @@ export const make = Effect.gen(function* () {
 
   // The descriptor is public, so this sends no credential to whatever
   // answers at a saved LAN address on a different network.
-  const checkDescriptor = (httpBaseUrl: string, environmentId: string, remember = false) =>
+  const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
     fetchRemoteEnvironmentDescriptor({
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
     }).pipe(
-      // Remembered even on a mismatch, so a reconnect never reuses an older match.
-      Effect.tap((descriptor) =>
-        remember ? remote.rememberCheckedDescriptor(httpBaseUrl, descriptor) : Effect.void,
-      ),
+      // The connect this check leads to skips its own read. Remembered even on a
+      // mismatch, so it never reuses an older match.
+      Effect.tap((descriptor) => remote.rememberCheckedDescriptor(httpBaseUrl, descriptor)),
       Effect.map((descriptor): RouteCheck =>
         descriptor.environmentId === environmentId ? "answered" : "silent",
       ),
@@ -175,9 +174,8 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  // Only a live session's host check feeds the reconnect it may trigger.
   const checkHost = (prepared: PreparedConnection) =>
-    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId, true).pipe(
+    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
       Effect.withSpan("ConnectionDriver.checkHost", {
         attributes: { "connection.target.kind": prepared.target._tag },
       }),

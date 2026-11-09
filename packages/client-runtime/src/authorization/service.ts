@@ -141,9 +141,9 @@ export const make = Effect.gen(function* () {
     }
   >();
 
-  // A host check that just answered hands its descriptor to the reconnect it
-  // triggers, once, so the reconnect skips a round trip. Only over HTTPS: a
-  // plain LAN address can belong to another machine after a network change.
+  // A route or host check hands its descriptor to the connect it leads to, once,
+  // so the connect skips a round trip. Only over HTTPS: a plain LAN address can
+  // belong to another machine after a network change.
   const checkedDescriptors = new Map<
     string,
     { readonly descriptor: ExecutionEnvironmentDescriptor; readonly at: number }
@@ -547,7 +547,7 @@ export const make = Effect.gen(function* () {
 
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
-    // Untraced: it runs on every live session's host check.
+    // Untraced: it runs on every route and host check.
     rememberCheckedDescriptor: Effect.fnUntraced(function* (httpBaseUrl, descriptor) {
       if (!httpBaseUrl.startsWith("https:")) return;
       checkedDescriptors.set(httpBaseUrl, { descriptor, at: yield* Clock.currentTimeMillis });
