@@ -84,7 +84,6 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
-  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -1092,10 +1091,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerReviewComments.length === 0 &&
     composerThreadContexts.length === 0 &&
     composerEnvironmentContexts.length === 0;
-  const standaloneComposerSlashCommand =
-    composerHoldsOnlyText && planModeUiEnabled && multipleModelSelections === null
-      ? parseStandaloneComposerSlashCommand(prompt)
-      : null;
   const sideChatHandlesDraft =
     parseSideChatCommand(prompt) !== null &&
     (props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null);
@@ -1116,11 +1111,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             props.onFreshSession !== undefined &&
             isClearComposerCommand(prompt)
           ? "clear"
-          : standaloneComposerSlashCommand === "plan"
-            ? "plan"
-            : standaloneComposerSlashCommand === "default"
-              ? "build"
-              : null;
+          : null;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const {
     items: composerMenuItems,
