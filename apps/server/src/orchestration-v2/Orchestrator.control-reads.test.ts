@@ -1794,3 +1794,91 @@ it.effect("background failures stay reported when another automated run starts",
     assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect(
+  "acknowledged background failures stay quiet after delegated delivery metadata changes",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventSink.EventSinkV2;
+      const { threadId } = yield* completeAndSnoozeThread("background-metadata", 30);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("background-metadata:start"),
+        threadId,
+        messageId: MessageId.make("background-metadata:start"),
+        text: "Delegate a check",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("background-metadata:delegate"),
+        parentThreadId: threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Check",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadProjection(threadId)).subagents[0]!;
+      const now = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("background-metadata:failed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              ...run,
+              status: "failed",
+              completedAt: now,
+              delegatedCompletion: {
+                disposition: "open",
+                nextGeneration: 2,
+                delivery: {
+                  generation: 1,
+                  messageId: MessageId.make("missing-delivery"),
+                  taskIds: [task.id],
+                },
+              },
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background-metadata:background"),
+        threadId,
+        background: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background-metadata:report"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background-metadata:ack"),
+        threadId,
+        acknowledgeBackground: true,
+      });
+      const result = yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.dispose",
+        commandId: CommandId.make("background-metadata:dispose"),
+        parentThreadId: threadId,
+        taskId: task.id,
+      });
+      assert.isTrue(result.storedEvents.some((stored) => stored.event.type === "run.updated"));
+      assert.isNull((yield* projections.getThreadShell(threadId))!.background!.reportedAt);
+    }).pipe(Effect.provide(layerTest)),
+);

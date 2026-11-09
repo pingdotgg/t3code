@@ -3423,6 +3423,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
+                              section === "background" ||
                               section === "snoozed" ||
                               section === "settled"
                                 ? `shelf:${section}`

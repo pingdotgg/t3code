@@ -123,9 +123,11 @@ export function SidebarSectionHeader(props: {
   const shelf =
     props.marker === "working-header"
       ? "working"
-      : props.marker === "snoozed-header"
-        ? "snoozed"
-        : "settled";
+      : props.marker === "background-header"
+        ? "background"
+        : props.marker === "snoozed-header"
+          ? "snoozed"
+          : "settled";
   return (
     <SortableSidebarMarker
       marker={props.marker}

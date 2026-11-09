@@ -514,4 +514,10 @@ it("a new background report wakes a snooze, while an explicit later snooze defer
   };
   expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
   expect(effectiveSnoozed({ ...shell, snoozedAt: NOW }, { now: NOW })).toBe(true);
+  expect(effectiveSnoozed({ ...shell, snoozedAt: "2026-04-10T11:00:00Z" }, { now: NOW })).toBe(
+    true,
+  );
+  expect(effectiveSnoozed({ ...shell, snoozedAt: "2026-04-10T12:00:00+02:00" }, { now: NOW })).toBe(
+    false,
+  );
 });

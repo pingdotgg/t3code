@@ -232,6 +232,17 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...input.thread, background: { ...background, reportedAt: NOW } },
       })?.phase,
     ).toBe("completed");
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: {
+          ...input.thread,
+          status: "failed",
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+          background: { acknowledgedAt: NOW.replace(".000Z", "Z"), reportedAt: null },
+        },
+      }),
+    ).toBeNull();
     const childUpdatedAt = "2026-09-04T12:02:00.000Z";
     expect(
       projectThreadAwarenessV2({

@@ -107,7 +107,11 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   const report = shell.source?.background?.reportedAt;
-  if (report != null && (shell.snoozedAt == null || report > shell.snoozedAt)) return true;
+  if (
+    report != null &&
+    (shell.snoozedAt == null || Date.parse(report) > Date.parse(shell.snoozedAt))
+  )
+    return true;
   if (shell.pendingSubagentRequest != null) return true;
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return true;
   const failedAt = failureEdgeAt(shell);
@@ -439,10 +443,15 @@ export function isQuietBackgroundThread(
     return false;
   const run = shell.latestRun;
   if (run != null && ["failed", "interrupted", "cancelled"].includes(run.status)) {
-    return run.completedAt != null && run.completedAt <= policy.acknowledgedAt;
+    return (
+      run.completedAt != null && Date.parse(run.completedAt) <= Date.parse(policy.acknowledgedAt)
+    );
   }
   if (shell.runtime?.status === "failed" || shell.runtime?.status === "interrupted") {
-    return shell.runtime.updatedAt != null && shell.runtime.updatedAt <= policy.acknowledgedAt;
+    return (
+      shell.runtime.updatedAt != null &&
+      Date.parse(shell.runtime.updatedAt) <= Date.parse(policy.acknowledgedAt)
+    );
   }
   return true;
 }

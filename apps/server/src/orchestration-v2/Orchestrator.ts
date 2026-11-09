@@ -1437,9 +1437,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const reports: Array<OrchestrationV2DomainEvent> = [];
     const reported = new Set<ThreadId>();
+    const runStatuses = new Map<RunId, string>();
     for (const event of events) {
+      if (event.type === "run.created") {
+        runStatuses.set(event.payload.id, event.payload.status);
+        continue;
+      }
+      if (event.type !== "run.updated") continue;
+      const previousStatus = runStatuses.get(event.payload.id);
+      runStatuses.set(event.payload.id, event.payload.status);
       if (
-        event.type !== "run.updated" ||
         !["failed", "interrupted", "cancelled"].includes(event.payload.status) ||
         reported.has(event.threadId) ||
         events.some(
@@ -1449,7 +1456,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         )
       )
         continue;
-      reported.add(event.threadId);
       const pending = events.findLast(
         (candidate) => candidate.threadId === event.threadId && "lineage" in candidate.payload,
       );
@@ -1458,6 +1464,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? pending.payload
           : yield* projectionStore.getThread(event.threadId);
       if (thread.background == null || thread.background.reportedAt != null) continue;
+      const priorStatus =
+        previousStatus ??
+        (yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
+          runIds: [event.payload.id],
+        })).runs[0]?.status;
+      if (priorStatus === event.payload.status) continue;
+      reported.add(event.threadId);
       reports.push({
         ...event,
         id: yield* idAllocator.allocate.event({ threadId: event.threadId }),

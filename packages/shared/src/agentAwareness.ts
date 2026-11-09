@@ -113,7 +113,8 @@ export function projectThreadAwarenessV2(
     (phase === "completed" ||
       (phase === "failed" &&
         thread.latestRunCompletedAt != null &&
-        DateTime.formatIso(thread.latestRunCompletedAt) <= thread.background.acknowledgedAt))
+        DateTime.toEpochMillis(thread.latestRunCompletedAt) <=
+          Date.parse(thread.background.acknowledgedAt)))
   )
     return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
