@@ -12,8 +12,14 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  updateAcpRegistryEnrichmentCache,
 } from "./driver.ts";
-import { acpRegistryProbeResult, normalizeAcpRegistryLiveConfiguration } from "./probe.ts";
+import {
+  acpRegistryAdvertisesModelCatalog,
+  acpRegistryProbeResult,
+  normalizeAcpRegistryLiveConfiguration,
+  resolveAcpRegistryProbeLiveConfiguration,
+} from "./probe.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {
@@ -41,6 +47,41 @@ function catalogWithInspection(
     resolve: () => Effect.die("unused resolve"),
     uninstallManagedBinary: () => Effect.die("unused uninstall"),
   };
+}
+
+function providerWithModels(
+  models: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly description: string | null;
+  }>,
+  currentModelId: string | null,
+): ReturnType<typeof buildCheckedAcpRegistrySnapshot> {
+  return buildCheckedAcpRegistrySnapshot({
+    ...identity,
+    settings: decodeSettings({ agentId: "test-agent" }),
+    checkedAt: "2026-08-13T10:00:00.000Z",
+    inspection: {
+      status: "ready",
+      agentId: "test-agent",
+      version: "1.0.0",
+      distribution: "npx",
+    },
+    probe: {
+      probe: {
+        instanceId: identity.instanceId,
+        ready: true,
+        icon: null,
+        authMethods: [],
+        models,
+        currentModelId,
+        configOptions: [],
+        sessionManagement: noSessionManagement,
+      },
+      slashCommands: [],
+      skills: [],
+    },
+  });
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
@@ -535,5 +576,178 @@ describe("acpRegistrySnapshotReadiness", () => {
     const updated = applyAcpRegistryLiveConfiguration(initialProvider, settledLiveConfig, []);
     expect(updated.models.map((m) => m.slug)).toEqual(["auto", "qmodel_38max", "kmodel_latest"]);
     expect(updated.models.find((m) => m.slug === "auto")?.isDefault).toBe(true);
+  });
+
+  it("keeps a richer probed catalog when a live session reports one provisional model", () => {
+    const provider = providerWithModels(
+      [
+        { id: "auto", name: "Auto", description: null },
+        { id: "qmodel", name: "Qwen", description: null },
+        { id: "kmodel", name: "Kimi", description: null },
+      ],
+      "auto",
+    );
+
+    const fallbackSelected = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [{ id: "smodel", name: "Default", description: null }],
+        currentModelId: "smodel",
+        configOptions: [],
+      },
+      [],
+    );
+    expect(fallbackSelected.models.map((m) => m.slug)).toEqual(["auto", "qmodel", "kmodel"]);
+    expect(fallbackSelected.models.find((m) => m.slug === "auto")?.isDefault).toBe(true);
+
+    const liveSelected = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [{ id: "auto", name: "Auto", description: null }],
+        currentModelId: "qmodel",
+        configOptions: [],
+      },
+      [],
+    );
+    expect(liveSelected.models.map((m) => m.slug)).toEqual(["auto", "qmodel", "kmodel"]);
+    expect(liveSelected.models.find((m) => m.slug === "qmodel")?.isDefault).toBe(true);
+    expect(liveSelected.models.find((m) => m.slug === "auto")?.isDefault).not.toBe(true);
+  });
+});
+
+describe("acpRegistryEnrichmentCache", () => {
+  const settledConfiguration = {
+    models: [
+      { id: "auto", name: "Auto", description: null },
+      { id: "qmodel", name: "Qwen", description: null },
+      { id: "kmodel", name: "Kimi", description: null },
+    ],
+    currentModelId: "auto",
+    configOptions: [],
+  };
+
+  it("does not renew the cache deadline when live configuration is replayed unchanged", () => {
+    const provider = providerWithModels(settledConfiguration.models, "auto");
+    const cache = { generation: 1, entry: { provider, expiresAt: 1_000 } };
+
+    const replayed = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: settledConfiguration,
+      customModels: [],
+      now: 2_000,
+    });
+
+    expect(replayed).toBe(cache);
+    expect(replayed.entry?.expiresAt).toBe(1_000);
+  });
+
+  it("updates the cache and promotes the expiry when live configuration discovers a catalog", () => {
+    const provider = providerWithModels(
+      [{ id: "smodel", name: "Default", description: null }],
+      "smodel",
+    );
+    const cache = { generation: 1, entry: { provider, expiresAt: 1_000 } };
+
+    const updated = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: settledConfiguration,
+      customModels: [],
+      now: 5_000,
+    });
+
+    expect(updated.entry?.provider.models.map((m) => m.slug)).toEqual(["auto", "qmodel", "kmodel"]);
+    expect((updated.entry?.expiresAt ?? 0) - 5_000).toBe(15 * 60 * 1_000);
+  });
+
+  it("keeps the provisional expiry when the live catalog remains incomplete", () => {
+    const provider = providerWithModels(
+      [{ id: "smodel", name: "Default", description: null }],
+      "smodel",
+    );
+    const cache = { generation: 1, entry: { provider, expiresAt: 1_000 } };
+
+    const updated = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: {
+        models: [{ id: "smodel", name: "Sonus", description: null }],
+        currentModelId: "smodel",
+        configOptions: [],
+      },
+      customModels: [],
+      now: 5_000,
+    });
+
+    expect(updated).not.toBe(cache);
+    expect((updated.entry?.expiresAt ?? 0) - 5_000).toBe(30 * 1_000);
+  });
+});
+
+describe("acpRegistryAdvertisesModelCatalog", () => {
+  it("counts choices inside option groups and available model state", () => {
+    expect(
+      acpRegistryAdvertisesModelCatalog([
+        {
+          id: "model",
+          name: "Model",
+          type: "select" as const,
+          category: "model" as const,
+          currentValue: "auto",
+          options: [
+            {
+              groupId: "qwen",
+              name: "Qwen",
+              options: [
+                { value: "auto", name: "Auto" },
+                { value: "qmodel", name: "Qwen3.8-Max" },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      acpRegistryAdvertisesModelCatalog([
+        {
+          id: "model",
+          name: "Model",
+          type: "select" as const,
+          category: "model" as const,
+          currentValue: "smodel",
+          options: [{ value: "smodel", name: "Sonus" }],
+        },
+      ]),
+    ).toBe(false);
+    expect(acpRegistryAdvertisesModelCatalog(undefined)).toBe(false);
+    expect(
+      acpRegistryAdvertisesModelCatalog(undefined, {
+        availableModels: [
+          { modelId: "auto", name: "Auto", description: null },
+          { modelId: "qmodel", name: "Qwen", description: null },
+        ],
+        currentModelId: "auto",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("resolveAcpRegistryProbeLiveConfiguration", () => {
+  it("treats an explicit empty config update as authoritative", () => {
+    const live = resolveAcpRegistryProbeLiveConfiguration({
+      notifiedConfigOptions: [],
+      runtimeConfigOptions: [
+        {
+          id: "effort",
+          name: "Effort",
+          type: "select",
+          currentValue: "high",
+          options: [{ value: "high", name: "High" }],
+        },
+      ],
+      modeState: undefined,
+      modelState: null,
+    });
+
+    expect(live.configOptions).toEqual([]);
+    expect(live.models).toEqual([]);
   });
 });

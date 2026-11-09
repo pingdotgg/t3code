@@ -209,6 +209,31 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
+export function acpRegistryAdvertisesModelCatalog(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  modelState?: EffectAcpSchema.SessionModelState | null,
+): boolean {
+  const modelOption = findModelConfigOption(configOptions);
+  return (
+    (modelOption !== undefined && flattenSelectChoices(modelOption.options).length > 1) ||
+    (modelState?.availableModels?.length ?? 0) > 1
+  );
+}
+
+export function resolveAcpRegistryProbeLiveConfiguration(input: {
+  readonly notifiedConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
+  readonly runtimeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly modeState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[1];
+  readonly modelState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[2];
+}): AcpRegistryLiveConfiguration {
+  // config_option_update replaces the full option set, so an empty notice is authoritative.
+  return normalizeAcpRegistryLiveConfiguration(
+    input.notifiedConfigOptions ?? input.runtimeConfigOptions,
+    input.modeState,
+    input.modelState,
+  );
+}
+
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): AcpRegistryAvailableCommands {
@@ -421,8 +446,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           );
         }
         if (update.sessionUpdate === "config_option_update") {
-          const modelOption = findModelConfigOption(update.configOptions);
-          const hasAdvertisedModels = modelOption !== undefined && modelOption.options.length > 1;
+          const hasAdvertisedModels = acpRegistryAdvertisesModelCatalog(update.configOptions);
           return Ref.set(configOptionsRef, update.configOptions).pipe(
             Effect.andThen(
               hasAdvertisedModels
@@ -442,11 +466,10 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         );
       }
       const started = startResult.success;
-      const initialModelOption = findModelConfigOption(started.sessionSetupResult.configOptions);
-      const hasInitialModels =
-        (initialModelOption !== undefined && initialModelOption.options.length > 1) ||
-        (started.sessionSetupResult.models?.availableModels != null &&
-          started.sessionSetupResult.models.availableModels.length > 1);
+      const hasInitialModels = acpRegistryAdvertisesModelCatalog(
+        started.sessionSetupResult.configOptions,
+        started.sessionSetupResult.models,
+      );
 
       yield* Effect.all(
         [
@@ -462,17 +485,13 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         { concurrency: "unbounded" },
       );
 
-      const latestConfigOptions =
-        (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions);
-      const latestModeState = yield* runtime.getModeState;
-
-      const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
-        latestConfigOptions.length > 0
-          ? latestConfigOptions
-          : (started.sessionSetupResult.configOptions ?? []),
-        latestModeState ?? parseSessionModeState(started.sessionSetupResult),
-        started.sessionSetupResult.models,
-      );
+      const liveConfiguration = resolveAcpRegistryProbeLiveConfiguration({
+        notifiedConfigOptions: yield* Ref.get(configOptionsRef),
+        runtimeConfigOptions: yield* runtime.getConfigOptions,
+        modeState:
+          (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
+        modelState: started.sessionSetupResult.models,
+      });
 
       return {
         resolved,
