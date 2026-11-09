@@ -176,6 +176,12 @@ function isRunOwnedSubagentTerminalStatus(
   return status === "interrupted" || status === "failed" || status === "cancelled";
 }
 
+function streamedThreadId(event: ProviderAdapter.ProviderAdapterV2Event): ThreadId | null {
+  if (event.type === "message.updated") return event.message.threadId;
+  if (event.type === "turn_item.updated") return event.turnItem.threadId;
+  return null;
+}
+
 function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
   return terminal.status === "failed" && terminal.childTurnsContinue === true;
 }
@@ -1506,7 +1512,10 @@ export const layer: Layer.Layer<
           // A wake due by now has fired; a later deadline needs a new one.
           if (idleFlushWake !== undefined && idleFlushWake.at <= now) idleFlushWake = undefined;
           if (idleFlushClosed) return;
+          const rootSettled = yield* Ref.get(rootRunFinalized);
           for (const event of assistantStreaming.takeIdleFlushes(now)) {
+            // Settling the root run closed its messages; only children may still stream.
+            if (rootSettled && streamedThreadId(event) === input.run.threadId) continue;
             // The held text's child may have been handed to another run since it arrived.
             if (!routeProviderEvent(event, routeIdentity, yield* Ref.get(eventRouting))[0])
               continue;

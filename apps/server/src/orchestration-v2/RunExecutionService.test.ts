@@ -4023,27 +4023,41 @@ it.effect("delivers a held paragraph after the provider goes idle with its promp
         },
       ] as ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
 
+    const blockerStarted = yield* Deferred.make<void>();
+    const releaseBlocker = yield* Deferred.make<void>();
+    const blocker = streamedMessageEvent({
+      id: `message:${key}:blocker`,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      role: "assistant",
+      text: "Other",
+      streaming: false,
+    });
     const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(providerEvents), {
       batched: true,
       onIngest: (event, write) =>
-        event.type === "message.updated" || event.type === "turn_item.updated"
-          ? Effect.gen(function* () {
-              const message = event.type === "message.updated" ? event.message : event.turnItem;
-              const text = "text" in message ? message.text : "";
-              const streaming = "streaming" in message && message.streaming;
-              yield* Ref.update(delivered, (current) => [
-                ...current,
-                `${event.type}:${streaming ? "streaming" : "final"}:${JSON.stringify(text)}${
-                  write.inSharedCommit ? " in commit" : ""
-                }`,
-              ]);
-              if (event.type === "turn_item.updated") {
-                yield* Deferred.succeed(paragraphDelivered, undefined);
-                if (streaming && text === "First.\n\nWaiting on the build")
-                  yield* Deferred.succeed(idleDelivered, undefined);
-              }
-            })
-          : Effect.void,
+        event.type === "message.updated" && event.message.text === "Other"
+          ? Deferred.succeed(blockerStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseBlocker)),
+            )
+          : event.type === "message.updated" || event.type === "turn_item.updated"
+            ? Effect.gen(function* () {
+                const message = event.type === "message.updated" ? event.message : event.turnItem;
+                const text = "text" in message ? message.text : "";
+                const streaming = "streaming" in message && message.streaming;
+                yield* Ref.update(delivered, (current) => [
+                  ...current,
+                  `${event.type}:${streaming ? "streaming" : "final"}:${JSON.stringify(text)}${
+                    write.inSharedCommit ? " in commit" : ""
+                  }`,
+                ]);
+                if (event.type === "turn_item.updated") {
+                  yield* Deferred.succeed(paragraphDelivered, undefined);
+                  if (streaming && text === "First.\n\nWaiting on the build")
+                    yield* Deferred.succeed(idleDelivered, undefined);
+                }
+              })
+            : Effect.void,
     }).pipe(Effect.forkChild);
 
     yield* Queue.offerAll(providerEvents, assistantText("First.\n\nWaiting on the build", true));
@@ -4053,12 +4067,18 @@ it.effect("delivers a held paragraph after the provider goes idle with its promp
     yield* Deferred.await(idleDelivered);
     yield* Queue.offerAll(providerEvents, [
       ...assistantText("First.\n\nWaiting on the build to", true),
+      blocker,
       ...assistantText("First.\n\nWaiting on the build to finish.", false),
-      rootTerminalEvent(ids, "completed"),
     ]);
+    yield* Deferred.await(blockerStarted);
+    // The appended text comes due while its final snapshots wait behind the blocked write.
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.succeed(releaseBlocker, undefined);
+    yield* Queue.offer(providerEvents, rootTerminalEvent(ids, "completed"));
     yield* Fiber.join(scenario);
 
     // Snapshots share the batch commit; the idle write commits alone, before it counts as shown.
+    // The final snapshots win over the stale append that came due behind them.
     assert.deepEqual(yield* Ref.get(delivered), [
       `message.updated:streaming:"First.\\n\\n" in commit`,
       `turn_item.updated:streaming:"First.\\n\\n" in commit`,
@@ -4159,6 +4179,7 @@ it.effect("settles a child message only an idle flush wrote when the root is int
     assert.equal(settled.length, 1);
     assert.equal(settled[0]?.status, "interrupted");
     assert.equal("text" in settled[0]! ? settled[0].text : null, heldChildText);
+    assert.isFalse("streaming" in settled[0]! && settled[0].streaming);
   }),
 );
 
@@ -4173,17 +4194,32 @@ it.effect.each([
     const subagentIngested = yield* Deferred.make<void>();
     const rootFinalized = yield* Deferred.make<void>();
     const flushed = yield* Deferred.make<void>();
+    const rootWrites = yield* Ref.make<ReadonlyArray<string>>([]);
     const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
       onIngest: (event) =>
         event.type === "subagent.updated"
           ? Deferred.succeed(subagentIngested, undefined)
           : isHeldChildSnapshot(event)
             ? Deferred.succeed(flushed, undefined)
-            : Effect.void,
+            : event.type === "message.updated" && event.message.threadId === ids.threadId
+              ? Ref.update(rootWrites, (current) => [...current, event.message.text])
+              : Effect.void,
       onFinalized: () => Deferred.succeed(rootFinalized, undefined),
     }).pipe(Effect.forkChild);
 
     yield* holdChildSnapshot(ids, events, subagentIngested);
+    // The root ends mid-paragraph: its tail is held, and the run settles without it.
+    yield* Queue.offer(
+      events,
+      streamedMessageEvent({
+        id: `message:${key}:root`,
+        threadId: ids.threadId,
+        runId: ids.runId,
+        role: "assistant",
+        text: "Root.\n\nhalf",
+        streaming: true,
+      }),
+    );
     const terminal = rootTerminalEvent(ids, terminalStatus);
     yield* Queue.offer(
       events,
@@ -4202,6 +4238,8 @@ it.effect.each([
       "turn_item:running",
       "subagent:completed",
     ]);
+    // A streaming write after the run settled would reopen the root's message.
+    assert.deepEqual(yield* Ref.get(rootWrites), ["Root.\n\n"]);
   }),
 );
 
@@ -4296,59 +4334,5 @@ it.effect("drops a child's held text once the child is handed to another run", (
     yield* Fiber.join(scenario);
 
     assert.deepEqual(yield* Ref.get(staleWrites), []);
-  }),
-);
-
-it.effect("flushes idle text only after the snapshots queued ahead of its wake", () =>
-  Effect.gen(function* () {
-    const key = "idle-flush-queued-snapshot";
-    const ids = backgroundScenarioIds(key);
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const paragraphWritten = yield* Deferred.make<void>();
-    const blockerStarted = yield* Deferred.make<void>();
-    const releaseBlocker = yield* Deferred.make<void>();
-    const writes = yield* Ref.make<ReadonlyArray<string>>([]);
-    const message = (id: string, text: string, streaming: boolean) =>
-      streamedMessageEvent({
-        id: `message:${key}:${id}`,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        role: "assistant",
-        text,
-        streaming,
-      });
-    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
-      batched: true,
-      onIngest: (event) => {
-        if (event.type !== "message.updated") return Effect.void;
-        if (event.message.text === "Other")
-          return Deferred.succeed(blockerStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseBlocker)),
-          );
-        const { streaming, text } = event.message;
-        return Ref.update(writes, (current) => [
-          ...current,
-          `${streaming ? "streaming" : "final"}:${text}`,
-        ]).pipe(Effect.andThen(Deferred.succeed(paragraphWritten, undefined)));
-      },
-    }).pipe(Effect.forkChild);
-
-    yield* Queue.offer(events, message("text", "First.\n\nWaiting on the build", true));
-    yield* Deferred.await(paragraphWritten);
-    yield* Queue.offerAll(events, [
-      message("blocker", "Other", false),
-      message("text", "First.\n\nWaiting on the build to finish.", false),
-    ]);
-    yield* Deferred.await(blockerStarted);
-    // The held text comes due while its final snapshot waits behind the blocked write.
-    yield* TestClock.adjust("1 second");
-    yield* Deferred.succeed(releaseBlocker, undefined);
-    yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
-    yield* Fiber.join(scenario);
-
-    assert.deepEqual(yield* Ref.get(writes), [
-      "streaming:First.\n\n",
-      "final:First.\n\nWaiting on the build to finish.",
-    ]);
   }),
 );
