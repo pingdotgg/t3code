@@ -480,46 +480,25 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
-const FORWARDED_SHORTCUT_CODE_KEYS: Readonly<Record<string, string>> = {
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Comma: ",",
-  Period: ".",
-  Slash: "/",
-  Semicolon: ";",
-  Quote: "'",
-  Backquote: "`",
-  Minus: "-",
-  Equal: "=",
-};
-
-/**
- * The keybinding key token for a key press: letters and digits by physical
- * position (Option on macOS changes the typed character, e.g. to "®"),
- * named keys lowercased ("arrowleft", "home").
- */
-const forwardedShortcutKey = (input: Electron.Input): string => {
-  const letter = input.code.match(/^Key([A-Z])$/)?.[1];
-  if (letter) return letter.toLowerCase();
-  const digit = input.code.match(/^Digit([0-9])$/)?.[1];
-  if (digit) return digit;
-  return FORWARDED_SHORTCUT_CODE_KEYS[input.code] ?? input.key.toLowerCase();
-};
-
 const isForwardedShortcut = (
   input: Electron.Input,
   shortcuts: ReadonlyArray<DesktopForwardedShortcut>,
+  platform: NodeJS.Platform,
 ): boolean => {
   if (input.type !== "keyDown" || shortcuts.length === 0) return false;
-  const key = forwardedShortcutKey(input);
-  return shortcuts.some(
-    (shortcut) =>
-      shortcut.key === key &&
-      shortcut.metaKey === input.meta &&
-      shortcut.ctrlKey === input.control &&
-      shortcut.altKey === input.alt &&
-      shortcut.shiftKey === input.shift,
+  return shortcuts.some((shortcut) =>
+    matchesKeybindingShortcut(
+      {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        altKey: input.alt,
+        shiftKey: input.shift,
+      },
+      { ...shortcut, modKey: false },
+      platform === "darwin" ? "MacIntel" : platform,
+    ),
   );
 };
 
@@ -1551,7 +1530,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return;
       }
       // App chords (the layout map) go to the app window, not the page.
-      if (isForwardedShortcut(input, forwardedKeyChords)) {
+      if (isForwardedShortcut(input, forwardedKeyChords, hostPlatform)) {
         event.preventDefault();
         const forwardedKey = {
           key: input.key,

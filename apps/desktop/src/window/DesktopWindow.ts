@@ -714,7 +714,11 @@ export const make = Effect.gen(function* () {
             const settings = yield* clientSettings.get.pipe(
               Effect.orElseSucceed(() => Option.none()),
             );
-            if (Option.isSome(settings) && settings.value.layoutThreeFingerSwipe) {
+            if (
+              Option.isSome(settings) &&
+              settings.value.layoutThreeFingerSwipe &&
+              settings.value.scrollingWorkspacesEnabled
+            ) {
               window.webContents.send(MENU_ACTION_CHANNEL, `layout-swipe-${direction}`);
               return;
             }

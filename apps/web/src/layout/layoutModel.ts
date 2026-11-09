@@ -1200,6 +1200,7 @@ export function replaceLayoutTabContent(
   content: LayoutTabContent,
   ghostOf?: ScopedThreadRef | null,
 ): LayoutState {
+  if (!findLayoutTab(state, (tab) => tab.id === tabId)) return state;
   const key = layoutTabContentKey(content);
   const duplicate = findLayoutTab(
     state,
@@ -1211,9 +1212,13 @@ export function replaceLayoutTabContent(
         ? { ...pane, tabs: pane.tabs.filter((tab) => tab.id !== duplicate.tab.id) }
         : pane;
     if (!withoutDuplicate.tabs.some((tab) => tab.id === tabId)) return withoutDuplicate;
+    const tabs =
+      ghostOf === undefined
+        ? withoutDuplicate.tabs
+        : withoutDuplicate.tabs.filter((tab) => tab.id === tabId || !isLayoutGhostTab(tab));
     return {
       ...withoutDuplicate,
-      tabs: withoutDuplicate.tabs.map((tab) =>
+      tabs: tabs.map((tab) =>
         tab.id === tabId &&
         (layoutTabContentKey(tab.content) !== key ||
           (isLayoutPageContent(tab.content) &&
@@ -1606,11 +1611,9 @@ function keepLayoutFocus(before: LayoutState, after: LayoutState): LayoutState {
   const restored = mapWorkspaces(after, (workspace) => {
     const previous = before.workspaces.find((candidate) => candidate.id === workspace.id);
     if (!previous || previous.focusedPaneId === workspace.focusedPaneId) return workspace;
-    const exists =
-      previous.focusedPaneId === null ||
-      workspace.columns.some((column) =>
-        column.panes.some((pane) => pane.id === previous.focusedPaneId),
-      );
+    const exists = workspace.columns.some((column) =>
+      column.panes.some((pane) => pane.id === previous.focusedPaneId),
+    );
     return exists ? { ...workspace, focusedPaneId: previous.focusedPaneId } : workspace;
   });
   const focusedWorkspaceId = restored.workspaces.some(

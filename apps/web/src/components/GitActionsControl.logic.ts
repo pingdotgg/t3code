@@ -539,11 +539,13 @@ export function buildSyncMenuItems(
     "Pull",
     busyReason ??
       detachedReason ??
-      (!isBehind
-        ? "Already up to date with upstream."
-        : hasChanges
-          ? "Commit or stash local changes before pulling."
-          : null),
+      (isAhead && isBehind
+        ? "Branch has diverged from upstream. Rebase/merge first."
+        : !isBehind
+          ? "Already up to date with upstream."
+          : hasChanges
+            ? "Commit or stash local changes before pulling."
+            : null),
   );
   const sync = syncMenuItem(
     "sync",

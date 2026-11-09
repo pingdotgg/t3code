@@ -46,6 +46,7 @@ import { toastManager } from "../ui/toast";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  AddToChatIconButton,
   PullRequestActorLabel,
   PullRequestLabelChip,
   PullRequestReviewOutcomeBadge,
@@ -221,21 +222,6 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
         <span>Add to chat</span>
       </span>
     </Button>
-  );
-}
-
-function AddToChatIconButton({ onClick }: { onClick: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button size="icon-xs" variant="ghost-muted" aria-label="Add to chat" onClick={onClick} />
-        }
-      >
-        <MessageSquarePlusIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup>Add to chat</TooltipPopup>
-    </Tooltip>
   );
 }
 
@@ -683,6 +669,7 @@ export function PullRequestSummaryTab({
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
       fixLabel={fixFindingLabel}
+      {...(onAddToChat ? { onAddToChat: (thread) => onAddToChat({ kind: "thread", thread }) } : {})}
       {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
       onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
         const result = await loadThreadComments({
