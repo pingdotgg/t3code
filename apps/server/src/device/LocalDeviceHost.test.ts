@@ -333,6 +333,21 @@ describe("AgentDevice startup", () => {
       expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(olderEntry);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
+    Effect.gen(function* () {
+      // Above the Linux and macOS PID limits, so never a live process.
+      const deadPid = 4_194_305;
+      const { host, fs, stateDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
+      );
+      yield* host.stop;
+      expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
+      expect(yield* fs.exists(`${stateDir}/daemon.json`)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 const diagnose = (

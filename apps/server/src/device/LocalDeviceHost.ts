@@ -631,6 +631,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const stopAgentDeviceDaemon = Effect.gen(function* () {
     if (!(yield* fs.exists(daemonFilePath()))) return;
     const recorded = yield* readDaemonFile().pipe(Effect.option);
+    if (
+      Option.isSome(recorded) &&
+      recorded.value.pid &&
+      !(yield* isProcessAlive(recorded.value.pid))
+    ) {
+      return yield* fs.remove(daemonFilePath(), { force: true });
+    }
     const entryPath = yield* installedAgentDeviceEntry(config.baseDir, [
       ...(Option.isSome(recorded) && recorded.value.version ? [recorded.value.version] : []),
       AGENT_DEVICE_VERSION,
