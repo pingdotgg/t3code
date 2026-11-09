@@ -83,7 +83,7 @@ export function closeLayoutProject(
 
 /**
  * Open a launcher tab: in the focused pane (cmd+T, "+"), in a new column
- * after it (cmd+D), or in a new pane below it (cmd+shift+D). Focus moves to
+ * after it (cmd+\), or in a new pane below it (cmd+shift+D). Focus moves to
  * it. Its surfaces open for the thread focus was on.
  */
 export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane"): void {

@@ -78,11 +78,9 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   // cmd+W closes the focused tab.
   { key: "mod+w", command: "tab.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
-  // Layout panes: cmd+D opens a new pane to the right, alt+cmd+shift+D below.
-  // Inside a terminal cmd+D splits the terminal (above). The diff toggle gave
-  // up cmd+D; alt+cmd+B and the palette still open it. cmd+shift+D stays
-  // dictation outside a terminal.
-  { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
+  { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  // Layout panes: cmd+\ opens a new pane to the right, alt+cmd+shift+D below.
+  { key: "mod+\\", command: "layout.splitRight", when: "!terminalFocus" },
   { key: "mod+alt+shift+d", command: "layout.splitDown", when: "!terminalFocus" },
   { key: "mod+alt+f", command: "layout.fill" },
   // alt+cmd looks, ctrl+alt+cmd moves (niri's map). Off macOS mod is ctrl,
@@ -460,8 +458,8 @@ export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEF
 export const RETIRED_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   // Without !assistantSelection a saved copy outranks cite on a selected passage.
   { key: "mod+shift+l", command: "composer.previousWorktree", when: "!terminalFocus" },
-  // cmd+D splits a pane right; the diff toggle has no key now.
-  { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  // cmd+D toggles the diff again, as on main; a new pane right moved to cmd+\.
+  { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
   // cmd+W closes the focused tab, the side pane's surface first.
   { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
   // cmd+T opens a new tab in the focused pane; surfaces are ordinary tabs now.
