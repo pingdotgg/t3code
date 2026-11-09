@@ -91,6 +91,17 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(makeUiState(), currentOrder, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+    expect(
+      reorderProjects(makeUiState(), currentOrder, [keyB], [keyALocal, keyARemote]).projectOrder,
+    ).toEqual([keyB, keyALocal, keyARemote, keyC]);
+    expect(
+      reorderProjects(
+        makeUiState(),
+        [keyB, keyALocal, keyARemote, keyC],
+        [keyB],
+        [keyALocal, keyARemote],
+      ).projectOrder,
+    ).toEqual([keyALocal, keyARemote, keyB, keyC]);
   });
 });
 

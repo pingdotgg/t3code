@@ -420,7 +420,10 @@ export function reorderProjects(
     return state;
   }
 
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  const insertIndex =
+    draggedBeforeTarget > 0
+      ? projectOrder.findLastIndex((id) => targetSet.has(id)) + 1
+      : originalTargetIndex;
   projectOrder.splice(insertIndex, 0, ...removed);
   return {
     ...state,
