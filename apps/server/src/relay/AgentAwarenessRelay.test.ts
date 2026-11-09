@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -144,6 +145,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -178,23 +180,31 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
-  const catchUp = { shellSnapshotReads: 0 };
+  const catchUp = { activitySnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
-    getThreadShell: (threadId) =>
-      Effect.sync(() => shellReads.push(threadId)).pipe(
-        Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
-      ),
-    getShellSnapshot: () =>
-      Effect.sync(() => {
-        catchUp.shellSnapshotReads += 1;
-        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
-      }),
+    getThreadShell: unused,
+    getShellSnapshot: unused,
+    getAgentAwarenessSnapshot: (threadId) =>
+      threadId === undefined
+        ? Effect.sync(() => {
+            catchUp.activitySnapshotReads += 1;
+            return { snapshotSequence: 1, threads: options.catchUpThreads ?? [] };
+          })
+        : Effect.sync(() => shellReads.push(threadId)).pipe(
+            Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
+            Effect.map((thread) => ({
+              snapshotSequence: 1,
+              threads: thread === null ? [] : [thread],
+            })),
+          ),
     listActiveSubagentThreadIds: unused,
     listAppOwnedChildThreadIds: unused,
     countThreads: unused,
     listActiveShellIndex: () => Effect.succeed([]),
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
+    getThreadTitles: unused,
+    getThreadLinkMetadata: unused,
     ensureLegacyTranscript: unused,
     dispatch: unused,
     searchThread: () => Effect.die("unused"),
@@ -258,7 +268,18 @@ const makeTestRelay = Effect.fnUntraced(function* (
     },
     { preconnect: () => {} },
   );
+  const project = {
+    id: PROJECT_ID,
+    title: "Project",
+    workspaceRoot: "/workspace",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: NOW,
+    updatedAt: NOW,
+    deletedAt: null,
+  };
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -271,21 +292,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
       update: unused,
       delete: unused,
       getByWorkspaceRoot: unused,
-      snapshot: Effect.succeed({ projects: [] } as never),
+      snapshot: Effect.succeed({ projects: [project], updatedAt: NOW }),
       listPage: unused,
       getShell: unused,
       listShells: unused,
-      getById: () =>
-        Effect.succeedSome({
-          id: PROJECT_ID,
-          title: "Project",
-          workspaceRoot: "/workspace",
-          defaultModelSelection: null,
-          scripts: [],
-          createdAt: NOW,
-          updatedAt: NOW,
-          deletedAt: null,
-        }),
+      getById: () => Effect.succeedSome(project),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
@@ -831,24 +842,34 @@ describe("AgentAwarenessRelay", () => {
 
 it.effect("catches up after startup without polling after success", () =>
   Effect.gen(function* () {
-    const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
+    const { relay, secrets, secretReads, catchUp, publications } = yield* makeTestRelay({
+      catchUpThreads: [shell()],
+    });
     yield* relay.start();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 1);
+    yield* relay.drain;
+    assert.equal(catchUp.activitySnapshotReads, 1);
+    assert.equal(publications.length, 1);
+    assert.include(publications[0]?.state, {
+      threadId: THREAD_ID,
+      projectTitle: "Project",
+      threadTitle: "Thread",
+      phase: "running",
+    });
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 1);
+    assert.equal(catchUp.activitySnapshotReads, 1);
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(catchUp.activitySnapshotReads, 2);
 
     const readsBeforeIdle = secretReads.length;
     yield* TestClock.adjust("10 minutes");
-    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(catchUp.activitySnapshotReads, 2);
     assert.equal(secretReads.length, readsBeforeIdle);
 
     yield* secrets.set(
@@ -857,6 +878,9 @@ it.effect("catches up after startup without polling after success", () =>
     );
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 3);
+    yield* relay.drain;
+    assert.equal(catchUp.activitySnapshotReads, 3);
+    assert.equal(publications.length, 2);
+    assert.equal(publications[1]?.state?.threadId, THREAD_ID);
   }).pipe(Effect.scoped),
 );
