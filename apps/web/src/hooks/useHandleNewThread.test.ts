@@ -373,6 +373,38 @@ describe("useNewThreadHandler", () => {
     expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
   });
 
+  it("leaves an open draft unchanged if the user types during quota preflight", async () => {
+    testState.reset(null);
+    testState.openEmptyDraft("draft-open");
+    testState.draftStore.getDraftSessionByLogicalProjectKey.mockReturnValueOnce({
+      draftId: "draft-open",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-open",
+    });
+    testState.setDefaultModels(
+      { instanceId: ProviderInstanceId.make("codex"), model: "gpt" },
+      { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" },
+      [],
+    );
+    const result = AsyncResult.success({ providers: [] as ServerProvider[] });
+    let complete = (_value: typeof result) => {};
+    const read = new Promise<typeof result>((resolve) => {
+      complete = resolve;
+    });
+    testState.refreshProviders.mockReturnValueOnce(read);
+    const pending = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.giveUserText("draft-open");
+    complete(result);
+    expect(await pending).toBeNull();
+    expect(testState.draftStore.setModelSelection).not.toHaveBeenCalled();
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+  });
+
   it("seeds the prompt into the empty draft that is already open", async () => {
     testState.reset(null);
     testState.openEmptyDraft("draft-open");

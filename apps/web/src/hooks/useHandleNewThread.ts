@@ -200,7 +200,12 @@ export function createNewThreadHandler(router: AnyRouter) {
             environmentId: projectRef.environmentId,
             input: selectionInput,
           });
-    if (abandonedSinceRequest()) return null;
+    if (
+      abandonedSinceRequest() ||
+      (emptyStoredDraftThread &&
+        composerDraftHasUserContent(getComposerDraft(emptyStoredDraftThread.draftId)))
+    )
+      return null;
     const fallbackResolution = resolveNewThreadModelSelection({ ...selectionInput, providers });
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
