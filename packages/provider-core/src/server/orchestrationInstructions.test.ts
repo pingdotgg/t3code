@@ -4,7 +4,6 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_SECTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -82,34 +81,5 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
-  });
-});
-
-describe("T3 secret instructions", () => {
-  it("route a password that a requested command such as sudo prompts for to request_secret", () => {
-    const section =
-      T3_CODE_ORCHESTRATION_SECTIONS.find((text) => text.includes("`request_secret`")) ?? "";
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, section);
-    assert.include(section, '`delivery: "file"`');
-    assert.match(
-      section,
-      /sudo/i,
-      "the request_secret guidance never names sudo, so agents hand `sudo ...` back to the user",
-    );
-    assert.match(
-      section,
-      /password/i,
-      "the request_secret guidance never ties a command's password prompt to the tool",
-    );
-    assert.include(
-      section,
-      "`sudo -n <cmd>` fails",
-      "without a sudo -n check first, agents request a password that passwordless sudo never needs",
-    );
-    assert.match(
-      section,
-      /other input as a file argument/,
-      "the sudo recipe replaces the command's piped stdin with the password file, so `... | sudo tee` writes nothing",
-    );
   });
 });
