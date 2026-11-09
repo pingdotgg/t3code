@@ -13,7 +13,6 @@ type Unreachable = Extract<EnvironmentConnectReachability, { readonly status: "u
  * need a public address, so the environment must answer on its T3 Connect tunnel.
  */
 export type McpGate =
-  | { readonly kind: "unavailable" }
   | { readonly kind: "checking" }
   | { readonly kind: "sign-in" }
   | { readonly kind: "disconnected" }
@@ -25,7 +24,6 @@ export type McpGate =
   | { readonly kind: "open"; readonly mcpUrl: string };
 
 export function resolveMcpGate(input: {
-  readonly cloudConfigured: boolean;
   /** Undefined until T3 Connect sign-in has loaded. */
   readonly signedIn: boolean | undefined;
   readonly connected: boolean;
@@ -34,11 +32,15 @@ export function resolveMcpGate(input: {
   readonly canReadRelay: boolean;
   readonly linkState: EnvironmentCloudLinkStateResult | null;
   readonly linkStateError: string | null;
-  readonly relayEndpoint: RelayManagedEndpoint | undefined;
-  /** A reachability check this gate started is still running. */
-  readonly checking: boolean;
+  /** The environment this device runs; its link state names its own tunnel. */
+  readonly thisMachine: boolean;
+  /** The account's machines on T3 Connect, where a saved machine's address comes from. */
+  readonly relay:
+    | { readonly status: "loading" | "failed" }
+    | { readonly status: "listed"; readonly endpoint: RelayManagedEndpoint | undefined };
+  /** A check run for this gate: its answer, "checking" until it has one, or null if it failed. */
+  readonly reachability: EnvironmentConnectReachability | "checking" | null;
 }): McpGate {
-  if (!input.cloudConfigured) return { kind: "unavailable" };
   if (input.signedIn === undefined) return { kind: "checking" };
   if (!input.signedIn) return { kind: "sign-in" };
   if (!input.connected) return { kind: "disconnected" };
@@ -46,15 +48,28 @@ export function resolveMcpGate(input: {
   if (!input.approvalCodes) return { kind: "update" };
   if (!input.canReadRelay) return { kind: "no-relay-read" };
   if (input.linkStateError !== null) return { kind: "error", message: input.linkStateError };
-  const linkState = input.linkState;
+  const { linkState, relay } = input;
   if (linkState === null) return { kind: "checking" };
-  if (!isManagedTunnelActive(linkState, input.relayEndpoint?.providerKind)) {
+  if (!input.thisMachine && relay.status !== "listed") {
+    return relay.status === "failed"
+      ? { kind: "error", message: "Could not reach T3 Connect." }
+      : { kind: "checking" };
+  }
+  const endpoint = relay.status === "listed" ? relay.endpoint : undefined;
+  if (
+    !isManagedTunnelActive(linkState, endpoint?.providerKind) ||
+    (!input.thisMachine && endpoint === undefined)
+  ) {
     return { kind: "turn-on" };
   }
-  const reachability = linkState.reachability;
-  const mcpUrl = t3ConnectMcpUrl(linkState, input.relayEndpoint);
+  const { reachability } = input;
+  if (reachability === "checking") return { kind: "checking" };
+  const mcpUrl = t3ConnectMcpUrl({
+    thisMachine: input.thisMachine,
+    tunnelHostname: linkState.tunnelHostname,
+    relayEndpoint: endpoint,
+  });
   if (reachability?.status === "reachable" && mcpUrl !== null) return { kind: "open", mcpUrl };
-  if (input.checking) return { kind: "checking" };
   return {
     kind: "offline",
     reachability: reachability?.status === "unreachable" ? reachability : null,

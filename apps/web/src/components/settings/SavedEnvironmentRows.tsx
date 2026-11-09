@@ -699,7 +699,7 @@ function ConfiguredCloudLinkRow({
           description="Run `t3 connect link` on the host, then restart T3 Code there."
         />
       ) : null}
-      {signedOut && isElectron ? null : (
+      {signedOut && showSwitch ? null : (
         <SettingsRow
           title={searchableSetting("publish-agent-activity").title}
           description={

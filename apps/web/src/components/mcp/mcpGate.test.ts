@@ -17,90 +17,101 @@ const tunnel: EnvironmentCloudLinkStateResult = {
   relayIssuer: "https://relay.example.test",
   managedTunnelActive: true,
   publishAgentActivity: true,
-  reachability: reachable,
   tunnelHostname: "prod-a1.t3coderelay.com",
 };
 
+const savedTunnel = {
+  httpBaseUrl: "https://prod-b2.t3coderelay.com",
+  wsBaseUrl: "wss://prod-b2.t3coderelay.com",
+  providerKind: "cloudflare_tunnel",
+} as const;
+
 const open = {
-  cloudConfigured: true,
   signedIn: true,
   connected: true,
   approvalCodes: true,
   canReadRelay: true,
   linkState: tunnel,
   linkStateError: null,
-  relayEndpoint: undefined,
-  checking: false,
+  thisMachine: true,
+  relay: { status: "listed", endpoint: undefined },
+  reachability: reachable,
+} satisfies Parameters<typeof resolveMcpGate>[0];
+
+const saved = {
+  ...open,
+  thisMachine: false,
+  relay: { status: "listed", endpoint: savedTunnel },
 } satisfies Parameters<typeof resolveMcpGate>[0];
 
 describe("resolveMcpGate", () => {
-  it("opens on a reachable T3 Connect tunnel, at its MCP URL", () => {
+  it("opens on a fresh reachable check, at the tunnel's MCP URL", () => {
     expect(resolveMcpGate(open)).toEqual({
       kind: "open",
       mcpUrl: "https://prod-a1.t3coderelay.com/mcp",
     });
-    // A saved machine's tunnel address from T3 Connect counts too.
-    expect(
-      resolveMcpGate({
-        ...open,
-        linkState: { ...tunnel, tunnelHostname: undefined },
-        relayEndpoint: {
-          httpBaseUrl: "https://prod-b2.t3coderelay.com",
-          wsBaseUrl: "wss://prod-b2.t3coderelay.com",
-          providerKind: "cloudflare_tunnel",
-        },
-      }),
-    ).toEqual({ kind: "open", mcpUrl: "https://prod-b2.t3coderelay.com/mcp" });
+    // A saved machine's address comes from T3 Connect, not from what it reports itself.
+    expect(resolveMcpGate(saved)).toEqual({
+      kind: "open",
+      mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
+    });
   });
 
   it.each([
-    ["no T3 Connect sign-in", { signedIn: false }, "sign-in"],
-    ["no permission to read T3 Connect", { canReadRelay: false }, "no-relay-read"],
-    ["a server without approval codes", { approvalCodes: false }, "update"],
-    ["no tunnel", { linkState: { ...tunnel, managedTunnelActive: false } }, "turn-on"],
-    ["a removed link", { linkState: { ...tunnel, linkRevoked: true } }, "turn-on"],
+    ["no T3 Connect sign-in", { ...open, signedIn: false }, "sign-in"],
+    ["no permission to read T3 Connect", { ...open, canReadRelay: false }, "no-relay-read"],
+    ["a server without approval codes", { ...open, approvalCodes: false }, "update"],
+    ["no tunnel", { ...open, linkState: { ...tunnel, managedTunnelActive: false } }, "turn-on"],
+    ["a removed link", { ...open, linkState: { ...tunnel, linkRevoked: true } }, "turn-on"],
     [
       "a publish-only link's local address",
       {
-        linkState: { ...tunnel, tunnelHostname: undefined },
-        relayEndpoint: {
-          httpBaseUrl: "http://127.0.0.1:3773",
-          wsBaseUrl: "ws://127.0.0.1:3773",
-          providerKind: "manual",
+        ...saved,
+        relay: {
+          status: "listed",
+          endpoint: {
+            ...savedTunnel,
+            httpBaseUrl: "http://127.0.0.1:3773",
+            providerKind: "manual",
+          },
         },
       },
       "turn-on",
     ],
     [
+      "a saved machine T3 Connect does not list",
+      { ...saved, relay: { status: "listed", endpoint: undefined } },
+      "turn-on",
+    ],
+    ["T3 Connect's list still loading", { ...saved, relay: { status: "loading" } }, "checking"],
+    ["the check still running", { ...open, reachability: "checking" }, "checking"],
+    [
       "an offline tunnel",
       {
-        linkState: {
-          ...tunnel,
-          reachability: {
-            status: "unreachable",
-            checkedAt: "2026-11-08T00:00:00.000Z",
-            cause: "no_connector",
-            reason: "Cloudflare has no live connection from this machine for the tunnel.",
-            hint: null,
-            fix: "Restart T3 Code.",
-          },
+        ...open,
+        reachability: {
+          status: "unreachable",
+          checkedAt: "2026-11-08T00:00:00.000Z",
+          cause: "no_connector",
+          reason: "Cloudflare has no live connection from this machine for the tunnel.",
+          hint: null,
+          fix: "Restart T3 Code.",
         },
       },
       "offline",
     ],
-    ["a tunnel not checked yet", { linkState: { ...tunnel, reachability: undefined } }, "offline"],
+    ["a failed check", { ...open, reachability: null }, "offline"],
     [
-      "a tunnel without an address",
-      { linkState: { ...tunnel, tunnelHostname: undefined } },
+      "no tunnel address yet",
+      { ...open, linkState: { ...tunnel, tunnelHostname: undefined } },
       "offline",
     ],
-  ] as const)("stays closed with %s", (_, override, kind) => {
-    expect(resolveMcpGate({ ...open, ...override }).kind).toBe(kind);
-  });
-
-  it("names a build without T3 Connect before asking anyone to sign in", () => {
-    expect(resolveMcpGate({ ...open, cloudConfigured: false, signedIn: false }).kind).toBe(
-      "unavailable",
-    );
+    [
+      "a hostname that is not a plain DNS name",
+      { ...open, linkState: { ...tunnel, tunnelHostname: "a.com;touch$IFS/tmp/x" } },
+      "offline",
+    ],
+  ] as const)("stays closed with %s", (_, input, kind) => {
+    expect(resolveMcpGate(input).kind).toBe(kind);
   });
 });

@@ -156,7 +156,18 @@ const linkProofClient = Effect.gen(function* () {
     const payload = (yield* responseJson(response)) as { access_token: string };
     return payload.access_token;
   });
-  return { post, exchange };
+  const linkableHere = (token: string, origin = NON_LOOPBACK_ORIGIN) =>
+    Effect.promise(() =>
+      handler(
+        new Request(`${origin}/api/connect/link-state`, {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+      ),
+    ).pipe(
+      Effect.flatMap(responseJson),
+      Effect.map((state) => (state as { linkableHere?: boolean }).linkableHere),
+    );
+  return { post, exchange, linkableHere };
 });
 
 describe("link proof over a non-loopback desktop transport", () => {
@@ -195,12 +206,12 @@ describe("link proof over a non-loopback desktop transport", () => {
     "does not pass desktop trust to a paired client or accept client-supplied provenance",
     () =>
       Effect.gen(function* () {
-        const { post, exchange } = yield* linkProofClient;
+        const { post, exchange, linkableHere } = yield* linkProofClient;
         const desktop = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
         const paired = yield* post(
           "/api/auth/pairing-token",
           {
-            scopes: ["relay:write"],
+            scopes: ["relay:read", "relay:write"],
             label: "desktop-bootstrap",
             subject: "desktop-bootstrap",
           },
@@ -227,6 +238,10 @@ describe("link proof over a non-loopback desktop transport", () => {
           LOOPBACK_ORIGIN,
         );
         expect(loopback.status).toBe(200);
+        // Link state tells clients the same, so Turn on shows only where linking works.
+        expect(yield* linkableHere(desktop)).toBe(true);
+        expect(yield* linkableHere(token)).toBe(false);
+        expect(yield* linkableHere(token, LOOPBACK_ORIGIN)).toBe(true);
       }),
   );
 

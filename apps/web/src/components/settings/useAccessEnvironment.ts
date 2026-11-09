@@ -7,7 +7,8 @@ import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 
 /**
  * The environments Sharing & access manages, the one `requested` resolves to, and its name.
- * The MCP wizard uses the same, so both name an environment alike.
+ * The MCP wizard uses the same, so both name an environment alike. A requested environment
+ * always counts, so a thread on a second WSL backend opens on that backend.
  */
 export function useAccessEnvironment(requested: EnvironmentId | null) {
   const { environments } = useEnvironments();
@@ -15,6 +16,7 @@ export function useAccessEnvironment(requested: EnvironmentId | null) {
   const candidates = environments.filter(
     (environment) =>
       environment.environmentId === primaryEnvironmentId ||
+      environment.environmentId === requested ||
       (environment.entry.enabled && !isDesktopLocalConnectionTarget(environment.entry.target)),
   );
   const environmentId = resolveAccessEnvironmentId({

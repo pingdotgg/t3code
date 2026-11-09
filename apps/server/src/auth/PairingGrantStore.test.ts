@@ -218,8 +218,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         Stream.runForEach((change) => Queue.offer(changes, change)),
         Effect.forkScoped({ startImmediately: true }),
       );
-      // An app approval code sends no update; the next one belongs to the first plain code.
-      yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
+      // An app approval code sends no update, issued or spent; the next belongs to a plain code.
+      const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, { mcpApproval: "auto" });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);

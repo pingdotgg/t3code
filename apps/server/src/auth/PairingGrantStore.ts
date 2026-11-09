@@ -585,7 +585,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new BootstrapCredentialConsumeAvailableError({ cause })));
 
       if (Option.isSome(consumed)) {
-        yield* emitRemoved(consumed.value.id);
+        if (!consumed.value.subject.startsWith(AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX)) {
+          yield* emitRemoved(consumed.value.id);
+        }
         return {
           method: consumed.value.method,
           scopes: consumed.value.scopes,

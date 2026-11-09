@@ -154,7 +154,10 @@ export const MCP_APPS: readonly McpApp[] = [
         "hermes mcp login t3code",
       ],
     },
-    steps: ["Run the commands where Hermes Agent runs."],
+    steps: [
+      "Add t3code under mcp_servers in ~/.hermes/config.yaml, with the URL and auth: oauth.",
+      "Run hermes mcp login t3code.",
+    ],
     note: "On a remote host, paste the final URL back when asked.",
     docs: "https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp",
   },
@@ -163,28 +166,27 @@ export const MCP_APPS: readonly McpApp[] = [
 /** The "Something else…" choice: the URL and general steps only. */
 export const OTHER_MCP_APP_STEPS = ["Add a remote MCP server with OAuth."] as const;
 
-/** The primary button's label for `app`; commands get a copy button each instead. */
-export function mcpHandoffLabel(app: McpApp): string | null {
-  switch (app.handoff.kind) {
-    case "open":
-      return `Open in ${app.name}`;
-    case "copy-url":
-      return `Copy URL and open ${app.name}`;
-    case "copy-message":
-      return `Copy message and open ${app.name}`;
-    case "commands":
-      return null;
-  }
-}
-
-/** The page the primary action opens, if any. */
-export function mcpHandoffLink(handoff: McpAppHandoff, mcpUrl: string): string | null {
+/**
+ * The primary button for `app`: its label, the https page it opens, and what it copies first.
+ * Null for apps set up with commands. It never copies the approval code.
+ */
+export function mcpHandoffAction(app: McpApp, mcpUrl: string) {
+  const { handoff } = app;
   switch (handoff.kind) {
     case "open":
-      return handoff.link(mcpUrl);
+      return { label: `Open in ${app.name}`, link: handoff.link(mcpUrl), copy: null };
     case "copy-url":
+      return {
+        label: `Copy URL and open ${app.name}`,
+        link: handoff.link,
+        copy: { text: mcpUrl, title: "URL copied" },
+      };
     case "copy-message":
-      return handoff.link;
+      return {
+        label: `Copy message and open ${app.name}`,
+        link: handoff.link,
+        copy: { text: handoff.message(mcpUrl), title: "Message copied" },
+      };
     case "commands":
       return null;
   }

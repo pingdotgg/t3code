@@ -79,6 +79,22 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
   };
 }
 
+/**
+ * Whether `linkProof` would accept a request like this one: never through a proxy, and from a
+ * loopback address unless the desktop app's own bootstrap session sent it (WSL uses a distro IP).
+ */
+export function canLinkFrom(
+  request: HttpServerRequest.HttpServerRequest,
+  subject: string,
+): boolean {
+  const url = requestAbsoluteUrl(request);
+  return (
+    url !== null &&
+    !hasForwardedAuthorityHeaders(request) &&
+    (subject === "desktop-bootstrap" || isLoopbackHostname(new URL(url).hostname))
+  );
+}
+
 export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;

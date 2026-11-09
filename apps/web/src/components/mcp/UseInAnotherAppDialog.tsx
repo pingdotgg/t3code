@@ -5,6 +5,7 @@ import {
   AuthAccessWriteScope,
   AuthMcpClientAccess,
   AuthRelayReadScope,
+  type EnvironmentConnectReachability,
   type EnvironmentId,
   managedCapabilityDenial,
   managedRuntimeModeDenial,
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Result from "effect/Result";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
@@ -23,11 +25,15 @@ import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { readLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useEnvironmentIdentities, type EnvironmentPresentation } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironmentIdentities,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { mintMcpApprovalCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment } from "~/state/peerLinks";
@@ -48,13 +54,7 @@ import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { resolveMcpGate } from "./mcpGate";
-import {
-  MCP_APPS,
-  type McpApp,
-  mcpHandoffLabel,
-  mcpHandoffLink,
-  OTHER_MCP_APP_STEPS,
-} from "./mcpApps";
+import { MCP_APPS, type McpApp, mcpHandoffAction, OTHER_MCP_APP_STEPS } from "./mcpApps";
 
 const requestAtom = Atom.make<{ readonly environmentId: EnvironmentId | null } | null>(null).pipe(
   Atom.keepAlive,
@@ -230,19 +230,21 @@ function useGate(environment: EnvironmentPresentation) {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const controller = useCloudLinkController(environmentId);
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
-  const relayEndpoint = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments.get(
-    environmentId,
-  )?.environment.endpoint;
+  const thisMachine = environmentId === usePrimaryEnvironmentId();
+  const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
+  const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
   const runCheck = useAtomCommand(checkReachability, { reportFailure: false });
-  // The gate opens on a fresh check, and a finished one counts once the link state reports it.
-  const [check, setCheck] = useState<"idle" | "running" | "failed" | { readonly at: string }>(
-    "idle",
-  );
+  // The gate opens on a check it ran, or on a newer one the link state reports.
+  const [check, setCheck] = useState<
+    "idle" | "running" | "failed" | EnvironmentConnectReachability
+  >("idle");
   const [connecting, setConnecting] = useState(false);
   const linkState = controller.linkState.data;
+  const reported = linkState?.reachability;
   const serverConfig = environment.serverConfig;
   const gate = resolveMcpGate({
-    cloudConfigured: true,
     signedIn: isSignedIn,
     connected: environment.connection.phase === "connected",
     approvalCodes:
@@ -252,17 +254,28 @@ function useGate(environment: EnvironmentPresentation) {
     canReadRelay,
     linkState,
     linkStateError: controller.linkState.error,
-    relayEndpoint,
-    checking:
-      check === "idle" ||
-      check === "running" ||
-      (typeof check === "object" && (linkState?.reachability?.checkedAt ?? "") < check.at),
+    thisMachine,
+    relay: discovery.listed
+      ? {
+          status: "listed",
+          endpoint: discovery.environments.get(environmentId)?.environment.endpoint,
+        }
+      : { status: Option.isSome(discovery.error) && !discovery.refreshing ? "failed" : "loading" },
+    reachability:
+      check === "idle" || check === "running"
+        ? "checking"
+        : check === "failed"
+          ? null
+          : reported !== undefined && reported.checkedAt > check.checkedAt
+            ? reported
+            : check,
   });
   const runReachabilityCheck = async () => {
     setCheck("running");
+    if (!discovery.listed) void refreshDiscovery();
     const result = await runCheck({ target: { environmentId } });
     controller.linkState.refresh();
-    setCheck(result._tag === "Success" ? { at: result.value.checkedAt } : "failed");
+    setCheck(result._tag === "Success" ? result.value : "failed");
   };
   const turnOn = async () => {
     setConnecting(true);
@@ -272,8 +285,7 @@ function useGate(environment: EnvironmentPresentation) {
     });
     if (!ok) setConnecting(false);
   };
-  const tunnelActive =
-    linkState !== null && isManagedTunnelActive(linkState, relayEndpoint?.providerKind);
+  const tunnelActive = linkState !== null && isManagedTunnelActive(linkState, undefined);
   const checkOnce = useEffectEvent(() => {
     if (check === "idle") void runReachabilityCheck();
   });
@@ -340,7 +352,15 @@ function GateScreen({
             `T3 Connect gives ${name} that address. Each app still needs your approval.`,
           ]}
         >
-          <Button onClick={openAuthPrompt}>Sign in to T3 Connect</Button>
+          {/* Clerk's sign-in is its own modal, so this dialog closes first. */}
+          <Button
+            onClick={() => {
+              close();
+              openAuthPrompt();
+            }}
+          >
+            Sign in to T3 Connect
+          </Button>
         </GateMessage>
       );
     case "disconnected":
@@ -406,7 +426,6 @@ function GateScreen({
       );
     }
     case "open":
-    case "unavailable":
       return null;
   }
 }
@@ -518,7 +537,9 @@ function ConnectStep({
         ) : null}
         {code}
         {app === null ? null : (
-          <TextButton onClick={() => setAnotherWay(false)}>Back to one click</TextButton>
+          <TextButton onClick={() => setAnotherWay(false)}>
+            {app.handoff.kind === "commands" ? "Back to commands" : "Back to one click"}
+          </TextButton>
         )}
         <LinkedLine environment={environment} access={access} />
       </section>
@@ -566,38 +587,39 @@ function openLink(url: string) {
 }
 
 function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl: string }) {
-  const { copyToClipboard } = useCopyToClipboard<string>({
-    onCopy: (title) => toastManager.add({ type: "success", title }),
-  });
-  const { handoff } = app;
-  const link = mcpHandoffLink(handoff, mcpUrl);
-  const label = mcpHandoffLabel(app);
+  const action = mcpHandoffAction(app, mcpUrl);
   const note = app.note ? <p className="text-xs text-muted-foreground">{app.note}</p> : null;
-  if (handoff.kind === "commands") {
+  if (action === null) {
     return (
       <div className="space-y-2">
-        {handoff.commands(mcpUrl).map((command) => (
-          <CommandBlock key={command} command={command} />
-        ))}
+        {app.handoff.kind === "commands"
+          ? app.handoff
+              .commands(mcpUrl)
+              .map((command) => <CommandBlock key={command} command={command} />)
+          : null}
         <p className="text-xs text-muted-foreground">Run them where {app.name} runs.</p>
         {note}
       </div>
     );
   }
+  const { copy, link } = action;
+  const handOff = async () => {
+    // Open only after the copy lands, so the app never gets an older clipboard.
+    if (copy !== null) {
+      const copied = await writeTextToClipboard(copy.text, copy.title).catch(() => false);
+      toastManager.add(
+        copied
+          ? { type: "success", title: copy.title }
+          : { type: "error", title: "Could not copy", description: "Use Set up another way." },
+      );
+      if (!copied) return;
+    }
+    openLink(link);
+  };
   return (
     <div className="space-y-2">
-      <Button
-        className="w-full"
-        onClick={() => {
-          // Copy first, while this page still has focus for the clipboard.
-          if (handoff.kind === "copy-url") copyToClipboard(mcpUrl, "URL copied");
-          if (handoff.kind === "copy-message") {
-            copyToClipboard(handoff.message(mcpUrl), "Message copied");
-          }
-          if (link) openLink(link);
-        }}
-      >
-        {label}
+      <Button className="w-full" onClick={() => void handOff()}>
+        {action.label}
       </Button>
       {note}
     </div>

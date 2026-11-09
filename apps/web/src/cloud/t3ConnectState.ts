@@ -1,11 +1,8 @@
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import type { EnvironmentCloudLinkStateResult } from "@t3tools/contracts";
 import type {
   RelayManagedEndpoint,
   RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
-
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 
 // Require managed discovery: stale tunnel config after a publish-only switch causes endpoint_provider_not_managed.
 export function isManagedTunnelActive(
@@ -20,35 +17,27 @@ export function isManagedTunnelActive(
   );
 }
 
-/**
- * The environment's MCP URL on its T3 Connect tunnel, or null. A publish-only link registers
- * its local address as `manual`, which is never public, so only a tunnel address counts.
- */
-export function t3ConnectMcpUrl(
-  linkState: Pick<EnvironmentCloudLinkStateResult, "tunnelHostname">,
-  relayEndpoint: RelayManagedEndpoint | undefined,
-): string | null {
-  const base = linkState.tunnelHostname
-    ? `https://${linkState.tunnelHostname}`
-    : relayEndpoint?.providerKind === "cloudflare_tunnel"
-      ? relayEndpoint.httpBaseUrl
-      : null;
-  const url = base === null ? null : URL.parse(base);
-  return url?.protocol === "https:" ? `${url.origin}/mcp` : null;
-}
+// The URL ends up in commands people paste into a shell, so only plain DNS names pass.
+const TUNNEL_HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
 /**
- * Backends this desktop app started sign in with its bootstrap credential, and the server lets
- * that session link to T3 Connect from any address, a WSL distro's IP too. A backend reached
- * over the network does not qualify, even on this machine.
+ * An environment's MCP URL on its T3 Connect tunnel, or null. This machine reports its own
+ * tunnel hostname; a saved machine's comes from T3 Connect, and only a tunnel counts there,
+ * since a publish-only link registers its local address as `manual`.
  */
-export function isDesktopOwnBackend(
-  target: ConnectionTarget,
-  primaryIsDesktopManaged: boolean,
-): boolean {
-  return target._tag === "PrimaryConnectionTarget"
-    ? primaryIsDesktopManaged
-    : isDesktopLocalConnectionTarget(target);
+export function t3ConnectMcpUrl(input: {
+  readonly thisMachine: boolean;
+  readonly tunnelHostname: string | undefined;
+  readonly relayEndpoint: RelayManagedEndpoint | undefined;
+}): string | null {
+  const url = input.thisMachine
+    ? URL.parse(`https://${input.tunnelHostname ?? ""}`)
+    : input.relayEndpoint?.providerKind === "cloudflare_tunnel"
+      ? URL.parse(input.relayEndpoint.httpBaseUrl)
+      : null;
+  return url?.protocol === "https:" && TUNNEL_HOSTNAME.test(url.hostname)
+    ? `${url.origin}/mcp`
+    : null;
 }
 
 /** Where T3 Connect can be turned on for an environment: from here, only by policy, or on its host. */
@@ -57,10 +46,13 @@ export type T3ConnectTurnOn =
   | { readonly kind: "policy"; readonly reason: string }
   | { readonly kind: "on-host" };
 
-/** Settings and the MCP wizard share this, so a Turn on control shows only where linking works. */
+/**
+ * Settings and the MCP wizard share this, so a Turn on control shows only where linking works.
+ * `linkableHere` is the environment's own answer for this session (its link state).
+ */
 export function resolveT3ConnectTurnOn(input: {
   readonly desktopApp: boolean;
-  readonly ownBackend: boolean;
+  readonly linkableHere: boolean;
   readonly cloudConfigured: boolean;
   readonly canReadRelay: boolean;
   readonly canWriteRelay: boolean;
@@ -68,7 +60,7 @@ export function resolveT3ConnectTurnOn(input: {
 }): T3ConnectTurnOn {
   if (input.connectDenial !== undefined) return { kind: "policy", reason: input.connectDenial };
   return input.desktopApp &&
-    input.ownBackend &&
+    input.linkableHere &&
     input.cloudConfigured &&
     input.canReadRelay &&
     input.canWriteRelay

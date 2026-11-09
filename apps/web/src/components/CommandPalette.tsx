@@ -1615,7 +1615,6 @@ function OpenCommandPaletteDialog(props: {
       "claude",
       "chatgpt",
       "grok",
-      "gemini",
       "muse",
       "instinct",
       "openclaw",
@@ -1624,7 +1623,7 @@ function OpenCommandPaletteDialog(props: {
     title: "Use T3 Code in another app (MCP)",
     icon: <PlugIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
-      openUseInAnotherApp(activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null);
+      openUseInAnotherApp(currentProjectEnvironmentId);
     },
   });
 

@@ -8,8 +8,8 @@ in once, and you choose what it may do.
 
 ## Add T3 Code to an assistant app
 
-Press Cmd-K and choose **Use T3 Code in another app (MCP)**, or use the button
-in **Settings → Sharing & access**. Pick the app, choose what it may do, and
+Open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code in another
+app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the app, choose what it may do, and
 follow the step for that app. Assistants like Poke and Claude run in the cloud,
 so the wizard first asks you to sign in to T3 Connect and turn it on for the
 environment. Turn on **Linked environments** in Labs to reach your other
