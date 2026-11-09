@@ -227,8 +227,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     setIsRefreshing(false);
   };
 
-  // Android wraps a RefreshControl's list in a layout a bottom sheet reads as unable to scroll up,
-  // so dragging down collapsed the sheet; sheets refresh from the AppBar instead.
+  // An Android bottom sheet reads a RefreshControl's list as unable to scroll up and drags itself
+  // instead, so Android sheets refresh from the AppBar.
   const inAndroidSheet =
     Platform.OS === "android" && (!isInspector || closeInspectorSheet !== null);
 

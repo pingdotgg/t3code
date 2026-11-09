@@ -78,7 +78,7 @@ export interface AppBarProps {
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AppBarAction>;
-  /** The screen supplies pull-to-refresh (not Android sheets); Android also lists this in the overflow menu. */
+  /** Pull-to-refresh is the gesture on both platforms; Android also lists this in the overflow menu. */
   readonly refresh?: Pick<AppBarAction, "accessibilityLabel" | "disabled" | "onPress">;
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
