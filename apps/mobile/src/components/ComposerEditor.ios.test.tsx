@@ -33,6 +33,7 @@ const native = vi.hoisted(() => ({
   mounts: 0,
   props: null as NativeProps | null,
   deliver: null as ((event: NativeEvent) => void) | null,
+  readGate: null as Promise<void> | null,
 }));
 
 function NativeView({ ref, ...props }: NativeProps) {
@@ -42,13 +43,17 @@ function NativeView({ ref, ...props }: NativeProps) {
     native.mounts += 1;
   }, []);
   useImperativeHandle(ref, () => ({
-    readState: async () => ({
-      value: native.text,
-      selection: { start: native.text.length, end: native.text.length },
-      eventCount: native.eventCount,
-      resetGeneration: native.resetGeneration,
-      pasteEventCount: native.pasteEventCount,
-    }),
+    readState: async () => {
+      const state = {
+        value: native.text,
+        selection: { start: native.text.length, end: native.text.length },
+        eventCount: native.eventCount,
+        resetGeneration: native.resetGeneration,
+        pasteEventCount: native.pasteEventCount,
+      };
+      await native.readGate;
+      return state;
+    },
   }));
   useLayoutEffect(() => {
     propsRef.current = props;
@@ -310,4 +315,26 @@ it("does not flush away a parent edit the native editor has not applied yet", as
 
   await act(async () => screen.editor.current!.flushPendingInput());
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft @file");
+});
+
+it("keeps a parent edit committed while a flush waits on the native editor", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft"));
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  const response = Promise.withResolvers<void>();
+  native.readGate = response.promise;
+  let flushed!: Promise<void>;
+  await act(async () => {
+    flushed = screen.editor.current!.flushPendingInput();
+  });
+  await act(async () => setComposerDraftText(DRAFT_KEY, "Draft plus more @file"));
+  native.readGate = null;
+  await act(async () => {
+    response.resolve();
+    await flushed;
+  });
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft plus more @file");
 });
