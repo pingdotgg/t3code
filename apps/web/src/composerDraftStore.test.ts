@@ -84,6 +84,7 @@ import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   resolveDraftPromotionNavigationTarget,
+  resolvePromotedComposerDraftTarget,
   restoreFailedDraftThread,
   subscribeDraftThreadPromotion,
   type ComposerFileAttachment,
@@ -1481,6 +1482,7 @@ describe("composerDraftStore draft promotion", () => {
     expect(useComposerDraftStore.getState().getDraftSession(draftId)?.promotedTo).toEqual(
       threadRef,
     );
+    expect(resolvePromotedComposerDraftTarget(draftId)).toBe(draftId);
 
     h.updateShell(threadRef, {
       latestRun: preparingRun,
@@ -1492,6 +1494,10 @@ describe("composerDraftStore draft promotion", () => {
     expect(state.getDraftSession(draftId)).toBeNull();
     expect(state.getPromotedDraftRedirect(draftId)).toEqual(threadRef);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("typed during setup");
+    // A late write through the draft id, such as a dictation started before promotion.
+    state.setPrompt(resolvePromotedComposerDraftTarget(draftId), "typed during setup, dictated");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("typed during setup, dictated");
+    expect(draftByKey(draftId)).toBeUndefined();
   });
 
   it("holds a background submission on its draft until the send settles", async () => {

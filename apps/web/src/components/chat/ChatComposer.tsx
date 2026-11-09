@@ -101,6 +101,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  resolvePromotedComposerDraftTarget,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1811,10 +1812,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? undefined
       : () => ({
           readDraft: () => {
-            const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+            const target = resolvePromotedComposerDraftTarget(composerDraftTarget);
+            const text = getComposerDraft(target)?.prompt ?? "";
             return { text, selection: { start: text.length, end: text.length } };
           },
-          commitDraft: (text) => setComposerDraftPrompt(composerDraftTarget, text),
+          commitDraft: (text) =>
+            setComposerDraftPrompt(resolvePromotedComposerDraftTarget(composerDraftTarget), text),
         }),
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
