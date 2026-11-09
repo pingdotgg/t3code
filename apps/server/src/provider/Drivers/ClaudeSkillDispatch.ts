@@ -19,40 +19,61 @@ export interface ClaudeSkillDispatch {
   readonly commandText: string;
 }
 
-export function planClaudeSkillDispatch(
-  prompt: string,
-  skills: ReadonlyMap<string, ClaudeSkillTarget>,
-): ClaudeSkillDispatch | undefined {
-  const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
+function matchSkillMentions(prompt: string, skills: ReadonlyMap<string, ClaudeSkillTarget>) {
+  return [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
     if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
-  const last = mentions.at(-1);
-  if (!last) {
-    return undefined;
-  }
+}
 
-  // Only the final skill gets native expansion. Earlier user-only skills need
-  // a fallback to their raw file because Claude's Skill tool refuses them.
-  const annotated = new Set([last.name]);
-  let promptWithInlineSlashes = "";
+// Claude's Skill tool refuses user-only skills, so any mention Claude will not
+// expand natively points at the skill's raw file instead.
+function inlineSkillMentions(
+  prompt: string,
+  mentions: ReturnType<typeof matchSkillMentions>,
+  nativelyExpanded: string | undefined,
+): string {
+  const annotated = new Set(nativelyExpanded === undefined ? [] : [nativelyExpanded]);
+  let text = "";
   let cursor = 0;
   for (const mention of mentions) {
-    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
+    text += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
     if (mention.skill.userInvocationOnly === true && !annotated.has(mention.name)) {
-      promptWithInlineSlashes += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
+      text += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
       annotated.add(mention.name);
     }
     cursor = mention.end;
   }
-  promptWithInlineSlashes = `${promptWithInlineSlashes}${prompt.slice(cursor)}`.trimEnd();
+  return `${text}${prompt.slice(cursor)}`.trimEnd();
+}
 
+export function planClaudeSkillDispatch(
+  prompt: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+): ClaudeSkillDispatch | undefined {
+  const mentions = matchSkillMentions(prompt, skills);
+  const last = mentions.at(-1);
+  if (!last) {
+    return undefined;
+  }
+  // Only the final skill gets native expansion.
   return {
     leadingText:
-      prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
+      prompt.slice(0, last.start).trim().length > 0
+        ? inlineSkillMentions(prompt, mentions, last.name)
+        : undefined,
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
+}
+
+/** Tool results never expand skills, so an answer only names them for the agent to run. */
+export function claudeSkillMentionsInAnswer(
+  answer: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+): string {
+  const mentions = matchSkillMentions(answer, skills);
+  return mentions.length === 0 ? answer : inlineSkillMentions(answer, mentions, undefined);
 }

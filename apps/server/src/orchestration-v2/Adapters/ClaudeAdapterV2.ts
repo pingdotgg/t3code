@@ -160,6 +160,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
+  claudeSkillMentionsInAnswer,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4641,15 +4642,19 @@ export function claudeUserInputQuestions(
 
 export function claudeSdkUserInputAnswers(
   answers: ProviderUserInputAnswers,
+  skills: ReadonlyMap<string, ClaudeSkillTarget> = new Map(),
 ): NonNullable<AskUserQuestionInput["answers"]> {
   return Object.fromEntries(
     Object.entries(answers).map(([question, answer]) => [
       question,
-      Array.isArray(answer)
-        ? answer.filter((value): value is string => typeof value === "string").join(", ")
-        : typeof answer === "string"
-          ? answer
-          : String(answer ?? ""),
+      claudeSkillMentionsInAnswer(
+        Array.isArray(answer)
+          ? answer.filter((value): value is string => typeof value === "string").join(", ")
+          : typeof answer === "string"
+            ? answer
+            : String(answer ?? ""),
+        skills,
+      ),
     ]),
   );
 }
@@ -10431,7 +10436,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   behavior: "allow",
                   updatedInput: {
                     questions: toolInput.questions,
-                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
+                    answers: claudeSdkUserInputAnswers(
+                      resolvedAnswers,
+                      yield* userInvocableSkills(context.input.runtimePolicy.cwd),
+                    ),
                   },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);

@@ -404,13 +404,22 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       ],
     );
     const sdkAnswers: NonNullable<AskUserQuestionInput["answers"]> =
-      ClaudeAdapterV2.claudeSdkUserInputAnswers({
-        "Which approach?": ["Simple", "Safe"],
-        "Deploy now?": "Yes",
-      });
+      ClaudeAdapterV2.claudeSdkUserInputAnswers(
+        {
+          "Which approach?": ["Simple", "Safe"],
+          "Deploy now?": "Yes",
+          "Anything else?": "$wait-what then $review it",
+        },
+        new Map([
+          ["wait-what", { path: "/skills/wait-what/SKILL.md", userInvocationOnly: true }],
+          ["review", { path: "/skills/review/SKILL.md" }],
+        ]),
+      );
     assert.deepEqual(sdkAnswers, {
       "Which approach?": "Simple, Safe",
       "Deploy now?": "Yes",
+      "Anything else?":
+        "/wait-what [The user invoked this skill. Follow the instructions at: /skills/wait-what/SKILL.md] then /review it",
     });
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,
