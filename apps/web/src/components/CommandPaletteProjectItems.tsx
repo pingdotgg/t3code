@@ -11,7 +11,7 @@ import {
 } from "./CommandPalette.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { COMMAND_PALETTE_META_ICON_CLASS, CommandPaletteMetaDot } from "./ThreadCommandSubtitle";
+import { COMMAND_PALETTE_META_ICON_CLASS } from "./ThreadCommandSubtitle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface CommandPaletteProjectLocation {
@@ -120,13 +120,8 @@ function ProjectLocationDescription(props: {
   const location = props.location ?? UNKNOWN_PROJECT_LOCATION;
   return (
     <span className="flex min-w-0 items-center gap-2">
+      {props.current ? <span className="shrink-0">Current</span> : null}
       <span className="inline-flex min-w-0 max-w-1/2 shrink-0 items-center gap-1">
-        {props.current ? (
-          <>
-            <span className="shrink-0">Current</span>
-            <CommandPaletteMetaDot />
-          </>
-        ) : null}
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
             aria-hidden
