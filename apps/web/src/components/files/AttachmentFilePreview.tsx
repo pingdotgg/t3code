@@ -332,6 +332,7 @@ export function AttachmentFilePreview(props: {
       src={url}
       title={props.name}
       pdf={kind === "pdf"}
+      refreshSrc={props.file ? undefined : refresh}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
       // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.

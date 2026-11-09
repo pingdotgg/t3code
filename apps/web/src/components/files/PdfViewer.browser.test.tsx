@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
-import { render } from "../../../test/render";
+import { TextLayer } from "pdfjs-dist";
+import { act, render } from "../../../test/render";
 import "~/index.css";
 
 // Vite serves the worker module through its transform with an inline source map (6.8 MB for
@@ -158,5 +159,62 @@ it("restores page, within-page offset and zoom after a remount", async () => {
     await expect.element(screen.getByText("Fit width")).toBeVisible();
   } finally {
     URL.revokeObjectURL(url);
+  }
+});
+
+it("renews the URL and keeps the latest reading position through a page error and retry", async () => {
+  const url = URL.createObjectURL(twoPagePdf());
+  const renewed = URL.createObjectURL(twoPagePdf());
+  // Revoking makes the old URL really dead, so a retry that reuses it fails.
+  const refreshSrc = async () => {
+    URL.revokeObjectURL(url);
+    return renewed;
+  };
+  try {
+    await using screen = await render(
+      <div className="flex h-[300px] w-[320px]">
+        <PdfViewer src={url} title="Retry PDF" refreshSrc={refreshSrc} />
+      </div>,
+    );
+    await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    const region = () => screen.getByRole("region", { name: "Retry PDF" }).element();
+    await act(async () => {
+      const scrolled = new Promise((resolve) =>
+        region().addEventListener("scroll", resolve, { once: true }),
+      );
+      region().scrollTo({ top: region().scrollTop + 40, left: 60 });
+      await scrolled;
+    });
+
+    const failure = Promise.withResolvers<void>();
+    const renderText = TextLayer.prototype.render;
+    using failingPage = vi.spyOn(TextLayer.prototype, "render").mockImplementationOnce(function (
+      this: TextLayer,
+    ) {
+      return renderText.call(this).then(() => failure.promise);
+    });
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(failingPage).toHaveBeenCalled());
+    const top = region().scrollTop;
+    const left = region().scrollLeft;
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+    const collapsed = new Promise((resolve) =>
+      region().addEventListener("scroll", resolve, { once: true }),
+    );
+    failure.reject(new Error("This PDF page could not render."));
+    await collapsed;
+    await expect.element(screen.getByRole("alert")).toBeVisible();
+
+    await screen.getByRole("button", { name: "Try again", exact: true }).click();
+    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
+    expect(region().scrollLeft).toBe(left);
+    expect(screen.container.textContent).toContain(zoom);
+  } finally {
+    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(renewed);
   }
 });
