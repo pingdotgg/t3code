@@ -173,6 +173,16 @@ export function createNewThreadHandler(router: AnyRouter) {
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
+    const storedDraftChanged = () => {
+      if (!emptyStoredDraftThread) return false;
+      const current = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      return (
+        current?.draftId !== emptyStoredDraftThread.draftId ||
+        current.promotedTo != null ||
+        (storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null) ||
+        composerDraftHasUserContent(getComposerDraft(emptyStoredDraftThread.draftId))
+      );
+    };
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
     const selectionInput = {
       defaultSelection:
@@ -200,12 +210,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             environmentId: projectRef.environmentId,
             input: selectionInput,
           });
-    if (
-      abandonedSinceRequest() ||
-      (emptyStoredDraftThread &&
-        composerDraftHasUserContent(getComposerDraft(emptyStoredDraftThread.draftId)))
-    )
-      return null;
+    if (abandonedSinceRequest() || storedDraftChanged()) return null;
     const fallbackResolution = resolveNewThreadModelSelection({ ...selectionInput, providers });
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
@@ -277,15 +282,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           const openedMeanwhile =
             routeTargetNow?.kind === "draft" &&
             routeTargetNow.draftId === emptyStoredDraftThread.draftId;
-          const promotedMeanwhile =
-            storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
-          const remappedMeanwhile =
-            getDraftSessionByLogicalProjectKey(logicalProjectKey)?.draftId !==
-            emptyStoredDraftThread.draftId;
-          const investedMeanwhile = composerDraftHasUserContent(
-            getComposerDraft(emptyStoredDraftThread.draftId),
-          );
-          if (openedMeanwhile || promotedMeanwhile || remappedMeanwhile || investedMeanwhile) {
+          if (openedMeanwhile || storedDraftChanged()) {
             return null;
           }
           workspaceContext = {
