@@ -84,8 +84,8 @@ it.effect.each(["seconds", "date", "missing", "short"] as const)(
       );
       yield* client.execute(request("a"));
       assert.strictEqual(
-        yield* client.isCoolingDown("https://api.anthropic.com", "Bearer a"),
-        true,
+        yield* client.getCooldownDeadline("https://api.anthropic.com", "Bearer a"),
+        now + (kind === "seconds" || kind === "date" ? 600_000 : 300_000),
       );
       yield* client.invalidateSuccessfulReads("https://api.anthropic.com", "Bearer a");
       yield* client.execute(request("a", "?cedar_ember=1"));

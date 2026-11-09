@@ -256,7 +256,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (
     input.usageHttpClient &&
     (yield* input.usageHttpClient
-      .isCoolingDown(API_BASE, `Bearer ${token}`)
+      .getCooldownDeadline(API_BASE, `Bearer ${token}`)
       .pipe(
         Effect.provideService(
           UsageAccountIdentity,

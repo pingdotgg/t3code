@@ -54,6 +54,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
+  readonly supportsUsageLimits?: boolean;
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
   readonly getUsageRefreshKey?: Effect.Effect<string | undefined>;
   readonly invalidateUsageCache?: Effect.Effect<void>;
@@ -299,6 +300,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
+    if (input.supportsUsageLimits === false) return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
     yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {

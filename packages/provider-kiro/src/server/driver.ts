@@ -99,6 +99,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
+      supportsUsageLimits: false,
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,

@@ -28,6 +28,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -867,6 +868,93 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(changedHealth.auth.email).toBe(overrideAccount);
       yield* claude!.snapshot.refreshUsage!;
       expect((yield* claude!.snapshot.getSnapshot).auth.email).toBe(overrideAccount);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves Claude's reset-credit cooldown through a suppressed SDK quota read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "claude-usage-cooldown-" });
+      const binaryPath = writeFakeCli({
+        directory: path.join(home, "bin"),
+        name: "claude",
+        source: 'process.stdout.write("2.1.219");',
+      });
+      yield* fs.writeFileString(
+        path.join(home, ".claude.json"),
+        JSON.stringify({ oauthAccount: { organizationUuid: "cooldown-org" } }),
+      );
+      yield* fs.writeFileString(
+        path.join(home, ".credentials.json"),
+        JSON.stringify({ claudeAiOauth: { accessToken: "fake-token" } }),
+      );
+      let quotaReads = 0;
+      using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: async () => ({
+              commands: [],
+              account: {
+                email: "cooldown@example.com",
+                subscriptionType: "pro",
+                tokenSource: "oauth",
+              },
+            }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+              quotaReads++;
+              return {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: {
+                    utilization: quotaReads === 1 ? 100 : 25,
+                    resets_at: "2026-07-18T14:39:00Z",
+                  },
+                },
+              };
+            },
+          }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+      );
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.includes("/api/oauth/usage")
+              ? Response.json({}, { status: 429, headers: { "retry-after": "420" } })
+              : Response.json({ version: "0.0.0" }),
+          ),
+        ),
+      );
+      const host = yield* ProviderHost.ProviderHost;
+      const usageHttpClient = yield* makeUsageHttpClient(client);
+      const instanceId = ProviderInstanceId.make("claude-cooldown");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ClaudeDriver.driverKind,
+            enabled: true,
+            config: makeClaudeConfig({ enabled: true, binaryPath, homePath: home }),
+          },
+        },
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(ProviderHost.ProviderHost, { ...host, usageHttpClient }),
+      );
+      const instance = (yield* registry.getInstance(instanceId))!;
+      yield* instance.snapshot.refresh;
+      const now = yield* Clock.currentTimeMillis;
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(1);
+      expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows[0]?.usedPercent).toBe(100);
+      yield* TestClock.adjust("5 minutes");
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(1);
+      expect((yield* instance.snapshot.getSnapshot).usageLimits?.refreshAfter).toBe(now + 420_000);
+      yield* TestClock.adjust("2 minutes");
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(2);
+      expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows[0]?.usedPercent).toBe(25);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -218,16 +218,15 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
             cached.delete(key);
         }
       }),
-      isCoolingDown: Effect.fn("UsageHttpClient.isCoolingDown")(function* (
+      getCooldownDeadline: Effect.fn("UsageHttpClient.getCooldownDeadline")(function* (
         origin: string,
         authorization: string,
       ) {
         const now = yield* Clock.currentTimeMillis;
-        return (
-          now <
-          (accounts.get(accountCacheKey(origin, authorization, yield* UsageAccountIdentity))
-            ?.retryAt ?? 0)
-        );
+        const retryAt = accounts.get(
+          accountCacheKey(origin, authorization, yield* UsageAccountIdentity),
+        )?.retryAt;
+        return retryAt !== undefined && now < retryAt ? retryAt : undefined;
       }),
     });
   });

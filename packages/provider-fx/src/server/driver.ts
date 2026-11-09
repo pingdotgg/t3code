@@ -106,6 +106,7 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
     const effectiveConfig = { ...config, enabled } satisfies FxSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<FxSettings>>({
+      supportsUsageLimits: false,
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,

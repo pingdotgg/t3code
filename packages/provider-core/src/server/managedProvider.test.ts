@@ -142,14 +142,15 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
-  it.effect(
-    "keeps health probes independent and shares usage refreshes across visible surfaces",
-    () =>
+  it.effect.each([true, false])(
+    "keeps health probes independent and shares supported usage refreshes: %s",
+    (supportsUsageLimits) =>
       Effect.scoped(
         Effect.gen(function* () {
           const reads = yield* Ref.make(0);
           const checks = yield* Ref.make(0);
           const provider = yield* makeManagedServerProvider({
+            supportsUsageLimits,
             resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
             getSettings: Effect.succeed({ enabled: true }),
             streamSettings: Stream.empty,
@@ -166,6 +167,14 @@ describe("makeManagedServerProvider", () => {
           }).pipe(Effect.provideService(UsagePolling, true));
           yield* provider.refresh;
           assert.strictEqual(yield* Ref.get(reads), 0);
+          if (!supportsUsageLimits) {
+            const beforeChecks = yield* Ref.get(checks);
+            yield* provider.refreshUsage!;
+            yield* provider.refreshUsage!;
+            assert.strictEqual(yield* Ref.get(checks), beforeChecks);
+            assert.strictEqual(yield* Ref.get(reads), 0);
+            return;
+          }
           yield* Effect.all([provider.refresh, provider.refresh], {
             concurrency: "unbounded",
           }).pipe(Effect.provideService(UsagePolling, true));

@@ -263,6 +263,7 @@ export type ClaudeCapabilitiesProbe = {
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly usageCheckedAt?: string;
+  readonly usageRefreshAfter?: number;
 };
 
 function parseClaudeInitializationCommands(
@@ -742,7 +743,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+      usageLimits: {
+        ...usageLimits,
+        ...(resetCredits ? { resetCredits } : {}),
+        ...(capabilities.usageRefreshAfter !== undefined
+          ? { refreshAfter: capabilities.usageRefreshAfter }
+          : {}),
+      },
     },
   });
 });

@@ -244,22 +244,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         lastIdentity = identity;
       }
       let includeUsage = yield* UsagePolling;
+      let usageRefreshAfter: number | undefined;
       if (includeUsage && usageHttpClient) {
         const token = yield* ClaudeResetCredits.readAccessToken(configDir).pipe(
           Effect.orElseSucceed(() => undefined),
         );
-        if (
-          token &&
-          (yield* usageHttpClient
-            .isCoolingDown("https://api.anthropic.com", `Bearer ${token}`)
+        if (token) {
+          usageRefreshAfter = yield* usageHttpClient
+            .getCooldownDeadline("https://api.anthropic.com", `Bearer ${token}`)
             .pipe(
               Effect.provideService(
                 UsageAccountIdentity,
                 yield* ClaudeResetCredits.readClaudeUsageAccountIdentity(accountConfigPath),
               ),
-            ))
-        )
-          includeUsage = false;
+            );
+          if (usageRefreshAfter !== undefined) includeUsage = false;
+        }
       }
       const capabilities: ClaudeCapabilitiesProbe = (yield* Cache.get(
         capabilitiesProbeCache,
@@ -272,7 +272,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       )
         yield* Cache.invalidate(capabilitiesProbeCache, encodeProbeKey([identity, !includeUsage]));
       lastAccount = capabilities;
-      return capabilities;
+      return usageRefreshAfter === undefined
+        ? capabilities
+        : { ...capabilities, usageRefreshAfter };
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

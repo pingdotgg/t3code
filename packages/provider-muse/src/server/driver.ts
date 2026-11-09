@@ -131,6 +131,7 @@ export const MuseDriver: ProviderDriver<
       return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
     });
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
+      supportsUsageLimits: false,
       // Status refresh respects update checks; explicit updates use the resolver below.
       resolveMaintenance: (options) =>
         host.settings.get.pipe(

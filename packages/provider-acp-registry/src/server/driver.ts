@@ -646,6 +646,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const snapshot = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
     >({
+      supportsUsageLimits: false,
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
