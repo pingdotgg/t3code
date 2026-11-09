@@ -75,6 +75,7 @@ describe("assistant citation navigation", () => {
     resetRightPanels();
     const router = createCitationRouter("/environment-one/thread-parent");
     await router.navigate(assistantCitationNavigation(sideChatCitation, sideChatShell));
+    expect(router.state.location.pathname).toBe("/environment-one/thread-parent");
     await revealAtRoute(router);
 
     expectSideChatRevealedOnParent(router);
