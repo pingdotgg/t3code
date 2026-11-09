@@ -25,6 +25,7 @@ import type {
 } from "@t3tools/contracts";
 import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
+import * as VcsAutomaticFetchInterval from "./VcsAutomaticFetchInterval.ts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -93,7 +94,7 @@ function layerTestFor(state: {
     Layer.provide(layerBackgroundPolicy(() => state.backgroundWorkEnabled !== false)),
     Layer.provide(
       Layer.succeed(
-        VcsStatusBroadcaster.VcsAutomaticFetchInterval,
+        VcsAutomaticFetchInterval.VcsAutomaticFetchInterval,
         state.automaticFetchInterval ?? Effect.succeed(Duration.seconds(30)),
       ),
     ),
