@@ -64,7 +64,7 @@ export const JobServiceKV = Layer.effect(
 Declare the storage — a real KV namespace, owned by the Layer:
 
 ```diff lang="typescript"
-+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Cloudflare from "@alchemy.run/cloudflare";
  import * as Effect from "effect/Effect";
  import * as Layer from "effect/Layer";
 
@@ -177,7 +177,10 @@ Changing the implementation is a one-line change:
 
 This swap crossed clouds: the Worker still runs on Cloudflare, but its
 jobs now come from a DynamoDB table on AWS, with the credentials and
-permissions wired up automatically.
+permissions wired up automatically. Alchemy creates an IAM user and a
+least-privilege role for the Worker, and each request is signed with the
+assumed role in the table's region. The Stack needs both provider sets,
+`Layer.mergeAll(Cloudflare.providers(), AWS.providers())`.
 
 Alchemy's own Bindings follow the same tag/Layer split
 ([a contract and a Layer](/infrastructure-as-effects/binding#a-contract-and-a-layer)).
