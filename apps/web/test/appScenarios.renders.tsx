@@ -275,7 +275,10 @@ it("app-switch-thread", async () => {
     );
     await expect.element(lastAnswer(threadId)).toBeVisible();
   };
-  await report("app-switch-thread", [await measure(go(B)), await measure(go(A))]);
+  const windows = [await measure(go(B)), await measure(go(A))];
+  // Only the rows losing and gaining the active highlight change.
+  for (const window of windows) expect(window.components.SidebarThreadRow).toBe(2);
+  await report("app-switch-thread", windows);
 });
 
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
