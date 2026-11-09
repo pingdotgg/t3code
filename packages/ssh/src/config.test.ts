@@ -14,14 +14,14 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
-  it.effect("deduplicates hosts through quoted and escaped Include paths like OpenSSH", () =>
+  it.effect("discovers hosts through quoted, escaped, and home-relative Includes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const homeDir = yield* makeTempHomeDir();
+      const homeDir = path.join(yield* makeTempHomeDir(), "home-$&-$$");
       const sshDir = path.join(homeDir, ".ssh");
       const quotedDir = path.join(homeDir, "quoted dir");
-      yield* fs.makeDirectory(sshDir);
+      yield* fs.makeDirectory(sshDir, { recursive: true });
       yield* fs.makeDirectory(quotedDir);
       yield* fs.writeFileString(
         path.join(quotedDir, "team#1=a.conf"),
@@ -32,10 +32,15 @@ describe("ssh config", () => {
         "Host escaped\n  HostName escaped.example.com\nHost *\n",
       );
       yield* fs.writeFileString(
+        path.join(sshDir, "home.conf"),
+        "Host home-relative\n  HostName home.example.com\nHost *\n",
+      );
+      yield* fs.writeFileString(
         path.join(sshDir, "config"),
         [
           `Include "${path.join(quotedDir, "team#1=a.conf")}" # comment`,
           `Include ${path.join(homeDir, "escaped space.conf").replaceAll(" ", "\\ ")}`,
+          "Include ~/.ssh/home.conf",
           "",
         ].join("\n"),
       );
@@ -50,6 +55,7 @@ describe("ssh config", () => {
         hosts.map((host) => [host.alias, host.hostname, host.source]),
         [
           ["escaped", "escaped.example.com", "ssh-config"],
+          ["home-relative", "home.example.com", "ssh-config"],
           ["quoted", "quoted.example.com", "ssh-config"],
         ],
       );

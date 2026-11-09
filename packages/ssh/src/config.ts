@@ -65,7 +65,7 @@ function parseSshConfigLine(line: string) {
 }
 
 function expandHomePath(input: string, homeDir: string): string {
-  return input.replace(/^~(?=$|\/|\\)/u, homeDir);
+  return input.replace(/^~(?=$|\/|\\)/u, () => homeDir);
 }
 
 const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
