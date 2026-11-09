@@ -18,7 +18,10 @@ const ERROR_STEP_TYPE = 17;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
-const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
+// Status is a gRPC code, or an HTTP status line such as "502 Bad Gateway". A message
+// stops at the next error, so each start scans its own span and the match stays linear.
+const API_ERROR =
+  /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
