@@ -3250,7 +3250,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <ComposerBannerStack items={shelfItems} />
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
-              <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
+              <ComposerBanner.Root
+                data-chat-composer-top-drawer="true"
+                variant="info"
+                className="pb-0.75"
+              >
                 {pendingUserInputs.length > 0 ? (
                   <ComposerPendingUserInputPanel
                     pendingUserInputs={pendingUserInputs}

@@ -205,7 +205,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           isCollapsed ? "Show the question and its options" : "Hide the question and its options"
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 pt-1.5"
+        className="px-2 [&:is(button)]:rounded-b-sm"
       >
         <ComposerBanner.Content>
           <span
@@ -257,12 +257,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
-          <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
+          <ComposerBanner.Body className="ps-4 pe-2 pb-1 wrap-anywhere sm:ps-3.5">
             <ChatMarkdown
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className={cn("pt-2 text-foreground/85", questionTextAlign)}
+              className={cn("pt-1 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
