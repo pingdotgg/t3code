@@ -62,13 +62,14 @@ const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
-// Cache reuse needs comparable agent identity: a fresh probe can only vouch for
-// a cached entry with a matching known version, or a versionless entry of its
-// own kind — otherwise a swapped local binary would keep serving stale metadata.
+// Keyed on the readiness version, not the probed one: readiness cannot observe
+// a local binary swap or an agent-reported probe version, so comparing against
+// the probed value would miss every refresh and force a probe per cycle.
+// A readiness version change is the only invalidation signal here; TTL bounds local drift.
 export const canReuseAcpEnrichmentCache = (
-  probedVersion: string | null,
-  cachedVersion: string | null,
-): boolean => (probedVersion === null ? cachedVersion === null : cachedVersion === probedVersion);
+  baseVersion: string | null,
+  cachedBaseVersion: string | null,
+): boolean => baseVersion === cachedBaseVersion;
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -611,6 +612,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       readonly generation: number;
       readonly entry: {
         readonly provider: ServerProvider;
+        readonly baseVersion: string | null;
         readonly expiresAt: number;
       } | null;
     }>({ generation: 0, entry: null });
@@ -628,7 +630,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (
         cached !== null &&
         cached.expiresAt > now &&
-        canReuseAcpEnrichmentCache(baseSnapshot.version, cached.provider.version)
+        canReuseAcpEnrichmentCache(baseSnapshot.version, cached.baseVersion)
       ) {
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
@@ -643,6 +645,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ...current,
                 entry: {
                   provider: enriched,
+                  baseVersion: baseSnapshot.version,
                   expiresAt: now + PROBE_SUCCESS_TTL_MS,
                 },
               }

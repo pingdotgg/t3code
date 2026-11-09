@@ -477,8 +477,11 @@ describe("acpRegistrySnapshotReadiness", () => {
       [null, null, true],
       ["1.0.0", null, false],
       [null, "1.0.0", false],
-    ] as const)("probed=%p cached=%p reuses=%p", (probedVersion, cachedVersion, reuses) => {
-      expect(canReuseAcpEnrichmentCache(probedVersion, cachedVersion)).toBe(reuses);
-    });
+    ] as const)(
+      "readiness=%p cachedBase=%p reuses=%p",
+      (baseVersion, cachedBaseVersion, reuses) => {
+        expect(canReuseAcpEnrichmentCache(baseVersion, cachedBaseVersion)).toBe(reuses);
+      },
+    );
   });
 });
