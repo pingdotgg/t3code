@@ -29,13 +29,13 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
-import { FilePreviewGallery, useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
   FilePreviewModal,
   type FilePreviewSource,
   type FilePreviewItem,
-} from "../../components/FilePreviewModal";
+} from "../../components/ui/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";

@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
-import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 
 export interface PullRequestMediaLocation {
   readonly environmentId: EnvironmentId;
