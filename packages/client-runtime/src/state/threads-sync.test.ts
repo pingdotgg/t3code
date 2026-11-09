@@ -81,10 +81,10 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
 
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
 
-function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function testSession(client: WsRpcProtocolClient, config: object = {}): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({} as never),
+    initialConfig: Effect.succeed(config as never),
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -118,6 +118,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
+  readonly socketSnapshots?: true;
   readonly historyHttpClient?: HttpClient.HttpClient;
   readonly getTurnItem?: (input: {
     readonly itemId: TurnItemId;
@@ -171,7 +172,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client)),
+    Option.some(
+      testSession(client, options?.socketSnapshots ? { threadSnapshotPagination: true } : {}),
+    ),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -778,6 +781,33 @@ describe("EnvironmentThreads", () => {
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
     }),
+  );
+
+  it.effect(
+    "opens over the socket alone, and asks HTTP whether a thread exists after it fails",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          httpSnapshot: { _tag: "missing" },
+          socketSnapshots: true,
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+        yield* Queue.offer(harness.inputs, new Error("Thread not found"));
+        yield* TestClock.adjust("250 millis");
+        const settled = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "deleted" || Option.isSome(value.error),
+        );
+        // The HTTP retry decides, so a missing thread never flashes an error.
+        expect(settled.status).toBe("deleted");
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      }),
   );
 
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
