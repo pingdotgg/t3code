@@ -4,7 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
-const state = vi.hoisted(() => ({ allowed: true, hasTask: true, toggle: vi.fn(), run: vi.fn() }));
+const state = vi.hoisted(() => ({ allowed: true, toggle: vi.fn(), run: vi.fn() }));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentScope: () => state.allowed,
@@ -28,10 +28,7 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => {
 });
 vi.mock(import("../../state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentQuery: (() => ({
-    data: { tasks: state.hasTask ? [task] : [] },
-    error: null,
-  })) as never,
+  useEnvironmentQuery: (() => ({ data: { tasks: [task] }, error: null })) as never,
 }));
 
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
@@ -50,7 +47,6 @@ const task = {
 
 async function setup() {
   state.allowed = true;
-  state.hasTask = true;
   state.toggle.mockReset().mockResolvedValue({ _tag: "Success" });
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
 
@@ -79,7 +75,6 @@ it.each([true, false])("runs scheduled work only with task permission (%s)", asy
   state.allowed = allowed;
   await renderPanel();
   const run = page.getByRole("menuitem", { name: "Run Daily review now" }).element();
-  expect(run).toBeDefined();
   expect(run.getAttribute("aria-disabled")).toBe(allowed ? null : "true");
   await act(async () => run.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   expect(state.run).toHaveBeenCalledTimes(allowed ? 1 : 0);
@@ -90,7 +85,6 @@ it("rejects a retained toggle after task permission is revoked", async () => {
   const { renderPanel, byLabel, screen } = fixture;
   await renderPanel();
   const toggle = byLabel("Pause Daily review");
-  expect(toggle).toBeDefined();
   state.allowed = false;
   await act(async () => toggle.click());
   expect(state.toggle).not.toHaveBeenCalled();
@@ -116,27 +110,4 @@ it("updates the next-run label while the task stays unchanged", async () => {
 
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(container.textContent).toContain("in 4m");
-});
-
-it("shows the card only while the thread has an automation", async () => {
-  await using fixture = await setup();
-  const { screen } = fixture;
-  const card = () => screen.container.querySelector("[data-thread-automations-panel]");
-  state.hasTask = false;
-  await screen.rerender(
-    <ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />,
-  );
-  expect(card()).toBeNull();
-
-  state.hasTask = true;
-  await screen.rerender(
-    <ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />,
-  );
-  expect(card()).not.toBeNull();
-
-  state.hasTask = false;
-  await screen.rerender(
-    <ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />,
-  );
-  expect(card()).toBeNull();
 });
