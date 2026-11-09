@@ -1,13 +1,16 @@
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
+import { isMacPlatform } from "~/lib/utils";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
   optimistic: null as ProjectReadFileResult | null,
+  fileListeners: new Set<() => void>(),
   writeFile: vi.fn(),
 }));
 
@@ -54,7 +57,14 @@ vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   useProjectFileQuery: () => ({
-    data: state.file,
+    // Edits write through setProjectFileQueryData, as the real query cache does.
+    data: useSyncExternalStore(
+      (listener) => {
+        state.fileListeners.add(listener);
+        return () => state.fileListeners.delete(listener);
+      },
+      () => state.optimistic ?? state.file,
+    ),
     error: null,
     isPending: false,
     readError: null,
@@ -71,6 +81,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
     contents: string,
   ) => {
     state.optimistic = { relativePath, contents, truncated: false, byteLength: contents.length };
+    for (const listener of state.fileListeners) listener();
   },
   confirmProjectFileQueryData: () => true,
 }));
@@ -236,6 +247,85 @@ describe("file view comments", () => {
     await screen.rerender(filePreview("config.ts", otherThreadRef));
 
     await expect.element(screen.getByText("Note from thread B")).toBeVisible();
+    expect(screen.getByText("Note from thread A").query()).toBeNull();
+  });
+
+  it("does not replay another thread's comment when undoing after a thread change", async () => {
+    using _settings = setup();
+    const contents = "export const one = 1;\nexport const two = 2;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(
+      threadRef,
+      buildFileReviewComment({
+        id: "file-comment-a",
+        filePath: "config.ts",
+        startLine: 2,
+        endLine: 2,
+        text: "Note from thread A",
+        contents,
+      }),
+    );
+    using _comments = {
+      [Symbol.dispose]: () => {
+        for (const target of [threadRef, otherThreadRef]) {
+          store.removeReviewComment(target, "file-comment-a");
+        }
+      },
+    };
+
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("Note from thread A")).toBeVisible();
+    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
+    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+
+    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
+    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
+    content()!.focus();
+    const selectionSynced = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
+    await selectionSynced;
+    await act(async () => {
+      content()!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          inputType: "insertParagraph",
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
+
+    await screen.rerender(filePreview("config.ts", otherThreadRef));
+    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+    content()!.focus();
+    const isMac = isMacPlatform(navigator.platform);
+    await act(async () => {
+      content()!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          code: "KeyZ",
+          metaKey: isMac,
+          ctrlKey: !isMac,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    const otherDraft = useComposerDraftStore.getState().getComposerDraft(otherThreadRef);
+    expect(otherDraft?.reviewComments ?? []).toEqual([]);
     expect(screen.getByText("Note from thread A").query()).toBeNull();
   });
 });
