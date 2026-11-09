@@ -73,6 +73,7 @@ import {
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
 import {
+  isPiAsyncSubagentWidgetClear,
   isSettledPiAsyncSubagentStatus,
   parsePiAsyncSubagentSnapshot,
   PI_SUBAGENT_ASYNC_WIDGET_KEY,
@@ -1389,6 +1390,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
+      // Releases each launching turn's pending work before the host drops or ends its run records.
+      const releaseAsyncSubagentWork = Effect.fnUntraced(function* () {
+        const turns = new Set([...asyncSubagentRuns.values()].map((context) => context.turn));
+        for (const turn of turns) yield* emitAsyncSubagentWorkPending(turn, false);
+      });
+
       const asyncSubagentTime = (epochMillis: number | undefined, fallback: DateTime.Utc) =>
         epochMillis === undefined
           ? fallback
@@ -1686,6 +1693,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (method === "setWidget") {
           if (recordString(event, "widgetKey") !== PI_SUBAGENT_ASYNC_WIDGET_KEY) return;
+          // The pump drops clears from compaction suspends, so a clear here means no jobs remain,
+          // including runs that finished and expired while the widget was suspended.
+          if (isPiAsyncSubagentWidgetClear(event["widgetLines"])) {
+            yield* applyAsyncSubagentSnapshot({ runs: [], complete: true });
+            return;
+          }
           const snapshot = parsePiAsyncSubagentSnapshot(event["widgetLines"]);
           if (snapshot !== undefined) yield* applyAsyncSubagentSnapshot(snapshot);
           return;
@@ -2560,6 +2573,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               // Tracked here rather than in handleSessionEvent, which also
               // replays buffered wake events after they were observed.
               if (event["type"] === "compaction_start") nativeCompacting = true;
+              // pi-subagents clears its async widget for automatic compaction and redraws it on
+              // the next message or settle; that clear says nothing about its runs.
+              if (
+                nativeCompacting &&
+                event["type"] === "extension_ui_request" &&
+                event["method"] === "setWidget" &&
+                recordString(event, "widgetKey") === PI_SUBAGENT_ASYNC_WIDGET_KEY &&
+                isPiAsyncSubagentWidgetClear(event["widgetLines"])
+              )
+                return;
               if (event["type"] === "compaction_end") {
                 nativeCompacting = false;
                 // Send before the handler can probe settlement, so Pi sees the
@@ -2665,6 +2688,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           );
         }
         const existing = threadInput.existingProviderThread;
+        // A model or policy change resumes the loaded session; reloading it would drop open runs.
+        // Selections apply per turn, so the loaded session can serve the resume as is.
+        if (
+          asyncSubagentRuns.size > 0 &&
+          threadState !== null &&
+          threadState.providerThread.appThreadId === threadInput.threadId &&
+          (existing === undefined ||
+            existing.nativeThreadRef?.nativeId ===
+              threadState.providerThread.nativeThreadRef?.nativeId)
+        )
+          return threadState.providerThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
         registrationAttempted = true;
@@ -2672,6 +2706,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
           threadState = null;
+          yield* releaseAsyncSubagentWork();
           dropAsyncSubagentRuns();
           appliedModel = null;
           appliedThinking = null;
@@ -3160,8 +3195,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
               // Stop on a waiting thread ends the host's records; pi-subagents keeps the runs.
-              for (const runId of asyncSubagentRuns.keys()) endedAsyncSubagentRuns.add(runId);
-              asyncSubagentRuns.clear();
+              yield* sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  yield* releaseAsyncSubagentWork();
+                  for (const runId of asyncSubagentRuns.keys()) endedAsyncSubagentRuns.add(runId);
+                  asyncSubagentRuns.clear();
+                }),
+              );
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
               return;

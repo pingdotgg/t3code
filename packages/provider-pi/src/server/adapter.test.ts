@@ -3012,7 +3012,9 @@ describe("PiAdapterV2", () => {
       );
 
       // pi-subagents clears the widget while it compacts and drops runs past its caps.
+      yield* fake.emit({ type: "compaction_start", reason: "threshold" });
       yield* asyncSubagentSnapshot(fake, undefined);
+      yield* fake.emit({ type: "compaction_end", reason: "threshold", result: null });
       yield* asyncSubagentSnapshot(fake, [], { runs: 1, byteLimitExceeded: false });
       yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("running")]);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
@@ -3052,6 +3054,12 @@ describe("PiAdapterV2", () => {
         requestRuntimeRestart: true,
       });
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      const released = yield* takeEvent((event) => event.type === "background_work.updated");
+      assert.isTrue(
+        released.type === "background_work.updated" &&
+          !released.pending &&
+          released.providerTurnId === providerTurnId,
+      );
 
       // The stopped run keeps reporting until it ends; the next turn must not adopt it.
       yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
@@ -3062,6 +3070,53 @@ describe("PiAdapterV2", () => {
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("settles background runs that expired while the widget was suspended", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, running } = yield* launchAsyncReviewer(fake);
+      // The run finished and expired during compaction; the redraw finds no jobs and clears.
+      yield* fake.emit({ type: "compaction_start", reason: "threshold" });
+      yield* asyncSubagentSnapshot(fake, undefined);
+      yield* fake.emit({ type: "compaction_end", reason: "threshold", result: null });
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* asyncSubagentSnapshot(fake, undefined);
+      const done = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+      );
+      assert.isTrue(
+        done.type === "subagent.updated" &&
+          running.type === "subagent.updated" &&
+          done.subagent.id === running.subagent.id,
+      );
+      const settled = yield* takeEvent((event) => event.type === "background_work.updated");
+      assert.isTrue(settled.type === "background_work.updated" && !settled.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps background runs when a selection change resumes the same session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, providerThread } = yield* launchAsyncReviewer(fake);
+      const switches = fake
+        .allRequests()
+        .filter((request) => request.type === "switch_session").length;
+      const resumed = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: modelSelection("other"),
+      });
+      assert.equal(resumed.id, providerThread.id);
+      assert.equal(
+        fake.allRequests().filter((request) => request.type === "switch_session").length,
+        switches,
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      yield* asyncSubagentSnapshot(fake, [asyncReviewerRun("complete")]);
+      const settled = yield* takeEvent((event) => event.type === "background_work.updated");
+      assert.isTrue(settled.type === "background_work.updated" && !settled.pending);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

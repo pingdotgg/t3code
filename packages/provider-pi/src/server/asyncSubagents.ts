@@ -101,9 +101,16 @@ function snapshotRun(node: unknown): PiAsyncSubagentRun | undefined {
 }
 
 /**
+ * True when pi-subagents removed its async widget. It does that when it tracks no jobs, but also
+ * while it suspends the widget for automatic compaction, so callers must rule that window out.
+ */
+export function isPiAsyncSubagentWidgetClear(widgetLines: unknown): boolean {
+  return widgetLines === undefined || widgetLines === null;
+}
+
+/**
  * Reads the runs pi-subagents reports on its async widget. Returns undefined when the lines carry
- * no snapshot, including a cleared widget: pi-subagents clears it while it compacts or switches
- * sessions and reports the runs again afterwards, so a clear is not evidence that work ended.
+ * no snapshot, including a cleared widget, which `isPiAsyncSubagentWidgetClear` identifies.
  */
 export function parsePiAsyncSubagentSnapshot(
   widgetLines: unknown,
