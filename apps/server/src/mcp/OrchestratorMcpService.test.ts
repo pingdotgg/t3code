@@ -3760,6 +3760,36 @@ describe("OrchestratorMcpService thread stop", () => {
           const before = yield* orchestrator.getThreadProjection(threadId);
           const runningRun = before.runs.find((run) => run.status === "running")!;
           assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
+          // A task the thread delegated, running when the thread is stopped.
+          const childRunning = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.threadId !== threadId &&
+                event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("delegate"),
+            parentThreadId: threadId,
+            parentRunId: runningRun.id,
+            parentNodeId: runningRun.rootNodeId!,
+            task: "child work",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(childRunning);
+          const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
+            .childThreadId!;
 
           const stopped = yield* service.interruptThread(client, {
             threadId,
@@ -3772,11 +3802,19 @@ describe("OrchestratorMcpService thread stop", () => {
             runId: runningRun.id,
             status: "interrupt_requested",
           });
-          // An agent's Stop must not read as the user's.
-          const request = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
-            (item) => item.runId === runningRun.id && item.type === "run_interrupt_request",
-          );
-          assert.equal(request?.type === "run_interrupt_request" && request.message, stop.message);
+          // An agent's Stop must not read as the user's, on its thread or a task it delegated.
+          const interruptMessages = (id: ThreadId) =>
+            orchestrator
+              .getThreadProjection(id)
+              .pipe(
+                Effect.map(({ turnItems }) =>
+                  turnItems.flatMap((item) =>
+                    item.type === "run_interrupt_request" ? [item.message] : [],
+                  ),
+                ),
+              );
+          assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
+          assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
         }).pipe(Effect.provide(layerTest));
       }),
     ),
