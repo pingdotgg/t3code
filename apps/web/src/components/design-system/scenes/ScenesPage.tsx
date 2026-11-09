@@ -90,7 +90,6 @@ function TurnPlayer({ script }: { script: TurnScript }) {
           requests={requests}
           providerLabel={script.title.startsWith("Claude") ? "Claude" : "Codex"}
           onAnswer={(requestId, answers) => respond(requestId, { answers })}
-          onBuildPlan={() => insert([{ kind: "turn", prompt: "Build the plan." }])}
         />
       </section>
 

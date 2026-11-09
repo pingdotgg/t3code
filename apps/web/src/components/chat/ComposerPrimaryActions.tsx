@@ -9,7 +9,6 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ChevronLeftIcon,
-  ChevronDownIcon,
   CornerUpRightIcon,
   ListPlusIcon,
   Minimize2Icon,
@@ -18,9 +17,6 @@ import {
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
-import { Group, GroupSeparator } from "../ui/group";
-import { Menu, MenuTrigger, MenuItem, MenuPopup } from "../ui/menu";
-import { composerFloatingLayerProps } from "./composerEventScope";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -38,6 +34,8 @@ interface PendingActionState {
 }
 
 interface ComposerPrimaryActionsProps {
+  /** Footer controls (dictation) that always sit right before the primary button. */
+  children?: ReactNode;
   compact: boolean;
   canOperateThread: boolean;
   pendingAction: PendingActionState | null;
@@ -46,9 +44,6 @@ interface ComposerPrimaryActionsProps {
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
-  showPlanFollowUpPrompt: boolean;
-  onImplementPlanInNewThread?: (() => void) | undefined;
-  promptHasText: boolean;
   /** Dictation is running; Send finishes it and submits once the transcript lands. */
   voiceInputActive?: boolean;
   isSendBusy: boolean;
@@ -110,6 +105,7 @@ const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
 };
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
+  children,
   compact,
   canOperateThread,
   pendingAction,
@@ -118,9 +114,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
-  showPlanFollowUpPrompt,
-  onImplementPlanInNewThread,
-  promptHasText,
   voiceInputActive = false,
   isSendBusy,
   sendDisabledReason,
@@ -210,6 +203,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             </Button>
           )
         ) : null}
+        {children}
         <MessageActionPill
           type="submit"
           className={cn("h-8 sm:h-7", compact ? "px-3" : "px-4")}
@@ -237,35 +231,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
-    return renderStopGenerationButton(false);
-  }
-
-  if (showPlanFollowUpPrompt && onImplementPlanInNewThread) {
     return (
-      <Group data-chat-composer-implement-actions="true">
-        <Button
-          type="submit"
-          size="sm"
-          variant="default"
-          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
-        >
-          {isSendBusy ? "Sending…" : promptHasText ? "Refine" : "Implement"}
-        </Button>
-        <GroupSeparator />
-        <Menu>
-          <MenuTrigger
-            disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
-            render={<Button size="icon-sm" variant="default" aria-label="Implementation actions" />}
-          >
-            <ChevronDownIcon />
-          </MenuTrigger>
-          <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
-            <MenuItem onClick={onImplementPlanInNewThread}>Implement in a new thread</MenuItem>
-          </MenuPopup>
-        </Menu>
-      </Group>
+      <>
+        {children}
+        {renderStopGenerationButton(false)}
+      </>
     );
   }
+
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
 
   const compactTokens =
@@ -274,21 +247,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       : null;
   const compactsBeforeSend = compactTokens !== null && !keepFullHistory;
 
-  // An empty composer builds the plan from its card; text here refines it.
-  const refinesPlan = showPlanFollowUpPrompt && promptHasText;
   const submitLabel = showResume
     ? "Resume thread"
     : isEditingQueuedMessage
       ? "Update queued message"
-      : refinesPlan
-        ? "Refine plan"
-        : compactsBeforeSend
-          ? "Compact and send"
-          : isQueuing
-            ? "Queue message"
-            : isRunning
-              ? "Steer message"
-              : "Submit message";
+      : compactsBeforeSend
+        ? "Compact and send"
+        : isQueuing
+          ? "Queue message"
+          : isRunning
+            ? "Steer message"
+            : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -353,7 +322,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       </Tooltip>
     </ComposerSendPill>
   );
-  if (compactTokens === null) return submit;
+  if (compactTokens === null) {
+    return (
+      <>
+        {children}
+        {submit}
+      </>
+    );
+  }
   const compactTone = keepFullHistory ? "text-muted-foreground" : "text-warning-foreground";
 
   return (
@@ -387,6 +363,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
         </TooltipPopup>
       </Tooltip>
+      {children}
       {submit}
     </div>
   );
