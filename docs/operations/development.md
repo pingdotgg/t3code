@@ -194,6 +194,13 @@ for the security model.
 
 ## Checks
 
+The desktop artifact tests exercise real WSL archive repacking and require GNU `tar` and GNU
+`gzip` as `tar` and `gzip` on `PATH`, including when `check:changed` selects those tests.
+On macOS, install Homebrew's `gnu-tar` and `gzip`, then prepend their GNU tool directories
+(`gnu-tar/libexec/gnubin` and `gzip/bin` under Homebrew's opt directory) to `PATH`.
+Confirm `tar --version` reports GNU tar and `gzip --help` lists `--rsyncable` before testing.
+The tests run without skips; the system BSD/Apple tools do not support the repack format.
+
 `vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
 changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
 of the affected packages and their dependents, and the test files beside the changed files. It also
@@ -351,9 +358,10 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 ```
 
-NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
-passed as `--wsl-runtime`, and GNU `tar` and `gzip` as `tar` and `gzip` on `PATH` to repack it, so
-release builds bundle it on Linux; see the
+NSIS is downloaded by electron-builder. Native Windows installers can be built on Windows
+without `--wsl-runtime`. Bundling WSL support needs the Linux CLI archive passed as
+`--wsl-runtime` and a Linux build host with GNU `tar` and GNU `gzip` on `PATH`.
+Release builds bundle the runtime on Ubuntu runners; see the
 [release runbook](./release.md#windows-payload-topology-and-update-validation).
 
 ### Signing and passkeys

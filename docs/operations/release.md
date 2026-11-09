@@ -497,10 +497,11 @@ CLI archive (`t3-<version>-linux-<arch>.tar.gz`, the same arch as the Windows
 host) that the Linux desktop job hands to the Windows desktop build as
 `--wsl-runtime`. WSL runs the same files, modes and bytes a Linux user
 downloads, but the archive is a private repack: a fixed `t3/` root, sorted
-entries, zeroed times and owners, and `gzip -n --rsyncable`, so files that did
-not change between nightlies keep their compressed bytes. Repacking needs GNU
-`tar` and GNU `gzip` on the build host. WSL verifies and extracts that archive
-into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside the selected distro,
+entries, zeroed times and owners, and `gzip -n --rsyncable`. Unchanged regions
+can retain their compressed bytes when their input bytes and metadata stay
+stable; content changes can still shift later blocks. Bundling the runtime
+requires a Linux build host with GNU `tar` and GNU `gzip` on `PATH`. WSL verifies
+and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside the selected distro,
 then reuses it for later launches of the same update.
 
 Windows keeps JavaScript and package metadata inside `app.asar` and unpacks only
@@ -532,9 +533,10 @@ Cross-architecture Windows builds retain every structural and extracted-sidecar
 check, but skip executing the target Electron binary. A same-architecture build
 for each release target must exercise the primary native-load probe.
 
-NSIS differential packaging remains enabled, and updates download only the
-installer blocks that changed. The app package compresses every entry with
-LZMA except `.tar.gz` files, which the `app-builder-lib` patch stores, so the
+NSIS differential packaging remains enabled. When the cached installer,
+blockmaps, and HTTP range requests are usable, updates reuse matching installer
+blocks; otherwise the updater falls back to a full installer download. The app
+package compresses every entry with LZMA except `.tar.gz` files, which the `app-builder-lib` patch stores, so the
 WSL archive's unchanged regions keep their bytes in the installer. A change to
 the app package's layout or compression can produce a larger one-time
 download.

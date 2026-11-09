@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
+// WSL staging fixtures require GNU tar and GNU gzip on PATH; see docs/operations/development.md#checks.
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
@@ -247,7 +248,10 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
           ? archive
           : NodeZlib.gzipSync(NodeZlib.gunzipSync(archive), { level: 9 });
       yield* fs.writeFile(
-        path.join(stageDistDir, `T3-Code-${WINDOWS_PAYLOAD_FIXTURE_VERSION}-x64.exe`),
+        path.join(
+          stageDistDir,
+          `T3-Code-${WINDOWS_PAYLOAD_FIXTURE_VERSION}-${input.targetArch ?? "x64"}.exe`,
+        ),
         Buffer.concat([Buffer.from("MZ installer stub"), payload, Buffer.from("trailer")]),
       );
     }
@@ -845,9 +849,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             return Effect.succeed(mockProcess(fails ? 1 : 0));
           }),
         );
-        const error = yield* preflightWindowsDesktopBuild({
+        const wslError = yield* preflightWindowsDesktopBuild({
           arch: "x64",
           bundlesWslRuntime: true,
+        }).pipe(Effect.flip);
+        assert.instanceOf(wslError, WindowsDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(wslError.missing, ["wsl-host"]);
+        assert.include(wslError.message, "Linux build host");
+
+        const error = yield* preflightWindowsDesktopBuild({
+          arch: "x64",
+          bundlesWslRuntime: false,
         }).pipe(
           Effect.provide(
             Layer.merge(
@@ -888,7 +900,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         yield* preflightWindowsDesktopBuild({
           arch: "x64",
-          bundlesWslRuntime: true,
+          bundlesWslRuntime: false,
         }).pipe(
           Effect.provide(
             Layer.merge(

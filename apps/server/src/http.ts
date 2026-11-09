@@ -653,9 +653,9 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       immutableBuildAssets.has(relativePath);
     const cacheControl = immutable ? "public, max-age=31536000, immutable" : "no-cache";
     const validators = (info: FileSystem.File.Info) => {
-      // Deployments can preserve HTML size and mtime while changing its bundle URLs.
+      // HTML and synthetic epoch times cannot identify a deployment's contents.
       const modifiedAt = isHtml ? undefined : Option.getOrUndefined(info.mtime);
-      return modifiedAt
+      return modifiedAt && modifiedAt.getTime() > 0
         ? {
             ETag: `W/"${info.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`,
             "Last-Modified": modifiedAt.toUTCString(),

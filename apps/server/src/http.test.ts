@@ -269,6 +269,24 @@ it.layer(
       expect(changed.status).toBe(200);
       expect(changed.headers["etag"]).not.toBe(etag);
       expect(yield* changed.text).toContain("next build");
+
+      const epoch = DateTime.toDateUtc(DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"));
+      yield* fs.writeFileString(assetPath, 'export const build = "first";');
+      yield* fs.utimes(assetPath, epoch, epoch);
+      const normalized = yield* request("/app.js");
+      const legacyEtag = 'W/"1d-0"';
+      yield* fs.writeFileString(assetPath, 'export const build = "other";');
+      yield* fs.utimes(assetPath, epoch, epoch);
+      for (const headers of [
+        { "if-none-match": normalized.headers["etag"] ?? legacyEtag },
+        { "if-modified-since": normalized.headers["last-modified"] ?? epoch.toUTCString() },
+      ]) {
+        const response = yield* request("/app.js", { headers });
+        expect(response.status).toBe(200);
+        expect(response.headers["etag"]).toBeUndefined();
+        expect(response.headers["last-modified"]).toBeUndefined();
+        expect(yield* response.text).toContain("other");
+      }
     }),
   );
 

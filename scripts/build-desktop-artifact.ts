@@ -431,7 +431,6 @@ const WINDOWS_DESKTOP_BUILD_PREREQUISITES = [
     id: "msvc",
     description: "Visual Studio Build Tools with C++, Windows SDK, and Spectre libraries",
   },
-  { id: "tar", description: "tar to inspect the bundled WSL runtime archive" },
 ] as const;
 
 export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<WindowsDesktopBuildPrerequisitesMissingError>()(
@@ -442,6 +441,9 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
   },
 ) {
   override get message(): string {
+    if (this.missing.includes("wsl-host")) {
+      return "Bundling the WSL runtime requires a Linux build host with GNU tar and GNU gzip. Release builds run this step on Ubuntu runners. Omit --wsl-runtime to build a native Windows installer without bundled WSL support.";
+    }
     const details = WINDOWS_DESKTOP_BUILD_PREREQUISITES.filter((requirement) =>
       this.missing.includes(requirement.id),
     )
@@ -735,7 +737,7 @@ export class WslRuntimeArchiveStagingError extends Schema.TaggedError<WslRuntime
 ) {
   override get message(): string {
     if (this.reason === "tools-missing") {
-      return `Staging the WSL runtime needs ${(this.missingTools ?? []).join(" and ")} as \`tar\` and \`gzip\` on PATH. Release builds bundle it on Ubuntu runners.`;
+      return `Staging the WSL runtime needs ${(this.missingTools ?? []).join(" and ")} as \`tar\` and \`gzip\` on PATH. Release builds run this step on Ubuntu runners, which provide GNU tar and GNU gzip on PATH.`;
     }
     if (this.reason === "unexpected-root") {
       return `WSL runtime archive ${this.archivePath} is not this build's Linux CLI archive: ${this.detail ?? ""}`;
@@ -2051,6 +2053,12 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
     const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
+    if (input.bundlesWslRuntime) {
+      return yield* new WindowsDesktopBuildPrerequisitesMissingError({
+        missing: ["wsl-host"],
+        rustTarget,
+      });
+    }
     const reuseResourceMonitor = yield* Config.Boolean(
       "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
     ).pipe(Config.withDefault(false));
@@ -2076,9 +2084,6 @@ export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBu
               ]),
               "Visual Studio Build Tools",
             ),
-        tar: input.bundlesWslRuntime
-          ? desktopBuildProbeSucceeds(ChildProcess.make("tar.exe", ["--version"]), "tar")
-          : Effect.succeed(true),
       },
       { concurrency: "unbounded" },
     );
@@ -3040,8 +3045,8 @@ const GNU_WSL_RUNTIME_REPACK_TOOLS = [
 /**
  * Repacks the Linux CLI archive the installer ships for WSL: the same files and modes under a
  * fixed root, sorted, with zeroed times and owners, through `gzip --rsyncable`. The installer
- * stores it uncompressed, so unchanged files reach the NSIS blockmap as unchanged bytes and a
- * differential update skips them. The digest pins what WSL extracts and names its cache.
+ * stores it uncompressed to preserve matching regions for differential updates; content changes
+ * can still shift later blocks. The digest pins what WSL extracts and names its cache.
  */
 export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
   readonly sourceArchivePath: string;
