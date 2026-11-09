@@ -1,19 +1,5 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 
-/** Top-level numbered items outside code fences: the plan's steps. 0 when it has none. */
-export function proposedPlanStepCount(planMarkdown: string): number {
-  let inFence = false;
-  let count = 0;
-  for (const line of planMarkdown.split(/\r?\n/)) {
-    if (/^\s{0,3}(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (!inFence && /^\s{0,1}\d+[.)]\s+\S/.test(line)) count += 1;
-  }
-  return count;
-}
-
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   options?: {
@@ -66,36 +52,6 @@ function sanitizePlanFileSegment(input: string): string {
 }
 
 export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
-
-export function buildPlanImplementationPrompt(planMarkdown: string): string {
-  return `${PLAN_IMPLEMENTATION_PROMPT_PREFIX}${planMarkdown.trim()}`;
-}
-
-export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
-  text: string;
-  interactionMode: "default" | "plan";
-} {
-  const trimmedDraftText = input.draftText.trim();
-  if (trimmedDraftText.length > 0) {
-    return {
-      text: trimmedDraftText,
-      interactionMode: "plan",
-    };
-  }
-
-  return {
-    text: buildPlanImplementationPrompt(input.planMarkdown),
-    interactionMode: "default",
-  };
-}
-
-export function buildPlanImplementationThreadTitle(planMarkdown: string): string {
-  const title = proposedPlanTitle(planMarkdown);
-  if (!title) {
-    return "Implement plan";
-  }
-  return `Implement ${title}`;
-}
 
 export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
   const title = proposedPlanTitle(planMarkdown);

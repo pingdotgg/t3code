@@ -4606,6 +4606,19 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   );
 }
 
+/* A split's unfocused panes draw their tab labels a tier down (strong to muted, muted to dim),
+   so the window has one strong tab label and it marks focus. Declared on the notch, so black
+   chrome's tokens there are the ones that step down. */
+[data-pane-notch][data-pane-notch-unfocused] {
+  --pane-notch-unfocused-strong: var(--contrast-muted-foreground);
+  --pane-notch-unfocused-muted: var(--contrast-dim-foreground);
+
+  & > * {
+    --contrast-strong-foreground: var(--pane-notch-unfocused-strong);
+    --contrast-muted-foreground: var(--pane-notch-unfocused-muted);
+  }
+}
+
 body {
   /* Reference the theme token (not a literal stack) so the Settings ->
      Appearance runtime override of --font-sans reaches all interface text. */
@@ -5189,6 +5202,15 @@ body {
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
+}
+
+/* Keep overflow discoverable when the edge fade falls between columns. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
 
 :root {

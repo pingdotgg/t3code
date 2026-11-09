@@ -8,6 +8,7 @@ import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
+import { useDraggable } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -879,6 +880,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handleClick = (event: ReactMouseEvent) => {
     onThreadClick(event, threadRef);
   };
+  const handleAuxClick = (event: ReactMouseEvent) => {
+    if (event.button === 1) onThreadClick(event, threadRef);
+  };
+  // Keep the browser's middle-click autoscroll from starting.
+  const handleMouseDown = (event: ReactMouseEvent) => {
+    if (event.button === 1) event.preventDefault();
+  };
   const handleAcknowledgeWokeClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1292,6 +1300,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                   inFolder && "ps-9",
                 )}
                 onClick={handleClick}
+                onAuxClick={handleAuxClick}
+                onMouseDown={handleMouseDown}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
@@ -1469,6 +1479,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
+              onAuxClick={handleAuxClick}
+              onMouseDown={handleMouseDown}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
@@ -1679,9 +1691,17 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     isActive: props.isRouteActive,
   });
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(
+  // Results only drag out as chat context; the row keeps its own listbox attributes.
+  const { listeners: dragListeners, setNodeRef: setDragNodeRef } = useDraggable({
+    id: scopedThreadKey(threadRef),
+  });
+  const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(
     props.isHighlighted || props.isRouteActive,
   );
+  const rowRef = (row: HTMLElement | null) => {
+    setDragNodeRef(row);
+    return leaseRowRef(row);
+  };
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
   const branchTarget =
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
@@ -1751,6 +1771,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               aria-current={accessibility.current}
               aria-describedby={`${props.resultId}-pr`}
               aria-label={accessibility.label}
+              {...dragListeners}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(

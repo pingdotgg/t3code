@@ -21,6 +21,7 @@ import {
 } from "./layoutModel";
 import { useLayoutBehavior, type LayoutNewTabPosition } from "./layoutBehavior";
 import { arrangeLayoutChange, useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
+import { followLayoutCompanions } from "./openRules";
 import { layoutChatRoute } from "./useLayoutSettingsSync";
 import { layoutPageHref, layoutRoutePage } from "./pageNavigation";
 import { isAppModalPage, getMainAppHref } from "../components/sidebar/mainAppLocation";
@@ -195,11 +196,13 @@ export function useLayoutRouteSync(
     if (!request.pending) return;
     const { base, derived, content, promotedDraftId, newTab } = request;
     if (content && derived !== base) {
-      useLayoutStore
-        .getState()
-        .commitDerived(base, derived, (current) =>
-          showRouteInLayout(current, content, promotedDraftId, newTab),
-        );
+      followLayoutCompanions(() =>
+        useLayoutStore
+          .getState()
+          .commitDerived(base, derived, (current) =>
+            showRouteInLayout(current, content, promotedDraftId, newTab),
+          ),
+      );
     }
     if (newTab && content) useLayoutStore.getState().clearNewTabRequest();
   }, [appModalPaused, request, routeKey]);

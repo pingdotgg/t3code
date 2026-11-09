@@ -1217,6 +1217,11 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     databaseStorage,
     databaseCompactionRecommendations,
+    reclaimDatabaseSpace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reclaim-database-space",
+      tag: WS_METHODS.serverReclaimDatabaseSpace,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:storage-cleanup-report",
       tag: WS_METHODS.serverGetStorageCleanupReport,

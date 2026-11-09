@@ -183,10 +183,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       // Like main: several open projects ask which one. The thread then replaces the
       // focused tab; cmd+T is the shortcut that adds a tab.
       "chat.new": (event) => {
-        const { legacySidebarEnabled } = getClientSettings();
         const groups = readProjectGroups();
         if (
-          !legacySidebarEnabled &&
           !shouldCreateNewThreadInCurrentProject(
             false,
             groups.filter((group) => !group.archived).length,
