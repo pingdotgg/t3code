@@ -950,7 +950,7 @@ describe("newThreadNoProjectIndex", () => {
   });
 
   it("goes after the pinned projects and the first unpinned one", () => {
-    expect(newThreadNoProjectIndex([entry(true), entry(true), entry(false, true), entry()])).toBe(
+    expect(newThreadNoProjectIndex([entry(false, true), entry(true), entry(true), entry()])).toBe(
       3,
     );
     expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
