@@ -100,6 +100,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The latest merge queue removal already reported; absent means none since startedAt. */
+  dequeuedThrough: Schema.optional(IsoDateTime),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

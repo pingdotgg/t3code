@@ -309,6 +309,13 @@ export const PullRequestReviewThreadConnection = Schema.Struct({
 })
 export interface PullRequestReviewThreadConnection extends Schema.Struct.Type<typeof PullRequestReviewThreadConnection.fields> {}
 
+/** The connection type for PullRequestTimelineItems. */
+export const PullRequestTimelineItemsConnection = Schema.Struct({
+  /** Identifies the count of items after applying `before` and `after` filters. */
+  filteredCount: Shared.Int
+})
+export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
+
 /** Represents a count of the state of a check run. */
 export const CheckRunStateCount = Schema.Struct({
   /** The state of a check run. */
@@ -378,6 +385,8 @@ export const PullRequestWatchFingerprintRepositoryPullRequestPullRequest = Schem
   reviews: Schema.NullOr(ReviewsPullRequestReviewConnection),
   /** The list of all review threads for this pull request. */
   reviewThreads: PullRequestReviewThreadConnection,
+  /** A list of events, comments, commits, etc. associated with the pull request. */
+  mergeQueueRemovals: PullRequestTimelineItemsConnection,
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestWatchFingerprintRepositoryPullRequestCommitsPullRequestCommitConnection
 })
@@ -399,7 +408,7 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
       { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}mergeQueueRemovals:timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){filteredCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
     ],
     fragments: []
   },

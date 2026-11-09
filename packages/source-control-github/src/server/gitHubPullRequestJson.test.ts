@@ -403,6 +403,7 @@ describe("pull request detail decoding", () => {
             headRef: null,
             author: null,
             autoMergeRequest: null,
+            lastMergeQueueRemoval: { nodes: [] },
             viewerCanUpdate: true,
             viewerDidAuthor: false,
             viewerCanUpdateBranch: false,
@@ -556,6 +557,38 @@ describe("pull request detail decoding", () => {
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+  });
+
+  it.each([
+    ["failed_checks", "failed-checks"],
+    ["checks_timed_out", "checks-timed-out"],
+    ["merge_conflict", "merge-conflict"],
+    ["manual", "manual"],
+    ["branch_protection", "other"],
+    [null, "other"],
+  ])("reads a merge queue removal for %s as %s", (reason, expected) => {
+    const removal = {
+      __typename: "RemovedFromMergeQueueEvent",
+      reason,
+      createdAt: "2026-07-05T00:00:00Z",
+      actor: { __typename: "User", login: "octocat" },
+    };
+    expect(detailOf([], { lastMergeQueueRemoval: { nodes: [removal] } }).mergeQueueRemoval).toEqual(
+      { reason: expected, at: "2026-07-05T00:00:00Z", actor: "octocat" },
+    );
+  });
+
+  it("reads a merge by the queue, or no removal at all, as no removal", () => {
+    const merged = {
+      __typename: "RemovedFromMergeQueueEvent",
+      reason: "merged",
+      createdAt: "2026-07-05T00:00:00Z",
+      actor: null,
+    };
+    expect(
+      detailOf([], { lastMergeQueueRemoval: { nodes: [merged] } }).mergeQueueRemoval,
+    ).toBeNull();
+    expect(detailOf([]).mergeQueueRemoval).toBeNull();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -1779,6 +1812,7 @@ describe("pull request watch fingerprints", () => {
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly dequeued?: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1786,6 +1820,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
+      mergeQueueRemovals: { filteredCount: input.dequeued ?? 0 },
       commits: {
         nodes: [
           {
@@ -1812,8 +1847,11 @@ describe("pull request watch fingerprints", () => {
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
+    const dequeued = fingerprint({ ...base, dequeued: 1 });
 
     expect(checkFinished.status).not.toBe(before.status);
+    expect(dequeued.status).not.toBe(before.status);
+    expect(dequeued.remarks).toBe(before.remarks);
     expect(checkFinished.remarks).toBe(before.remarks);
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);

@@ -111,6 +111,18 @@ query PullRequestCore(
       autoMergeRequest {
         mergeMethod
       }
+      # GitHub also logs a removal with reason `merged` when the queue merges the pull request.
+      lastMergeQueueRemoval: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+        nodes {
+          ... on RemovedFromMergeQueueEvent {
+            reason
+            createdAt
+            actor {
+              login
+            }
+          }
+        }
+      }
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch

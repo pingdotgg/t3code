@@ -5,6 +5,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -595,6 +596,22 @@ export const PullRequestReportStateInput = Schema.Struct({
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
+export const PullRequestMergeQueueRemovalReason = Schema.Literals([
+  "failed-checks",
+  "checks-timed-out",
+  "merge-conflict",
+  "manual",
+  "other",
+]);
+export type PullRequestMergeQueueRemovalReason = typeof PullRequestMergeQueueRemovalReason.Type;
+
+export const PullRequestMergeQueueRemoval = Schema.Struct({
+  reason: PullRequestMergeQueueRemovalReason,
+  at: IsoDateTime,
+  actor: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -635,6 +652,11 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
   maintainerCanModify: Schema.optional(Schema.Boolean),
+  /**
+   * The latest time the merge queue dropped the pull request without merging it. Null when it
+   * never has; absent where the host reports no merge queue.
+   */
+  mergeQueueRemoval: ForwardCompatibleOptional(Schema.NullOr(PullRequestMergeQueueRemoval)),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

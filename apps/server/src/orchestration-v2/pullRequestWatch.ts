@@ -3,6 +3,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
+  PullRequestMergeQueueRemoval,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -19,7 +20,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "dequeued"; readonly removal: PullRequestMergeQueueRemoval };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -35,7 +37,13 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -136,6 +144,16 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // Queue checks run on a merge group commit, so a removal is the only sign they failed.
+  const removal = detail.mergeQueueRemoval;
+  const dequeued =
+    removal != null &&
+    Date.parse(removal.at) > Date.parse(watch.dequeuedThrough ?? watch.startedAt);
+  if (dequeued && (removal.actor === null || removal.actor.toLowerCase() !== own)) {
+    changes.push({ kind: "dequeued", removal });
+  }
+  const dequeuedThrough = dequeued ? removal.at : watch.dequeuedThrough;
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -153,6 +171,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      ...(dequeuedThrough === undefined ? {} : { dequeuedThrough }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -210,6 +229,28 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "dequeued":
+      return [
+        `- ${dequeuedLine(change.removal, context.baseBranch)} It will not merge until it is queued again.`,
+      ];
+  }
+}
+
+const QUEUE_CHECKS =
+  "Those checks ran on a temporary merge group commit, not on the pull request's head, so they are not listed here.";
+
+function dequeuedLine(removal: PullRequestMergeQueueRemoval, baseBranch: string): string {
+  switch (removal.reason) {
+    case "failed-checks":
+      return `The merge queue removed it because checks failed on the merge group. ${QUEUE_CHECKS}`;
+    case "checks-timed-out":
+      return `The merge queue removed it because checks on the merge group did not finish in time. ${QUEUE_CHECKS}`;
+    case "merge-conflict":
+      return `The merge queue removed it because it conflicts with ${baseBranch} or with pull requests ahead of it in the queue.`;
+    case "manual":
+      return `${removal.actor ?? "Someone"} removed it from the merge queue.`;
+    case "other":
+      return "The merge queue removed it.";
   }
 }
 
@@ -219,6 +260,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  dequeued: "left merge queue",
 };
 
 export function pullRequestWatchMessage(input: {
@@ -242,7 +284,10 @@ export function pullRequestWatchMessage(input: {
       : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      (change.kind === "dequeued" && change.removal.reason !== "manual"),
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");

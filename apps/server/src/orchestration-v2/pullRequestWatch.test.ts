@@ -389,6 +389,32 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports a merge queue removal once, never the agent's own or one before the watch", () => {
+    const removal = { reason: "failed-checks", at: "2026-10-02T12:20:00Z", actor: null } as const;
+    const dequeued = detail({ mergeQueueRemoval: removal });
+    const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
+    const first = evaluatePullRequestWatch(tired, dequeued, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "dequeued", removal }]);
+    assert.equal(first.next.wakes, 0);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, dequeued, noRemarks).changes, []);
+    const { text, notification } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: "aaaaaaaaaa",
+      report: first,
+    });
+    assert.include(text, "- The merge queue removed it because checks failed on the merge group.");
+    assert.equal(notification.outcome, "failed");
+
+    const older = { ...removal, at: "2026-10-02T11:00:00Z" };
+    const before = evaluatePullRequestWatch(watch(), detail({ mergeQueueRemoval: older }), []);
+    assert.deepEqual(before.changes, []);
+    const own = { reason: "manual", at: removal.at, actor: "Agent-User" } as const;
+    const pulled = evaluatePullRequestWatch(watch(), detail({ mergeQueueRemoval: own }), []);
+    assert.deepEqual(pulled.changes, []);
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(

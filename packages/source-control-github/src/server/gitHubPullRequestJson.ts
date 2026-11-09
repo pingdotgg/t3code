@@ -18,6 +18,7 @@ import type {
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -472,6 +473,36 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
     default:
       return "unknown";
   }
+}
+
+// GitHub types `reason` as a free string; these cases are the values seen on real pull requests.
+function toMergeQueueRemovalReason(reason: string | null): PullRequestMergeQueueRemoval["reason"] {
+  switch (reason) {
+    case "failed_checks":
+      return "failed-checks";
+    case "checks_timed_out":
+      return "checks-timed-out";
+    case "merge_conflict":
+      return "merge-conflict";
+    case "manual":
+      return "manual";
+    default:
+      return "other";
+  }
+}
+
+type MergeQueueRemovals = NonNullable<
+  NonNullable<PullRequestCore.Result["repository"]>["pullRequest"]
+>["lastMergeQueueRemoval"];
+
+function toMergeQueueRemoval(removals: MergeQueueRemovals): PullRequestMergeQueueRemoval | null {
+  const node = nodesOf(removals)[0];
+  if (node?.__typename !== "RemovedFromMergeQueueEvent" || node.reason === "merged") return null;
+  return {
+    reason: toMergeQueueRemovalReason(node.reason),
+    at: node.createdAt,
+    actor: trimmed(node.actor?.login),
+  };
 }
 
 function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod | undefined {
@@ -1010,6 +1041,7 @@ export function toPullRequestWatchFingerprint(
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
+      pr.mergeQueueRemovals.filteredCount,
     ].join(" "),
     remarks: [
       pr.comments.totalCount,
@@ -1028,6 +1060,7 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
   readonly checksTruncated: boolean;
+  readonly mergeQueueRemoval: PullRequestMergeQueueRemoval | null;
 }
 
 type CoreRequestedReviewer = NonNullable<
@@ -1098,6 +1131,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             viewerCanUpdate: pr.viewerCanUpdateBranch,
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
+    mergeQueueRemoval: toMergeQueueRemoval(pr.lastMergeQueueRemoval),
   };
 }
 
