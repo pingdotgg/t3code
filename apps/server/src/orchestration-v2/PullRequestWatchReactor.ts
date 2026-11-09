@@ -706,7 +706,7 @@ export const make = Effect.gen(function* () {
       return undefined;
     }
     const notifications = yield* check;
-    if (notifications == null) return true;
+    if (notifications == null) return undefined;
     const thread = notifications.threads.find(
       (candidate) => candidate.number === group.targets[0]!.link.number,
     );

@@ -8946,7 +8946,7 @@ const watchCostScenarios = [
     ceilingWake: 120,
     saves: 0,
   },
-  { name: "notifications readable again", notificationsReadableFrom: 60, saves: 32 },
+  { name: "notifications readable again", notificationsReadableFrom: 60, saves: 31 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
 
@@ -8999,7 +8999,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         });
       yield* watch(true);
 
-      const cost = { graphql: 0, core: 0, fingerprints: 0 };
+      const cost = { graphql: 0, core: 0, refused: 0, fingerprints: 0 };
       const editAt =
         scenario.reviewCommentEdit === undefined ? null : at(scenario.reviewCommentEdit);
       const notificationTimes = (now: number) => {
@@ -9083,8 +9083,10 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                 }),
               notifications: ({ since }) =>
                 Effect.map(Clock.currentTimeMillis, (now) => {
-                  if (!notificationsReadable || now < at(scenario.notificationsReadableFrom ?? 0)) {
+                  if (!notificationsReadable) return null;
+                  if (now < at(scenario.notificationsReadableFrom ?? 0)) {
                     cost.core += 1;
+                    cost.refused += 1;
                     return null;
                   }
                   const threads = [...notificationTimes(now)]
@@ -9099,6 +9101,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
       );
 
       const totals: Array<number> = [];
+      const graphql: Array<number> = [];
+      const refused: Array<number> = [];
       const seen = new Set<string>();
       const wakes: Array<readonly [number, string]> = [];
       for (let minute = 0; minute <= 120; minute += 2) {
@@ -9107,6 +9111,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         yield* reactor.sweep;
         cost.graphql += Math.ceil(cost.fingerprints / 25);
         totals.push(cost.graphql + cost.core);
+        graphql.push(cost.graphql);
+        refused.push(cost.refused);
         const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
         for (const message of messages) {
           const summary = message.notification?.summary;
@@ -9116,7 +9122,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         }
       }
       yield* watch(false);
-      return { totals, wakes };
+      return { totals, graphql, refused, wakes };
     });
 
   it.effect.each(watchCostScenarios)(
@@ -9126,7 +9132,11 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         const baseline = yield* runWatch(scenario, false, "baseline");
         const branch = yield* runWatch(scenario, true, "notifications");
         branch.totals.forEach((total, index) => {
-          assert.isAtMost(total, baseline.totals[index]!);
+          assert.isAtMost(branch.graphql[index]!, baseline.graphql[index]!);
+          assert.isAtMost(total - branch.refused[index]!, baseline.totals[index]!);
+          if (index * 2 < (scenario.notificationsReadableFrom ?? 0)) {
+            assert.equal(branch.graphql[index], baseline.graphql[index]);
+          }
         });
         assert.equal(baseline.totals.at(-1)! - branch.totals.at(-1)!, scenario.saves);
         assert.deepEqual(
