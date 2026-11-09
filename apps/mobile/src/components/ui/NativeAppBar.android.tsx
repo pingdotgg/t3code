@@ -22,7 +22,7 @@ export function NativeAppBar(props: {
     // instead of at zero height until Compose has measured and reported the bar.
     <NativeThemeHost style={{ width: "100%", height: layout.height }}>
       <TopAppBar
-        applyWindowInsets={false}
+        windowInsets={{}}
         // Every header shares the list toolbar's height, so titles line up across panes.
         modifiers={[fillMaxWidth(), height(layout.height)]}
         colors={{
