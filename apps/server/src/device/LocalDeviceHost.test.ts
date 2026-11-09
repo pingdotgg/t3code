@@ -122,7 +122,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy, runs };
+  return { host, fs, baseDir, stateDir, hub, daemonHealthy, runs };
 });
 
 describe("AgentDevice startup", () => {
@@ -307,6 +307,30 @@ describe("AgentDevice startup", () => {
         "--state-dir",
         stateDir,
       ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops a previous server's daemon with the agent-device version it recorded", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, fs, baseDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const olderInstall = path.join(baseDir, "tools", "agent-device", "0.0.1");
+      const olderEntry = path.join(
+        olderInstall,
+        "node_modules",
+        "agent-device",
+        "bin",
+        "agent-device.mjs",
+      );
+      yield* fs.makeDirectory(path.dirname(olderEntry), { recursive: true });
+      yield* fs.writeFileString(olderEntry, "");
+      yield* fs.writeFileString(path.join(olderInstall, ".install-complete"), "0.0.1");
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(olderEntry);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

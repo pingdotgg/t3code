@@ -47,7 +47,9 @@ import {
   isAgentDeviceInstalled,
   isDeviceHubInstalled,
   deviceToolVersions,
+  AGENT_DEVICE_VERSION,
   DEVICE_HUB_VERSION,
+  installedAgentDeviceEntry,
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
@@ -624,34 +626,35 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }
   });
 
-  // The daemon may predate this process (an earlier server was killed), so derive
-  // the tool from the install rather than from this session's startup.
+  // The daemon may predate this process (an earlier server was killed, possibly on an
+  // older pin), so stop it with the CLI of its recorded version when that is installed.
   const stopAgentDeviceDaemon = Effect.gen(function* () {
     if (!(yield* fs.exists(daemonFilePath()))) return;
-    const installed = yield* isAgentDeviceInstalled(config.baseDir);
-    if (!installed) return;
-    const agentTool = yield* ensureAgentDevice(config.baseDir);
+    const recorded = yield* readDaemonFile().pipe(Effect.option);
+    const entryPath = yield* installedAgentDeviceEntry(config.baseDir, [
+      ...(Option.isSome(recorded) && recorded.value.version ? [recorded.value.version] : []),
+      AGENT_DEVICE_VERSION,
+    ]);
+    if (!entryPath) return;
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
     yield* runner.run({
       command: nodePath,
       args: [
-        agentTool.entryPath,
+        entryPath,
         "daemon",
         "stop",
         "--state-dir",
         agentDeviceStateDir(path, config.stateDir),
       ],
       env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-      // Shutdown must finish inside the desktop's 5 s quit grace.
-      timeout: Duration.seconds(3),
+      timeout: Duration.seconds(10),
       timeoutBehavior: "timedOutResult",
     });
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
-    Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.ignore,
   );
 
