@@ -24,6 +24,6 @@ describe("MCP app links", () => {
     for (const url of [action?.link, app.docs].filter((value) => value != null)) {
       expect(new URL(url).protocol).toBe("https:");
     }
-    if (action?.appLink) expect(action.appLink).toBe("grokbot://app");
+    expect(action?.appLink ?? null).toBe(app.id === "grok-bot" ? "grokbot://app" : null);
   });
 });

@@ -687,8 +687,9 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       toastManager.add({
         type: "success",
         title: copy.title,
-        // A browser can block an open that follows the copy; this keeps a way through.
-        ...(isElectron
+        // A browser can block an open that follows the copy, and no platform reliably reports an
+        // app link nothing handles (Linux says it opened), so these keep a way through.
+        ...(isElectron && appLink === null
           ? {}
           : {
               actionProps: {
