@@ -5295,6 +5295,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          progress: () => Effect.succeed({ pending: 0, settles: 0 }),
+          awaitSettle: () => Effect.void,
         }),
       );
       yield* runtime.resumeThread({

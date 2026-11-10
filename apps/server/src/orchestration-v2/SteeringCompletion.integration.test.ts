@@ -1490,6 +1490,9 @@ it.effect(
         const requests = Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
           take: Effect.never,
+          settle: () => Effect.void,
+          progress: () => Effect.succeed({ pending: 0, settles: 0 }),
+          awaitSettle: () => Effect.void,
         });
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
