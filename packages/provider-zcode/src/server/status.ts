@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import {
   type CustomModelSetting,
   type ModelCapabilities,
@@ -5,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type { ZcodeSettings } from "../settings.ts";
 import { resolveZcodeCatalogFiles, resolveZcodeLaunchCommand } from "./zcodeRuntime.ts";
-import { zcodeEntitledModels } from "./zcodeRequestAuth.ts";
+import { zcodeEntitledModels, zcodeOAuthSelectedFamilies } from "./zcodeRequestAuth.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -133,9 +134,14 @@ const runZcodeDoctor = Effect.fn("ZcodeProviderStatus.runDoctor")(function* (
   );
 });
 
-/** Auth is CLI-managed (`zcode login`); the probe only reads the credential store's active provider. */
+/**
+ * Auth is CLI-managed (`zcode login`); the probe derives status from the same credential-store
+ * keys and setting.json plan selections the provisioning ladder accepts, so an account that can
+ * make ZCode requests never shows a false `zcode login` warning.
+ */
 export const zcodeAuthFromCredentials = (
   data: unknown,
+  setting: unknown,
 ): "authenticated" | "unauthenticated" | "unknown" => {
   if (Array.isArray(data)) {
     const hasActiveProvider = data.some(
@@ -147,32 +153,39 @@ export const zcodeAuthFromCredentials = (
     );
     return hasActiveProvider ? "authenticated" : "unauthenticated";
   }
-  // The CLI store is a JSON object keyed by credential id.
+  // Object stores are judged like provisioning, which ignores any oauth:active_provider marker.
   if (typeof data === "object" && data !== null) {
-    const active = (data as Record<string, unknown>)["oauth:active_provider"];
-    if (active === undefined) return "unauthenticated";
-    return typeof active === "string" && active.length > 0 ? "authenticated" : "unknown";
+    return zcodeOAuthSelectedFamilies(setting, data as Record<string, unknown>).size > 0
+      ? "authenticated"
+      : "unauthenticated";
   }
   return "unknown";
 };
 
-const decodeCredentials = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeStoreJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const readZcodeAuthStatus = Effect.fn("ZcodeProviderStatus.readAuthStatus")(function* (
   fileSystem: FileSystem.FileSystem,
   credentialsPath: string,
+  settingPath: string,
 ): Effect.fn.Return<"authenticated" | "unauthenticated" | "unknown", never, never> {
   const raw = yield* fileSystem.readFile(credentialsPath).pipe(
     Effect.map((bytes) => new TextDecoder().decode(bytes)),
     Effect.orElseSucceed(() => undefined),
   );
   if (raw === undefined) return "unauthenticated" as const;
-  return zcodeAuthFromCredentials(Option.getOrUndefined(decodeCredentials(raw)));
+  const setting = yield* fileSystem.readFileString(settingPath).pipe(Effect.option);
+  return zcodeAuthFromCredentials(
+    Option.getOrUndefined(decodeStoreJson(raw)),
+    Option.isNone(setting) ? undefined : Option.getOrUndefined(decodeStoreJson(setting.value)),
+  );
 });
 
-const resolveZcodeCredentialsPath = (environment: NodeJS.ProcessEnv): string => {
-  const dataBaseDir = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME || "";
-  return `${dataBaseDir}/.zcode/v2/credentials.json`;
+const resolveZcodeDataPath = (environment: NodeJS.ProcessEnv, file: string): string => {
+  // Windows runs without HOME; os.homedir() (USERPROFILE there) keeps the probe on the real store.
+  const dataBaseDir =
+    environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME || NodeOS.homedir();
+  return `${dataBaseDir}/.zcode/v2/${file}`;
 };
 
 export const buildInitialZcodeProviderSnapshot = Effect.fn(
@@ -338,7 +351,8 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
 
   const authStatus = yield* readZcodeAuthStatus(
     fileSystem,
-    resolveZcodeCredentialsPath(environment),
+    resolveZcodeDataPath(environment, "credentials.json"),
+    resolveZcodeDataPath(environment, "setting.json"),
   );
   // Enumerate the picker from the CLI's own catalog + entitlement ladder; fall back to the
   // default-only list when the catalog files are absent (fresh installs before first login).
