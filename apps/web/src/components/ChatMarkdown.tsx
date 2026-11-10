@@ -148,6 +148,7 @@ import {
   resolveMarkdownFileHostPath,
 } from "../markdownFileHostPath";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { useSaveFileAs } from "./files/useSaveFileAs";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
@@ -552,6 +553,8 @@ function useChatMarkdownState({
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const saveFileAs = useSaveFileAs();
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
     canOperateHost &&
@@ -875,6 +878,16 @@ function useChatMarkdownState({
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
+        onSave={
+          threadRef && canReadFiles
+            ? () =>
+                void saveFileAs({
+                  environmentId: threadRef.environmentId,
+                  threadId: threadRef.threadId,
+                  path: async () => (await resolveHostPath()).absolutePath,
+                })
+            : undefined
+        }
         onOpenInBrowser={
           threadRef &&
           canOperatePreview &&
