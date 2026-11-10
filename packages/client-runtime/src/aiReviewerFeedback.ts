@@ -24,14 +24,15 @@ const SUGGESTION_FENCE = /^```suggestion\r?\n([\s\S]*?)^```/mu;
 const BADGE_IMAGE_LINE =
   /^\s*(?:!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)|<img\b[^>]*\bsrc=["'](https?:\/\/[^"']+)["'][^>]*>)\s*$/imu;
 const CODERABBIT_HEADER = /^[ \t]*_(?:[^_\n|]+?)_\s*\|\s*_(?:[^_\n]+?)_[ \t]*$/mu;
-const MACROSCOPE_SEVERITY = /^[ \t]*[🟢🟡🟠🔴⚪]\s*\*\*(Low|Medium|High|Critical)\*\*[ \t]*$/mu;
+const MACROSCOPE_SEVERITY =
+  /^[ \t]*[🟢🟡🟠🔴⚪]\s*\*\*(Low|Medium|High|Critical)\*\*(?:[ \t]+(`[^`]+`))?[ \t]*$/mu;
 const BUGBOT_SEVERITY = /^[ \t]*\*\*(Critical|High|Medium|Low)\s+Severity\*\*[ \t]*$/mu;
 const DEVIN_TITLE = /^[ \t]*([🟢🟡🟠🔴⚪🔵])\s*\*\*(.+?)\*\*[ \t]*$/mu;
 const GEMINI_SEVERITY_LINE =
   /^[ \t]*(?:\*\*)?\[severity:\s*(critical|high|medium|low)\](?:\*\*)?(?:\s+(.+))?$/imu;
 const GEMINI_BADGE_LINE =
   /^[ \t]*!\[(critical|high|medium|low|high-priority)\]\((https?:\/\/[^)\s]*gstatic\.com\/codereviewagent\/[^)\s]+)\)[ \t]*$/imu;
-const AGENT_PROMPT_SUMMARY = /prompt\s+for\s+ai/iu;
+const AGENT_PROMPT_SUMMARY = /prompt\s+for\s+ai|copy\s+this\s+ai\s+prompt/iu;
 const COMMITTABLE_SUMMARY = /committable\s+suggestion/iu;
 const SUGGESTION_SUMMARY =
   /proposed\s+fix|suggested\s+(?:fix|tweak|diff|cleanup|change|direction|assertion)|example\s+formatting/iu;
@@ -139,6 +140,20 @@ function parseHeader(prologue: string): {
   }
 
   const first = lines[index]!.trim();
+  const modernRabbit = /^\*\*\s*(Minor|Major|Critical|Trivial)\s*\*\*\s*·\s*\*\*([^*]+)\*\*/u.exec(
+    first,
+  );
+  if (modernRabbit) {
+    return {
+      severity: modernRabbit[1]!,
+      category: modernRabbit[2]!.trim(),
+      rest: lines
+        .slice(index + 1)
+        .join("\n")
+        .trim(),
+      title: null,
+    };
+  }
   const rabbit = /^_(.+?)_\s*\|\s*_(.+?)_$/u.exec(first);
   if (rabbit) {
     return {
@@ -152,15 +167,12 @@ function parseHeader(prologue: string): {
     };
   }
 
-  const macro = /^[🟢🟡🟠🔴⚪]\s*\*\*(Low|Medium|High|Critical)\*\*$/u.exec(first);
+  const macro = MACROSCOPE_SEVERITY.exec(first);
   if (macro) {
     return {
       severity: macro[1]!,
       category: null,
-      rest: lines
-        .slice(index + 1)
-        .join("\n")
-        .trim(),
+      rest: [...lines.slice(index + 1), macro[2] ?? ""].join("\n").trim(),
       title: null,
     };
   }
@@ -262,6 +274,9 @@ function dropBadgeLines(text: string): string {
 
 function stripReviewerChrome(text: string): string {
   return text
+    .replace(/<picture\b[^>]*>[\s\S]*?<\/picture\s*>/giu, (picture) =>
+      /(?:src|srcset)=["'][^"']*coderabbit_public_assets/iu.test(picture) ? "" : picture,
+    )
     .replace(DEVIN_BADGE_CHROME, "")
     .replace(BUGBOT_FIX_CHROME, "")
     .replace(GREPTILE_REMEMBER, "")
@@ -297,7 +312,6 @@ function isAiReviewerSignal(
   if (header.category !== null) return true;
   if (details.some((block) => AGENT_PROMPT_SUMMARY.test(block.summary))) return true;
   if (details.some((block) => COMMITTABLE_SUMMARY.test(block.summary))) return true;
-  if (AI_REVIEWER_MARKER.test(body)) return true;
   if (CODERABBIT_HEADER.test(body) || MACROSCOPE_SEVERITY.test(body)) return true;
   if (
     BUGBOT_SEVERITY.test(body) ||
@@ -319,6 +333,7 @@ function isAiReviewerSignal(
  */
 export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null {
   const normalized = body.replace(/\r\n?/gu, "\n");
+  if (/<!--\s*walkthrough_start\s*-->/iu.test(normalized)) return null;
   const details = extractDetails(normalized);
   const hasMarker =
     AI_REVIEWER_MARKER.test(normalized) ||
@@ -330,9 +345,14 @@ export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null
 
   if (details.length === 0 && !hasMarker) return null;
 
-  const firstDetailsStart = details[0]?.start ?? normalized.length;
+  const outsideDetails = details
+    .reduceRight(
+      (text, block) => `${text.slice(0, block.start)}${text.slice(block.end)}`,
+      normalized,
+    )
+    .trim();
   const prologue = stripReviewerChrome(
-    stripHtmlComments(normalized.slice(0, firstDetailsStart)).replace(ADDRESSED_FOOTER, "").trim(),
+    stripHtmlComments(outsideDetails).replace(ADDRESSED_FOOTER, "").trim(),
   );
   const header = parseHeader(dropBadgeLines(prologue));
   if (!isAiReviewerSignal(normalized, details, header)) return null;
@@ -348,12 +368,6 @@ export function parseAiReviewerFeedback(body: string): AiReviewerFeedback | null
     null;
 
   // Devin and Greptile often put ```suggestion after <details>, outside the prologue.
-  const outsideDetails = details
-    .reduceRight(
-      (text, block) => `${text.slice(0, block.start)}${text.slice(block.end)}`,
-      normalized,
-    )
-    .trim();
   const outsideSuggestion = extractSuggestionFence(
     stripReviewerChrome(stripHtmlComments(outsideDetails).replace(ADDRESSED_FOOTER, "")),
   );
