@@ -55,6 +55,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import { makePipelineRunner, pipelineError } from "./pipelineRunner.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 
+/** A create with a commandId saves to this id, so a replay resolves to the same row. */
+export const pipelineIdForCommand = (commandId: string) => PipelineId.make(`pipeline:${commandId}`);
+
 export class PipelineService extends Context.Service<
   PipelineService,
   {
@@ -180,19 +183,16 @@ export const layerWithStarters = (
           const now = DateTime.formatIso(yield* DateTime.now);
           const uuid =
             input.id !== undefined || input.commandId !== undefined ? null : yield* random.uuidV4();
-          // Derived from the commandId so a replayed create resolves to the same row.
           const id =
             input.id ??
-            PipelineId.make(
-              input.commandId === undefined ? `pipeline:${uuid}` : `pipeline:${input.commandId}`,
-            );
+            (input.commandId === undefined
+              ? PipelineId.make(`pipeline:${uuid}`)
+              : pipelineIdForCommand(input.commandId));
 
           const existing = yield* store.getDefinition(id);
           if (existing === null && input.requireExisting === true) {
             return yield* pipelineError("Pipeline not found.", { pipelineId: id });
           }
-          // A replayed create returns what it made, so a reused key cannot overwrite later edits.
-          if (existing !== null && input.id === undefined) return { pipeline: existing };
           const definition: PipelineDefinition = {
             id,
             name: input.name,
@@ -203,7 +203,7 @@ export const layerWithStarters = (
           // The update is checked in the write, so an edit cannot undo a concurrent delete.
           const saved =
             existing === null
-              ? yield* insertOnce(definition)
+              ? yield* insertOrUpdate(definition)
               : yield* store.updateDefinition(definition);
           if (!saved) return yield* pipelineError("Pipeline not found.", { pipelineId: id });
           yield* notifyDefsChanged;
@@ -211,8 +211,8 @@ export const layerWithStarters = (
         },
       );
 
-      // A concurrent replay of the same create can win the insert; keep the row it wrote.
-      const insertOnce = Effect.fn("PipelineService.insertOnce")(function* (
+      // A concurrent replay of the same create can win the insert; fall back to the update path.
+      const insertOrUpdate = Effect.fn("PipelineService.insertOrUpdate")(function* (
         definition: PipelineDefinition,
       ) {
         return yield* store.insertDefinition(definition).pipe(
@@ -222,7 +222,7 @@ export const layerWithStarters = (
               .getDefinition(definition.id)
               .pipe(
                 Effect.flatMap((current) =>
-                  current === null ? Effect.fail(error) : Effect.succeed(true),
+                  current === null ? Effect.fail(error) : store.updateDefinition(definition),
                 ),
               ),
           ),

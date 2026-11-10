@@ -3946,6 +3946,7 @@ describe("OrchestratorMcpService pipelines", () => {
       readonly shells?: ReadonlyArray<OrchestrationV2ThreadShell>;
       readonly pipelines?: ReadonlyArray<PipelineDefinition>;
       readonly providers?: ReadonlyArray<ServerProvider>;
+      readonly callerModelSelection?: OrchestrationV2ThreadShell["modelSelection"];
     } = {},
   ) => {
     const started: Array<{ input: unknown; options: unknown }> = [];
@@ -3958,6 +3959,9 @@ describe("OrchestratorMcpService pipelines", () => {
     const caller = liveThreadShell(callerThreadId, modes);
     const shell = {
       ...caller,
+      ...(extra.callerModelSelection === undefined
+        ? {}
+        : { modelSelection: extra.callerModelSelection }),
       ...extra.checkout,
       ...(extra.pipelineThread === undefined ? {} : { pipeline: extra.pipelineThread }),
       ...(extra.callerParentThreadId === undefined
@@ -4286,6 +4290,23 @@ describe("OrchestratorMcpService pipelines", () => {
         assert.equal(input.steps[1]!.modelSelection.model, "gpt-6");
         assert.equal(input.steps[0]!.compactAfterHandoff, undefined);
         assert.equal(saved.steps[0]!.compactAfterHandoff, true);
+
+        // Reusing the key returns what the first call made instead of overwriting it.
+        const made = { ...definition, id: PipelineService.pipelineIdForCommand(input.commandId!) };
+        const replay = harness(
+          { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+          { pipelines: [made] },
+        );
+        const replayed = yield* withService(replay, (service) =>
+          service.savePipeline(replay.scope, {
+            name: "Something else",
+            clientRequestId: "save-1",
+            steps: [{ name: "Other", promptTemplate: "{{input}}" }],
+          }),
+        );
+        assert.equal(replayed.pipelineId, made.id);
+        assert.equal(replayed.name, "Feature delivery");
+        assert.equal(replay.upserted.length, 0);
       }),
   );
 
@@ -4308,6 +4329,37 @@ describe("OrchestratorMcpService pipelines", () => {
         definition.steps[0]!,
         { ...definition.steps[1]!, promptTemplate: "Build {{previous.output}}", pauseBefore: true },
       ]);
+    }),
+  );
+
+  it.effect("cleans the caller's model settings that a new step inherits", () =>
+    Effect.gen(function* () {
+      const codex = ProviderInstanceId.make("codex");
+      const addStep = (callerModelSelection: OrchestrationV2ThreadShell["modelSelection"]) => {
+        const h = harness(
+          { runtimeMode: "full-access", interactionMode: "default" },
+          { callerModelSelection },
+        );
+        return withService(h, (service) =>
+          service.savePipeline(h.scope, {
+            name: "New",
+            steps: [{ name: "One", promptTemplate: "{{input}}" }],
+          }),
+        ).pipe(Effect.map(() => upsertedOf(h).steps[0]!.modelSelection));
+      };
+      // An option the model no longer describes is dropped, as delegate_task drops it.
+      const tuned = yield* addStep({
+        instanceId: codex,
+        model: "gpt-6",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "retired", value: true },
+        ],
+      });
+      assert.deepEqual(tuned.options, [{ id: "effort", value: "high" }]);
+      // A model the provider stopped advertising still runs the caller, so it is not refused.
+      const legacy = yield* addStep({ instanceId: codex, model: "gpt-legacy" });
+      assert.equal(legacy.model, "gpt-legacy");
     }),
   );
 
