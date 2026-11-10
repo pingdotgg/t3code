@@ -333,6 +333,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     if (
       readFollow().mode === "following" &&
       timelineAnchorMessageId === null &&
+      viewportRef.current?.leftEndUnexplained() === false &&
       resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false
     ) {
       scrollToEnd();

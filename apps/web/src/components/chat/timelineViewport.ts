@@ -59,6 +59,8 @@ export interface TimelineViewport {
   /** Follow announces letting go, so the list can remember it is reading history. */
   readonly followReleased: () => void;
   readonly onFollowReleased: (listener: () => void) => () => void;
+  /** Since last at the end, the view moved up with no input or list correction behind it. */
+  readonly leftEndUnexplained: () => boolean;
 }
 
 const UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
@@ -137,19 +139,18 @@ export function attachTimelineViewport(
     scrollNode.querySelector("iframe:hover") !== null ||
     (document.activeElement instanceof HTMLIFrameElement &&
       scrollNode.contains(document.activeElement));
+  let leftEndUnexplained = false;
   const handleScroll = () => {
-    if (
-      scrolledUp({ ...scrollPosition(), programmatic: programmaticHolds > 0 }) &&
-      frameHasInput() &&
-      // LegendList updates its scroll state on the next animation frame.
-      resolveTimelineIsAtEnd({
-        contentLength: scrollNode.scrollHeight,
-        scroll: scrollNode.scrollTop,
-        scrollLength: scrollNode.clientHeight,
-      }) === false
-    ) {
-      emit({ source: "scroll" });
-    }
+    const upward = scrolledUp({ ...scrollPosition(), programmatic: programmaticHolds > 0 });
+    // LegendList updates its scroll state on the next animation frame.
+    const atEnd = resolveTimelineIsAtEnd({
+      contentLength: scrollNode.scrollHeight,
+      scroll: scrollNode.scrollTop,
+      scrollLength: scrollNode.clientHeight,
+    });
+    if (atEnd) leftEndUnexplained = false;
+    else if (upward) leftEndUnexplained = true;
+    if (upward && frameHasInput() && atEnd === false) emit({ source: "scroll" });
   };
   scrollNode.addEventListener("scroll", handleScroll, { passive: true });
   scrollNode.addEventListener("wheel", handleWheel, { passive: true });
@@ -179,6 +180,7 @@ export function attachTimelineViewport(
       followReleasedListeners.add(listener);
       return () => followReleasedListeners.delete(listener);
     },
+    leftEndUnexplained: () => leftEndUnexplained,
     dispose: () => {
       listeners.clear();
       followReleasedListeners.clear();

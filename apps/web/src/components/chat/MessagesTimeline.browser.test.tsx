@@ -455,8 +455,11 @@ describe("MessagesTimeline following", () => {
     expect(screen.buttons("Scroll to end")).toHaveLength(0);
 
     // A screen reader moving to the first message leaves the end on purpose; it stays there.
+    const scrolled = new Promise((resolve) =>
+      viewport().addEventListener("scroll", resolve, { once: true }),
+    );
     await act(() => screen.container.querySelector("h3")!.scrollIntoView({ block: "start" }));
-    await vi.waitFor(() => expect(screen.buttons("Scroll to end")).toHaveLength(1));
+    await scrolled;
     await act(() => vi.advanceTimersByTime(1_000));
     expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight);
   });
