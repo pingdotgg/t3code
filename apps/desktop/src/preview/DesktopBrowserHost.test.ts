@@ -1103,11 +1103,14 @@ describe("DesktopBrowserHost", () => {
       yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-2" });
       yield* settle;
       debuggee.release();
-      yield* raw({ id: 5, method: "Page.stopScreencast", sessionId: "t3-preview-page-1" });
+      // Streamers go without stopping, such as viewers that closed.
+      yield* raw({
+        id: 5,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-1" },
+      });
       yield* settle;
       expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
-
-      // The last streamer goes without stopping, such as a viewer that closed.
       yield* raw({
         id: 6,
         method: "Target.detachFromTarget",
