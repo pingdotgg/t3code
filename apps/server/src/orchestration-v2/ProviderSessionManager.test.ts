@@ -4263,6 +4263,7 @@ it.effect.each([true, false])(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now })],
         });
+        let deliverPending: OrchestrationV2DomainEvent | undefined;
         for (const delivery of ["pending", "delivered"] as const) {
           const threadId = ThreadId.make(`thread-provider-session-manager-archive-${delivery}`);
           const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
@@ -4280,13 +4281,9 @@ it.effect.each([true, false])(
             now,
             delegatedBy: parentThreadId,
           });
-          yield* eventSink.write({
-            events: [
-              {
-                ...created,
-                payload: { ...created.payload, forkedFrom: { type: "node", nodeId: taskId } },
-              },
-              {
+          const taskEvent = (state: "pending" | "delivered") =>
+            Effect.gen(function* () {
+              return {
                 id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
                 type: "subagent.updated",
                 threadId: parentThreadId,
@@ -4308,14 +4305,23 @@ it.effect.each([true, false])(
                   prompt: "Delegated work",
                   title: null,
                   model: null,
-                  completionDelivery: { state: delivery, observedByRunId: null },
+                  completionDelivery: { state, observedByRunId: null },
                   status: "completed",
                   result: "Done.",
                   startedAt: now,
                   completedAt: now,
                   updatedAt: now,
                 },
+              } satisfies OrchestrationV2DomainEvent;
+            });
+          if (delivery === "pending") deliverPending = yield* taskEvent("delivered");
+          yield* eventSink.write({
+            events: [
+              {
+                ...created,
+                payload: { ...created.payload, forkedFrom: { type: "node", nodeId: taskId } },
               },
+              yield* taskEvent(delivery),
             ],
           });
           const runtime = yield* manager.open({
@@ -4363,13 +4369,13 @@ it.effect.each([true, false])(
 
         yield* TestClock.adjust("1 second");
         if (keptOpen) {
-          assert.deepEqual([yield* Queue.take(unloads), yield* Queue.take(unloads)].toSorted(), [
-            "archive:native-delivered",
-            "unload:native-pending",
-          ]);
+          assert.equal(yield* Queue.take(unloads), "archive:native-delivered");
+          // The pending child stays loaded until its parent takes the result.
+          yield* eventSink.write({ events: [deliverPending!] });
+          yield* TestClock.adjust("1 second");
+          assert.equal(yield* Queue.take(unloads), "archive:native-pending");
           return;
         }
-        // The release may also unload the pending child, but it archives only the delivered one.
         const exits: Array<string> = [];
         for (
           let exit = yield* Queue.take(unloads);

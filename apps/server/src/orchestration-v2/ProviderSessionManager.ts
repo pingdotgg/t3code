@@ -1661,9 +1661,7 @@ export const layerWithOptions = (
 
       // Provider clients list a delegated child as an ordinary conversation, so a
       // finished one is archived once its parent has the result.
-      const isDeliveredDelegatedChild = Effect.fn(
-        "ProviderSessionManager.isDeliveredDelegatedChild",
-      )(
+      const delegatedChildArchive = Effect.fn("ProviderSessionManager.delegatedChildArchive")(
         function* (threadId: ThreadId) {
           const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
             runStatuses: [],
@@ -1674,19 +1672,22 @@ export const layerWithOptions = (
             runs.at(-1)?.delegatedTaskId ??
             (thread.forkedFrom?.type === "node" ? thread.forkedFrom.nodeId : undefined);
           const parentThreadId = thread.lineage.parentThreadId;
-          if (parentThreadId === null || taskId === undefined) return false;
+          if (parentThreadId === null || taskId === undefined) return undefined;
           const task = (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
             subagentIds: [taskId],
           })).subagents[0];
-          const delivery = task?.completionDelivery?.state;
-          return (
-            task?.origin === "app_owned" &&
-            task.childThreadId === threadId &&
-            task.status === "completed" &&
-            (delivery === "delivered" || delivery === "acknowledged")
-          );
+          if (
+            task?.origin !== "app_owned" ||
+            task.childThreadId !== threadId ||
+            task.status !== "completed"
+          ) {
+            return undefined;
+          }
+          const delivery = task.completionDelivery?.state;
+          if (delivery === "pending" || delivery === "claimed") return "awaiting_delivery";
+          return delivery === "delivered" || delivery === "acknowledged" ? "ready" : undefined;
         },
-        (effect) => effect.pipe(Effect.orElseSucceed(() => false)),
+        (effect) => effect.pipe(Effect.orElseSucceed(() => undefined)),
       );
 
       const unloadIdleThread = Effect.fn("ProviderSessionManager.unloadIdleThread")(
@@ -1722,7 +1723,10 @@ export const layerWithOptions = (
                       .hasPendingBackgroundWorkForThread(pending.providerThread)
                       .pipe(Effect.catchCause(() => Effect.succeed(false)));
               if (hasPendingWork) return "deferred" as const;
-              const archive = yield* isDeliveredDelegatedChild(input.threadId);
+              const child = yield* delegatedChildArchive(input.threadId);
+              // Unloading now would miss the archive once the parent takes the result.
+              if (child === "awaiting_delivery") return "deferred" as const;
+              const archive = child === "ready";
               if (input.archiveOnly === true && !archive) return "skipped" as const;
               const unloading = yield* Ref.modify(sessions, (current) => {
                 const latest = current.get(key);

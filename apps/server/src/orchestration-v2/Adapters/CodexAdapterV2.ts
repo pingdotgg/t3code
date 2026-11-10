@@ -7426,7 +7426,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               sessionApprovals.delete(nativeThreadId);
               // Archive also unloads; resumeNativeThread unarchives on the next turn.
               if (unloadInput.archive === true) {
-                yield* client.request("thread/archive", { threadId: nativeThreadId });
+                yield* client.request("thread/archive", { threadId: nativeThreadId }).pipe(
+                  // A failed archive must still unload; the archive error is still reported.
+                  Effect.tapError(() =>
+                    client
+                      .request("thread/unsubscribe", { threadId: nativeThreadId })
+                      .pipe(Effect.ignore),
+                  ),
+                );
               } else {
                 yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
               }
