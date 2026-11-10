@@ -2130,6 +2130,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       assert.equal(rejected.acceptance, "rejected");
       assert.equal(rejected.status, "failed");
       assert.isNull(rejected.binding);
+      assert.isNull(rejected.acceptedAt);
+      assert.equal(rejected.costCoverage, "unknown");
       childRun = {
         id: RunId.make("run:child"),
         status: "completed",
@@ -2139,9 +2141,18 @@ describe("OrchestratorMcpService provider resolution", () => {
       } as OrchestrationV2ThreadProjection["runs"][number];
       const completed = yield* service.taskReceipt(scope, { clientRequestId: "lost-response" });
       assert.equal(completed.status, "completed");
+      assert.equal(completed.requestedAt, "2026-01-01T00:00:01.000Z");
+      assert.equal(completed.startedAt, "2026-01-01T00:00:02.000Z");
       assert.equal(completed.completedAt, "2026-01-01T00:00:03.000Z");
       assert.equal(completed.costCoverage, "unknown");
       assert.isNull(completed.deliveredAt);
+      for (const status of ["failed", "cancelled", "interrupted", "rolled_back"] as const) {
+        childRun = { ...childRun, status };
+        const terminal = yield* service.taskReceipt(scope, { clientRequestId: "lost-response" });
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.outcome, status === "failed" ? null : status);
+        assert.equal(terminal.costCoverage, "unknown");
+      }
       assert.equal(
         (yield* service.taskReceipt(scope, { clientRequestId: "not-accepted" })).acceptance,
         "unknown",
@@ -2164,6 +2175,10 @@ describe("OrchestratorMcpService provider resolution", () => {
         service.taskReceipt(scope, { clientRequestId: "lost-response", parentThreadId }),
       );
       assert.equal(override.code, "capability_denied");
+      const namespaceOverride = yield* Effect.flip(
+        service.taskReceipt(scope, { clientRequestId: "lost-response", requestNamespace: "other" }),
+      );
+      assert.equal(namespaceOverride.code, "capability_denied");
       const external = {
         ...scope,
         thread: undefined,

@@ -1240,8 +1240,8 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     });
     const parent = yield* projections.getThreadProjection(parentThreadId);
     const parentRun = parent.runs[0]!;
-    yield* orchestrator.dispatch({
-      type: "delegated_task.request",
+    const delegation = {
+      type: "delegated_task.request" as const,
       commandId: CommandId.make("delegate-parent-pr"),
       parentThreadId,
       parentRunId: parentRun.id,
@@ -1250,9 +1250,10 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "mcp",
-    });
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+    } as const;
+    yield* orchestrator.dispatch(delegation);
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
@@ -1265,6 +1266,15 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       childThreadId,
       childRunId: child.runs[0]!.id,
     });
+    yield* sql`DELETE FROM orchestration_events WHERE command_id = ${delegation.commandId}`;
+    const retry = yield* orchestrator.dispatch(delegation);
+    assert.lengthOf(retry.storedEvents, 0);
+    const afterRetry = yield* projections.getThreadProjection(parentThreadId);
+    assert.lengthOf(afterRetry.subagents, 1);
+    const [retained] = yield* sql<{ readonly result_metadata: string | null }>`
+      SELECT result_metadata FROM orchestration_command_receipts WHERE command_id = ${delegation.commandId}
+    `;
+    assert.equal(retained!.result_metadata, receipt!.result_metadata);
     assert.isNull(child.thread.linkedPullRequest);
     assert.deepEqual(child.thread.pullRequests, []);
     assert.equal(child.thread.branch, parent.thread.branch);

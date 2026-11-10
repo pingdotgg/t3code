@@ -20,7 +20,9 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -355,7 +357,7 @@ describe("orchestrator MCP toolkit", () => {
             );
 
         const delegationStartSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
-        const delegatedCall = yield* invoke("delegate_task", {
+        const request = {
           task: delegatedPrompt,
           target: {
             providerInstanceId: codexInstanceId,
@@ -363,11 +365,49 @@ describe("orchestrator MCP toolkit", () => {
           },
           mode: "async",
           clientRequestId: "delegate-codex-replay-1",
+        };
+        const releaseRequest = yield* Deferred.make<void>();
+        const requestHeld = yield* Deferred.make<void>();
+        const replyReady = yield* Deferred.make<void>();
+        const lostReply = yield* Deferred.succeed(requestHeld, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRequest)),
+          Effect.andThen(invoke("delegate_task", request)),
+          Effect.flatMap(() => Deferred.succeed(replyReady, undefined)),
+          Effect.andThen(Effect.never),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(requestHeld);
+        const before = yield* invoke("task_receipt", {
+          clientRequestId: request.clientRequestId,
         });
+        expect(
+          (yield* decodeTaskReceiptResult(before.structuredContent).pipe(Effect.orDie)).acceptance,
+        ).toBe("unknown");
+        yield* Deferred.succeed(releaseRequest, undefined);
+        yield* Deferred.await(replyReady);
+        yield* Fiber.interrupt(lostReply);
+        const recoveredCall = yield* invoke("task_receipt", {
+          clientRequestId: request.clientRequestId,
+        });
+        const recovered = yield* decodeTaskReceiptResult(recoveredCall.structuredContent).pipe(
+          Effect.orDie,
+        );
+        expect(recovered.acceptance).toBe("accepted");
+        expect(recovered.binding).not.toBeNull();
+        const delegatedCall = yield* invoke("delegate_task", request);
         const delegatedStart = yield* decodeDelegateTaskResult(
           delegatedCall.structuredContent,
         ).pipe(Effect.orDie);
         expect(delegatedStart.childRunId).not.toBeNull();
+        expect(recovered.binding).toEqual({
+          taskId: delegatedStart.taskId,
+          childThreadId: delegatedStart.childThreadId,
+          childRunId: delegatedStart.childRunId,
+        });
+        const parentAfterRetry = yield* orchestrator.getThreadProjection(parentThreadId);
+        expect(
+          parentAfterRetry.subagents.filter((task) => task.origin === "app_owned"),
+        ).toHaveLength(1);
         const receiptCall = yield* invoke("task_receipt", {
           clientRequestId: "delegate-codex-replay-1",
         });
@@ -404,6 +444,34 @@ describe("orchestrator MCP toolkit", () => {
               }),
             ),
           );
+        const externalScope: McpInvocationContext.McpInvocationScope = {
+          ...invocation,
+          thread: undefined,
+          requestNamespace: "new-oauth-session",
+          client: { sessionId: "oauth", label: "read-only client", access: "read-only" },
+        };
+        const completedCall = yield* invoke(
+          "task_receipt",
+          {
+            clientRequestId: request.clientRequestId,
+            parentThreadId,
+            requestNamespace: invocation.requestNamespace,
+          },
+          externalScope,
+        );
+        const completedReceipt = yield* decodeTaskReceiptResult(
+          completedCall.structuredContent,
+        ).pipe(Effect.orDie);
+        expect(completedReceipt).toMatchObject({
+          acceptance: "accepted",
+          status: "completed",
+          binding: recovered.binding,
+          costCoverage: "unknown",
+          outcome: null,
+        });
+        expect(completedReceipt.requestedAt).not.toBeNull();
+        expect(completedReceipt.startedAt).not.toBeNull();
+        expect(completedReceipt.completedAt).not.toBeNull();
         const delegatedStatusCall = yield* invoke("task_status", {
           taskId: delegatedStart.taskId,
         });
