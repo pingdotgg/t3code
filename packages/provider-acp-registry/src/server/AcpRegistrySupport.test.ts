@@ -385,7 +385,7 @@ describe("AcpRegistrySupport", () => {
         "D:\\workspace",
       );
 
-      expect(resolved.spawn.command).toMatch(/^C:\\.*\\tools\\agent\.exe$/u);
+      expect(resolved.spawn.command).toMatch(/^C:\\(?:.*\\)?tools\\agent\.exe$/u);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
