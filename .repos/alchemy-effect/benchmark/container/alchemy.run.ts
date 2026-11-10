@@ -1,6 +1,6 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import BunMicrovmLive from "./src/bun-image.ts";

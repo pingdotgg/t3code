@@ -1,8 +1,9 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
-import {
-  parseHeaders,
-  parseRedirects,
-} from "../../../internal/workers-shared/index.ts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import { parseHeaders, parseRedirects } from "../../../internal/workers-shared/index.ts";
 import {
   constructHeaders,
   constructRedirects,
@@ -27,35 +28,24 @@ import type {
   RouterConfig,
   StaticRouting,
 } from "../../../internal/workers-shared/shared/types.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
+import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
+import * as Paths from "../../internal/Paths.ts";
 import * as Plugin from "../../Plugin.ts";
 import { PluginContext, type BindingHook } from "../../PluginContext.ts";
 import { ConfigError, SystemError } from "../../RuntimeError.shared.ts";
 import type { RuntimeWorker } from "../../RuntimeWorker.ts";
-import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
-import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 
 const AssetsKvWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/assets/assets-kv.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/assets/assets-kv.worker"),
 };
 const AssetsWorker = {
-  worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/assets/assets.worker",
-    ),
+  worker: () => loadInternalWorker("#cloudflare-runtime-core-worker/bindings/assets/assets.worker"),
 };
 const RouterWorker = {
-  worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/assets/router.worker",
-    ),
+  worker: () => loadInternalWorker("#cloudflare-runtime-core-worker/bindings/assets/router.worker"),
 };
 
 export class Assets extends Plugin.Service<Assets, { isConfigured: boolean }>()(
@@ -67,6 +57,7 @@ export const AssetsLive = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const paths = yield* Paths.Paths;
 
     interface ManifestEntry {
       readonly pathHash: Uint8Array;
@@ -79,45 +70,34 @@ export const AssetsLive = Layer.effect(
       };
     }
 
-    const buildAssetManifest = Effect.fn("buildAssetManifest")(function* (
-      dir: string,
-    ) {
+    const buildAssetManifest = Effect.fn("buildAssetManifest")(function* (dir: string) {
       const files = yield* fs.readDirectory(dir, { recursive: true }).pipe(
         Effect.catchIf(
           (error) => error.reason._tag === "NotFound",
           () =>
             Effect.succeed([]).pipe(
-              Effect.tap(() =>
-                Effect.logWarning(`Could not read assets directory "${dir}"`),
-              ),
+              Effect.tap(() => Effect.logWarning(`Could not read assets directory "${dir}"`)),
             ),
         ),
-        Effect.mapError(
-          (cause) =>
-            new SystemError({
-              subtag: "Assets",
-              message: `Failed to read assets directory "${dir}": ${cause.message}`,
-              hint: "Ensure the assets directory exists and is readable.",
-              detail: { directory: dir },
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          SystemError.make({
+            subtag: "Assets",
+            message: `Failed to read assets directory "${dir}": ${cause.message}`,
+            hint: "Ensure the assets directory exists and is readable.",
+            detail: { directory: dir },
+            cause,
+          }),
         ),
       );
-      const { assetsIgnoreFunction } = yield* createAssetsIgnoreFunction(
-        dir,
-      ).pipe(
-        Effect.provide([
-          Layer.succeed(FileSystem.FileSystem, fs),
-          Layer.succeed(Path.Path, path),
-        ]),
-        Effect.mapError(
-          (cause) =>
-            new SystemError({
-              subtag: "Assets",
-              message: `Failed to read assets ignore file in "${dir}": ${cause.message}`,
-              detail: { directory: dir },
-              cause,
-            }),
+      const { assetsIgnoreFunction } = yield* createAssetsIgnoreFunction(dir).pipe(
+        Effect.provide([Layer.succeed(FileSystem.FileSystem, fs), Layer.succeed(Path.Path, path)]),
+        Effect.mapError((cause) =>
+          SystemError.make({
+            subtag: "Assets",
+            message: `Failed to read assets ignore file in "${dir}": ${cause.message}`,
+            detail: { directory: dir },
+            cause,
+          }),
         ),
       );
       const manifest: Array<ManifestEntry> = [];
@@ -133,14 +113,13 @@ export const AssetsLive = Layer.effect(
             const filepath = path.join(dir, file);
             const relativeFilepath = path.relative(dir, filepath);
             const info = yield* fs.stat(filepath).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new SystemError({
-                    subtag: "Assets",
-                    message: `Failed to stat asset file "${filepath}": ${cause.message}`,
-                    detail: { filepath },
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                SystemError.make({
+                  subtag: "Assets",
+                  message: `Failed to stat asset file "${filepath}": ${cause.message}`,
+                  detail: { filepath },
+                  cause,
+                }),
               ),
             );
 
@@ -152,7 +131,7 @@ export const AssetsLive = Layer.effect(
             // TODO: Warn about _worker.js
 
             if (info.size > BigInt(MAX_ASSET_SIZE)) {
-              return yield* new ConfigError({
+              return yield* ConfigError.make({
                 subtag: "Assets",
                 message:
                   `Asset too large. ` +
@@ -181,7 +160,10 @@ export const AssetsLive = Layer.effect(
             );
             manifest.push({ pathHash, contentHash });
             assetsReverseMap[bytesToHex(contentHash)] = {
-              filePath: relativeFilepath,
+              // The KV worker requests this from workerd's disk service as a
+              // URL path. Windows separators would land inside one URL
+              // segment, which workerd's disk service rejects.
+              filePath: relativeFilepath.split(path.sep).join("/"),
               contentType: getContentType(filepath),
             };
           }),
@@ -189,7 +171,7 @@ export const AssetsLive = Layer.effect(
       );
 
       if (manifest.length > MAX_ASSET_COUNT) {
-        return yield* new ConfigError({
+        return yield* ConfigError.make({
           subtag: "Assets",
           message:
             `Maximum number of assets exceeded. ` +
@@ -214,20 +196,14 @@ export const AssetsLive = Layer.effect(
     const hashPath = (input: string) =>
       Effect.promise(async () => {
         const data = new TextEncoder().encode(input);
-        const hashBuffer = await crypto.subtle.digest(
-          "SHA-256",
-          data.buffer as ArrayBuffer,
-        );
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer);
         return new Uint8Array(hashBuffer, 0, PATH_HASH_SIZE);
       });
 
     const bytesToHex = (buffer: Uint8Array) =>
       Array.from(buffer, (b) => b.toString(16).padStart(2, "0")).join("");
 
-    const compareManifestEntries = (
-      a: { pathHash: Uint8Array },
-      b: { pathHash: Uint8Array },
-    ) => {
+    const compareManifestEntries = (a: { pathHash: Uint8Array }, b: { pathHash: Uint8Array }) => {
       if (a.pathHash.length < b.pathHash.length) {
         return -1;
       }
@@ -270,25 +246,32 @@ export const AssetsLive = Layer.effect(
             },
           };
         }
-        const { encodedAssetManifest, assetsReverseMap } =
-          yield* buildAssetManifest(path.resolve(worker.assets.directory));
+        const { encodedAssetManifest, assetsReverseMap } = yield* buildAssetManifest(
+          path.resolve(worker.assets.directory),
+        );
+        // workerd's disk service needs a directory that exists. A missing one
+        // (an app without a static directory yet) serves nothing, like the
+        // empty manifest built for it.
+        const filesDirectory = (yield* fs
+          .exists(worker.assets.directory)
+          .pipe(Effect.orElseSucceed(() => false)))
+          ? worker.assets.directory
+          : yield* paths.cache("assets", "empty");
         const { assetsConfig, routerConfig } = yield* buildAssetConfigs(worker);
-        const [assetsKvWorker, assetsWorker, routerWorker] =
-          yield* Effect.forEach(
-            [AssetsKvWorker, AssetsWorker, RouterWorker],
-            (worker) =>
-              Effect.map(
-                Effect.promise(worker.worker),
-                formatInternalWorkerModules,
-              ),
-            { concurrency: "unbounded" },
-          );
+        const [assetsKvWorker, assetsWorker, routerWorker] = yield* Effect.forEach(
+          [AssetsKvWorker, AssetsWorker, RouterWorker],
+          (worker) => Effect.map(Effect.promise(worker.worker), formatInternalWorkerModules),
+          { concurrency: "unbounded" },
+        );
         return {
           services: [
             {
               name: "assets:files",
               disk: {
-                path: worker.assets.directory,
+                path: filesDirectory,
+                // Deploys upload dot-paths such as `.well-known/`. Reads still
+                // go through the manifest, so ignored files stay unreachable.
+                allowDotfiles: true,
               },
             },
             {
@@ -371,10 +354,7 @@ export const AssetsLive = Layer.effect(
 );
 
 export const buildAssetConfigs = Effect.fn("buildAssetConfigs")(function* (
-  worker: Pick<
-    RuntimeWorker,
-    "assets" | "compatibilityDate" | "compatibilityFlags"
-  >,
+  worker: Pick<RuntimeWorker, "assets" | "compatibilityDate" | "compatibilityFlags">,
 ) {
   let headers: AssetConfig["headers"] | undefined;
   if (worker.assets?.headers) {
@@ -406,6 +386,7 @@ export const buildAssetConfigs = Effect.fn("buildAssetConfigs")(function* (
     compatibility_flags: worker.compatibilityFlags,
     html_handling: worker.assets?.htmlHandling,
     not_found_handling: worker.assets?.notFoundHandling,
+    base_path: worker.assets?.basePath,
     headers,
     redirects,
     has_static_routing: !!staticRouting,
@@ -423,10 +404,9 @@ export const local = (binding: string): BindingHook<Assets> =>
           },
         })
       : Effect.fail(
-          new ConfigError({
+          ConfigError.make({
             subtag: "Assets",
-            message:
-              "An assets binding cannot be used without worker.assets being specified.",
+            message: "An assets binding cannot be used without worker.assets being specified.",
             hint: "Remove the assets binding or specify worker.assets in your worker config.",
             detail: {
               binding,
