@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
@@ -26,17 +27,19 @@ function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): Chec
 const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerVcsProcessTest = VcsProcess.layer.pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provideMerge(layerVcsDriverTest),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerTest = layerCheckpointStoreTest.pipe(
   Layer.provideMerge(layerVcsProcessTest),
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 function makeTmpDir(
@@ -163,21 +166,28 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
-    it.effect("keeps a/ and b/ patch prefixes when the repository disables them", () =>
+    it.effect("keeps the patch format clients parse when the repository changes it", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         yield* git(tmp, ["config", "diff.noprefix", "true"]);
+        yield* git(tmp, ["config", "diff.suppressBlankEmpty", "true"]);
+        yield* git(tmp, ["config", "diff.submodule", "log"]);
+        const sub = NodePath.join(tmp, "sub");
+        yield* git(tmp, ["init", "sub"]);
+        yield* initRepoWithCommit(sub);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store-noprefix");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nbefore\n");
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: fromCheckpointRef,
         });
-        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nafter\n");
+        yield* git(sub, ["commit", "--allow-empty", "-m", "moved"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -191,6 +201,9 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         });
 
         expect(diff).toContain("diff --git a/README.md b/README.md");
+        expect(diff).toContain(" # test\n \n-before\n+after\n");
+        expect(diff).toContain("diff --git a/sub b/sub");
+        expect(diff).toContain("+Subproject commit ");
       }),
     );
 
@@ -530,6 +543,41 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
           new Set(["README.md", "shared.txt"]),
         );
+      }),
+    );
+
+    it.effect("keeps paths from signed commits under log.showSignature", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const signingKey = NodePath.join(yield* makeTmpDir("checkpoint-signing-key-"), "key");
+        yield* (yield* VcsProcess.VcsProcess).run({
+          operation: "CheckpointStore.test.sshKeygen",
+          command: "ssh-keygen",
+          cwd: tmp,
+          args: ["-q", "-t", "ed25519", "-N", "", "-f", signingKey],
+          timeoutMs: 10_000,
+        });
+        yield* git(tmp, ["config", "gpg.format", "ssh"]);
+        yield* git(tmp, ["config", "user.signingkey", `${signingKey}.pub`]);
+        yield* git(tmp, ["config", "log.showSignature", "true"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-signed");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+        yield* writeTextFile(NodePath.join(tmp, "kept.txt"), "kept\n");
+        yield* git(tmp, ["add", "kept.txt"]);
+        yield* git(tmp, ["commit", "-S", "-m", "kept"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["kept.txt"]));
       }),
     );
   });
