@@ -12,9 +12,9 @@ const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // Inline links, titled or angle-bracketed, are taken whole so URLs inside them stay as written.
-// `[` ends a label or destination, which keeps the scan linear.
+// Only an unescaped `[` opens a link or ends its label or destination, which keeps the scan linear.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-]|\]\()(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|(?<!\\)\[(?<label>(?:[^[\]\\\n]|\\.)*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-]|\]\()(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
@@ -147,18 +147,53 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`${THREAD_LINK_PROTOCOL}://v`) || markdown.includes(HOSTED_PREFIX);
 }
 
+// THREAD_LINK_OUTSIDE_CODE's code span, anchored where a backtick in a label opens one.
+const CODE_SPAN_AT = /(`+)[^\n]*?\1/y;
+
+/** Where a code span opening in a link's label ends, when it runs past the label. */
+function codeSpanEndPastLabel(markdown: string, labelStart: number, labelEnd: number) {
+  let index = markdown.indexOf("`", labelStart);
+  while (index !== -1 && index < labelEnd) {
+    CODE_SPAN_AT.lastIndex = index;
+    if (CODE_SPAN_AT.exec(markdown) === null) {
+      index = markdown.indexOf("`", index + 1);
+      continue;
+    }
+    if (CODE_SPAN_AT.lastIndex > labelEnd) return CODE_SPAN_AT.lastIndex;
+    index = markdown.indexOf("`", CODE_SPAN_AT.lastIndex);
+  }
+  return null;
+}
+
+// Hermes' matchAll yields matches without `groups`; exec keeps them.
+function* threadLinkMatches(markdown: string) {
+  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+    const label = match.groups?.label;
+    if (label?.includes("`")) {
+      const spanEnd = codeSpanEndPastLabel(
+        markdown,
+        match.index + 1,
+        match.index + 1 + label.length,
+      );
+      if (spanEnd !== null) {
+        pattern.lastIndex = spanEnd;
+        continue;
+      }
+    }
+    const href =
+      match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
+    yield { match, link: href === undefined ? null : parseThreadLinkHref(href) };
+  }
+}
+
 /** Every thread the markdown's links can name, so their titles are keyed reads. */
 export function threadLinkRefs(
   markdown: string,
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
-  // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
-    const href =
-      match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
+  for (const { link } of threadLinkMatches(markdown)) {
     if (link === null) continue;
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
       refs.set(`${ref.environmentId}/${ref.threadId}`, ref);
@@ -182,14 +217,15 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
-  return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as Partial<
-      Record<"angleHref" | "href" | "autolink" | "bare" | "label", string>
-    >;
-    const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
-  });
+  let result = "";
+  let copied = 0;
+  for (const { match, link } of threadLinkMatches(markdown)) {
+    const replacement = link === null ? undefined : replace(link, match.groups?.label);
+    if (replacement === undefined) continue;
+    result += markdown.slice(copied, match.index) + replacement;
+    copied = match.index + match[0].length;
+  }
+  return result + markdown.slice(copied);
 }
 
 /**
