@@ -717,7 +717,9 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     throw new Error("Theme files must contain a JSON object.");
   }
   if (value.version !== THEME_FILE_VERSION && value.version !== 2) {
-    throw new Error(`This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION}.`);
+    throw new Error(
+      `This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION} or 2.`,
+    );
   }
 
   const name = value.name;

@@ -1458,6 +1458,7 @@ html[data-theme-id][data-theme-treatment="stock"] {
 
   @variant dark {
     --tool-error-icon: #fca5a5;
+    --sidebar: var(--card);
   }
 }
 
