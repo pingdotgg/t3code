@@ -121,13 +121,13 @@ export function createBrowseNavigationCoordinator() {
     invalidate: () => {
       generation += 1;
     },
-    run: async (load: () => Promise<void>, commit: () => void) => {
+    run: async <A>(load: () => Promise<A>, commit: (result: A) => void) => {
       const navigationGeneration = ++generation;
-      await load();
+      const result = await load();
       if (navigationGeneration !== generation) {
         return false;
       }
-      commit();
+      commit(result);
       return true;
     },
   };
@@ -143,6 +143,12 @@ export function createFilesystemEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    roots: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:roots",
+      tag: WS_METHODS.filesystemBrowse,
+      staleTimeMs: 0,
+      idleTtlMs: BROWSE_IDLE_TTL_MS,
+    }),
     getMetadata: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:get-metadata",
       tag: WS_METHODS.filesystemGetMetadata,

@@ -27,6 +27,7 @@ export const FilesystemGetMetadataResult = Schema.Struct({
 export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Type;
 
 export const FilesystemBrowseInput = Schema.Struct({
+  mode: Schema.optional(Schema.Literals(["directory", "roots"])),
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
 });

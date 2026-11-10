@@ -28,6 +28,7 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceDrives from "./WorkspaceDrives.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
@@ -207,6 +208,10 @@ export const make = Effect.gen(function* () {
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
+      if (input.mode === "roots") {
+        return { parentPath: "/", entries: yield* WorkspaceDrives.list() };
+      }
+
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);

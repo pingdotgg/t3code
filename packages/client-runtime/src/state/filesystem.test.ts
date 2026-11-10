@@ -112,22 +112,22 @@ describe("filesystem browse model", () => {
 describe("browse navigation", () => {
   it("only commits the latest valid navigation", async () => {
     const navigation = createBrowseNavigationCoordinator();
-    const first = Promise.withResolvers<void>();
-    const second = Promise.withResolvers<void>();
+    const first = Promise.withResolvers<string>();
+    const second = Promise.withResolvers<string>();
     const commits: string[] = [];
-    const commit = (name: string) => () => commits.push(name);
-    const firstRun = navigation.run(() => first.promise, commit("first"));
-    const secondRun = navigation.run(() => second.promise, commit("second"));
+    const commit = (name: string) => commits.push(name);
+    const firstRun = navigation.run(() => first.promise, commit);
+    const secondRun = navigation.run(() => second.promise, commit);
 
-    second.resolve();
+    second.resolve("second");
     await expect(secondRun).resolves.toBe(true);
-    first.resolve();
+    first.resolve("first");
     await expect(firstRun).resolves.toBe(false);
 
-    const invalidated = Promise.withResolvers<void>();
-    const invalidatedRun = navigation.run(() => invalidated.promise, commit("stale"));
+    const invalidated = Promise.withResolvers<string>();
+    const invalidatedRun = navigation.run(() => invalidated.promise, commit);
     navigation.invalidate();
-    invalidated.resolve();
+    invalidated.resolve("stale");
 
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
