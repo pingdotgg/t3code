@@ -230,6 +230,15 @@ describe("evaluatePullRequestWatch", () => {
     const lateRun = evaluatePullRequestWatch(settled.next, late, noRemarks);
     const lateDone = detail({ checks: [...finished.checks, check("docs", "success")] });
     assert.deepEqual(evaluatePullRequestWatch(lateRun.next, lateDone, noRemarks).changes, []);
+    const held = { ...check("test", "action-required"), url: run(3) };
+    const heldRead = detail({ checks: [check("lint", "failure"), held] });
+    const hold = evaluatePullRequestWatch(lint.next, heldRead, noRemarks);
+    assert.deepEqual(hold.changes, [{ kind: "checks-awaiting-approval", checks: [held] }]);
+    const ran = { ...check("test", "success"), url: `${run(3)}/job/1` };
+    const heldDone = detail({ checks: [check("lint", "failure"), ran] });
+    assert.deepEqual(evaluatePullRequestWatch(hold.next, heldDone, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
 
     const second = detail({ checks: [check("lint", "failure"), check("test", "failure"), bot] });
     const test = evaluatePullRequestWatch(lint.next, second, noRemarks);
