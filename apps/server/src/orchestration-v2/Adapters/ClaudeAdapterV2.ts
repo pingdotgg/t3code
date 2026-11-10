@@ -4113,7 +4113,8 @@ function providerFailureFromResult(
   usageLimited = false,
 ): OrchestrationV2ProviderFailure | null {
   // Keep malformed provider output from making regex matching unbounded.
-  const resultForGatewayParsing = message.result.slice(0, 4096);
+  const resultForGatewayParsing =
+    message.subtype === "success" ? message.result.slice(0, 4096) : "";
   const gatewayLimit =
     message.subtype === "success" && message.is_error && message.terminal_reason === "api_error"
       ? message.api_error_status === 503 && failureHint === undefined
