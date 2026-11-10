@@ -4969,9 +4969,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // A post-settle agent can ask after its run settled; the request opens a continuation.
+        const admitsRequestsOutsideTurn = () =>
+          followsAgentWorkState || postSettleContinuationEnabled;
+
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          // A post-settle agent can ask after its run settled; the request opens a continuation.
-          if (!followsAgentWorkState && !postSettleContinuationEnabled) return true;
+          if (!admitsRequestsOutsideTurn()) return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -6569,14 +6572,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
+              if (admitsRequestsOutsideTurn() && dispositionFor(latestRuntimePolicy) === "ask") {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
+                  const context = admitsRequestsOutsideTurn()
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
                   // Kiro sends the tool's kind on its `tool_call` and leaves it

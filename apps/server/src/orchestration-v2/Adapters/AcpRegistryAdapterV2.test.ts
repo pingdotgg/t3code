@@ -2397,44 +2397,70 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("opens a continuation for a Factory Droid question asked after its run settled", () =>
+  const permissionRequest = (toolCallId: string, kind: string) => ({
+    kind: "request",
+    method: "session/request_permission",
+    params: {
+      sessionId: CLAUDE_ROOT_SESSION,
+      toolCall: { toolCallId, title: toolCallId, kind, status: "pending", rawInput: {} },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    },
+  });
+  it.effect.each([
+    {
+      request: "a question",
+      frame: {
+        kind: "request",
+        method: "elicitation/create",
+        params: {
+          sessionId: CLAUDE_ROOT_SESSION,
+          mode: "form",
+          message: "Which file?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              question_1: {
+                type: "string",
+                title: "File",
+                oneOf: [{ const: "option_0", title: "a.ts" }],
+              },
+            },
+            required: ["question_1"],
+          },
+        },
+      },
+      reply: {
+        method: "elicitation/create",
+        result: { action: "accept", content: { question_1: "option_0" } },
+      },
+      response: { answers: { question_1: "option_0" } },
+    },
+    {
+      request: "an approval",
+      frame: permissionRequest("run-tests", "execute"),
+      reply: {
+        method: "session/request_permission",
+        result: { outcome: { outcome: "selected", optionId: "allow" } },
+      },
+      response: { decision: "accept" as const },
+    },
+    {
+      request: "an auto-approved read",
+      frame: permissionRequest("read-file", "read"),
+      reply: {
+        method: "session/request_permission",
+        result: { outcome: { outcome: "selected", optionId: "allow" } },
+      },
+      response: undefined,
+    },
+  ])("admits $request Factory Droid sends after its run settled", ({ frame, reply, response }) =>
     Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["question"]);
+      const gate = makeProviderReplayGate(["request"]);
       const session = yield* openClaudeReplaySession(
         [
           ...droidFirstTurn(),
-          {
-            type: "emit_inbound",
-            label: "question",
-            frame: {
-              kind: "request",
-              method: "elicitation/create",
-              params: {
-                sessionId: CLAUDE_ROOT_SESSION,
-                mode: "form",
-                message: "Which file?",
-                requestedSchema: {
-                  type: "object",
-                  properties: {
-                    question_1: {
-                      type: "string",
-                      title: "File",
-                      oneOf: [{ const: "option_0", title: "a.ts" }],
-                    },
-                  },
-                  required: ["question_1"],
-                },
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            frame: {
-              kind: "response",
-              method: "elicitation/create",
-              result: { action: "accept", content: { question_1: "option_0" } },
-            },
-          },
+          { type: "emit_inbound", label: "request", frame },
+          { type: "expect_outbound", frame: { kind: "response", ...reply } },
           claudeMarker("answered"),
           claudeFrames.closeRequest,
           claudeFrames.closed,
@@ -2445,7 +2471,12 @@ describe("AcpRegistryAdapterV2", () => {
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       assert.equal((yield* session.terminal).status, "completed");
-      gate.release("question");
+      gate.release("request");
+      if (response === undefined) {
+        yield* session.throughMarker("answered");
+        assert.lengthOf(session.offers, 0, "an automatic decision needs no continuation");
+        return;
+      }
       yield* Queue.take(session.offered);
       yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
       yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
@@ -2453,10 +2484,10 @@ describe("AcpRegistryAdapterV2", () => {
         (event) =>
           event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
       )).at(-1);
-      if (pending?.type !== "runtime_request.updated") throw new Error("Missing question");
+      if (pending?.type !== "runtime_request.updated") throw new Error("Missing request");
       yield* session.runtime.respondToRuntimeRequest({
         requestId: pending.runtimeRequest.id,
-        answers: { question_1: "option_0" },
+        ...response,
       });
       yield* session.throughMarker("answered");
       const settled = yield* Effect.forkScoped(session.terminal);
