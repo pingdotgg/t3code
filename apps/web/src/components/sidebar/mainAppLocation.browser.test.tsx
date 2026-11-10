@@ -58,7 +58,7 @@ describe("main app return location", () => {
     using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };
 
     const returnLocation = async (from: string, control: string) => {
-      await settled(router, router.navigate(assistantCitationNavigation(citation)));
+      await settled(router, router.navigate(assistantCitationNavigation(citation, null)));
       expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
       await settled(router, router.navigate({ href: from }));
       await userEvent.click(screen.getByRole("button", { name: control }));
