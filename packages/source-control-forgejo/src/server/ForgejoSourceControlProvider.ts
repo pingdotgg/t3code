@@ -90,58 +90,48 @@ export const makeDiscovery = Effect.gen(function* () {
       const credentials = yield* Effect.result(listLogins({ cwd, command: "fj", remoteUrl }));
       const logins = Result.isSuccess(credentials) ? credentials.success : [];
       const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
-      const defaultLogin =
+      const login =
         (remote && ForgejoCli.matchForgejoLogin(logins, remote)) ||
         logins.find((entry) => entry.default === "true") ||
         logins[0];
-      // fj reads the cwd repository even with --host and fails on an unborn branch.
-      const home = yield* HostProcess.HomeDirectory;
-      const probeFj = (login: typeof defaultLogin) =>
-        probeSourceControlProvider({
-          cwd: home,
-          process,
-          spec: {
-            ...discovery,
-            executable: "fj",
-            versionArgs: ["version"],
-            authArgs: login ? ["--host", login.url, "whoami"] : ["auth", "list"],
-            parseAuth: (result) =>
-              Result.isFailure(credentials)
+      const fj = yield* probeSourceControlProvider({
+        // fj reads the cwd repository even with --host and fails on an unborn branch.
+        cwd: yield* HostProcess.HomeDirectory,
+        process,
+        spec: {
+          ...discovery,
+          executable: "fj",
+          versionArgs: ["version"],
+          authArgs: login ? ["--host", login.url, "whoami"] : ["auth", "list"],
+          parseAuth: (result) =>
+            Result.isFailure(credentials)
+              ? providerAuth({
+                  status: "unknown",
+                  detail: "Could not read fj authentication storage. Authenticate again with fj.",
+                })
+              : login && result.exitCode === 0
                 ? providerAuth({
-                    status: "unknown",
-                    detail: "Could not read fj authentication storage. Authenticate again with fj.",
+                    status: "authenticated",
+                    account: login.user,
+                    host: ForgejoCli.parseForgejoRemote(login.url)?.host,
                   })
-                : login && result.exitCode === 0
-                  ? providerAuth({
-                      status: "authenticated",
-                      account: login.user,
+                : login && /error sending request/i.test(result.stderr)
+                  ? // The server was never reached, so the token was not judged. fj stores no
+                    // scheme, and a failed HTTPS check is no evidence the host is safe for HTTP.
+                    providerAuth({
+                      status: "unknown",
                       host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                      detail: /^http:/i.test(login.url)
+                        ? `Could not reach ${login.url}.`
+                        : `Could not reach ${login.url}. For a server that serves only HTTP, open a project whose remote uses http:// to check its fj login.`,
                     })
                   : providerAuth({
                       status: "unauthenticated",
                       detail:
                         "Authenticate this server with `fj --host <server-url> auth add-token`.",
                     }),
-          },
-        });
-      let login = defaultLogin;
-      let fj = yield* probeFj(login);
-      // fj stores logins without a scheme. Without a remote naming one, a server may serve only HTTP.
-      const loginHost = login && ForgejoCli.parseForgejoRemote(login.url)?.host;
-      if (
-        login &&
-        fj.status === "available" &&
-        fj.auth.status === "unauthenticated" &&
-        /^https:\/\//i.test(login.url) &&
-        !(remote && !remote.ssh && remote.host === loginHost)
-      ) {
-        const httpLogin = { ...login, url: login.url.replace(/^https:/i, "http:") };
-        const httpFj = yield* probeFj(httpLogin);
-        if (httpFj.auth.status === "authenticated") {
-          login = httpLogin;
-          fj = httpFj;
-        }
-      }
+        },
+      });
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
         if (login && fj.auth.status === "authenticated" && cli.getAccount) {
           const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
