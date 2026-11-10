@@ -1,0 +1,36 @@
+import * as Kinesis from "@distilled.cloud/aws/kinesis";
+import * as Binding from "alchemy/Binding";
+import * as Effect from "effect/Effect";
+
+export interface DescribeLimitsRequest extends Kinesis.DescribeLimitsInput {}
+
+/**
+ * Runtime binding for `kinesis:DescribeLimits`.
+ *
+ * An account-level operation (no stream argument) that reports shard quotas
+ * and current usage for the region. Provide the implementation with
+ * `Effect.provide(AWS.Kinesis.DescribeLimitsHttp)`.
+ * ### Account Settings
+ * **Example:** Check Shard Quota Headroom
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const describeLimits = yield* AWS.Kinesis.DescribeLimits();
+ *
+ * // runtime
+ * const limits = yield* describeLimits();
+ * const headroom = (limits.ShardLimit ?? 0) - (limits.OpenShardCount ?? 0);
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeLimits extends Binding.Service<
+  DescribeLimits,
+  "AWS.Kinesis.DescribeLimits",
+  () => Effect.Effect<
+    (
+      request?: DescribeLimitsRequest,
+    ) => Effect.Effect<Kinesis.DescribeLimitsOutput, Kinesis.DescribeLimitsError>
+  >
+> {}
+
+export const DescribeLimits = Binding.Service<DescribeLimits>("AWS.Kinesis.DescribeLimits");
