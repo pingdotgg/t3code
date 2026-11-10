@@ -1142,6 +1142,16 @@ export function extractMcpToolCallIdentity(
     const tool = prefix === undefined ? metaToolName : metaToolName.slice(prefix.length);
     return tool ? { server: metaServerId, tool } : undefined;
   }
+  // OMP mounts MCP tools as xd://mcp__<server>_<tool> devices and calls them by writing JSON
+  // args; a read of the same path only fetches the tool's docs.
+  const devicePath = typeof rawInput?.path === "string" ? rawInput.path : "";
+  if (devicePath.startsWith("xd://") && typeof rawInput?.content === "string") {
+    const deviceTool = T3_MCP_TITLE_CALL.exec(devicePath.slice("xd://".length))?.groups?.tool;
+    if (deviceTool !== undefined && T3_MCP_TOOL_NAMES.has(deviceTool)) {
+      const input = acpMcpFallbackInput(rawInput.content);
+      return { server: "t3-code", tool: deviceTool, ...(input === undefined ? {} : { input }) };
+    }
+  }
   const candidates = [
     meta?.toolName,
     claudeCode?.toolName,
