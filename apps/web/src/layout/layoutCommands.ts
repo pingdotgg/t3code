@@ -327,8 +327,10 @@ export function useLayoutKeyboardCommands(): void {
           bubbles: true,
           cancelable: true,
         });
-        // Unhandled, the key keeps its native meaning, as it would have.
-        if (!(event.target ?? window).dispatchEvent(replay)) event.preventDefault();
+        // A promoted draft's keyed editor can unmount while the selected chat lands.
+        const replayTarget =
+          event.target instanceof Node && event.target.isConnected ? event.target : window;
+        if (!replayTarget.dispatchEvent(replay)) event.preventDefault();
         return;
       }
       // A surface tab whose thread's chat is not open answers its thread's
