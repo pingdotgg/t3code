@@ -3825,11 +3825,12 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
   return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
 });
 
-// Web and mobile offer a session grant when options are omitted, and this
-// path only ever answers once.
+// MCP servers such as Computer Use ask on every call and expect the client to
+// remember a session grant, as Codex does. The CLI drops a reply's `_meta.persist`.
 const CLAUDE_MCP_ELICITATION_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
+  { decision: "acceptForSession", label: "Always allow this session" },
   { decision: "accept", label: "Approve" },
 ];
 
@@ -5212,6 +5213,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingClaudeRuntimeRequest>(),
         );
+        const mcpElicitationSessionGrants = yield* Ref.make(new Set<string>());
         // Background local_bash tasks can trigger wake turns on the query stream with no active provider turn.
         const lastTurnRouteByNativeThread = yield* Ref.make(
           new Map<
@@ -10620,6 +10622,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             return { action: "decline" } satisfies ElicitationResult;
           }
+          const grantKey = `${request.serverName}\u0000${request.message}`;
+          if ((yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
+            return acceptance;
+          }
           // The CLI waits on this answer, so a turn held for its prompt echo
           // must show its output now, as canUseTool does.
           if (context.heldRootFrames.length > 0) {
@@ -10706,8 +10712,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
             });
           }
+          if (resolved === "acceptForSession") {
+            yield* Ref.update(mcpElicitationSessionGrants, (current) =>
+              new Set(current).add(grantKey),
+            );
+            return acceptance;
+          }
           // Never null: the SDK reads null as answered out of band and leaves
-          // the server waiting. Every accept is one-time; no grant is offered.
+          // the server waiting.
           return resolved === "accept"
             ? acceptance
             : ({
