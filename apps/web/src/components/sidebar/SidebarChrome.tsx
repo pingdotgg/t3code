@@ -139,6 +139,7 @@ function HistoryNavigationButton({
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const enabled = useCanNavigateHistory(direction);
+  const { isMobile, setOpenMobile } = useSidebar();
   const label = direction === "back" ? "Go back" : "Go forward";
   const shortcutLabel = shortcutLabelForCommand(
     keybindings,
@@ -156,7 +157,10 @@ function HistoryNavigationButton({
               onBackdrop && "relative top-auto translate-y-0",
             )}
             disabled={!enabled}
-            onClick={() => navigateHistory(direction)}
+            onClick={() => {
+              if (isMobile) setOpenMobile(false);
+              navigateHistory(direction);
+            }}
             size="icon-sm"
             variant={onBackdrop ? "media-navigation" : "ghost"}
           />
