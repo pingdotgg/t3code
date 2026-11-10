@@ -535,30 +535,27 @@ function branchNameFromHeadRef(value: string): string | null {
 }
 
 const STATUS_FETCH_REF_FORMAT =
-  "%(refname)%00%(objectname)%00%(symref)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)";
+  "%(refname)%00%(symref)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)";
 
 const STATUS_FETCH_BASE_CONFIG_PATTERN = String.raw`^branch\..*\.(t3-merge-base-ref|t3-merge-base|gh-merge-base)$`;
 
 // Status reads only the remote's default branch, plus the upstreams and recorded bases of
 // checked-out branches. Fetching every branch takes tens of seconds on large remotes.
-function statusFetchBranches(
+function statusFetchRefs(
   forEachRefStdout: string,
   baseConfigStdout: string,
   lsRemoteStdout: string,
   remoteName: string,
 ): string[] {
   const trackingPrefix = `refs/remotes/${remoteName}/`;
-  const localOids = new Map<string, string>();
   const checkedOut = new Set<string>();
   const wanted = new Set<string>();
   let defaultBranch: string | null = null;
   for (const line of forEachRefStdout.split("\n")) {
-    const [refName = "", oid = "", symref = "", worktreePath, upstreamRemote, upstreamRef = ""] =
+    const [refName = "", symref = "", worktreePath, upstreamRemote, upstreamRef = ""] =
       line.split("\0");
     if (refName === `${trackingPrefix}HEAD`) {
       defaultBranch = parseDefaultBranchFromRemoteHeadRef(symref, remoteName);
-    } else if (refName.startsWith(trackingPrefix)) {
-      localOids.set(refName.slice(trackingPrefix.length), oid);
     } else if (worktreePath && refName.startsWith("refs/heads/")) {
       checkedOut.add(refName.slice("refs/heads/".length));
       if (upstreamRemote === remoteName && upstreamRef.startsWith("refs/heads/")) {
@@ -586,15 +583,14 @@ function statusFetchBranches(
     if (name.length > 0) wanted.add(name);
   }
   // A branch deleted on the remote fails the whole fetch, so only request advertised ones.
-  const changed: string[] = [];
+  const advertised: string[] = [];
   for (const line of lsRemoteStdout.split("\n")) {
-    const [oid = "", refName = ""] = line.split("\t");
-    const branch = refName.startsWith("refs/heads/") ? refName.slice("refs/heads/".length) : null;
-    if (branch !== null && wanted.has(branch) && localOids.get(branch) !== oid) {
-      changed.push(branch);
+    const refName = line.split("\t")[1] ?? "";
+    if (refName.startsWith("refs/heads/") && wanted.has(refName.slice("refs/heads/".length))) {
+      advertised.push(refName);
     }
   }
-  return changed;
+  return advertised;
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
@@ -1443,7 +1439,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "for-each-ref",
               `--format=${STATUS_FETCH_REF_FORMAT}`,
               "refs/heads/",
-              `refs/remotes/${remoteName}/`,
+              `refs/remotes/${remoteName}/HEAD`,
             ],
             "Git could not list local branches.",
           ),
@@ -1460,8 +1456,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ],
         { concurrency: "unbounded" },
       );
-      const branches = statusFetchBranches(localRefs, baseConfig, remoteHeads, remoteName);
-      for (let start = 0; start < branches.length; start += STATUS_FETCH_REFSPEC_BATCH) {
+      // Source-only refspecs let Git apply the remote's configured fetch mapping.
+      const refs = statusFetchRefs(localRefs, baseConfig, remoteHeads, remoteName);
+      for (let start = 0; start < refs.length; start += STATUS_FETCH_REFSPEC_BATCH) {
         yield* runStatusGit(
           [
             "fetch",
@@ -1470,9 +1467,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "--no-auto-gc",
             "--",
             remoteName,
-            ...branches
-              .slice(start, start + STATUS_FETCH_REFSPEC_BATCH)
-              .map((branch) => `+refs/heads/${branch}:refs/remotes/${remoteName}/${branch}`),
+            ...refs.slice(start, start + STATUS_FETCH_REFSPEC_BATCH),
           ],
           "Background Git fetch exited with a non-zero status.",
         );
