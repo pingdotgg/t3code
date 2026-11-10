@@ -527,13 +527,12 @@ function GuestThread({
             }
           />
         </HostImageUrlContext>
-        {follow.showScrollToBottom ? (
-          <ScrollToEndButton
-            summary={[]}
-            bottom={4}
-            onScrollToEnd={() => follow.scrollToEnd(true)}
-          />
-        ) : null}
+        <ScrollToEndButton
+          visible={follow.showScrollToBottom}
+          summary={[]}
+          bottom={4}
+          onScrollToEnd={() => follow.scrollToEnd(true)}
+        />
       </div>
       <div className={cn(LANE, "shrink-0 pb-4")}>
         <GuestComposer shareId={shareId} model={model} onSent={() => follow.scrollToEnd(true)} />
