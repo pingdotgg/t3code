@@ -16,7 +16,7 @@ import PdfViewer from "./PdfViewer";
 
 // Page 1 is a short banner whose title is drawn in two runs with a font change, so pdf.js
 // splits it into two text spans. Page 2 is a letter page rotated a quarter turn.
-function twoPagePdf() {
+function twoPagePdf(padding = 0) {
   const pages = [
     {
       box: "0 0 612 140",
@@ -34,6 +34,15 @@ function twoPagePdf() {
     ]),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    // Unreferenced filler pushes the cross-reference table past the first range.
+    ...(padding
+      ? [
+          `<< /Length ${padding} >>
+stream
+${"x".repeat(padding)}
+endstream`,
+        ]
+      : []),
   ];
   let source = "%PDF-1.4\n";
   const offsets: number[] = [];
@@ -108,6 +117,42 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
   } finally {
     URL.revokeObjectURL(url);
   }
+});
+
+it.each([
+  { server: "valid", full: false },
+  { server: "ignored", full: true },
+  { server: "malformed", full: true },
+  { server: "revised", full: true },
+])("opens a PDF from a server with $server ranges", async ({ server, full }) => {
+  const bytes = new Uint8Array(await twoPagePdf(200_000).arrayBuffer());
+  const url = "https://assets.example/report.pdf";
+  const requests: (string | null)[] = [];
+  const realFetch = globalThis.fetch;
+  using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input) !== url) return realFetch(input, init);
+    const range = new Headers(init?.headers).get("range");
+    requests.push(range);
+    const match = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
+    if (!match || server === "ignored") return Promise.resolve(new Response(bytes));
+    const start = Number(match[1]);
+    const end = Math.min(Number(match[2]), bytes.length - 1);
+    const reported = server === "malformed" ? start + 1 : start;
+    return Promise.resolve(
+      new Response(bytes.slice(start, end + 1), {
+        status: 206,
+        headers: {
+          "content-range": `bytes ${reported}-${end}/${bytes.length}`,
+          etag: server === "revised" && requests.length > 1 ? '"b"' : '"a"',
+        },
+      }),
+    );
+  });
+  await using screen = await render(<PdfViewer src={url} title="Ranged PDF" />);
+  await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
+  expect(requests[0]).toBe("bytes=0-65535");
+  expect(requests.includes(null)).toBe(full);
+  if (!full) expect(requests.length).toBeGreaterThan(1);
 });
 
 it("restores page, within-page offset and zoom after a remount", async () => {
