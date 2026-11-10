@@ -196,7 +196,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           />
         }
       >
-        <HistoryIcon className="size-4" />
+        <HistoryIcon />
         <MenuItemLabel className="min-w-0 flex-1">
           {props.rows.length}{" "}
           {props.rows.length === 1 && props.label === "Previous agents"
@@ -324,7 +324,7 @@ function RemoteSubagentRow(props: {
               variant="ghost"
               part="row"
               multiline
-              className="min-h-12 sm:min-h-12"
+              className="min-h-10 sm:min-h-10"
               aria-disabled={environment === null || undefined}
               render={props.inMenu ? <MenuItem /> : undefined}
               onClick={() => {
@@ -1017,10 +1017,7 @@ export function ThreadRelationshipsPanel(props: {
               variant="ghost"
               part="row"
               multiline
-              className={cn(
-                childAgent ? "min-h-12 sm:min-h-12" : "min-h-10 sm:min-h-10",
-                workflowGroup && "flex-1",
-              )}
+              className={cn("min-h-10 sm:min-h-10", workflowGroup && "flex-1")}
               aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
               render={
                 groups
@@ -1211,7 +1208,7 @@ export function ThreadRelationshipsPanel(props: {
               {groups
                 .filter((group) => group.id === "previous" && group.rows.length > 0)
                 .map((group) => (
-                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-0.5">
+                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
                     <ThreadLineageGroup {...group}>
                       {(visibleRows) => visibleRows.map((row) => renderLineageRow(row, true))}
                     </ThreadLineageGroup>
