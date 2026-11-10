@@ -6252,8 +6252,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         WHERE thread_id = ${threadId}
           AND run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))
       `;
+      // Paging stubs these notifications anyway; skip decoding their unbounded detail.
       const itemRows = yield* sql<PayloadRow>`
-        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        SELECT CASE WHEN type = 'notification'
+          THEN json_remove(payload_json, '$.detail') ELSE payload_json END AS payload_json
+        FROM orchestration_v2_projection_turn_items
         WHERE thread_id = ${threadId}
           AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(itemIds)}))
       `;
