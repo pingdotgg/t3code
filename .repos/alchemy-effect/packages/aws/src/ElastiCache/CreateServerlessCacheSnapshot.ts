@@ -1,0 +1,44 @@
+import type * as elasticache from "@distilled.cloud/aws/elasticache";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { ServerlessCache } from "./ServerlessCache.ts";
+
+/**
+ * Runtime binding for the `CreateServerlessCacheSnapshot` operation (IAM
+ * actions `elasticache:CreateServerlessCacheSnapshot` +
+ * `elasticache:AddTagsToResource`), scoped to one {@link ServerlessCache}.
+ *
+ * Takes an on-demand snapshot of the bound serverless cache — e.g. a
+ * pre-migration backup from an operational Lambda. Available for valkey,
+ * redis, and serverless memcached. Provide the implementation with
+ * `Effect.provide(AWS.ElastiCache.CreateServerlessCacheSnapshotHttp)`.
+ * ### Managing Snapshots
+ * **Example:** Take an On-Demand Snapshot
+ * ```typescript
+ * const createSnapshot = yield* ElastiCache.CreateServerlessCacheSnapshot(cache);
+ *
+ * const result = yield* createSnapshot({
+ *   ServerlessCacheSnapshotName: "pre-migration",
+ * });
+ * // result.ServerlessCacheSnapshot.Status → "creating"
+ * ```
+ *
+ * @binding
+ */
+export interface CreateServerlessCacheSnapshot extends Binding.Service<
+  CreateServerlessCacheSnapshot,
+  "AWS.ElastiCache.CreateServerlessCacheSnapshot",
+  (
+    cache: ServerlessCache,
+  ) => Effect.Effect<
+    (
+      request: Omit<elasticache.CreateServerlessCacheSnapshotRequest, "ServerlessCacheName">,
+    ) => Effect.Effect<
+      elasticache.CreateServerlessCacheSnapshotResponse,
+      elasticache.CreateServerlessCacheSnapshotError
+    >
+  >
+> {}
+export const CreateServerlessCacheSnapshot = Binding.Service<CreateServerlessCacheSnapshot>(
+  "AWS.ElastiCache.CreateServerlessCacheSnapshot",
+);
