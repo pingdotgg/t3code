@@ -112,44 +112,7 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
-    yield* git(checkout, ["init", "--quiet"]);
-    const baseDir = path.join(checkout, ".t3");
-    yield* fileSystem.makeDirectory(baseDir);
-    yield* Effect.gen(function* () {
-      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
-      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
-      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
-      const failure = yield* Effect.flip(scratch.ensureScratchProject);
-      assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("names the data dir and its enclosing repository when Scratch is unavailable", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
-    yield* git(checkout, ["init", "--quiet"]);
-    const baseDir = path.join(checkout, ".t3");
-    yield* fileSystem.makeDirectory(baseDir);
-    const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
-    yield* Effect.gen(function* () {
-      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
-      const failure = yield* Effect.flip(scratch.ensureScratchProject);
-      assert.include(failure.message, baseDir);
-      // The root prefixes the data dir, so it must appear on its own.
-      assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
-    }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("warns once when the data dir sits inside a Git checkout", () => {
+it.effect("offers nothing, and says why once, when the data dir sits inside a Git checkout", () => {
   const warnings: string[] = [];
   const logger = Logger.make(({ logLevel, message }) => {
     if (logLevel === "Warn") warnings.push(String(message));
@@ -161,11 +124,16 @@ it.effect("warns once when the data dir sits inside a Git checkout", () => {
     yield* git(checkout, ["init", "--quiet"]);
     const baseDir = path.join(checkout, ".t3");
     yield* fileSystem.makeDirectory(baseDir);
+    const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
-      yield* scratch.scratchRoot;
-      yield* scratch.isScratchProject(ProjectId.make("project:any"));
-      yield* Effect.flip(scratch.ensureScratchProject);
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
+      const failure = yield* Effect.flip(scratch.ensureScratchProject);
+      assert.equal(failure._tag, "ScratchUnavailableError");
+      assert.include(failure.message, baseDir);
+      // The root prefixes the data dir, so it must appear on its own.
+      assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
       yield* Effect.flip(scratch.ensureScratchProject);
     }).pipe(
       Effect.provide(
