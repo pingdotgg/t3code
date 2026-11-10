@@ -2,10 +2,12 @@ import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as RcMap from "effect/RcMap";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
@@ -657,6 +659,52 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   });
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+});
+
+// Long enough for a burst of workspace switches; short because the helper holds the user's
+// binary open, and Windows refuses to overwrite or delete a running executable.
+const CODEX_SKILLS_HELPER_IDLE_TTL = "30 seconds";
+
+/** Reuses one app-server per launch identity; each read passes its cwd and rescans from disk. */
+export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* () {
+  const helpers = yield* RcMap.make({
+    lookup: (launch: {
+      readonly binaryPath: string;
+      readonly homePath?: string;
+      readonly launchArgs?: string;
+      readonly environment: NodeJS.ProcessEnv;
+    }) =>
+      withCodexAppServerClient({ ...launch, cwd: process.cwd() }).pipe(
+        Effect.map(({ client }) => client),
+      ),
+    idleTimeToLive: CODEX_SKILLS_HELPER_IDLE_TTL,
+  });
+  return Effect.fn("CodexSkillsProbe.probe")(function* (input: {
+    readonly binaryPath: string;
+    readonly homePath?: string;
+    readonly launchArgs?: string;
+    readonly cwd: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }) {
+    const { cwd, ...rest } = input;
+    const launch = {
+      ...rest,
+      environment: providerProbeEnvironment(rest.environment ?? process.env),
+    };
+    // Retire helpers for a previous binary, home, credentials, or launch options.
+    const stale = Array.from(yield* RcMap.keys(helpers)).filter(
+      (key) => !Equal.equals(key, launch),
+    );
+    yield* Effect.forEach(stale, (key) => RcMap.invalidate(helpers, key), { discard: true });
+    const skillsResponse = yield* RcMap.get(helpers, launch).pipe(
+      Effect.flatMap((client) => client.request("skills/list", { cwds: [cwd], forceReload: true })),
+      Effect.scoped,
+      // RcMap keeps a failed spawn, and a dead helper keeps failing; drop it so the retry respawns.
+      Effect.onError(() => RcMap.invalidate(helpers, launch)),
+      Effect.retry({ times: 1 }),
+    );
+    return parseCodexSkillsListResponse(skillsResponse, cwd);
+  });
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
