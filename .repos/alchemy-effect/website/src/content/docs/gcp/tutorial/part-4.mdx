@@ -1,0 +1,147 @@
+---
+title: "Part 4: Stages"
+description: Deploy isolated dev, staging, and prod copies of your stack with --stage, and tune Cloud Run per stage.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+
+In [Part 3](/gcp/tutorial/part-3) you tested a deployed Stack. So far
+everything lands in one environment. **Stages** are separate copies of
+the same Stack: one per developer, per environment, and (in
+[Part 5](/gcp/tutorial/part-5)) per pull request.
+
+## The default stage
+
+Without `--stage`, Alchemy deploys to `live_$USER`:
+
+```sh
+$ whoami
+sam
+
+$ bun alchemy deploy
+# deploys to stage `live_sam`
+```
+
+Every developer gets a personal copy with no setup. The stage comes
+from, in order:
+
+1. the `--stage <name>` flag
+2. the `ALCHEMY_STAGE` environment variable
+3. `live_${USER}` (or `live_${USERNAME}` on Windows)
+
+## Deploy a second stage
+
+```sh
+bun alchemy deploy --stage staging
+```
+
+<Terminal content={`[u]Plan[/u]: [g]2 to create[/g]
+[g]+[/g] [b]Api[/b] [d](GCP.Run.Service)[/d]
+[g]+[/g] [b]Bucket[/b] [d](GCP.Storage.Bucket)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Bucket[/b] [d](GCP.Storage.Bucket)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](GCP.Run.Service)[/d] [g]created[/g]
+{
+[s2]url: "https://myapp-staging-api-d4e5f6-uc.a.run.app",
+}`} />
+
+`staging` gets its own Bucket, its own service, its own service
+account, and its own URL. `live_sam` is untouched.
+
+## How stages stay apart
+
+Each stage has its own state and its own resource names. The stage is
+part of every generated name, so `prod` and `live_sam` never collide in
+the same project.
+
+Deploying or destroying one stage never touches another:
+
+```sh
+bun alchemy deploy --stage prod
+bun alchemy deploy --stage pr-42
+bun alchemy destroy --stage pr-42   # only removes pr-42
+```
+
+Stage names must match `[a-z0-9][-_a-z0-9]*`.
+
+## Configure per stage
+
+Keep one warm instance in prod so the first request after a quiet
+period doesn't wait for a cold start. `Stack.useSync` gives the props
+the current stage:
+
+```diff lang="typescript"
+// src/api.ts
+import * as GCP from "@alchemy.run/gcp";
++import { Stack } from "alchemy/Stack";
+import * as Effect from "effect/Effect";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+-  { main: import.meta.url, invokerIamDisabled: true },
++  Stack.useSync((stack) => ({
++    main: import.meta.url,
++    invokerIamDisabled: true,
++    scaling: { minInstanceCount: stack.stage === "prod" ? 1 : 0 },
++  })),
+  Effect.gen(function* () {
+    // ...
+  }),
+) {}
+```
+
+`alchemy deploy --stage prod` keeps one instance running. Every other
+stage scales to zero.
+
+## Destroy a stage
+
+```sh
+bun alchemy destroy --stage staging
+```
+
+The plan lists everything in `staging` for deletion, including the
+service account Alchemy created for the service.
+
+## Stages in tests
+
+Tests default to `test_$USER`. Set the stage per file so parallel CI
+runs don't collide:
+
+```diff lang="typescript"
+// test/integ.test.ts
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: GCP.providers(),
+  state: GCP.state(),
++  stage: `pr-${process.env.PR_NUMBER}`,
+});
+```
+
+See [Test harness → stage](/testing/test-harness#stage) for the
+per-call form.
+
+## Stages and projects
+
+Stages separate **what** is deployed. [Profiles](/environments/profiles)
+choose **where**: which GCP project and credentials. Pair a `prod`
+stage with a `prod` profile pointing at a separate project:
+
+```sh
+bun alchemy deploy --stage prod --profile prod
+bun alchemy deploy --stage pr-42 --profile default
+```
+
+## Recap
+
+You now have:
+
+- A personal `live_<user>` stage for every plain `alchemy deploy`
+- A `staging` stage deployed and destroyed with `--stage`
+- A warm instance in prod only, via `Stack.useSync`
+- Tests pinned to their own stage
+
+In [Part 5](/gcp/tutorial/part-5), GitHub Actions deploys `prod` on
+every push to `main` and a `pr-<n>` preview for every pull request.
