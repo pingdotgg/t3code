@@ -36,8 +36,6 @@ export interface AdaptiveWorkspaceActions {
   ) => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
   readonly setNativeInspectorWidth: (width: number) => void;
-  /** The thread composer reports its focus so the layout can make room for typing. */
-  readonly setComposerEditing: (editing: boolean) => void;
 }
 
 /** Changes only with the window (size, fold, hinge), never with a pane toggle or the keyboard. */
@@ -58,11 +56,6 @@ interface WorkspacePaneStateValue {
    * its sidebar, and on a workspace page (Android Settings, Usage) that covers it.
    */
   readonly sidebarToggleable: boolean;
-  /**
-   * Android split view while the thread composer has the soft keyboard: the
-   * sidebar and rail step aside and the thread header drops to one line.
-   */
-  readonly composerKeyboardActive: boolean;
   /**
    * Whether the sidebar shows in each orientation, where it floats over the content in portrait
    * (the unfolded Duo). The native split switches between them as a rotation starts.
@@ -95,14 +88,12 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceLayoutVal
   setAuxiliaryPaneWidth: () => undefined,
   nativeInspectorWidth: 0,
   setNativeInspectorWidth: () => undefined,
-  setComposerEditing: () => undefined,
 });
 export const WorkspacePaneStateContext = createContext<WorkspacePaneStateValue>({
   panes: compactPanes,
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
   sidebarToggleable: false,
-  composerKeyboardActive: false,
   sidebarByOrientation: null,
 });
 

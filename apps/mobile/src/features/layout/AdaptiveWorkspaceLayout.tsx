@@ -3,7 +3,6 @@ import {
   WorkspacePresentationHostContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
-import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   AdaptiveWorkspaceContext,
@@ -215,7 +214,6 @@ function useStableActions(actions: Required<AdaptiveWorkspaceActions>): Adaptive
     openWorkspaceTab: (tab, options) => latest.current.openWorkspaceTab(tab, options),
     setAuxiliaryPaneWidth: (width) => latest.current.setAuxiliaryPaneWidth(width),
     setNativeInspectorWidth: (width) => latest.current.setNativeInspectorWidth(width),
-    setComposerEditing: (editing) => latest.current.setComposerEditing(editing),
   }));
   return stable;
 }
@@ -321,12 +319,6 @@ function AdaptiveWorkspaceLayoutContent(
     nativeWorkspace,
     usesSplitView: baseLayout.usesSplitView,
   });
-  const [composerEditing, setComposerEditing] = useState(false);
-  const softKeyboardVisible = useSoftKeyboardShowing();
-  // Keyed on the soft keyboard, not focus: Back closes the keyboard while the editor keeps focus.
-  // It only compacts the thread header; the sidebar stays, so no pane changes width for typing.
-  const composerKeyboardActive =
-    Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible;
   const showPrimarySidebar = !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
   // Medium windows float the sidebar over a page; beside a list it keeps its room.
   const sidebarFloats =
@@ -928,7 +920,6 @@ function AdaptiveWorkspaceLayoutContent(
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
-    setComposerEditing,
   });
   const contextValue = useMemo(
     () => ({ ...actions, layout, nativeInspectorWidth, workspacePageWidth }),
@@ -941,17 +932,9 @@ function AdaptiveWorkspaceLayoutContent(
       fileInspector,
       primarySidebarSearchQuery,
       sidebarToggleable,
-      composerKeyboardActive,
       sidebarByOrientation,
     }),
-    [
-      panes,
-      fileInspector,
-      primarySidebarSearchQuery,
-      sidebarToggleable,
-      composerKeyboardActive,
-      sidebarByOrientation,
-    ],
+    [panes, fileInspector, primarySidebarSearchQuery, sidebarToggleable, sidebarByOrientation],
   );
 
   const inspectorSheet = (

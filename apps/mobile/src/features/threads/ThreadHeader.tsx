@@ -24,7 +24,7 @@ export function ThreadHeader(props: {
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
-  const { panes, composerKeyboardActive } = useWorkspacePaneState();
+  const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
@@ -60,7 +60,6 @@ export function ThreadHeader(props: {
       actions={actions}
       menus={menus}
       hideBottomBorder
-      compact={composerKeyboardActive}
     />
   );
 }
