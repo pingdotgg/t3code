@@ -10,10 +10,7 @@ import { useState } from "react";
 export function NavCounter() {
   const [count, setCount] = useState(0);
   return (
-    <button
-      data-testid="nav-counter"
-      onClick={() => setCount((value) => value + 1)}
-    >
+    <button data-testid="nav-counter" onClick={() => setCount((value) => value + 1)}>
       nav-count: {count}
     </button>
   );
