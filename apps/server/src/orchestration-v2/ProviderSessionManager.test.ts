@@ -440,6 +440,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
+    readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
@@ -575,6 +576,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                       `${archive === true ? "archive" : "unload"}:${providerThread.nativeThreadRef?.nativeId}`,
                     ),
               ),
+              Effect.andThen(archive === true ? (options.archive ?? Effect.void) : Effect.void),
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
@@ -615,6 +617,7 @@ function layerTest(input: {
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
+  readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
@@ -655,6 +658,7 @@ function layerTest(input: {
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
+      ...(input.archive === undefined ? {} : { archive: input.archive }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
@@ -4243,9 +4247,14 @@ it.effect(
     }),
 );
 
-it.effect.each([true, false])(
-  "ProviderSessionManagerV2 archives an idle delegated child once its parent has the result (session kept open: %s)",
-  (keptOpen) =>
+it.effect.each([
+  { keptOpen: true, archive: "succeeds" },
+  { keptOpen: false, archive: "succeeds" },
+  { keptOpen: false, archive: "fails" },
+  { keptOpen: false, archive: "hangs" },
+] as const)(
+  "ProviderSessionManagerV2 archives an idle delegated child once its parent has the result (session kept open: $keptOpen, archive $archive)",
+  ({ keptOpen, archive }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const unloads = yield* Queue.unbounded<string>();
@@ -4368,26 +4377,18 @@ it.effect.each([true, false])(
         }
 
         yield* TestClock.adjust("1 second");
-        if (keptOpen) {
-          assert.equal(yield* Queue.take(unloads), "archive:native-delivered");
-          // The pending child stays loaded until its parent takes the result.
-          yield* eventSink.write({ events: [deliverPending!] });
-          yield* TestClock.adjust("1 second");
-          assert.equal(yield* Queue.take(unloads), "archive:native-pending");
+        assert.equal(yield* Queue.take(unloads), "archive:native-delivered");
+        if (archive !== "succeeds") {
+          if (archive === "hangs") yield* TestClock.adjust("10 seconds");
+          // An archive that never finished may have left the thread loaded.
+          assert.equal(yield* Queue.take(unloads), "unload:native-delivered");
           return;
         }
-        const exits: Array<string> = [];
-        for (
-          let exit = yield* Queue.take(unloads);
-          exit !== "close";
-          exit = yield* Queue.take(unloads)
-        ) {
-          exits.push(exit);
-        }
-        assert.deepEqual(
-          exits.filter((exit) => exit.startsWith("archive:")),
-          ["archive:native-delivered"],
-        );
+        // The pending child stays loaded, and keeps the session open, until its parent takes the result.
+        yield* eventSink.write({ events: [deliverPending!] });
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(unloads), "archive:native-pending");
+        if (!keptOpen) assert.equal(yield* Queue.take(unloads), "close");
       });
 
       yield* effect.pipe(
@@ -4396,6 +4397,11 @@ it.effect.each([true, false])(
             state,
             idleTimeoutMs: 1000,
             unloads,
+            ...(archive === "fails"
+              ? { archive: unimplemented("archive refused") }
+              : archive === "hangs"
+                ? { archive: Effect.never }
+                : {}),
             // Another thread's work keeps the shared session open past the children's idle unloads.
             hasPendingBackgroundWork: Effect.succeed(keptOpen),
           }),
