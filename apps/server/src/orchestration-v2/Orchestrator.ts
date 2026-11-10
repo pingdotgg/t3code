@@ -3012,8 +3012,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly disposition: "stopped" | "disposed";
     readonly now: DateTime.Utc;
     readonly cancelQueuedDelivery?: boolean;
-    // An interrupted wake disposes only the results it carried. The cohort stays open, and its
-    // delivery stays the wake's, so the wake's terminal reserves any sibling's result.
+    // An interrupted or cancelled wake disposes only the results it carried. The cohort stays
+    // open, and its delivery stays the wake's, so the wake's terminal reserves any sibling's result.
     readonly interruptedWakeTaskIds?: ReadonlyArray<NodeId>;
   }) {
     const parentRun = input.projection.runs.find((candidate) => candidate.id === input.parentRunId);
@@ -3752,6 +3752,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
           },
           events,
+          "cohort",
         );
       }
     }
@@ -10301,6 +10302,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchQueuedRunCancel = Effect.fn("Orchestrator.dispatchQueuedRunCancel")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.cancel" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    // Settling disposes a cancelled wake's whole cohort, so a sibling's late result cannot unsettle it.
+    disposes: "wake" | "cohort" = "wake",
   ) {
     const projection = yield* loadProjectionForCommand(
       command,
@@ -10318,8 +10321,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const queuedMessage = projection.messages.find(
       (candidate) => candidate.id === queuedRun.userMessageId,
     );
+    const now = yield* DateTime.now;
     if (queuedMessage?.delegatedCompletion !== undefined) {
-      const now = yield* DateTime.now;
       yield* disposeDelegatedCompletionCohort({
         command,
         events,
@@ -10327,64 +10330,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentRunId: queuedMessage.delegatedCompletion.parentRunId,
         disposition: "disposed",
         now,
+        cancelQueuedDelivery: false,
+        ...(disposes === "wake"
+          ? { interruptedWakeTaskIds: queuedMessage.delegatedCompletion.taskIds }
+          : {}),
       });
-      return;
     }
-    const queuedRootNode =
-      queuedRun.rootNodeId === null
-        ? undefined
-        : projection.nodes.find((candidate) => candidate.id === queuedRun.rootNodeId);
-    const queuedAttempt =
-      queuedRun.activeAttemptId === null
-        ? undefined
-        : projection.attempts.find((candidate) => candidate.id === queuedRun.activeAttemptId);
-
-    const now = yield* DateTime.now;
+    yield* emitQueuedRunCancellation({ command, events, projection, run: queuedRun, now });
     const emitEvent = emit(events, command);
-    yield* emitEvent({
-      type: "run.updated",
-      threadId: command.threadId,
-      runId: queuedRun.id,
-      ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
-      providerInstanceId: queuedRun.providerInstanceId,
-      occurredAt: now,
-      payload: {
-        ...queuedRun,
-        status: "cancelled",
-        queuePosition: null,
-        completedAt: now,
-      },
-    });
-    if (queuedAttempt !== undefined && queuedRootNode !== undefined) {
-      yield* emitEvent({
-        type: "run-attempt.updated",
-        threadId: command.threadId,
-        runId: queuedRun.id,
-        nodeId: queuedRootNode.id,
-        providerInstanceId: queuedRun.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...queuedAttempt,
-          status: "cancelled",
-          completedAt: now,
-        },
-      });
-    }
-    if (queuedRootNode !== undefined) {
-      yield* emitEvent({
-        type: "node.updated",
-        threadId: command.threadId,
-        runId: queuedRun.id,
-        nodeId: queuedRootNode.id,
-        providerInstanceId: queuedRun.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...queuedRootNode,
-          status: "cancelled",
-          completedAt: now,
-        },
-      });
-    }
     const guest = queuedMessage?.context?.guest;
     if (guest !== undefined) {
       const thread = guestShareAfterCancelledSend(projection.thread, guest, now);
