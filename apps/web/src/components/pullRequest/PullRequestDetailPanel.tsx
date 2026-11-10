@@ -76,6 +76,7 @@ import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import {
   capitalizeTerm,
+  changeRequestMediaHost,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
@@ -247,7 +248,7 @@ function pullRequestMarkdownContext(
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
     repository: detail?.repository ?? null,
-    host: detail === null ? null : (URL.parse(detail.url)?.host.toLowerCase() ?? null),
+    host: changeRequestMediaHost(detail) ?? null,
   };
 }
 

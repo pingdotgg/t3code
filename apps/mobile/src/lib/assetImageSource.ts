@@ -20,7 +20,7 @@ export function assetImageCacheKey(
     case "attachment":
       return `t3-attachment:${JSON.stringify([environmentId, resource.attachmentId])}`;
     case SOURCE_CONTROL_MEDIA_ASSET: {
-      const media = sourceControlClients.mediaUrl(resource.url);
+      const media = sourceControlClients.mediaUrl(resource.url, resource.host);
       return media?.immutable
         ? `t3-media:${JSON.stringify([environmentId, media.fetchUrl])}`
         : undefined;

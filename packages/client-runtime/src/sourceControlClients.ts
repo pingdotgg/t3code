@@ -25,6 +25,17 @@ export {
 
 export const sourceControlClients = builtInSourceControlDefinitions;
 
+/**
+ * The host a change request's media is named by, for `mediaUrl`. Only GitHub reads it: an
+ * Enterprise Server can run on any hostname, while another forge's same-host links load as written.
+ */
+export function changeRequestMediaHost(
+  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
+): string | undefined {
+  if (changeRequest?.provider !== "github") return undefined;
+  return URL.parse(changeRequest.url)?.host.toLowerCase() || undefined;
+}
+
 /** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
 export function readHostCredentialSettings(
   settings: Pick<ServerSettings, "sourceControlHosts">,
