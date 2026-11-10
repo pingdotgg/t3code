@@ -25,7 +25,7 @@ const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
 const WEB_CITATION_OPEN = "\uE200";
 // OpenAI web-search citations: U+E200 "cite" (U+E202 id)+ U+E201. T3 has no sources for the ids.
 const WEB_CITATION_MARKER = /([ \t]?)\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
-const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+const DROPS_PRECEDING_SPACE = /^(?:\s|[.,;:!?)\]]|$)/u;
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataCodexArtifactTemplate",
@@ -251,15 +251,17 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
-// The space before a marker goes with it, unless dropping it would join two words.
-function webCitationReplacement(text: string, space: string, markerEnd: number): string {
-  return space && WORD_CHARACTER.test(text[markerEnd] ?? "") ? space : "";
+// The space before a marker goes with it only where nothing it separates follows.
+function webCitationReplacement(space: string, following: string): string {
+  return DROPS_PRECEDING_SPACE.test(following) ? "" : space;
 }
 
-function removeWebCitationMarkers(text: string): string {
-  return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) =>
-    webCitationReplacement(text, space, offset + marker.length),
-  );
+// `after` is the source text past this string, for a marker that ends it.
+function removeWebCitationMarkers(text: string, after = ""): string {
+  return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) => {
+    const markerEnd = offset + marker.length;
+    return webCitationReplacement(space, text.slice(markerEnd, markerEnd + 1) || after);
+  });
 }
 
 function collectWebCitationMarkers(
@@ -274,14 +276,18 @@ function collectWebCitationMarkers(
     matches.push({
       start: markerStart,
       end: markerEnd,
-      markdown: webCitationReplacement(source, marker[1] ?? "", markerEnd),
+      markdown: webCitationReplacement(marker[1] ?? "", source.slice(markerEnd, markerEnd + 1)),
     });
   }
 }
 
 function transformCodexDirectives(node: MarkdownAstNode, source: string, insideLink = false): void {
   if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
-    node.value = removeWebCitationMarkers(node.value);
+    const end = node.position?.end.offset;
+    node.value = removeWebCitationMarkers(
+      node.value,
+      end === undefined ? "" : source.slice(end, end + 1),
+    );
     return;
   }
   // GFM autolinks take a marker that directly follows a bare URL into the href.

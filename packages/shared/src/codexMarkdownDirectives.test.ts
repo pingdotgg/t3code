@@ -88,6 +88,7 @@ describe("remarkCodexDirectives", () => {
     expect(text).toContain("Prices rose 3%.");
     expect(text).toContain("Rates held.");
     expect(text).not.toMatch(WEB_CITATION_MARKER);
+    expect(textContent(parse("red \uE200cite\uE202turn0search0\uE201**blue**"))).toBe("red blue");
   });
 
   it("keeps web citation markers out of a bare URL they follow", () => {
@@ -142,6 +143,9 @@ describe.each([
   it.each([
     [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],
     ["red \uE200cite\uE202turn0search0\uE201blue", "red blue"],
+    ["red \uE200cite\uE202turn0search0\uE201**blue**", "red **blue**"],
+    ["red \uE200cite\uE202turn0search0\uE201[blue](https://a.dev)", "red [blue](https://a.dev)"],
+    ["red \uE200cite\uE202turn0search0\uE201`blue`", "red `blue`"],
     ["[s](https://a.dev\uE200cite\uE202turn0search0\uE201)", "[s](https://a.dev)"],
     ["[s]\n\n[s]: https://a.dev\uE200cite\uE202turn0search0\uE201", "[s]\n\n[s]: https://a.dev"],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
