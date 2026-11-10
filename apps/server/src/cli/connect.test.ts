@@ -184,8 +184,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         ]);
 
         const printed = (yield* TestConsole.logLines).join("\n");
-        assert.notInclude(printed, "Exposure: enabled");
-        assert.match(printed, /publish.only/i);
+        assert.include(printed, "Exposure: publish-only");
       }).pipe(
         Effect.scoped,
         Effect.provide(
