@@ -38,7 +38,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
         ? []
         : [
             [
-              "primary",
+              "service",
               { environment: { endpoint: { providerKind: testState.relayProviderKind } } },
             ],
           ],
@@ -73,15 +73,15 @@ vi.mock(import("../state/use-atom-command"), async (original) => ({
 }));
 vi.mock(import("./linkEnvironmentAtoms"), async (original) => ({
   ...(await original()),
-  linkPrimaryEnvironment: testState.link as never,
-  unlinkPrimaryEnvironment: testState.unlink as never,
-  updatePrimaryEnvironmentPreferences: testState.preferences as never,
+  linkEnvironment: testState.link as never,
+  unlinkEnvironment: testState.unlink as never,
+  updateEnvironmentPreferences: testState.preferences as never,
 }));
-vi.mock(import("./primaryCloudLinkState"), async (original) => ({
+vi.mock(import("./cloudLinkState"), async (original) => ({
   ...(await original()),
-  readCachedPrimaryCloudLinkState: () => testState.snapshot,
-  usePrimaryCloudLinkState: (() => ({
-    target,
+  readCachedCloudLinkState: () => testState.snapshot,
+  useCloudLinkState: ((environmentId: EnvironmentId | null) => ({
+    target: environmentId === null ? null : { environmentId },
     data: testState.renderedSnapshot,
     error: null,
     isPending: false,
@@ -96,12 +96,7 @@ vi.mock(import("./publicConfig"), async (original) => ({
 import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import { useCloudLinkController, type CloudLinkDesiredState } from "./useCloudLinkController";
 
-const target = {
-  environmentId: EnvironmentId.make("primary"),
-  label: "Primary",
-  httpBaseUrl: "http://localhost:3773",
-  wsBaseUrl: "ws://localhost:3773/ws",
-};
+const target = { environmentId: EnvironmentId.make("service") };
 const linkedState: EnvironmentCloudLinkStateResult = {
   linked: true,
   cloudUserId: "account-1",
@@ -114,7 +109,7 @@ const linkedState: EnvironmentCloudLinkStateResult = {
 type Controller = ReturnType<typeof useCloudLinkController>;
 
 function ControllerProbe({ onRender }: { onRender: (controller: Controller) => void }) {
-  const value = useCloudLinkController();
+  const value = useCloudLinkController(target.environmentId);
   useLayoutEffect(() => {
     onRender(value);
   });
