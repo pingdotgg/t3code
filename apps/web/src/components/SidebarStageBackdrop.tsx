@@ -50,9 +50,9 @@ export function useSidebarStageBackdropVariant(
 
 /**
  * Channel art across the whole window, behind the sidebar and the inset pane
- * (pen Duxhn): the drafting sheet, in each channel's ink. Mount it first inside
- * the sidebar wrapper so the pane and the sidebar paint over it. The paint
- * lives in index.css. Static: no motion or blur.
+ * (pen Duxhn). Mount it first inside the sidebar wrapper so the pane and the
+ * sidebar paint over it. The paint lives in index.css, so the browser fetches
+ * only the image for the mounted channel and theme. Static: no motion or blur.
  */
 export function ChromeChannelArt({ variant }: { variant: SidebarStageBackdropVariant }) {
   return (
@@ -61,13 +61,13 @@ export function ChromeChannelArt({ variant }: { variant: SidebarStageBackdropVar
       className="pointer-events-none fixed inset-0 z-0 hidden select-none overflow-hidden md:block"
       data-chrome-art-layer={variant}
     >
-      <DraftingSheetMarks />
+      {variant === "dev" ? <DevDraftingSheetMarks /> : null}
     </div>
   );
 }
 
 // Layout-token calculations keep drafting-sheet marks aligned during sidebar resizing and collapse.
-function DraftingSheetMarks() {
+function DevDraftingSheetMarks() {
   return (
     <>
       <div data-bp="h" data-bp-at="pane-top" />
