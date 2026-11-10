@@ -2406,7 +2406,7 @@ it.effect("reports submodule downloads as their own setup step", () =>
         "Receiving objects: 60% (6/10), 12.00 MiB | 1.50 MiB/s",
       );
 
-      yield* line("Submodule path 'vendor/assets': checked out 'abc'");
+      yield* line("Submodule path 'vendor/o'hare': checked out 'abc'");
       yield* progress.onSubmodulesFinished?.({ ok: true, detail: null }) ?? Effect.void;
       yield* Deferred.succeed(release, undefined);
       yield* tracker.stream(launched.threadId).pipe(
@@ -2415,7 +2415,7 @@ it.effect("reports submodule downloads as their own setup step", () =>
       );
       assert.deepInclude(yield* stage("submodules"), {
         status: "done",
-        detail: "vendor/assets",
+        detail: "vendor/o'hare",
       });
     }).pipe(Effect.provide(harness.layer));
   }),

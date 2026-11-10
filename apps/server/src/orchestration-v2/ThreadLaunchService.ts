@@ -470,7 +470,8 @@ const make = Effect.gen(function* () {
                     `disabled in ${source}`,
                   ),
                 onSubmoduleLine: (line) => {
-                  const submodulePath = /Submodule path '([^']+)'/.exec(line)?.[1];
+                  // Paths may contain quotes; git closes the path with "': ".
+                  const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
                   if (submodulePath !== undefined) {
                     return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
                   }
