@@ -87,9 +87,11 @@ export interface ZcodeConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+const EXIT_DRAIN_GRACE = Duration.seconds(1);
 
 interface PendingZcodeRequest {
   readonly deferred: Deferred.Deferred<unknown, ZcodeProtocolError>;
+  readonly method: string;
 }
 
 const MAX_ZCODE_RECORD_CHARS = 16 * 1024 * 1024;
@@ -149,14 +151,19 @@ export function zcodeJsonStringify(value: unknown): string {
   }
 }
 
-const ZCODE_ERROR_DETAIL_MAX_CHARS = 600;
+const ZCODE_SERVER_ERROR_CODE_MAX_CHARS = 100;
 
-function summarizeZcodeError(error: unknown): string {
-  const text = typeof error === "string" ? error : JSON.stringify(error);
-  if (text === undefined) return "unknown error";
-  return text.length > ZCODE_ERROR_DETAIL_MAX_CHARS
-    ? `${text.slice(0, ZCODE_ERROR_DETAIL_MAX_CHARS)}…`
-    : text;
+// Bounded server-error metadata; the raw payload travels only in `cause`.
+function describeZcodeServerError(error: unknown): string {
+  const code = zcodeRecordField(error, "code");
+  const codeText =
+    typeof code === "string" || typeof code === "number"
+      ? `code ${String(code).slice(0, ZCODE_SERVER_ERROR_CODE_MAX_CHARS)}`
+      : undefined;
+  const payloadLength = JSON.stringify(error)?.length ?? 0;
+  return codeText === undefined
+    ? `${payloadLength}-char payload`
+    : `${codeText}, ${payloadLength}-char payload`;
 }
 
 function describeZcodeStdoutClosure(exitCode: number | undefined): string {
@@ -224,7 +231,9 @@ export const makeZcodeConnection = Effect.fnUntraced(function* (options: ZcodeSp
   };
 
   const hasExited = (): boolean => {
-    if (childExited) return true;
+    // A dead POSIX leader does not empty its group: detached tools keep the pgid alive and
+    // must stay reachable for the SIGKILL escalation.
+    if (childExited && platform === "win32") return true;
     try {
       if (platform === "win32") process.kill(Number(child.pid), 0);
       else signalProcessGroup(Number(child.pid), 0);
@@ -288,8 +297,8 @@ export const makeZcodeConnection = Effect.fnUntraced(function* (options: ZcodeSp
             yield* Deferred.fail(
               pending.deferred,
               new ZcodeProtocolError({
-                operation: String(record["method"] ?? "request"),
-                detail: summarizeZcodeError(record["error"]),
+                operation: pending.method,
+                detail: describeZcodeServerError(record["error"]),
                 ...(record["error"] === undefined ? {} : { cause: record["error"] }),
               }),
             );
@@ -309,6 +318,31 @@ export const makeZcodeConnection = Effect.fnUntraced(function* (options: ZcodeSp
           childExited = true;
           return Deferred.succeed(exitDeferred, Number(code));
         }),
+    }),
+    Effect.forkIn(scope),
+  );
+
+  // A detached tool child can inherit stdout and keep it open after zcode exits, so stdout
+  // EOF never arrives and stdout closure cannot fail the transport. Give records buffered
+  // at death the grace window to drain, then fail the transport without EOF; the
+  // transportDown claim keeps a later stdout close from double-failing.
+  yield* Deferred.await(exitDeferred).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        Effect.sleep(EXIT_DRAIN_GRACE).pipe(
+          Effect.andThen(failTransport(new ZcodeProtocolError({ operation: "exit", cause }))),
+        ),
+      onSuccess: (exitCode) =>
+        Effect.sleep(EXIT_DRAIN_GRACE).pipe(
+          Effect.andThen(
+            failTransport(
+              new ZcodeProtocolError({
+                operation: "read",
+                detail: `zcode app-server exited with code ${exitCode}, but stdout never closed`,
+              }),
+            ),
+          ),
+        ),
     }),
     Effect.forkIn(scope),
   );
@@ -410,7 +444,7 @@ export const makeZcodeConnection = Effect.fnUntraced(function* (options: ZcodeSp
   ): Effect.fn.Return<unknown, ZcodeProtocolError | ZcodeProtocolTimeoutError> {
     const id = nextRequestId++;
     const deferred = yield* Deferred.make<unknown, ZcodeProtocolError>();
-    pendingRequests.set(String(id), { deferred });
+    pendingRequests.set(String(id), { deferred, method });
     yield* send({ id, method, params }).pipe(
       Effect.tapError(() => Effect.sync(() => pendingRequests.delete(String(id)))),
     );
