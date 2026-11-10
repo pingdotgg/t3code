@@ -3190,22 +3190,8 @@ html:root[data-theme-id="t3-code-classic"] {
   );
   --tool-error-icon: var(--error);
   --destructive-fill-foreground: #ffffff;
-  --raised-fill: linear-gradient(var(--popover), var(--popover));
-  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
-  --raised-rim: linear-gradient(var(--border), var(--border));
-  --raised-hover-rim: var(--raised-rim);
-  --popover-rim: var(--raised-rim);
-  --card-settings-fill: linear-gradient(
-    color-mix(in srgb, var(--card) 60%, transparent),
-    color-mix(in srgb, var(--card) 60%, transparent)
-  );
-  /* Solid, so the timeline never shows through the composer or its tray. */
-  --tray-fill: linear-gradient(
-    color-mix(in srgb, var(--card) 80%, var(--background)),
-    color-mix(in srgb, var(--card) 80%, var(--background))
-  );
-  --composer-fill: linear-gradient(var(--card), var(--card));
-  --tray-stroke: var(--border);
+  /* Classic is a palette: surfaces keep the chosen style's fills, rims and gradients, so the
+     default style still reads as lit edges over lifted surfaces. */
   --hairline: var(--border);
   --divider: var(--border);
   --table-row-rule: var(--border);
@@ -3217,6 +3203,11 @@ html:root[data-theme-id="t3-code-classic"] {
 
   @variant dark {
     --background: color-mix(in srgb, var(--app-theme-canvas) 94.5%, white);
+    /* Main's dark surfaces sit within a few levels of its black page and lean on borders.
+       Without those borders they need the default theme's spacing between steps. */
+    --card: color-mix(in srgb, var(--background) 97.5%, white);
+    --popover: color-mix(in srgb, var(--background) 97%, white);
+    --surface-raised: color-mix(in srgb, var(--background) 94%, white);
     --info-foreground: var(--color-blue-400);
     --success-foreground: var(--color-emerald-400);
     --tool-error-icon: #fca5a5;
@@ -3251,11 +3242,6 @@ html:root[data-theme-id="t3-code-classic"] > body {
 
 html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
   --app-panel-fill: var(--background);
-}
-
-html:root[data-theme-id="t3-code-classic"] .surface-card-settings-rim {
-  background: var(--card-settings-fill) padding-box;
-  border-color: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 html:root[data-theme-id="t3-code-classic"] .surface-dialog {
