@@ -57,6 +57,8 @@ const mocks = vi.hoisted(() => ({
   projectWords: {} as Record<string, SpeechCustomWords>,
   transcripts: [] as Array<string | Error | Promise<string>>,
   transcriptionSignals: [] as AbortSignal[],
+  transcriptionConnections: [] as unknown[],
+  deletedRecordings: [] as string[],
   committed: vi.fn(),
   draft: "",
 }));
@@ -181,30 +183,32 @@ vi.mock("./browserVoiceInput", () => ({
       transcriber: {
         prepare: async () => {
           mocks.recordingOptions.push(input.getTranscriptionOptions());
-          return {
-            locale: "en",
-            transcribe: async (_uri: string, options: { readonly signal: AbortSignal }) => {
-              mocks.transcribeCalls.push(
-                input.cloudProvider
-                  ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
-                  : environmentId,
-              );
-              mocks.transcriptionSignals.push(options.signal);
-              const next = mocks.transcripts.shift() ?? "dictated";
-              if (next instanceof Error) throw next;
-              if (typeof next === "string") return next;
-              return new Promise<string>((resolve, reject) => {
-                options.signal.addEventListener("abort", () => reject(new Error("aborted")));
-                next.then(resolve, reject);
-              });
-            },
-          };
+          return { locale: "en", transcribe };
         },
       },
+      retryTranscription: (locale: string) => ({ locale, transcribe }),
       cancelRecording() {},
-      deleteRecording() {},
+      deleteRecording(uri: string) {
+        mocks.deletedRecordings.push(uri);
+      },
       releaseRecording() {},
     };
+    async function transcribe(_uri: string, options: { readonly signal: AbortSignal }) {
+      mocks.transcriptionConnections.push(input.prepared);
+      mocks.transcribeCalls.push(
+        input.cloudProvider
+          ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
+          : environmentId,
+      );
+      mocks.transcriptionSignals.push(options.signal);
+      const next = mocks.transcripts.shift() ?? "dictated";
+      if (next instanceof Error) throw next;
+      if (typeof next === "string") return next;
+      return new Promise<string>((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        next.then(resolve, reject);
+      });
+    }
   },
 }));
 
@@ -240,6 +244,8 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.projectWords = {};
   mocks.transcripts = [];
   mocks.transcriptionSignals = [];
+  mocks.transcriptionConnections = [];
+  mocks.deletedRecordings = [];
   mocks.committed.mockClear();
   mocks.draft = "";
 }
@@ -418,6 +424,45 @@ it("keeps a recording that failed after its editor moved on for a retry in its o
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
   expect(commitThreadB).not.toHaveBeenCalled();
+});
+
+it("retries a recording parked for its thread over the destination's new connection", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed"), "second try"];
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  const reconnected = mocks.prepared.get("env-a");
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  await vi.waitFor(() =>
+    expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" }),
+  );
+  expect(mocks.deletedRecordings).toEqual([]);
+  await act(() => mocks.voice.start());
+  expect(mocks.transcriptionConnections.at(-1)).toBe(reconnected);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("keeps a failed recording for retry when its editor's destination reconnects", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed"), "second try"];
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" });
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe />);
+  const reconnected = mocks.prepared.get("env-a");
+  await vi.waitFor(() =>
+    expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" }),
+  );
+  await act(() => mocks.voice.start());
+  expect(mocks.microphoneRequests).toEqual(["env-a"]);
+  expect(mocks.transcriptionConnections.at(-1)).toBe(reconnected);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
 it("finishes a recording into its draft after the editor unmounts", async () => {

@@ -8,6 +8,7 @@ import {
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
+  type PreparedVoiceTranscription,
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -33,12 +34,9 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
 }) {
-  return createBrowserPcmCapture(input, async (options) => {
-    const recordingOptions = input.getTranscriptionOptions();
-    const transcribeRecording = async (
-      uri: string,
-      { signal: transcriptionSignal }: VoiceTranscriptionOptions,
-    ) => {
+  const transcribeWith =
+    (recordingOptions: SpeechTranscriptionOptions) =>
+    async (uri: string, { signal: transcriptionSignal }: VoiceTranscriptionOptions) => {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
@@ -72,6 +70,9 @@ export function createBrowserVoiceInputPlatform(input: {
         });
       }
     };
+  const capture = createBrowserPcmCapture(input, async (options) => {
+    const recordingOptions = input.getTranscriptionOptions();
+    const transcribeRecording = transcribeWith(recordingOptions);
     if (input.cloudProvider) {
       if (input.cloudProvider === "openrouter" && !input.cloudModel)
         throw new VoiceTranscriptionError({
@@ -124,4 +125,12 @@ export function createBrowserVoiceInputPlatform(input: {
       }),
     };
   });
+  return {
+    ...capture,
+    /** Sends a recording captured on another connection to the same destination through this one. */
+    retryTranscription: (locale: string): PreparedVoiceTranscription => ({
+      locale,
+      transcribe: (uri, options) => transcribeWith(input.getTranscriptionOptions())(uri, options),
+    }),
+  };
 }
