@@ -47,7 +47,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
-  const [rootHeight, setRootHeight] = useState<number | null>(null);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
   const windowHinge = use(WindowHingeContext);
   // State, not a ref: `open` reaches render-prop children, and the compiler
@@ -61,7 +60,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     setAnchor(null);
     setPath([]);
     setOverlay(null);
-    setRootHeight(null);
   };
 
   const open = () => {
@@ -73,7 +71,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const measureOverlay = () => {
     overlayRef.current?.measureInWindow((x, y, width, height) => {
       setOverlay({ x, y, width, height });
-      setRootHeight(height);
     });
   };
 
@@ -126,7 +123,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           margin: SCREEN_MARGIN,
           minHeight: 2 * menuItemHeight + 14 * scale,
         });
-  const placeable = local !== null && rootHeight !== null;
 
   const onPressItem = (action: MenuAction) => {
     if ((action.subactions?.length ?? 0) > 0) {
@@ -173,7 +169,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             onLayout={measureOverlay}
           >
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
-            {!placeable || local === null ? null : !anchor.keyboardWasVisible ? (
+            {local === null ? null : !anchor.keyboardWasVisible ? (
               <MenuPopup
                 // Compose aligns to the trigger's start if it fits; hinge-safe triggers keep menus on their side.
                 anchor={windowHinge ? { ...local, x: left, width: menuWidth } : local}
