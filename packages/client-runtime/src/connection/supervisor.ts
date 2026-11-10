@@ -89,7 +89,11 @@ type SupervisorSignal =
   | { readonly _tag: "RetryRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
-  | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
+  | {
+      readonly _tag: "BetterRouteAvailable";
+      readonly routeId: string;
+      readonly generation: number;
+    };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -487,6 +491,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             : checkGrant(route, (grant) => grantCovers(grant, activeGrant)),
       { concurrency: "unbounded" },
     );
+    if ((yield* Ref.get(silentRoutes)).generation !== silent.generation) return;
     yield* Ref.update(silentRoutes, (previous) => {
       if (previous.generation !== silent.generation) return previous;
       const routes = new Map(previous.routes);
@@ -504,6 +509,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* signal({
       _tag: "BetterRouteAvailable",
       routeId: connectionRouteId(better[index]!.target),
+      generation: silent.generation,
     });
   });
 
@@ -747,6 +753,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       return "end" as const;
     }
     if (next._tag === "BetterRouteAvailable") {
+      if ((yield* Ref.get(silentRoutes)).generation !== next.generation) return;
       yield* Ref.set(preferredRouteId, Option.some(next.routeId));
       return "reset" as const;
     }
