@@ -130,8 +130,12 @@ describe("ProjectSetupScriptRunner", () => {
       const command = 'node "${HOME:-.}/x.mjs" setup';
       const { writes } = yield* setup({ shell: "/usr/bin/fish", command });
       yield* TestClock.adjust("3 seconds");
-      const submitted = (yield* Queue.take(writes)).split("\r");
-      expect(submitted.find((line) => line.includes(command))).toMatch(/printf .*\$status/);
+      const [check, ...rest] = (yield* Queue.take(writes)).split("\r");
+      expect(check).toContain(
+        `'node "\${HOME:-.}/x.mjs" setup' | '/usr/bin/fish' --no-config --no-execute; or printf`,
+      );
+      // Typed on its own line so the fish line editor still expands abbreviations.
+      expect(rest).toContain(command);
     }),
   );
 

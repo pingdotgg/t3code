@@ -176,13 +176,17 @@ function resolveCompletionShell(shell: string): CompletionShell | null {
   return "posix";
 }
 
+function quoteFish(value: string): string {
+  return `'${value.replace(/[\\']/g, "\\$&")}'`;
+}
+
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-// Interactive fish runs each submitted line alone and drops one that fails to parse, so it gets a single line that
-// `source`s the body: fish parses all of it before running any (`eval` would skip only the failing statement).
-// Abbreviations, which only the line editor expands, do not apply inside it.
+// Interactive fish keeps a line that fails to parse in its editor, running nothing, so the body is first parsed as a
+// quoted string. It stays typed rather than sourced because only the line editor expands abbreviations.
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
+  shellPath: string,
   sentinel: string,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
@@ -190,7 +194,7 @@ function wrapCommandForCompletion(
     case "powershell":
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `source (printf '%s' '${body.replace(/[\\']/g, "\\$&")}' | psub); printf '\\n${sentinel}%s\\n' $status`;
+      return `printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-config --no-execute; or printf '\\n${sentinel}%s\\n' $status\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
@@ -503,6 +507,7 @@ export const make = Effect.gen(function* () {
         commandLine = wrapCommandForCompletion(
           script.command,
           completionShell,
+          shell,
           completionSentinel(completionToken),
         );
       }
