@@ -2274,6 +2274,59 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("selects the provider and id Pi reported when either contains a slash", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const hub = "hub=https://hub.example:8318/v1";
+      fake.queueModels([{ provider: "openrouter", id: "openrouter/auto" }]);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [],
+        "First",
+        modelSelection("openrouter/openrouter/auto"),
+      );
+      const openRouterRequest = yield* fake.takeRequest("set_model");
+      assert.deepEqual(
+        { provider: openRouterRequest["provider"], modelId: openRouterRequest["modelId"] },
+        { provider: "openrouter", modelId: "openrouter/auto" },
+      );
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // A provider registered after the session started, e.g. by an extension reload.
+      fake.queueModels([
+        { provider: "openrouter", id: "openrouter/auto" },
+        { provider: hub, id: "claude-haiku-4-5" },
+      ]);
+      yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [],
+        "Second",
+        modelSelection(`${hub}/claude-haiku-4-5`),
+        2,
+      );
+      const hubRequest = yield* fake.takeRequest("set_model");
+      assert.deepEqual(
+        { provider: hubRequest["provider"], modelId: hubRequest["modelId"] },
+        { provider: hub, modelId: "claude-haiku-4-5" },
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["anthropic/model-b", "default"])(
     "preserves explicit thinking when switching models to %s in the same runtime",
     (targetModel) =>
