@@ -25,6 +25,8 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   /** The exact model the grant names; required for OpenRouter and custom endpoints. */
   readonly cloudModel?: SpeechModelId | undefined;
+  /** The custom endpoint base URL the grant consented to. */
+  readonly cloudEndpoint?: string | undefined;
   readonly hasAudioConsent: () => boolean;
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getMicrophoneId: () => string;
@@ -51,6 +53,7 @@ export function createBrowserVoiceInputPlatform(input: {
                 recordingOptions,
                 input.hasAudioConsent,
                 input.cloudModel,
+                input.cloudEndpoint,
               )
             : transcribeEnvironmentPcm(
                 input.prepared,

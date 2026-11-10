@@ -25,8 +25,8 @@ export function cloudSpeechDisclosure(
       host = "";
     }
     return host
-      ? `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to your endpoint at ${host}.`
-      : `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to the custom endpoint configured on it.`;
+      ? `After you stop, ${environment} sends your recording to your endpoint at ${host}.`
+      : `After you stop, ${environment} sends your recording to the custom endpoint configured on it.`;
   }
   return `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to ${CLOUD_SPEECH_PROVIDER_NAMES[provider]}.`;
 }

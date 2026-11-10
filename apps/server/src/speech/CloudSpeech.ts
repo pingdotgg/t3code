@@ -109,12 +109,13 @@ function customTranscriptionsUrl(baseUrl: string) {
   } catch {
     return null;
   }
-  if (url.search || url.hash) return null;
+  if (url.search || url.hash || url.username || url.password) return null;
   const hostname = url.hostname.toLowerCase();
-  const host = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const host =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
   const local =
     host === "localhost" || host === "::1" || host === "127.0.0.1" || host.endsWith(".localhost");
-  if (url.protocol === "http:" && !local) return null;
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return null;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}/audio/transcriptions`;
 }
 
@@ -142,6 +143,7 @@ export class CloudSpeech extends Context.Service<
       pcm: Uint8Array,
       options: SpeechTranscriptionOptions,
       model?: string | undefined,
+      endpoint?: string | undefined,
     ) => Effect.Effect<string, CloudSpeechError | SpeechInvalidAudioError | ServerSettingsError>;
   }
 >()("t3/speech/CloudSpeech") {}
@@ -212,13 +214,17 @@ export const layer = Layer.effect(
         pcm: Uint8Array,
         options: SpeechTranscriptionOptions,
         model?: string,
+        endpoint?: string,
       ) {
         const source = (yield* credentials)[provider];
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
-        const customUrl =
-          provider === "custom" ? customTranscriptionsUrl((yield* settings.getSettings).cloudSpeechCustomBaseUrl) : null;
+        // A custom grant names the base URL it consented to; audio never goes anywhere else.
+        const consentedUrl = Effect.map(settings.getSettings, ({ cloudSpeechCustomBaseUrl }) =>
+          endpoint === cloudSpeechCustomBaseUrl ? customTranscriptionsUrl(endpoint) : null,
+        );
+        const customUrl = provider === "custom" ? yield* consentedUrl : null;
         if (provider === "custom" && (!model || !customUrl))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const samples = yield* Effect.try({
@@ -258,6 +264,8 @@ export const layer = Layer.effect(
             provider,
             reason: current ? "key-changed" : "missing-key",
           });
+        if (provider === "custom" && (yield* consentedUrl) !== customUrl)
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const response = yield* execute(request).pipe(Effect.mapError(unavailable));
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({

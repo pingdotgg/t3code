@@ -1369,9 +1369,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
-    Schema.withDecodingDefault(
-      Effect.succeed({ openai: "", xai: "", openrouter: "", custom: "" }),
-    ),
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "", custom: "" })),
   ),
   /** Base URL of the OpenAI-compatible transcription endpoint, including the version path (e.g. `https://host/v1`). */
   cloudSpeechCustomBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),

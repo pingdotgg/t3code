@@ -233,18 +233,20 @@ it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart"
             new Uint8Array(new Float32Array([0, 0.5]).buffer),
             { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
             model,
+            baseUrl,
           )
           .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
       });
     yield* service.setKey("custom", Redacted.make("custom-key"));
     const pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer);
-    const transcribe = (model: string | undefined) =>
+    const transcribe = (model: string | undefined, endpoint = "http://localhost:8080/v1") =>
       service
         .transcribe(
           "custom",
           pcm,
           { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
           model,
+          endpoint,
         )
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
     expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({
@@ -253,6 +255,9 @@ it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart"
     });
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* Effect.flip(transcribe(undefined))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(yield* Effect.flip(transcribe("whisper-1", "http://localhost:9090/v1"))).toMatchObject({
       reason: "model-unavailable",
     });
     expect(upstream).not.toHaveBeenCalled();
@@ -266,6 +271,9 @@ it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart"
     expect(form.get("language")).toBe("en");
     expect([...form.keys()].at(-1)).toBe("file");
     expect(yield* Effect.flip(attempt("http://example.com/v1", "whisper-1"))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(yield* Effect.flip(attempt("ftp://localhost/v1", "whisper-1"))).toMatchObject({
       reason: "model-unavailable",
     });
     expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({

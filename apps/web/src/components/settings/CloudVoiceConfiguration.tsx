@@ -95,7 +95,7 @@ function isCustomEndpoint(value: string) {
   } catch {
     return false;
   }
-  if (url.search || url.hash) return false;
+  if (url.search || url.hash || url.username || url.password) return false;
   const host = url.hostname.toLowerCase();
   const loopback =
     host === "localhost" || host === "[::1]" || host === "127.0.0.1" || host.endsWith(".localhost");
@@ -169,7 +169,7 @@ function ModelPicker({
 export function CloudVoiceConfiguration({
   environment,
   provider,
-  active,
+  active: selected,
   close,
 }: {
   environment: Pick<EnvironmentPresentation, "environmentId" | "label" | "serverConfig">;
@@ -194,7 +194,7 @@ export function CloudVoiceConfiguration({
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
   const currentModel =
-    active &&
+    selected &&
     grant?.destination.kind === "cloud" &&
     (grant.destination.provider === "openrouter" || grant.destination.provider === "custom")
       ? grant.destination.model
@@ -206,6 +206,12 @@ export function CloudVoiceConfiguration({
   const savedEndpoint = environment.serverConfig?.settings?.cloudSpeechCustomBaseUrl ?? "";
   const [endpoint, setEndpoint] = useState(savedEndpoint);
   const endpointChanged = custom && endpoint.trim() !== savedEndpoint;
+  // A custom grant bound to another URL is void, so it must be approved again.
+  const active =
+    selected &&
+    (grant?.destination.kind !== "cloud" ||
+      grant.destination.provider !== "custom" ||
+      grant.destination.endpoint === savedEndpoint);
   const endpointReady = !custom || isCustomEndpoint(endpoint);
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -257,8 +263,8 @@ export function CloudVoiceConfiguration({
           endpoint: endpoint.trim(),
         }
       : routed && isModelId(model)
-      ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+        ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
+        : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
     ? modelChosen &&
@@ -404,7 +410,7 @@ export function CloudVoiceConfiguration({
               : active && !routed
                 ? `Anyone with dictation access to ${environment.label} can use this API key.`
                 : cloudSpeechDisclosure(provider, environment.label, {
-                    endpoint: custom ? (endpoint.trim() || savedEndpoint) : undefined,
+                    endpoint: custom ? endpoint.trim() || savedEndpoint : undefined,
                   })}
           </DialogDescription>
         </DialogHeader>
@@ -420,7 +426,9 @@ export function CloudVoiceConfiguration({
               AsyncResult.isSuccess(presence) &&
               presence.value &&
               saved === undefined ? (
-              <p>Update {environment.label} to use {name} dictation.</p>
+              <p>
+                Update {environment.label} to use {name} dictation.
+              </p>
             ) : saved === undefined ? (
               <p role="status">Checking for an API key…</p>
             ) : routed ? (

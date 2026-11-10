@@ -822,7 +822,10 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("transcribeCloud", "/api/voice/cloud/:provider/transcribe", {
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ provider: CloudSpeechProvider }),
-      query: Schema.Struct({ model: Schema.optionalKey(SpeechModelId) }),
+      query: Schema.Struct({
+        model: Schema.optionalKey(SpeechModelId),
+        endpoint: Schema.optionalKey(Schema.String),
+      }),
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
       error: [

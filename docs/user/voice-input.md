@@ -53,6 +53,8 @@ transcription server instead of a hosted provider. Enter the server's base URL
 name, and an API key; audio is sent to the URL's `/audio/transcriptions` route.
 Plain `http` is only accepted for localhost servers. The model, like the
 OpenRouter model, is per device; the URL and key are shared by the environment.
+Changing the URL stops dictation on every device until it chooses the custom
+endpoint again under **Manage endpoint**.
 T3 cannot verify what a custom endpoint retains, so only point it at servers you
 trust.
 

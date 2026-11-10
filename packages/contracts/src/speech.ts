@@ -76,7 +76,7 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
         case "rate-limit":
           return "The custom endpoint reached a usage limit. Check the endpoint's quota or try again later.";
         case "model-unavailable":
-          return "Set the custom endpoint URL and a model name in Settings → Voice.";
+          return "Check the custom endpoint URL and model in Settings → Voice, then choose it again.";
         case "unavailable":
           return "The custom endpoint couldn’t transcribe this recording. Check its URL in Settings → Voice.";
       }

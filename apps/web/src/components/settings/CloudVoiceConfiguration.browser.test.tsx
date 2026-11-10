@@ -13,6 +13,10 @@ import { SettingsScopeProvider } from "./SettingsScopeContext";
 vi.mock(import("../../state/session"), { spy: true });
 const persistedSettings: unknown[] = [];
 let configuredEndpoint = "";
+function setup() {
+  persistedSettings.length = 0;
+  configuredEndpoint = "";
+}
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original<typeof import("../../state/use-atom-command")>()),
   useAtomCommand: (() => async (input: unknown) => {
@@ -250,6 +254,7 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
 });
 
 it("configures a custom OpenAI-compatible endpoint with its URL, model, and key", async () => {
+  setup();
   const id = EnvironmentId.make("voice-host");
   const target = new PrimaryConnectionTarget({
     environmentId: id,
@@ -308,20 +313,25 @@ it("configures a custom OpenAI-compatible endpoint with its URL, model, and key"
           const dialog = page.getByRole("dialog");
           const save = dialog.getByRole("button", { name: "Save and enable" });
           await expect.element(save).toBeDisabled();
-          await dialog.getByLabelText("Custom endpoint API key", { exact: true }).fill("custom-key");
+          await dialog
+            .getByLabelText("Custom endpoint API key", { exact: true })
+            .fill("custom-key");
           await dialog.getByRole("textbox", { name: "Transcription model" }).fill("whisper-1");
           const endpoint = dialog.getByRole("textbox", { name: "Endpoint base URL" });
           await endpoint.fill("http://insecure.example.com/v1");
           await expect.element(save).toBeDisabled();
           await endpoint.fill("https://stt.example.com/v1");
-          await expect.element(
-            dialog.getByText("your endpoint at stt.example.com", { exact: false }),
-          ).toBeVisible();
+          await expect
+            .element(dialog.getByText("your endpoint at stt.example.com", { exact: false }))
+            .toBeVisible();
           await userEvent.keyboard("{Enter}");
           await expect.element(dialog).not.toBeInTheDocument();
           await expect.element(destination).toHaveTextContent("Custom endpoint via Laptop");
           expect(persistedSettings).toEqual([
-            { environmentId: id, input: { patch: { cloudSpeechCustomBaseUrl: "https://stt.example.com/v1" } } },
+            {
+              environmentId: id,
+              input: { patch: { cloudSpeechCustomBaseUrl: "https://stt.example.com/v1" } },
+            },
           ]);
           expect(writes).toEqual([{ key: "custom-key" }]);
           expect(grantDestination()).toMatchObject({

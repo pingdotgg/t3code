@@ -125,8 +125,7 @@ const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
-  if (provider === "custom")
-    return <AudioLinesIcon aria-hidden className="size-4 shrink-0" />;
+  if (provider === "custom") return <AudioLinesIcon aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
       driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}

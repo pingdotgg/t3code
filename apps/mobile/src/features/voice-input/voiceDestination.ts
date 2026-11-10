@@ -52,6 +52,8 @@ function cloudVoiceDestination(
 ): CloudDestination | null {
   if (provider === "openrouter")
     return model ? { kind: "cloud", environmentId, provider, model } : null;
+  // Custom endpoints are configured from web and desktop only.
+  if (provider === "custom") return null;
   return { kind: "cloud", environmentId, provider };
 }
 

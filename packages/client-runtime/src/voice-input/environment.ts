@@ -131,8 +131,12 @@ export const transcribeCloudPcm = (
   options: SpeechTranscriptionOptions,
   canSend: () => boolean,
   model?: SpeechModelId,
+  endpoint?: string,
 ) => {
-  const query = model === undefined ? {} : { model };
+  const query = {
+    ...(model === undefined ? {} : { model }),
+    ...(endpoint === undefined ? {} : { endpoint }),
+  };
   return request({
     group: "voice",
     prepared,

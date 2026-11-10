@@ -238,7 +238,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
       />
     ) : (
       CloudSpeechProvider.literals.map((provider) => {
-        if (editing && provider !== editing.provider) return null;
+        if (provider === "custom" || (editing && provider !== editing.provider)) return null;
         const label = CLOUD_SPEECH_LABELS[provider];
         const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
         const routed = provider === "openrouter";

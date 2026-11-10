@@ -58,7 +58,10 @@ URL is a server setting, validated to https (or loopback http), with
 `/audio/transcriptions` appended and the grant's model sent in the form. The
 grant names the exact model for the same reason OpenRouter's does. The endpoint
 is disclosed by host in the consent dialog but is otherwise unvetted; the
-response must still decode as `{ text }`.
+response must still decode as `{ text }`. A custom grant also names the base URL
+it consented to; the client sends it with each recording and the server refuses
+to upload unless it still matches the setting, so changing the URL voids every
+device's grant.
 
 ## Server side
 

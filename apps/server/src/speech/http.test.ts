@@ -221,9 +221,7 @@ effectIt.effect(
         headers: { "content-type": "application/octet-stream" },
         body: encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
       };
-      expect((yield* call("openrouter/transcribe?model=openrouter%2Fauto", audio)).status).toBe(
-        400,
-      );
+      expect((yield* call("openrouter/transcribe?model=", audio)).status).toBe(400);
       expect((yield* call("openrouter/transcribe?model=acme%2Ftranscribe-1", audio)).status).toBe(
         422,
       );
