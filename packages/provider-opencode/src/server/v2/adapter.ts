@@ -776,6 +776,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const awaitIdle = Effect.fnUntraced(function* (sessionId: string) {
       if (!busy.has(sessionId)) return;
       const waiter = idleWaiters.get(sessionId) ?? (yield* Deferred.make<void>());
+      if (!busy.has(sessionId)) return;
       idleWaiters.set(sessionId, waiter);
       yield* Deferred.await(waiter).pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore);
     });
