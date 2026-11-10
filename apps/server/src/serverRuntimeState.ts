@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
@@ -12,6 +13,8 @@ import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
+  // `pid` is only meaningful on this machine; a shared (NFS) $HOME can hold another machine's record.
+  hostname: Schema.optional(Schema.String),
   ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   privateNetworkOnly: Schema.optional(Schema.Boolean),
@@ -70,9 +73,10 @@ export const makePersistedServerRuntimeState = (input: {
   readonly serviceManaged?: boolean;
   readonly managedPolicy?: PersistedServerRuntimeState["managedPolicy"];
 }): Effect.Effect<PersistedServerRuntimeState> =>
-  Effect.map(DateTime.now, (now) => ({
+  Effect.map(Effect.all([DateTime.now, HostProcess.Hostname]), ([now, hostname]) => ({
     version: 1,
     pid: process.pid,
+    hostname,
     ...(input.config.host ? { host: input.config.host } : {}),
     ...(input.config.privateNetworkOnly ? { privateNetworkOnly: true } : {}),
     port: input.port,
@@ -138,6 +142,14 @@ export const isProcessAlive = (pid: number): boolean => {
     return error instanceof Error && "code" in error && error.code === "EPERM";
   }
 };
+
+/** The machine that wrote `state`, when it is not this one. Older records name no machine. */
+export const otherOwnerHostname = Effect.fn("serverRuntimeState.otherOwnerHostname")(function* (
+  state: PersistedServerRuntimeState,
+) {
+  const hostname = yield* HostProcess.Hostname;
+  return state.hostname !== undefined && state.hostname !== hostname ? state.hostname : undefined;
+});
 
 export const readPersistedServerRuntimeState = Effect.fn(
   "serverRuntimeState.readPersistedServerRuntimeState",

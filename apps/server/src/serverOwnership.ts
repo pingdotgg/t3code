@@ -31,6 +31,7 @@ import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
   isProcessAlive,
+  otherOwnerHostname,
   persistServerRuntimeState,
   readPersistedServerRuntimeState,
   type PersistedServerRuntimeState,
@@ -38,12 +39,15 @@ import {
 
 export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
-  { stateDir: Schema.String },
+  { stateDir: Schema.String, ownerHostname: Schema.optional(Schema.String) },
 ) {
   // Distinct exit codes let supervisors stop restarting an already-owned server.
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
+    if (this.ownerHostname !== undefined) {
+      return `A T3 Code server on ${this.ownerHostname} already owns ${this.stateDir}, which this machine shares. Pair with that server on ${this.ownerHostname}, or use a separate T3 home on this machine, then retry. Do not stop or uninstall anything from this machine for it. No server was stopped.`;
+    }
     return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
   }
 }
@@ -189,6 +193,24 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     .uuidV4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
+  // The holder may be on another machine sharing this home; name it so nobody stops the wrong one.
+  const alreadyRunning = readPersistedServerRuntimeState(statePath).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.undefined,
+        onSome: otherOwnerHostname,
+      }),
+    ),
+    Effect.orElseSucceed(() => undefined),
+    Effect.flatMap((ownerHostname) =>
+      Effect.fail(
+        new ServerAlreadyRunningError({
+          stateDir,
+          ...(ownerHostname === undefined ? {} : { ownerHostname }),
+        }),
+      ),
+    ),
+  );
   const lock = yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
@@ -216,7 +238,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         isSqliteBusy(cause)
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
-    }),
+    }).pipe(Effect.catchTags({ ServerAlreadyRunningError: () => alreadyRunning })),
     ({ db }) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>

@@ -523,9 +523,14 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   {
     installedBaseDir: Schema.String,
     baseDir: Schema.String,
+    // Set when another machine sharing this $HOME, and so this unit file, runs that home's server.
+    ownerHostname: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.ownerHostname !== undefined) {
+      return `The T3 Code service in this home directory serves ${this.installedBaseDir}, whose server runs on ${this.ownerHostname}, not ${this.baseDir}. ${this.ownerHostname} shares this home directory and its service, so manage that service on ${this.ownerHostname}: uninstalling or replacing it here would take it from ${this.ownerHostname}. To run T3 Code on this machine as well, use \`t3 serve\` with a separate T3 home instead of a service; both data directories are kept.`;
+    }
     return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
   }
 

@@ -36,6 +36,7 @@ import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
   isProcessAlive,
+  otherOwnerHostname,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
@@ -78,6 +79,18 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
       `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
+    ].join("\n");
+  }
+}
+
+export class ServerOnOtherMachineError extends Schema.TaggedError<ServerOnOtherMachineError>()(
+  "ServerOnOtherMachineError",
+  { statePath: Schema.String, hostname: Schema.String, pairCommand: Schema.String },
+) {
+  override get message(): string {
+    return [
+      `The T3 Code server recorded in ${this.statePath} runs on ${this.hostname}, not this machine.`,
+      `Pair on ${this.hostname} with \`${this.pairCommand}\`, or use a separate T3 home on this machine (pass --base-dir).`,
     ].join("\n");
   }
 }
@@ -267,6 +280,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   }
 
   const checkedStatePaths: Array<string> = [];
+  let otherMachine: { readonly statePath: string; readonly hostname: string } | undefined;
   for (const baseDir of new Set(bases)) {
     for (const variant of ["userdata", "dev"] as const) {
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
@@ -278,6 +292,11 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       checkedStatePaths.push(statePath);
       const state = yield* readPersistedServerRuntimeState(statePath);
       if (Option.isNone(state)) {
+        continue;
+      }
+      const ownerHostname = yield* otherOwnerHostname(state.value);
+      if (ownerHostname !== undefined) {
+        otherMachine ??= { statePath, hostname: ownerHostname };
         continue;
       }
       // A dead server's port may be reused; do not mint tokens in its old database for another server.
@@ -297,6 +316,12 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     }
   }
   const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
+  if (otherMachine !== undefined) {
+    return yield* new ServerOnOtherMachineError({
+      ...otherMachine,
+      pairCommand: (yield* resolveHostCliCommand("pair", baseDirArgs)).command,
+    });
+  }
   return yield* new NoRunningServerError({
     checkedStatePaths,
     inLinkedWorktree,

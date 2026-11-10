@@ -215,10 +215,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const before = yield* readSetup();
   // Before any question or write: install would refuse only after both.
   if (before.service.otherBaseDir !== undefined) {
-    return yield* new BootService.BootServiceOtherBaseDirError({
-      installedBaseDir: before.service.otherBaseDir,
-      baseDir,
-    });
+    return yield* CliService.otherBaseDirError(before.service.otherBaseDir, baseDir);
   }
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({

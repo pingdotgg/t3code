@@ -801,7 +801,7 @@ export class Launcher {
     // Signal listeners alone do not keep Node alive.
     this.#timer = setInterval(() => {}, 2_147_483_647);
     process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+      "[service-launcher] Another T3 Code server owns this T3 home; the server's error above names it and its machine. This service stays idle and stopped nothing. Restart it once this home is free.\n",
     );
   }
 

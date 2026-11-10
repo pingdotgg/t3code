@@ -5,6 +5,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -15,6 +16,7 @@ import * as ServiceProtection from "../cloud/serviceProtection.ts";
 import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { otherOwnerHostname, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveEntryPath } from "./invocation.ts";
 
@@ -85,6 +87,24 @@ export const writeServiceEnv = Effect.fn("cli.service.write_env")(function* (
   yield* fs.writeFileString(current.path, next);
 });
 
+export const otherBaseDirError = Effect.fn("cli.service.otherBaseDirError")(function* (
+  installedBaseDir: string,
+  baseDir: string,
+) {
+  const { serverRuntimeStatePath } = yield* ServerConfig.deriveServerPaths(
+    installedBaseDir,
+    undefined,
+    {},
+  );
+  const state = yield* readPersistedServerRuntimeState(serverRuntimeStatePath);
+  const ownerHostname = Option.isSome(state) ? yield* otherOwnerHostname(state.value) : undefined;
+  return yield* new BootService.BootServiceOtherBaseDirError({
+    installedBaseDir,
+    baseDir,
+    ...(ownerHostname === undefined ? {} : { ownerHostname }),
+  });
+});
+
 export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
   readonly start?: boolean;
@@ -94,10 +114,7 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   const status = yield* service.status;
   // Before the downgrade check, which reads this home's state, not the service's.
   if (status.otherBaseDir !== undefined) {
-    return yield* new BootService.BootServiceOtherBaseDirError({
-      installedBaseDir: status.otherBaseDir,
-      baseDir,
-    });
+    return yield* otherBaseDirError(status.otherBaseDir, baseDir);
   }
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;

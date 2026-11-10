@@ -188,6 +188,13 @@ describe("server ownership", () => {
           );
           assert.equal(refused._tag, "ServerAlreadyRunningError");
           assert.include(refused.message, "do not delete it while a server is running");
+          // regression: #34060 a shared $HOME names the machine that owns it.
+          const fromOtherMachine = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.provideService(HostProcess.Hostname, `not-${state.hostname}`),
+            Effect.flip,
+          );
+          assert.equal(fromOtherMachine._tag, "ServerAlreadyRunningError");
+          assert.include(fromOtherMachine.message, `on ${state.hostname} already owns`);
           assert.equal(yield* fs.readFileString(statePath), before);
         }),
       );
