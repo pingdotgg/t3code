@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { LegendListRef } from "@legendapp/list/react";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -32,7 +33,9 @@ describe("attachTimelineViewport", () => {
     let scroll = scrolled();
     timeline.scrollTop = 1500;
     await scroll;
-    const viewport = attachTimelineViewport(timeline);
+    // A list that never adjusts its own scroll.
+    const list = { getState: () => ({ listen: () => () => {} }) } as unknown as LegendListRef;
+    const viewport = attachTimelineViewport(timeline, list);
     const sources: string[] = [];
     viewport.subscribe((navigation) => sources.push(navigation.source));
 
