@@ -621,6 +621,22 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
   }),
 );
 
+const deletedProject = (id: ProjectId) => ({
+  id,
+  title: "client-target",
+  workspaceRoot: "/projects/client-target",
+  repositoryIdentity: null,
+  faviconPath: null,
+  defaultModelSelection: null,
+  defaultThreadEnvMode: null,
+  autoPull: false,
+  projectIcon: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: "2026-01-01T00:00:00.000Z",
+});
+
 it.effect("deleting a project through MCP also discards its clone record", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
@@ -629,22 +645,7 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       harness.dependencies,
       Layer.mergeAll(
         Layer.mock(Project.ProjectService)({
-          delete: (input) =>
-            Effect.succeed({
-              id: input.projectId,
-              title: "client-target",
-              workspaceRoot: "/projects/client-target",
-              repositoryIdentity: null,
-              faviconPath: null,
-              defaultModelSelection: null,
-              defaultThreadEnvMode: null,
-              autoPull: false,
-              projectIcon: null,
-              scripts: [],
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-              deletedAt: "2026-01-01T00:00:00.000Z",
-            }),
+          delete: (input) => Effect.succeed(deletedProject(input.projectId)),
         }),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
           discard: (projectId) => Effect.sync(() => void discarded.push(projectId)),
@@ -662,6 +663,45 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("an agent cannot delete the built-in scratch project, even with force", () =>
+  Effect.gen(function* () {
+    const deleted: Array<ProjectId> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mergeAll(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: (projectId) => Effect.succeed(projectId === harness.projectId),
+        }),
+        Layer.mock(Project.ProjectService)({
+          delete: (input) =>
+            Effect.sync(() => {
+              deleted.push(input.projectId);
+              return deletedProject(input.projectId);
+            }),
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_delete", { projectId: harness.projectId, force: true })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(deleted).toEqual([]);
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/scratch|no project/i),
+    });
   }),
 );
 
