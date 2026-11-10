@@ -65,6 +65,8 @@ import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -9190,6 +9192,8 @@ const layerAgentDeviceAccessProduction = (
         Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(SecretResolver.SecretResolver)({}),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
         Layer.mock(PreviewManager.PreviewManager)({}),
         Layer.mock(TerminalManager.TerminalManager)({}),
         Layer.mock(WorkspacePaths.WorkspacePaths)({
