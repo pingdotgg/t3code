@@ -4649,6 +4649,32 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
+/* Aqua's gloss stays on controls. Pane tabs and the composer body keep the default style's
+   calm faces, so the split does not run across the app's structure. */
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
+:is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]),
+:root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  [data-chrome-scope] {
+  --pane-tab-fill: transparent;
+  --pane-tab-shadow: none;
+  --composer-fill: var(--ss-default-composer-fill) !important;
+}
+
+/* On the near-black sidebar the well's split sits close to the chrome, or its top half glares. */
+:root:is(.dark, .black-chrome):is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  [data-app-sidebar] {
+  --well-fill: linear-gradient(
+    180deg in srgb,
+    oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
+    oklch(from var(--ss-background) calc(l + 0.03) c h) 50%,
+    oklch(from var(--ss-background) calc(l - 0.01) c h) 50%,
+    oklch(from var(--ss-background) calc(l + 0.005) c h) 100%
+  ) !important;
+}
+
 /* Rim surfaces use the secondary face and its fading edge, with no drop shadow. */
 :root[data-surface-style="gradient-rim-everywhere"] > body,
 [data-surface-preview="gradient-rim-everywhere"],
