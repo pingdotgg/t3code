@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs certificate bytes.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
+import * as NodeHttps from "node:https";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -623,7 +627,6 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
-      // Each address says why it was not Box.
       expect(failed.message).toBe(
         `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       );
@@ -660,14 +663,78 @@ it.effect("linking an address with nothing listening says so, unlike one that is
       const a = yield* makeA(laptop);
       const linking = (url: string) =>
         a.links.link({ url, pairingCode: "unused", access: "auto" }).pipe(Effect.flip);
-      const refused = yield* linking(closed);
-      const answered = yield* linking(notT3);
-      expect(answered.message).toContain(notT3);
-      expect(refused.message).toContain(closed);
-      expect(refused.message.replace(closed, "<url>")).not.toBe(
-        answered.message.replace(notT3, "<url>"),
+      expect((yield* linking(closed)).message).toBe(`${closed} did not answer (ECONNREFUSED).`);
+      expect((yield* linking(notT3)).message).toBe(
+        `${notT3} answered, but not as a T3 Code environment this version understands.`,
       );
       expect(yield* a.links.list).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+/** An https listener whose certificate this machine does not trust. */
+const serveUntrusted = Layer.build(
+  Layer.fresh(
+    NodeHttpServer.layerServer(
+      () =>
+        NodeHttps.createServer({
+          key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+          cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+        }),
+      { port: 0, host: "127.0.0.1" },
+    ),
+  ),
+).pipe(
+  Effect.map((server) => {
+    const address = Context.get(server, HttpServer.HttpServer).address;
+    if (address._tag === "UnixPathAddress") throw new Error("expected a TCP address");
+    return `https://127.0.0.1:${address.port}`;
+  }),
+);
+
+it.effect("names an untrusted certificate instead of calling the peer something else", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const untrusted = yield* serveUntrusted;
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({ url: untrusted, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(failed.reason).toBe("unreachable");
+      expect(failed.message).toContain("certificate this machine rejected");
+      expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(yield* a.links.list).toEqual([]);
+
+      // A stored link tries its next address past an untrusted one.
+      const b = yield* serveB(box);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* a.sql`
+        UPDATE peer_environment_links
+        SET urls_json = ${JSON.stringify([untrusted, b.url])}
+        WHERE environment_id = ${box.environmentId}
+      `;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it("reads Node's TLS verification code from anywhere in a cause chain", () => {
+  for (const code of [
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "HOSTNAME_MISMATCH",
+    "INVALID_CA",
+    "INVALID_PURPOSE",
+    "PATH_LENGTH_EXCEEDED",
+  ]) {
+    expect(PeerLinks.certificateErrorCode({ code })).toBe(code);
+  }
+  const wrapped = { message: "fetch failed", cause: { cause: { code: "INVALID_CA" } } };
+  expect(PeerLinks.certificateErrorCode(wrapped)).toBe("INVALID_CA");
+  expect(PeerLinks.certificateErrorCode({ cause: { code: "ECONNREFUSED" } })).toBeUndefined();
+  expect(PeerLinks.certificateErrorCode(new Error("timed out"))).toBeUndefined();
+});
