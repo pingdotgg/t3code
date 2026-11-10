@@ -518,6 +518,27 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("drops a kept install record once a newer update downloads", () => {
+    const harness = makeHarness({
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+    });
+    harness.pendingRemoval.fails = true;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.isDefined(harness.previousInstallRecord());
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.download).completed);
+        assert.isUndefined(harness.previousInstallRecord());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
       const stopping = yield* Deferred.make<void>();
