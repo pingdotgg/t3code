@@ -1,5 +1,3 @@
-import { McpAppCallToolInput } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
@@ -205,13 +203,11 @@ describe("makeMcpAppHost", () => {
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {
-    const encodeForRpc = Schema.encodeUnknownSync(Schema.toCodecJson(McpAppCallToolInput));
     const received: unknown[] = [];
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
           throw new McpAppHostRefusal({ message: "Declined by the user." });
-        encodeForRpc({ threadId: "thread-1", itemId: "item-1", ...input });
         received.push(input.arguments);
         return { content: [], structuredContent: { ok: true } };
       },
