@@ -2,13 +2,13 @@ import { SURFACE_STYLES, type SurfaceStyle } from "@t3tools/contracts";
 
 import { Button, ContentButton } from "../ui/button";
 
-const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
-  "gradient-rim": "Toned aqua",
-  flat: "Flat",
-  "soft-gradient": "Soft gradient",
-  "aqua-gloss-full": "Aqua gloss",
-  "aqua-blue": "Aqua blue",
-  "gradient-rim-everywhere": "Gradient rim",
+const SURFACE_STYLE_COPY: Record<SurfaceStyle, { name: string; description: string }> = {
+  "gradient-rim": { name: "Standard", description: "Light sheen, thin outlines." },
+  flat: { name: "Flat", description: "Solid color, no shine." },
+  "soft-gradient": { name: "Soft", description: "Soft shading, light shadows." },
+  "aqua-gloss-full": { name: "Gloss", description: "Shine on every button." },
+  "aqua-blue": { name: "Accent gloss", description: "Gloss in your accent color." },
+  "gradient-rim-everywhere": { name: "Outline", description: "Thin outlines, no shine." },
 };
 
 /**
@@ -32,6 +32,7 @@ export function SurfaceStylePicker({
           <ContentButton
             variant="selection-card"
             aria-pressed={isActive}
+            className="flex flex-col"
             data-surface-style-card={style}
             key={style}
             onClick={() => onChange(style)}
@@ -47,23 +48,23 @@ export function SurfaceStylePicker({
                 <Button render={<span />} size="sm">
                   Approve
                 </Button>
-                <Button
-                  render={<span />}
-
-                  size="sm"
-                  variant="secondary"
-                >
+                <Button render={<span />} size="sm" variant="secondary">
                   Button
                 </Button>
               </span>
               {/* px-3 like the theme cards above, so names in a column share one line. */}
-              <span className="flex flex-col items-start gap-1.5 border-t border-divider px-3 py-3 sm:flex-row sm:items-center">
-                <span className="min-w-0 flex-1 text-label text-foreground max-sm:wrap-anywhere sm:truncate">
-                  {SURFACE_STYLE_LABELS[style]}
+              <span className="flex flex-col gap-0.5 border-t border-divider px-3 py-3">
+                <span className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center">
+                  <span className="min-w-0 flex-1 text-label text-foreground max-sm:wrap-anywhere sm:truncate">
+                    {SURFACE_STYLE_COPY[style].name}
+                  </span>
+                  {style === defaultValue ? (
+                    <span className="shrink-0 text-meta text-dim-foreground">Default</span>
+                  ) : null}
                 </span>
-                {style === defaultValue ? (
-                  <span className="shrink-0 text-meta text-dim-foreground">Default</span>
-                ) : null}
+                <span className="text-pretty text-meta text-muted-foreground">
+                  {SURFACE_STYLE_COPY[style].description}
+                </span>
               </span>
             </span>
           </ContentButton>
