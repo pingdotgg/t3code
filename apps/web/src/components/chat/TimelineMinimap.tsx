@@ -38,6 +38,7 @@ export function TimelineMinimap({
   hasPersistentGutter,
   hitStripWidth,
   currentIndex,
+  atEnd,
   items,
   stripMap,
   onWheel,
@@ -46,6 +47,7 @@ export function TimelineMinimap({
   hasPersistentGutter: boolean;
   hitStripWidth: number;
   currentIndex: number | null;
+  atEnd: boolean;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onWheel: (event: WheelEvent) => void;
@@ -84,7 +86,8 @@ export function TimelineMinimap({
     currentIndex !== null && currentIndex >= 0 && currentIndex < items.length ? currentIndex : null;
   const previousItem =
     resolvedCurrentIndex === null ? null : (items[resolvedCurrentIndex - 1] ?? null);
-  const nextItem = resolvedCurrentIndex === null ? null : (items[resolvedCurrentIndex + 1] ?? null);
+  const nextItem =
+    resolvedCurrentIndex === null || atEnd ? null : (items[resolvedCurrentIndex + 1] ?? null);
 
   const resolveActiveIndexFromPointer = (event: MouseEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
