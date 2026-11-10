@@ -218,10 +218,20 @@ index 734ff9862cdfe65b8082599c6c221c4886436e01..f18798a3d56dd0749550b5aff62a06fb
  			} catch (error) {
  				if (disableErrorHandling) throw error;
 diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
-index 984f049ff3694dd353fa6637b0f09fc7dce74992..8f659c06b70ba603f725cccdcaebe89c21b00f6b 100644
+index 984f049ff3694dd353fa6637b0f09fc7dce74992..4d6599905be0fe7b5b5c1a225c0b3ff8d810c72a 100644
 --- a/dist/components/VirtualizedFileDiff.js
 +++ b/dist/components/VirtualizedFileDiff.js
-@@ -626,7 +626,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+@@ -264,7 +264,8 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		const { pendingExpansions, pendingHydratedDiff, options: { collapsed = false } } = this;
+ 		if (pendingHydratedDiff != null) {
+ 			this.pendingHydratedDiff = void 0;
+-			if (pendingHydratedDiff.expectedDiff === fileDiff) {
++			// T3 patch: a host may re-supply an unchanged diff as a new object; it is still this diff.
++			if (areDiffTargetsEqual(pendingHydratedDiff.expectedDiff, fileDiff)) {
+ 				Object.assign(fileDiff, pendingHydratedDiff.nextDiff);
+ 				this.setHydratedState(pendingHydratedDiff.files);
+ 				this.installHydratedDiff(fileDiff);
+@@ -626,7 +627,7 @@ var VirtualizedFileDiff = class extends FileDiff {
  	rerender() {
  		if (!this.enabled || this.getInputDiff() == null && this.additionFile == null && this.deletionFile == null) return;
  		const workingDiff = this.getWorkingDiff();
@@ -230,7 +240,7 @@ index 984f049ff3694dd353fa6637b0f09fc7dce74992..8f659c06b70ba603f725cccdcaebe89c
  		if (this.isSimpleMode()) this.pendingRender = void 0;
  		this.forceRenderOverride = true;
  		if (this.isSimpleMode() && this.requestRender()) return;
-@@ -790,7 +790,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+@@ -790,7 +791,7 @@ var VirtualizedFileDiff = class extends FileDiff {
  		const previousRenderedDiff = this.getRenderedDiff();
  		const { pendingRender } = this;
  		const previousLayoutDiff = pendingRender?.diff ?? previousRenderedDiff;
