@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskCancelResult,
+  type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
@@ -24,6 +25,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
+import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -258,6 +260,7 @@ const make = Effect.gen(function* () {
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
+      const title = input.title ?? parent.thread.title;
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.mapError(
@@ -289,7 +292,7 @@ const make = Effect.gen(function* () {
         clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
         linkIdentity: link.launchIdentity,
         projectId,
-        title: input.title ?? parent.thread.title,
+        title,
         modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
         runtimeMode: runtimeMode ?? inheritedRuntimeMode,
         interactionMode: interactionMode ?? parent.thread.interactionMode,
@@ -302,6 +305,7 @@ const make = Effect.gen(function* () {
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
         label: link?.label ?? target.environmentId,
+        title,
         launch,
       };
       const recorded = yield* threads
@@ -581,6 +585,7 @@ const make = Effect.gen(function* () {
    * The last reply `runId` gave on the task's thread there, which is its
    * result, read whole however long it is. A failed run prefers its error
    * from the activity view over an earlier reply, without taking another run's.
+   * Led by a note when its provider reported running another model than it asked for.
    */
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
     scope: ThreadScope,
@@ -591,13 +596,16 @@ const make = Effect.gen(function* () {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
     let afterPosition: number | undefined;
+    let run: OrchestratorMcpThreadRun | undefined;
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
+        runLimit: 50,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
+      run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
       reply =
         read.items.findLast(
           (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
@@ -627,7 +635,7 @@ const make = Effect.gen(function* () {
       text += part.text ?? "";
       textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
     }
-    return text;
+    return run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel);
   });
 
   /**
