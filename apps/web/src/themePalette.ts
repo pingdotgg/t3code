@@ -18,6 +18,7 @@ import {
   THEME_WHITE_FOREGROUND,
   THEME_BLACK_FOREGROUND,
   parseThemeColor,
+  formatThemeColorNumber,
   toCanonicalThemeColor,
   themeRgbToHexColor,
   decodeThemeColors,
@@ -369,6 +370,17 @@ function canonicalizeThemeDefinition(theme: ThemeDefinition): ThemeDefinition {
         }
       : {}),
   };
+}
+
+/** A chip kind's per-theme contrast-solved lightness with `color`'s hue and chroma. */
+export function contextChipAccentWithHueOf(
+  kind: ContextChipAccentKind,
+  color: string,
+): string | null {
+  const parsed = parseThemeColor(color);
+  if (!parsed) return null;
+  const { C, h } = parsed.color;
+  return `oklch(from var(${contextChipColorVariable(kind)}) l ${formatThemeColorNumber(C, 4)} ${formatThemeColorNumber(h, 2)})`;
 }
 
 const CONTEXT_CHIP_CONTRAST = 5;

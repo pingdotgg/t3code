@@ -133,7 +133,7 @@ export function parseThemeColor(value: unknown): ParsedThemeColor | null {
   };
 }
 
-function formatThemeColorNumber(value: number, precision: number): string {
+export function formatThemeColorNumber(value: number, precision: number): string {
   const rounded = Math.abs(value) < 10 ** -precision / 2 ? 0 : value;
   return rounded.toFixed(precision).replace(/(?:\.0+|(?:(\.[0-9]*?)0+))$/, "$1");
 }
