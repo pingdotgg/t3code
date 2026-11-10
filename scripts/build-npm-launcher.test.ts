@@ -405,7 +405,7 @@ syncBuiltinESMExports();
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "kills a runtime that ignores the forwarded SIGTERM so the launcher exits",
+    "kills a runtime that ignores the forwarded SIGTERM, and its providers, so the launcher exits",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -428,12 +428,20 @@ syncBuiltinESMExports();
         const versionDir = path.join(home, "runtime/versions", VERSION);
         yield* fs.makeDirectory(versionDir, { recursive: true });
         yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${VERSION}\n`);
-        // Stands in for a runtime whose exit is stuck behind blocked filesystem calls. It gives up
-        // on its own well inside the project timeout so an unescalated stop fails descriptively.
+        // Stands in for a runtime whose exit is stuck behind blocked filesystem calls, with a
+        // provider it never gets to stop. Both give up on their own well inside the project
+        // timeout so an unescalated stop fails descriptively.
         const stuck = "runtime ignored SIGTERM and was still running 30s later";
+        const orphaned = "provider outlived the runtime by 30s";
+        const provider = `process.on("SIGTERM", () => {}); setTimeout(() => { console.log(${JSON.stringify(orphaned)}); process.exit(0); }, 30_000);`;
         yield* fs.writeFileString(
           path.join(versionDir, "t3"),
-          `#!${process.execPath}\nprocess.on("SIGTERM", () => setTimeout(() => { console.log(${JSON.stringify(stuck)}); process.exit(0); }, 30_000));\nsetInterval(() => {}, 1 << 30);\nconsole.log(process.pid);\n`,
+          `#!${process.execPath}
+const provider = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(provider)}], { stdio: "inherit" });
+process.on("SIGTERM", () => setTimeout(() => { console.log(${JSON.stringify(stuck)}); process.exit(0); }, 30_000));
+setInterval(() => {}, 1 << 30);
+console.log(process.pid, provider.pid);
+`,
         );
         yield* fs.chmod(path.join(versionDir, "t3"), 0o755);
 
@@ -442,10 +450,10 @@ syncBuiltinESMExports();
           [path.join(installed, "package/bin/t3.mjs"), "serve"],
           { cwd: root, env: { PATH: hostPath, T3CODE_HOME: home }, stdio: "pipe" },
         );
-        let runtimePid: number | undefined;
+        let pids: Array<number> = [];
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
-            for (const pid of [runtimePid, launcher.pid]) {
+            for (const pid of [...pids, launcher.pid]) {
               try {
                 if (pid !== undefined) process.kill(pid, "SIGKILL");
               } catch {}
@@ -459,21 +467,16 @@ syncBuiltinESMExports();
           stdout += chunk;
           if (stdout.includes("\n")) started.resolve();
         });
-        const exit = NodeEvents.EventEmitter.once(launcher, "exit");
+        // The runtime and provider inherit this pipe, so it closes only once all three are gone.
+        const closed = NodeEvents.EventEmitter.once(launcher.stdout, "close");
         yield* Effect.promise(() => started.promise);
-        const pid = Number(stdout.trim());
-        assert.isTrue(Number.isInteger(pid), stdout);
-        runtimePid = pid;
+        pids = stdout.trim().split(" ").map(Number);
+        assert.isTrue(pids.length === 2 && pids.every(Number.isInteger), stdout);
 
         launcher.kill("SIGTERM");
-        yield* Effect.promise(() => exit);
+        yield* Effect.promise(() => closed);
         assert.notInclude(stdout, stuck, "the launcher waited on a runtime that ignored SIGTERM");
-        assert.throws(
-          () => process.kill(pid, 0),
-          /ESRCH/,
-          undefined,
-          `runtime ${pid} outlived the launcher`,
-        );
+        assert.notInclude(stdout, orphaned, "the runtime's provider outlived the launcher");
       }),
   );
 });

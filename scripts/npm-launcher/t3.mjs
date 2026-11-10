@@ -194,13 +194,34 @@ async function main() {
     process.on(signal, () => {
       if (!ipc && signal === "SIGINT") return;
       child.kill(signal);
-      force ??= setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS).unref();
+      force ??= setTimeout(() => killTree(child), TERMINATE_GRACE_MS).unref();
     });
   }
   child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>
     process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),
   );
+}
+
+/** SIGKILL the runtime and its providers, which a runtime stuck on shutdown never stops. */
+function killTree(child) {
+  const pids = [child.pid];
+  if (process.platform !== "win32") {
+    const table = spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }).stdout || "";
+    const rows = table
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/).map(Number));
+    for (let i = 0; i < pids.length; i++) {
+      for (const [pid, ppid] of rows) if (ppid === pids[i]) pids.push(pid);
+    }
+  }
+  for (const pid of pids.slice(1)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  child.kill("SIGKILL");
 }
 
 function executableError(key, detail) {
