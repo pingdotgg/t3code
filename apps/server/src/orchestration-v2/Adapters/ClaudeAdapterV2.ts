@@ -11311,7 +11311,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
-              // Set before the claim: a query exit claimed after it finalizes this turn, one claimed before it fails the start.
+              // Set before claiming: a query that exits after the claim finalizes this turn; one that exits before it fails the start.
               yield* Ref.set(activeTurn, context);
               const attached = yield* Ref.modify(queryContext, (current) => {
                 if (current?.query !== querySession.query || querySession.stopping) {
