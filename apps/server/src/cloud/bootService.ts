@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { otherMachineOf, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
@@ -523,9 +524,14 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   {
     installedBaseDir: Schema.String,
     baseDir: Schema.String,
+    // On a shared $HOME the unit is shared too, and its server may run on another machine.
+    ownerHostname: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.ownerHostname !== undefined) {
+      return `The T3 Code service in this home serves ${this.installedBaseDir}, not ${this.baseDir}, and its server runs on ${this.ownerHostname}, which shares this home. Change that service from ${this.ownerHostname}: uninstalling it here would also remove it there.`;
+    }
     return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
   }
 
@@ -552,6 +558,8 @@ export interface BootServiceStatus {
   readonly installedBaseDir?: string;
   /** Set when the installed unit serves a different T3 home than this CLI. */
   readonly otherBaseDir?: string;
+  /** The other machine running `otherBaseDir`'s server, when this home is shared. */
+  readonly otherBaseDirHostname?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -655,6 +663,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+  const localHostname = yield* HostProcess.Hostname;
+  const hostnameOfOtherMachineServing = (baseDir: string) =>
+    readPersistedServerRuntimeState(path.join(baseDir, "userdata", "server-runtime.json")).pipe(
+      Effect.map((state) =>
+        Option.isSome(state) ? otherMachineOf(state.value, localHostname) : undefined,
+      ),
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
   const otherBaseDirOf = (unit: string) => {
     const installedBaseDir = bootServiceBaseDirOf(unit);
     return installedBaseDir !== undefined &&
@@ -811,7 +827,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? otherBaseDirOf(existingUnit.value)
       : undefined;
     if (installedBaseDir !== undefined) {
-      return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
+      const ownerHostname = yield* hostnameOfOtherMachineServing(installedBaseDir);
+      return yield* new BootServiceOtherBaseDirError({
+        installedBaseDir,
+        baseDir: input.baseDir,
+        ...(ownerHostname === undefined ? {} : { ownerHostname }),
+      });
     }
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
@@ -1081,6 +1102,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
     const otherBaseDir = otherBaseDirOf(unit);
+    const otherBaseDirHostname =
+      otherBaseDir === undefined ? undefined : yield* hostnameOfOtherMachineServing(otherBaseDir);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -1094,6 +1117,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ...(installedVersion === undefined ? {} : { installedVersion }),
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       ...(otherBaseDir === undefined ? {} : { otherBaseDir }),
+      ...(otherBaseDirHostname === undefined ? {} : { otherBaseDirHostname }),
       problems,
       current:
         problems.length === 0 &&

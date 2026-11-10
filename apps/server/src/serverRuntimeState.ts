@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,6 +13,8 @@ import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
+  // A shared $HOME (NFS) can hold a server from another machine, where `pid` means nothing here.
+  hostname: Schema.optional(Schema.String),
   ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   privateNetworkOnly: Schema.optional(Schema.Boolean),
@@ -70,9 +73,10 @@ export const makePersistedServerRuntimeState = (input: {
   readonly serviceManaged?: boolean;
   readonly managedPolicy?: PersistedServerRuntimeState["managedPolicy"];
 }): Effect.Effect<PersistedServerRuntimeState> =>
-  Effect.map(DateTime.now, (now) => ({
+  Effect.map(Effect.all([DateTime.now, HostProcess.Hostname]), ([now, hostname]) => ({
     version: 1,
     pid: process.pid,
+    hostname,
     ...(input.config.host ? { host: input.config.host } : {}),
     ...(input.config.privateNetworkOnly ? { privateNetworkOnly: true } : {}),
     port: input.port,
@@ -127,6 +131,13 @@ export const clearPersistedServerRuntimeState = Effect.fn(
     }),
   );
 });
+
+/** The machine a recorded server runs on, when that is not this one. */
+export const otherMachineOf = (
+  state: Pick<PersistedServerRuntimeState, "hostname">,
+  localHostname: string,
+): string | undefined =>
+  state.hostname !== undefined && state.hostname !== localHostname ? state.hostname : undefined;
 
 /** Signal 0 only probes existence; EPERM still means alive. */
 export const isProcessAlive = (pid: number): boolean => {

@@ -218,6 +218,9 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     return yield* new BootService.BootServiceOtherBaseDirError({
       installedBaseDir: before.service.otherBaseDir,
       baseDir,
+      ...(before.service.otherBaseDirHostname === undefined
+        ? {}
+        : { ownerHostname: before.service.otherBaseDirHostname }),
     });
   }
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {

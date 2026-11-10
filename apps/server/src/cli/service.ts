@@ -97,6 +97,9 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
     return yield* new BootService.BootServiceOtherBaseDirError({
       installedBaseDir: status.otherBaseDir,
       baseDir,
+      ...(status.otherBaseDirHostname === undefined
+        ? {}
+        : { ownerHostname: status.otherBaseDirHostname }),
     });
   }
   if (status.installed && status.current) {
