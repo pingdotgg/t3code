@@ -2204,7 +2204,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (applyPromptReplacement(0, promptRef.current.length, command)) {
         resetComposerTrigger(detectComposerTrigger(command, command.length));
       }
-      return;
+      return false;
     }
     // A send while a pasted image is still compressing would strand that image:
     // the turn snapshot wouldn't include it, and it would surface in the *next*
