@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -479,6 +480,9 @@ export interface OrchestratorV2Shape {
     shareId: GuestShareId,
   ) => Effect.Effect<ThreadId | null, OrchestratorV2Error>;
   /** Titles of the given threads that exist, archived ones included. */
+  readonly getThreadLinkMetadata: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>, OrchestratorV2Error>;
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
@@ -1455,6 +1459,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     delivery === null || delivery === undefined
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
+
+  const isUnobservedAcknowledgement = (
+    command: OrchestrationV2ServerCommand,
+  ): command is Extract<
+    OrchestrationV2ServerCommand,
+    { readonly type: "delegated_task.completion-delivery.acknowledge" }
+  > & { readonly observedByRunId: null } =>
+    command.type === "delegated_task.completion-delivery.acknowledge" &&
+    command.observedByRunId === null;
+
+  /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
+  const delegatedCompletionPlanEvents = (
+    threadId: ThreadId,
+    plan: {
+      readonly parentRun: OrchestrationV2Run | undefined;
+      readonly message: OrchestrationV2ThreadProjection["messages"][number] | undefined;
+    },
+    threadProviderInstanceId: ProviderInstanceId,
+    occurredAt: DateTime.Utc,
+  ): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> => [
+    ...(plan.parentRun === undefined
+      ? []
+      : [
+          {
+            type: "run.updated" as const,
+            threadId,
+            runId: plan.parentRun.id,
+            ...(plan.parentRun.rootNodeId === null ? {} : { nodeId: plan.parentRun.rootNodeId }),
+            providerInstanceId: plan.parentRun.providerInstanceId,
+            occurredAt,
+            payload: plan.parentRun,
+          },
+        ]),
+    ...(plan.message === undefined
+      ? []
+      : [
+          {
+            type: "message.updated" as const,
+            threadId,
+            ...(plan.message.runId === null ? {} : { runId: plan.message.runId }),
+            ...(plan.message.nodeId === null ? {} : { nodeId: plan.message.nodeId }),
+            providerInstanceId: plan.parentRun?.providerInstanceId ?? threadProviderInstanceId,
+            occurredAt,
+            payload: plan.message,
+          },
+        ]),
+  ];
 
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -2646,6 +2697,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "disposed";
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    // A late wait can arrive after finalization held the result for its still-live spawning run.
+    if (isUnobservedAcknowledgement(command)) {
+      if (
+        !isTerminalDelegatedTaskStatus(task.status) ||
+        task.completionDelivery?.state !== "pending"
+      )
+        return;
+      const parentRun = projection.runs.find((run) => run.id === task.runId);
+      if (parentRun !== undefined && isLiveRun(parentRun)) return;
+      const records = yield* projectionStore
+        .getThreadRecords(command.parentThreadId, ["messages", "providerTurns"], {
+          messageRoles: ["user"],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.parentThreadId,
+                cause,
+              }),
+          ),
+        );
+      const plan = yield* planDelegatedCompletionDelivery({
+        parentProjection: { ...projection, ...records },
+        parentRun,
+        task,
+        updatedTask: task,
+        now,
+      }).pipe(mapDispatchError(command));
+      if (plan.task.completionDelivery?.state === "pending") return;
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.parentThreadId,
+        ...(task.runId === null ? {} : { runId: task.runId }),
+        nodeId: task.id,
+        driver: task.driver,
+        providerInstanceId: task.providerInstanceId,
+        occurredAt: now,
+        payload: plan.task,
+      });
+      for (const event of delegatedCompletionPlanEvents(
+        command.parentThreadId,
+        plan,
+        projection.thread.providerInstanceId,
+        now,
+      )) {
+        yield* emitEvent(event);
+      }
+      return plan.parentRun?.id;
+    }
     // task_status and t3_thread_read use distinct command IDs, so two
     // valid observations can race after their read preflight. Re-emit the
     // existing task row so the second dispatch is a successful idempotent
@@ -4056,6 +4157,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                     ...(existing.endedWatch?.owedChecks !== undefined && {
                       owedChecks: existing.endedWatch.owedChecks,
+                    }),
+                    ...(existing.endedWatch?.awaitingApproval !== undefined && {
+                      awaitingApproval: existing.endedWatch.awaitingApproval,
+                    }),
+                    ...(existing.endedWatch?.approvalAnnounced !== undefined && {
+                      approvalAnnounced: existing.endedWatch.approvalAnnounced,
                     }),
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
@@ -5962,10 +6069,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         taskIds: delivery.taskIds,
       };
     }
-    // Route durable mailbox deliveries and delegated task questions under the
-    // thread lock, using the live session's capabilities. A question queued
-    // behind a long parent turn is never seen. Never interrupt/restart a turn
-    // for a notification.
+    // Steer mailbox deliveries, delegated task questions, and command notices
+    // into an active goal under the thread lock: queued behind a long turn or a
+    // goal run, they are never seen. Never interrupt/restart a turn for one.
+    const noticeKind = command.notification?.source.kind;
+    const commandNotice = noticeKind === "command" && command.creationSource === "server";
     if (
       !freshContext &&
       (delegatedCompletion !== undefined
@@ -5973,7 +6081,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (id) =>
               projection.subagents.find((task) => task.id === id)?.completionWake === "always",
           )
-        : command.notification?.source.kind === "delegated_task")
+        : noticeKind === "delegated_task" || commandNotice)
     ) {
       const active = projection.runs.find((run) => run.status === "running");
       const providerThread = projection.providerThreads.find(
@@ -5989,6 +6097,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         active !== undefined &&
         activeTurn !== undefined &&
         providerThread?.providerSessionId != null &&
+        (!commandNotice || providerThread.goal?.status === "active") &&
         (activeMessage === undefined || !isNativeMaintenanceCommand(activeMessage))
       ) {
         const session = yield* providerSessions
@@ -8615,28 +8724,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: plan.task,
     });
-    if (plan.parentRun !== undefined) {
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.parentThreadId,
-        runId: plan.parentRun.id,
-        ...(plan.parentRun.rootNodeId === null ? {} : { nodeId: plan.parentRun.rootNodeId }),
-        providerInstanceId: plan.parentRun.providerInstanceId,
-        occurredAt: now,
-        payload: plan.parentRun,
-      });
-    }
-    if (plan.message !== undefined) {
-      yield* emitEvent({
-        type: "message.updated",
-        threadId: command.parentThreadId,
-        ...(plan.message.runId === null ? {} : { runId: plan.message.runId }),
-        ...(plan.message.nodeId === null ? {} : { nodeId: plan.message.nodeId }),
-        providerInstanceId:
-          plan.parentRun?.providerInstanceId ?? parentProjection.thread.providerInstanceId,
-        occurredAt: now,
-        payload: plan.message,
-      });
+    for (const event of delegatedCompletionPlanEvents(
+      command.parentThreadId,
+      plan,
+      parentProjection.thread.providerInstanceId,
+      now,
+    )) {
+      yield* emitEvent(event);
     }
     const node = parentProjection.nodes.find((candidate) => candidate.id === task.id);
     if (node !== undefined) {
@@ -9032,6 +9126,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "secret_request",
             label: command.label,
             reason: command.reason,
+            ...(command.url === undefined ? {} : { url: command.url }),
             ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
             ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
             secretStatus: command.secretStatus,
@@ -12910,40 +13005,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: completionPlan.task,
         },
-        ...(completionPlan.parentRun === undefined
-          ? []
-          : [
-              {
-                type: "run.updated" as const,
-                threadId: parentThreadId,
-                runId: completionPlan.parentRun.id,
-                ...(completionPlan.parentRun.rootNodeId === null
-                  ? {}
-                  : { nodeId: completionPlan.parentRun.rootNodeId }),
-                providerInstanceId: completionPlan.parentRun.providerInstanceId,
-                occurredAt: now,
-                payload: completionPlan.parentRun,
-              },
-            ]),
-        ...(completionPlan.message === undefined
-          ? []
-          : [
-              {
-                type: "message.updated" as const,
-                threadId: parentThreadId,
-                ...(completionPlan.message.runId === null
-                  ? {}
-                  : { runId: completionPlan.message.runId }),
-                ...(completionPlan.message.nodeId === null
-                  ? {}
-                  : { nodeId: completionPlan.message.nodeId }),
-                providerInstanceId:
-                  completionPlan.parentRun?.providerInstanceId ??
-                  parentProjection.thread.providerInstanceId,
-                occurredAt: now,
-                payload: completionPlan.message,
-              },
-            ]),
+        ...delegatedCompletionPlanEvents(
+          parentThreadId,
+          completionPlan,
+          parentProjection.thread.providerInstanceId,
+          now,
+        ),
         ...(parentNode === undefined
           ? []
           : [
@@ -13854,6 +13921,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
+          isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
@@ -14029,7 +14097,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "delegated_task.wake-policy" ||
-      command.type === "delegated_task.remote.complete"
+      command.type === "delegated_task.remote.complete" ||
+      isUnobservedAcknowledgement(command)
     ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
@@ -14538,6 +14607,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     findGuestShareThreadId: Effect.fn("OrchestratorV2.findGuestShareThreadId")(function (shareId) {
       return projectionStore
         .findGuestShareThreadId(shareId)
+        .pipe(Effect.mapError(shellProjectionError));
+    }),
+    getThreadLinkMetadata: Effect.fn("OrchestratorV2.getThreadLinkMetadata")(function (threadIds) {
+      return projectionStore
+        .getThreadLinkMetadata(threadIds)
         .pipe(Effect.mapError(shellProjectionError));
     }),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
