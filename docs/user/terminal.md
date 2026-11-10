@@ -17,6 +17,9 @@ then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
 
+On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
+Select Text shows the visible output, where you can copy text or tap a link.
+
 ## File links
 
 To read a file from terminal output without leaving T3 Code, enable **Settings → General →
