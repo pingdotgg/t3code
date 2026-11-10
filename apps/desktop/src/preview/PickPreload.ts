@@ -560,7 +560,10 @@ function startAnnotation(
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
   root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
-  root.style.cssText = "pointer-events:none";
+  root.style.cssText = "pointer-events:none;outline:none";
+  // Window focus alone leaves the guest without a focused frame, so Escape and the
+  // tool keys never arrive; focusing a node in the page gives it one.
+  root.tabIndex = -1;
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
   cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
@@ -874,6 +877,7 @@ function startAnnotation(
     inputLayer.tabIndex = -1;
     inputLayer.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY - 1};cursor:crosshair;outline:none`;
   }
+  const previousFocus = inputLayer ? null : document.activeElement;
   let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
   let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
@@ -1619,7 +1623,10 @@ function startAnnotation(
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     inputLayer?.remove();
+    const ownedFocus = document.hasFocus() && shadowRoot.activeElement !== null;
     host.remove();
+    if (ownedFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected)
+      previousFocus.focus({ preventScroll: true });
     activeSession = null;
     if (notifyMain) ipcRenderer.send(ELEMENT_PICKED_CHANNEL, null);
   };
@@ -1652,7 +1659,13 @@ function startAnnotation(
         return;
       }
     }
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
+    // Keys reach this listener retargeted to the host, so the focused root is checked directly.
+    if (
+      isAnnotationNode(event.target as Element) &&
+      shadowRoot.activeElement !== root &&
+      event.key !== "Escape"
+    )
+      return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -1774,6 +1787,7 @@ function startAnnotation(
     inputLayer.focus({ preventScroll: true });
   }
   document.documentElement.appendChild(host);
+  if (!inputLayer) root.focus({ preventScroll: true });
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
