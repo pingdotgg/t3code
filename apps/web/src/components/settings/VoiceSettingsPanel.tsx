@@ -3,6 +3,7 @@ import {
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
+  linkEnvironmentSpeechModels,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   updateEnvironmentSpeechAcceleration,
@@ -42,6 +43,7 @@ import {
   StarIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  UnlinkIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -215,6 +217,11 @@ function ModelCard(props: ModelCardProps) {
           ) : null}
         </div>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
+        {model.linkedFrom ? (
+          <p className="mt-0.5 break-all text-2xs text-muted-foreground">
+            Using your file at {model.linkedFrom}
+          </p>
+        ) : null}
         <ModelBenchmarks
           model={model}
           languages={props.comparisonLanguages}
@@ -283,10 +290,18 @@ function ModelCard(props: ModelCardProps) {
             size="icon-sm"
             variant="ghost"
             disabled={props.busy}
-            aria-label={`Delete ${model.name}`}
+            aria-label={
+              model.linkedFrom
+                ? `Stop using your ${model.name} file; the file stays on disk`
+                : `Delete ${model.name}`
+            }
             onClick={props.onDelete}
           >
-            <Trash2Icon className="size-3.5" />
+            {model.linkedFrom ? (
+              <UnlinkIcon className="size-3.5" />
+            ) : (
+              <Trash2Icon className="size-3.5" />
+            )}
           </Button>
         ) : null}
       </div>
@@ -779,6 +794,7 @@ function SpeechModelBrowser(props: {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SpeechModelSort>("recommended");
   const [downloadedOnly, setDownloadedOnly] = useState(false);
+  const [existingPath, setExistingPath] = useState("");
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);
@@ -981,6 +997,38 @@ function SpeechModelBrowser(props: {
                   );
                 })}
               </div>
+              {status.supportsModelLinking ? (
+                <form
+                  className="flex items-center gap-2 border-t border-border/60 p-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run("No new supported model found at that path", async () => {
+                      await runEnvironmentSpeech(
+                        linkEnvironmentSpeechModels(prepared, existingPath),
+                      );
+                      setExistingPath("");
+                    });
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      size="compact"
+                      aria-label="Path to a model file or folder already on this environment"
+                      placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+                      value={existingPath}
+                      onChange={(e) => setExistingPath(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    disabled={controlsDisabled || !existingPath.trim()}
+                  >
+                    Use existing
+                  </Button>
+                </form>
+              ) : null}
             </div>
           </div>
         </>

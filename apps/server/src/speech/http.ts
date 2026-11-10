@@ -165,6 +165,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "linkModels",
+        Effect.fn("environment.voice.linkModels")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* speech.linkModels(args.payload.path).pipe(mapSpeechError);
+        }),
+      )
+      .handle(
         "updateAcceleration",
         Effect.fn("environment.voice.updateAcceleration")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
