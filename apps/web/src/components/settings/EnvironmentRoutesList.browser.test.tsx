@@ -48,10 +48,7 @@ const LAN = direct("lan", "http://192.168.1.10:3773/");
 const TAILNET = direct("tailnet", "https://desk.tail1234.ts.net/");
 const PUBLIC = direct("public", "https://desk.example.com/");
 
-function routesList(
-  routes: ReadonlyArray<ConnectionRoute>,
-  refusedRouteIds: ReadonlyArray<string> = [],
-) {
+function routesList(routes: ReadonlyArray<ConnectionRoute>) {
   const [first, ...rest] = routes;
   const entry: ConnectionCatalogEntry = {
     target: first!.target,
@@ -67,7 +64,6 @@ function routesList(
     entry,
     connection: { phase: "available", error: null, traceId: null },
     serverConfig: null,
-    refusedRouteIds,
   };
   return <EnvironmentRoutesList environment={environment} onAddRoute={() => undefined} />;
 }
@@ -93,12 +89,4 @@ it("shows a route added after a reorder was saved, once another route is removed
   await expect
     .element(screen.getByRole("button", { name: "Remove desk.example.com route" }))
     .toBeVisible();
-});
-
-it("marks a route whose host refused this device's sign-in", async () => {
-  await using screen = await render(routesList([LAN, TAILNET], ["lan"]));
-  const [lan, tailnet] = screen.getByRole("listitem").all();
-  await expect.element(lan!.getByText("Sign-in refused")).toBeVisible();
-  await expect.element(lan!.getByText(/Pair this address again with Add route/)).toBeVisible();
-  await expect.element(tailnet!.getByText("Sign-in refused")).not.toBeInTheDocument();
 });

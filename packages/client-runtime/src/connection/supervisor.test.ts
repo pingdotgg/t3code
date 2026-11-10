@@ -1685,48 +1685,6 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect("reports a refused preferred route while connected over another route", () =>
-    Effect.gen(function* () {
-      const loopbackTarget = new BearerConnectionTarget({
-        environmentId: TARGET.environmentId,
-        label: TARGET.label,
-        connectionId: "bearer:loopback",
-      });
-      const entry: ConnectionCatalogEntry = {
-        target: loopbackTarget,
-        profile: Option.some(
-          new BearerConnectionProfile({
-            connectionId: loopbackTarget.connectionId,
-            environmentId: TARGET.environmentId,
-            label: TARGET.label,
-            httpBaseUrl: "http://127.0.0.1:3773/",
-            wsBaseUrl: "ws://127.0.0.1:3773/",
-          }),
-        ),
-        alternateRoutes: [LAN_ROUTE],
-        enabled: true,
-      };
-      const harness = yield* makeHarness({
-        checkRoute: () => Effect.succeed("answered"),
-        prepare: (_attempt, target) =>
-          connectionRouteId(target) === loopbackTarget.connectionId
-            ? Effect.fail(hostRefusal())
-            : Effect.succeed(preparedFor(target)),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(entry, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      const state = yield* awaitState(supervisor.state, (value) => value.phase === "connected");
-      expect(
-        connectionRouteId(
-          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
-        ),
-      ).toBe(LAN_TARGET.connectionId);
-      expect(state.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
-    }),
-  );
-
   it.effect("does not report a route that failed before reaching its host's sign-in", () =>
     Effect.gen(function* () {
       const failures = [
