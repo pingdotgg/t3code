@@ -8,7 +8,7 @@ import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { scopedThreadKey } from "../../../lib/scopedEntities";
 import { uuidv4 } from "../../../lib/uuid";
 import { usePendingTaskListActions } from "../../home/usePendingTaskListActions";
-import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
+import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../adaptive-workspace-context";
 import { openSettings } from "../../settings/settings-navigation";
 import { ThreadNavigationSidebar } from "../../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../../threads/use-open-thread-pull-requests";
@@ -42,14 +42,9 @@ function selectedThreadKey(state: { readonly index: number; readonly routes: rea
 /** The thread list in the workspace's sidebar column. */
 export function WorkspaceThreadSidebar() {
   const navigation = useNavigation();
-  const {
-    layout,
-    panes,
-    primarySidebarSearchQuery,
-    setPrimarySidebarSearchQuery,
-    revealPrimarySidebar,
-    openWorkspaceTab,
-  } = useAdaptiveWorkspaceLayout();
+  const { layout, setPrimarySidebarSearchQuery, revealPrimarySidebar, openWorkspaceTab } =
+    useAdaptiveWorkspaceLayout();
+  const { panes, primarySidebarSearchQuery } = useWorkspacePaneState();
   const selectDetail = useSelectWorkspaceDetail();
   const openThreadPullRequests = useOpenThreadPullRequests();
   const selectedThread = useNavigationState(selectedThreadKey);
