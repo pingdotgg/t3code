@@ -954,23 +954,36 @@ describe("t3_worktree_release", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps a worktree another thread binds to while the session winds down", () =>
+  it.effect("keeps a worktree another thread binds to between removal attempts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-rebound-" });
       const sharingPaths: Array<string> = [];
+      let attempts = 0;
+      const firstAttempt = yield* Deferred.make<void>();
       const refreshed = yield* Deferred.make<void>();
       const harness = makeHarness({
         thread: { worktreePath, branch: "feature/rebound" },
         otherThreadWorktreePaths: sharingPaths,
-        isLive: () => Effect.sync(() => sharingPaths.push(worktreePath)).pipe(Effect.as(false)),
+        git: {
+          removeWorktree: () =>
+            Effect.suspend(() => {
+              attempts++;
+              sharingPaths.push(worktreePath);
+              return Deferred.succeed(firstAttempt, undefined).pipe(
+                Effect.andThen(Effect.fail("EBUSY" as never)),
+              );
+            }),
+        },
         onRefreshStatus: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
       });
 
       const result = yield* runRelease(harness, { deleteBranch: true });
       expect(result.removal).toBe("scheduled");
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust("2 seconds");
       yield* Deferred.await(refreshed);
-      expect(harness.removeWorktree).not.toHaveBeenCalled();
+      expect(attempts).toBe(1);
       expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

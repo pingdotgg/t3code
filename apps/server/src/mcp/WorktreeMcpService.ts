@@ -460,21 +460,29 @@ const make = Effect.gen(function* () {
         Effect.retry(RELEASE_RETRY),
         Effect.ignore,
       );
-      // A thread can bind to the worktree while the session winds down; this one's binding is already cleared.
-      const sharing = yield* threadManagement.getShellSnapshot({
-        worktreePath: input.worktreePath,
-      });
-      if (sharing.threads.length + sharing.archivedThreads.length === 0) {
-        yield* gitWorkflow
-          .removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: input.force })
-          .pipe(Effect.retry(RELEASE_RETRY));
-        if (input.deleteBranch && input.branch !== null) {
-          yield* gitWorkflow.deleteLocalBranch({
-            cwd: input.projectCwd,
-            refName: input.branch,
-            force: true,
-          });
-        }
+      // A thread can bind to the worktree while removal waits or retries; this one's binding is already cleared.
+      const removed = yield* Effect.suspend(() =>
+        threadManagement.getShellSnapshot({ worktreePath: input.worktreePath }),
+      ).pipe(
+        Effect.flatMap((sharing) =>
+          sharing.threads.length + sharing.archivedThreads.length > 0
+            ? Effect.succeed(false)
+            : gitWorkflow
+                .removeWorktree({
+                  cwd: input.projectCwd,
+                  path: input.worktreePath,
+                  force: input.force,
+                })
+                .pipe(Effect.as(true)),
+        ),
+        Effect.retry(RELEASE_RETRY),
+      );
+      if (removed && input.deleteBranch && input.branch !== null) {
+        yield* gitWorkflow.deleteLocalBranch({
+          cwd: input.projectCwd,
+          refName: input.branch,
+          force: true,
+        });
       }
       yield* vcsStatusBroadcaster
         .refreshStatus(input.projectCwd)
