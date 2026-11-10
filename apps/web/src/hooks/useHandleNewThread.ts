@@ -230,6 +230,28 @@ export function createNewThreadHandler(router: AnyRouter) {
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
     const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const hasExplicitWorkspaceOption =
+      hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
+    // The index route and desktop activation can both open a project's draft; the one that
+    // loses the await still succeeded if the route now shows this project's live draft.
+    const draftOpenedMeanwhile = () => {
+      if (options?.prompt !== undefined || hasExplicitWorkspaceOption) return null;
+      if (readProject(projectRef) === null) return null;
+      const routeTarget = getCurrentRouteTarget();
+      if (routeTarget?.kind !== "draft") return null;
+      const session = getDraftSession(routeTarget.draftId);
+      if (
+        session === null ||
+        session.promotedTo != null ||
+        session.environmentId !== projectRef.environmentId ||
+        session.projectId !== projectRef.projectId ||
+        session.logicalProjectKey !== logicalProjectKey ||
+        readThreadShell(scopeThreadRef(session.environmentId, session.threadId)) !== null
+      ) {
+        return null;
+      }
+      return { draftId: routeTarget.draftId, threadId: session.threadId };
+    };
     const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     const storedDraftThreadRef = storedDraftThread
       ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -259,21 +281,19 @@ export function createNewThreadHandler(router: AnyRouter) {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
-        const hasExplicitWorkspaceOption =
-          hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         if (hasExplicitWorkspaceOption) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
-          if (abandonedSinceRequest()) {
-            return null;
-          }
           // Concurrent calls may change the draft; stale resets, remaps, or navigation could clobber it.
           const routeTargetNow = getCurrentRouteTarget();
           const openedMeanwhile =
             routeTargetNow?.kind === "draft" &&
             routeTargetNow.draftId === emptyStoredDraftThread.draftId;
+          if (abandonedSinceRequest() || openedMeanwhile) {
+            return draftOpenedMeanwhile();
+          }
           const promotedMeanwhile =
             storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
           const remappedMeanwhile =
@@ -282,7 +302,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           const investedMeanwhile = composerDraftHasUserContent(
             getComposerDraft(emptyStoredDraftThread.draftId),
           );
-          if (openedMeanwhile || promotedMeanwhile || remappedMeanwhile || investedMeanwhile) {
+          if (promotedMeanwhile || remappedMeanwhile || investedMeanwhile) {
             return null;
           }
           workspaceContext = {
@@ -383,7 +403,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
       if (abandonedSinceRequest()) {
-        return null;
+        return draftOpenedMeanwhile();
       }
       // Reuse drafts registered while awaiting so their pending navigation cannot lose them.
       const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);

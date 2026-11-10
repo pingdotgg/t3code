@@ -19,6 +19,7 @@ const testState = vi.hoisted(() => {
     readonly threadId: string;
   } | null = null;
   let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
+  let draftSessions = new Map<string, Record<string, unknown>>();
   let draftsWithUserText = new Set<string>();
   const router = {
     state: {
@@ -32,17 +33,19 @@ const testState = vi.hoisted(() => {
   const draftStore = {
     getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() =>
-      openDraftRoute === null
-        ? null
-        : {
-            logicalProjectKey: "remote-project",
-            promotedTo: null,
-            threadId: "thread-open",
-            createdAt: "2026-01-01T00:00:00.000Z",
-            runtimeMode: "full-access",
-            interactionMode: "default",
-          },
+    getDraftSession: vi.fn(
+      (draftId: string) =>
+        draftSessions.get(draftId) ??
+        (openDraftRoute === null
+          ? null
+          : {
+              logicalProjectKey: "remote-project",
+              promotedTo: null,
+              threadId: "thread-open",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            }),
     ),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
@@ -81,6 +84,35 @@ const testState = vi.hoisted(() => {
     openEmptyDraft(draftId: string) {
       openDraftRoute = { kind: "draft", draftId };
     },
+    // Another caller registers, maps and shows its draft while this one waits.
+    openConcurrently({
+      draftId = "draft-winner",
+      threadId = "thread-winner",
+      environmentId = "environment-ssh",
+      projectId = "project-remote",
+    }: {
+      draftId?: string;
+      threadId?: string;
+      environmentId?: string;
+      projectId?: string;
+    }) {
+      draftSessions = new Map([
+        ...draftSessions,
+        [
+          draftId,
+          {
+            threadId,
+            environmentId,
+            projectId,
+            logicalProjectKey: "remote-project",
+            promotedTo: null,
+          },
+        ],
+      ]);
+      storedDraft = { draftId, environmentId, promotedTo: null, threadId };
+      openDraftRoute = { kind: "draft", draftId };
+      router.state.location.href = `/draft/${draftId}`;
+    },
     get targetSettings() {
       return targetSettings;
     },
@@ -93,6 +125,7 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       openDraftRoute = null;
+      draftSessions = new Map();
       draftsWithUserText = new Set();
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
@@ -265,21 +298,70 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
-  it("abandons a delayed draft open when the user navigates elsewhere", async () => {
-    testState.reset(draft);
-    const openThread = useNewThreadHandler();
-    const pendingOpen = openThread(
+  it.each<[string, () => void, { prompt?: string }?]>([
+    ["the user navigates elsewhere", () => (testState.router.state.location.href = "/usage")],
+    [
+      "another project's draft opens",
+      () => testState.openConcurrently({ draftId: "draft-other", projectId: "project-other" }),
+    ],
+    [
+      "another environment's draft opens",
+      () =>
+        testState.openConcurrently({
+          draftId: "draft-other",
+          environmentId: "environment-primary",
+        }),
+    ],
+    ["the project is removed", () => testState.removeProject()],
+    [
+      "the project is removed as its draft opens",
+      () => {
+        testState.removeProject();
+        testState.openConcurrently({});
+      },
+    ],
+    [
+      "its draft opens without the requested prompt",
+      () => testState.openConcurrently({}),
+      { prompt: "Read the playbook. " },
+    ],
+  ])("abandons a delayed draft open when %s", async (_, interrupt, options = {}) => {
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true, ...options },
+    );
+
+    interrupt();
+    const interruptedHref = testState.router.state.location.href;
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toBeNull();
+    expect(testState.router.state.location.href).toBe(interruptedHref);
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("returns the draft a concurrent open showed while it waited", async () => {
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
+    const pendingOpen = useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
       { replace: true },
     );
+    const winner = {
+      draftId: draft?.draftId ?? "draft-winner",
+      threadId: draft?.threadId ?? "thread-winner",
+    };
 
-    testState.router.state.location.href = "/usage";
+    testState.openConcurrently(winner);
     testState.completeProjectFileRead(null);
-    await pendingOpen;
 
-    expect(testState.router.state.location.href).toBe("/usage");
+    await expect(pendingOpen).resolves.toEqual(winner);
+    expect(testState.router.state.location.href).toBe(`/draft/${winner.draftId}`);
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
   });
 
   it("sets the prompt before the draft shows", async () => {
@@ -299,21 +381,6 @@ describe.each([
     expect(testState.draftStore.setPrompt.mock.invocationCallOrder[0]).toBeLessThan(
       testState.router.navigate.mock.invocationCallOrder[0] ?? 0,
     );
-  });
-
-  it("abandons a delayed draft open when the project is removed meanwhile", async () => {
-    testState.reset(draft);
-    const pendingOpen = useNewThreadHandler()(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { replace: true },
-    );
-
-    testState.removeProject();
-    testState.completeProjectFileRead(null);
-
-    await expect(pendingOpen).resolves.toBeNull();
-    expect(testState.router.navigate).not.toHaveBeenCalled();
-    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 });
 
