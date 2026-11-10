@@ -69,23 +69,3 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..1fac4b40c9f376a4f6d6b7fa60e4d247
      @Override
      protected void onSizeChanged(int w, int h, int ow, int oh) {
          super.onSizeChanged(w, h, ow, oh);
-diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
-index 38904266dc37b006274104f4680778ffbfece369..ba9f760ee760fbe3299f5e11a23825e94c5ef851 100644
---- a/apple/RNCWebViewImpl.m
-+++ b/apple/RNCWebViewImpl.m
-@@ -1376,6 +1376,15 @@ RCTAutoInsetsProtocol>
-       return;
-     }
- 
-+    // A subframe's about:blank or about:srcdoc load has nothing for JS to vet.
-+    // Through the bridge, the default origin whitelist cancels about:srcdoc and a
-+    // late about:blank commit replaces the document its parent already wrote.
-+    if (hasTargetFrame && !navigationAction.targetFrame.isMainFrame &&
-+        [request.URL.scheme.lowercaseString isEqualToString:@"about"]) {
-+        decisionHandler(WKNavigationActionPolicyAllow);
-+        return;
-+    }
-+
-     if (_onShouldStartLoadWithRequest) {
-         int lockIdentifier = [[RNCWebViewDecisionManager getInstance] setDecisionHandler: ^(BOOL shouldStart){
-             dispatch_async(dispatch_get_main_queue(), ^{

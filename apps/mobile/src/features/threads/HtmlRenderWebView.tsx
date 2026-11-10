@@ -134,6 +134,8 @@ export function HtmlRenderWebView(props: {
         // with vertical overflow hold vertical drags until they reach an edge.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
+        // The default whitelist cancels about:srcdoc iframes before the handler below.
+        originWhitelist={["http://*", "https://*", "about:srcdoc"]}
         onShouldStartLoadWithRequest={(request) =>
           request.isTopFrame === false ||
           withoutFragment(request.url) === withoutFragment(props.uri)
