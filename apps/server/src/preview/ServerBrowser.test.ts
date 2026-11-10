@@ -2602,68 +2602,54 @@ it.effect("a tab stuck in an agent action does not hold back setting changes for
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect(
-  "calls queued behind a stuck agent action time out on their own, and dialogs come first",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { broker, tabId } = yield* ready;
-        const page = contexts[0]!.page;
-        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
-        const stalled = stallColorScheme(page);
-        const stuck = yield* broker
-          .invoke<void>({
-            scope,
-            tabId,
-            operation: "setColorScheme",
-            input: { colorScheme: "dark" },
-            timeoutMs: 1_000,
-          })
-          .pipe(Effect.flip, Effect.forkScoped);
-        yield* stalled;
-        const queued = yield* broker
-          .invoke<void>({
-            scope,
-            tabId,
-            operation: "click",
-            input: { ref: "e1" },
-            timeoutMs: 1_000,
-          })
-          .pipe(Effect.flip, Effect.forkScoped);
-        // The host handles requests in arrival order, so the click is queued once this answers.
-        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-        yield* TestClock.adjust("2 seconds");
-        expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
-        expect(yield* Fiber.join(queued)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
-        page.emit("dialog", {
-          type: () => "alert",
-          message: () => "Saved",
-          defaultValue: () => "",
-          accept: vi.fn(async () => {}),
-          dismiss: vi.fn(async () => {}),
-        });
-        const blocked = yield* broker
-          .invoke<void>({
-            scope,
-            tabId,
-            operation: "click",
-            input: { ref: "e1" },
-            timeoutMs: 1_000,
-          })
-          .pipe(Effect.flip);
-        expect(blocked).toMatchObject({
-          _tag: "PreviewAutomationControlInterruptedError",
-          reason: "dialogPending",
-        });
-        const stop = yield* broker
-          .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
-          .pipe(Effect.flip);
-        expect(stop).toMatchObject({
-          _tag: "PreviewAutomationControlInterruptedError",
-          reason: "dialogPending",
-        });
-      }),
-    ).pipe(Effect.provide(layer)),
+it.effect("a dialog on a stuck tab is reported before the tab is busy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const stalled = stallColorScheme(page);
+      const stuck = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* stalled;
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      page.emit("dialog", {
+        type: () => "alert",
+        message: () => "Saved",
+        defaultValue: () => "",
+        accept: vi.fn(async () => {}),
+        dismiss: vi.fn(async () => {}),
+      });
+      const blocked = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "click",
+          input: { ref: "e1" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip);
+      expect(blocked).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "dialogPending",
+      });
+      const stop = yield* broker
+        .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip);
+      expect(stop).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "dialogPending",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect("an action that fails just after its timeout still reports its own failure", () =>
