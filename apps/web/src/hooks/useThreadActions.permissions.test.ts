@@ -36,7 +36,6 @@ const state = vi.hoisted(() => ({
     lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
     session: { status: "ready" | "stopped" } | null;
     latestTurn: null;
-    lineage: { parentThreadId: null; relationshipToParent: null; rootThreadId: ThreadId };
   }[],
   familyThreads: [] as {
     id: ThreadId;
@@ -269,7 +268,6 @@ beforeEach(() => {
       lineage: { parentThreadId: null },
       session: null,
       latestTurn: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: target.threadId },
     },
   ];
   state.requests = [];
