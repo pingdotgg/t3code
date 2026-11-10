@@ -53,7 +53,8 @@ export function ThreadRelationshipIcon({
   driver?: ProviderDriverKind | undefined;
   provider?: ServerProvider | undefined;
   providerEntries?: ReadonlyArray<ProviderInstanceEntry>;
-  status: string | null;
+  /** Omit where the row shows the state itself; null draws the idle dot. */
+  status?: string | null;
   fallbackIcon?: LucideIcon;
 }) {
   const iconClassName = "size-4 shrink-0 text-muted-foreground";
@@ -78,23 +79,25 @@ export function ThreadRelationshipIcon({
       ) : (
         <FallbackIcon className={iconClassName} />
       )}
-      <span
-        className={cn(
-          "absolute size-2 rounded-full border-2 border-card",
-          showInstanceBadge ? "-left-1 -top-1" : "-bottom-1 -right-1",
-          status === "running" ||
-            status === "in_progress" ||
-            status === "pending" ||
-            status === "waiting"
-            ? "bg-info"
-            : status === "failed" || status === "error"
-              ? "bg-destructive"
-              : status === "completed"
-                ? "bg-success"
-                : "bg-dim-foreground",
-        )}
-        aria-hidden="true"
-      />
+      {status === undefined ? null : (
+        <span
+          className={cn(
+            "absolute size-2 rounded-full border-2 border-card",
+            showInstanceBadge ? "-left-1 -top-1" : "-bottom-1 -right-1",
+            status === "running" ||
+              status === "in_progress" ||
+              status === "pending" ||
+              status === "waiting"
+              ? "bg-info"
+              : status === "failed" || status === "error"
+                ? "bg-destructive"
+                : status === "completed"
+                  ? "bg-success"
+                  : "bg-dim-foreground",
+          )}
+          aria-hidden="true"
+        />
+      )}
     </span>
   );
 }
