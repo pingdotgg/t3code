@@ -381,6 +381,7 @@ function DictionaryEditor(props: {
         {/* One line while empty, so a wrapped placeholder never makes the field taller than Add. */}
         <div className="min-w-0 flex-1 [&_textarea]:placeholder-shown:whitespace-nowrap">
           <Textarea
+            size="sm"
             value={termDraft}
             rows={1}
             maxLength={5_100}
@@ -395,7 +396,13 @@ function DictionaryEditor(props: {
             }}
           />
         </div>
-        <Button type="button" variant="secondary" disabled={!canAddTerm} onClick={addTerm}>
+        <Button
+          size="standard"
+          type="button"
+          variant="secondary"
+          disabled={!canAddTerm}
+          onClick={addTerm}
+        >
           <PlusIcon />
           Add
         </Button>
@@ -416,6 +423,7 @@ function DictionaryEditor(props: {
               ) : null}
               {aliasDraft?.term === term ? (
                 <Input
+                  size="settings"
                   autoFocus
                   value={aliasDraft.value}
                   maxLength={50}
@@ -746,7 +754,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Transcription hardware" className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label="Transcription hardware"
+              className="max-w-72"
+            >
               <SelectValue>
                 {supported.acceleration === "auto"
                   ? "Auto"
@@ -788,7 +801,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Unload model" className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label="Unload model"
+              className="max-w-72"
+            >
               <SelectValue>{UNLOAD_LABELS[supported.modelUnloadTimeout]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1038,7 +1056,7 @@ function SpeechModelBrowser(props: {
         >
           <div className="w-full min-w-0 flex-1">
             <Input
-              size="compact"
+              size="settings"
               aria-label="Path to a model file or folder already on this environment"
               placeholder="Already downloaded elsewhere? Paste the model file or folder path"
               value={existingPath}
@@ -1328,7 +1346,7 @@ export function VoiceSettingsPanel() {
                   void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode">
+              <SelectTrigger variant="well" size="compact" aria-label="Dictation shortcut mode">
                 <SelectValue>{SHORTCUT_MODES[settings.voiceShortcutMode].label}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1382,7 +1400,8 @@ export function VoiceSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   aria-label="Transcribe with"
                   className="min-w-0 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:max-w-72"
                 >
@@ -1634,7 +1653,7 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Cleanup instructions">
+                <SelectTrigger variant="well" size="compact" aria-label="Cleanup instructions">
                   <SelectValue>
                     {settings.speechPostProcessingPrompt.mode === "custom" ? "Custom" : "Built-in"}
                   </SelectValue>
@@ -1673,6 +1692,7 @@ export function VoiceSettingsPanel() {
             description="The phrase you say to fix a mistake, like “scratch that”."
             control={
               <Input
+                size="settings"
                 key={settings.speechCorrectionWord}
                 defaultValue={settings.speechCorrectionWord}
                 maxLength={50}
