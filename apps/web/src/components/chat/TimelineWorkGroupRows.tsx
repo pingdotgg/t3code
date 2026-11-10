@@ -1066,7 +1066,12 @@ function CollapsedWorkingWindow({
     reportOverflow();
     return observeResize([content, viewport], () => {
       reportOverflow();
-      if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
+      if (followRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      } else if (scrolledToEnd(viewport)) {
+        followRef.current = true;
+        setFollowing(true);
+      }
     });
   }, [onOverflowChange]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as scrolling brings the spacer near the viewport
@@ -1106,7 +1111,7 @@ function CollapsedWorkingWindow({
         onScrollCapture={(event) => {
           const viewport = getViewport();
           if (!viewport || event.target !== viewport || prependRef.current) return;
-          const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+          const atEnd = scrolledToEnd(viewport);
           followRef.current = atEnd;
           setFollowing(atEnd);
           if (atEnd) setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
@@ -1154,6 +1159,10 @@ function CollapsedWorkingWindow({
       ) : null}
     </div>
   );
+}
+
+function scrolledToEnd(viewport: HTMLElement) {
+  return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
 }
 
 function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
