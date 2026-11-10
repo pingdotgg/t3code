@@ -142,7 +142,7 @@ function markdownThreadFindText(
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
       // The quote card is not searched; its text is found in the message it came from.
-      text += citation.comment ?? "";
+      text += (citation.comment ?? "").replace(/\r?\n/g, " ");
       return;
     }
     {
