@@ -1,0 +1,40 @@
+name: Effect bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  relay:
+    if: >-
+      github.repository == 'Effect-TS/effect' &&
+      github.event.comment.user.login != 'effect-bot' &&
+      startsWith(github.event.comment.body, '@effect-bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # Never check out the PR head/merge ref. Execute only default-branch code.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Effect-TS/effect
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/effect-bot.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      # No dependency install, local actions, build, or PR-controlled code.
+      # GITHUB_EVENT_PATH is read as JSON by the trusted helper.
+      - name: Relay maintainer mention
+        run: node scripts/effect-bot.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MULTICA_EFFECT_BOT_WEBHOOK_URL: ${{ secrets.MULTICA_EFFECT_BOT_WEBHOOK_URL }}
+          MULTICA_EFFECT_BOT_WEBHOOK_SECRET: ${{ secrets.MULTICA_EFFECT_BOT_WEBHOOK_SECRET }}

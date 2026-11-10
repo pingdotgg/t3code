@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import type { FileBackedComposerAttachment } from "./composerImages";
@@ -84,6 +85,14 @@ class LocalAttachmentPreviewKey implements Equal.Equal {
   }
 }
 
+class LocalAttachmentPreviewLoadError extends Schema.TaggedError<LocalAttachmentPreviewLoadError>()(
+  "LocalAttachmentPreviewLoadError",
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 const localAttachmentPreviewFamily = Atom.family((key: LocalAttachmentPreviewKey) =>
   Atom.make(
     // The lease lives as long as the atom: unmounting the last reader (or a
@@ -92,8 +101,16 @@ const localAttachmentPreviewFamily = Atom.family((key: LocalAttachmentPreviewKey
       Effect.tryPromise({
         try: (signal) => loadLocalAttachmentPreview(key.attachment, signal),
         catch: (cause) =>
-          cause instanceof Error ? cause : new Error("The local file is unavailable."),
-      }).pipe(Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file)))),
+          new LocalAttachmentPreviewLoadError({
+            message: cause instanceof Error ? cause.message : "The local file is unavailable.",
+            cause,
+          }),
+      }).pipe(
+        Effect.filterOrElse(
+          (file) => file !== null,
+          () => Effect.interrupt,
+        ),
+      ),
       (file) => Effect.sync(file.dispose),
     ),
   ).pipe(Atom.withLabel(`local-attachment-preview:${key.attachment.id}`)),

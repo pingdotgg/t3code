@@ -68,9 +68,7 @@ const stagesOf = (
 > =>
   Effect.gen(function* () {
     const stacks =
-      filter.stack !== undefined
-        ? [filter.stack]
-        : [...(yield* state.listStacks())].sort();
+      filter.stack !== undefined ? [filter.stack] : [...(yield* state.listStacks())].sort();
     if (filter.stage !== undefined) {
       const stage = filter.stage;
       return stacks.map((stack) => ({ stack, stage }));
@@ -114,11 +112,7 @@ const parsePath = (path: string | undefined) => {
     : Effect.succeed(parts);
 };
 
-const stageFiles = Effect.fn(function* (
-  state: StateService,
-  stack: string,
-  stage: string,
-) {
+const stageFiles = Effect.fn(function* (state: StateService, stack: string, stage: string) {
   const fqns = yield* state.list({ stack, stage });
   return [
     ...fqns.map((fqn): StateFile => ({
@@ -151,10 +145,7 @@ const filesUnder = Effect.fn(function* (
   return perStage.flat();
 });
 
-const filesAt = Effect.fn(function* (
-  state: StateService,
-  parts: ReadonlyArray<string>,
-) {
+const filesAt = Effect.fn(function* (state: StateService, parts: ReadonlyArray<string>) {
   const path = parts.join("/");
   if (parts.length === 0) {
     return { directory: true as const, files: yield* filesUnder(state) };
@@ -187,10 +178,7 @@ const filesAt = Effect.fn(function* (
   return { directory: true as const, files: descendants };
 });
 
-export const listState = Effect.fn("listState")(function* ({
-  path,
-  recursive = false,
-}: TreeQuery) {
+export const listState = Effect.fn("listState")(function* ({ path, recursive = false }: TreeQuery) {
   const state = yield* yield* State;
   const parts = yield* parsePath(path);
   const normalizedPath = parts.join("/");
@@ -212,10 +200,7 @@ export const listState = Effect.fn("listState")(function* ({
   ];
 });
 
-export const readState = Effect.fn("readState")(function* ({
-  path,
-  recursive = false,
-}: TreeQuery) {
+export const readState = Effect.fn("readState")(function* ({ path, recursive = false }: TreeQuery) {
   const state = yield* yield* State;
   const parts = yield* parsePath(path);
   const target = yield* filesAt(state, parts);
@@ -247,10 +232,7 @@ export const deleteState = Effect.fn("deleteState")(function* ({
   }
   const target = yield* filesAt(state, parts);
   if (target.directory && !recursive) {
-    return yield* invalidPath(
-      path,
-      "path is a directory; set recursive to delete its descendants",
-    );
+    return yield* invalidPath(path, "path is a directory; set recursive to delete its descendants");
   }
   if (parts.length === 1) {
     yield* state.deleteStack({ stack: parts[0]! });
@@ -258,8 +240,7 @@ export const deleteState = Effect.fn("deleteState")(function* ({
     yield* state.deleteStack({ stack: parts[0]!, stage: parts[1]! });
   } else {
     const resources = target.files.filter(
-      (file): file is Extract<StateFile, { kind: "resource" }> =>
-        file.kind === "resource",
+      (file): file is Extract<StateFile, { kind: "resource" }> => file.kind === "resource",
     );
     if (resources.length === 0) {
       return yield* invalidPath(path, "output cannot be deleted independently");

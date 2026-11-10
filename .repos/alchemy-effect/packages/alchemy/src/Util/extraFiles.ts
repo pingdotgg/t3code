@@ -14,8 +14,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { dotAlchemyDirectory } from "../AlchemyContext.ts";
-import { isPathWithin } from "./isPathWithin.ts";
 import { hashDirectory } from "../Command/Memo.ts";
+import { isPathWithin } from "./isPathWithin.ts";
 import { initialCwd } from "./Node.ts";
 import { sha256 } from "./sha256.ts";
 
@@ -24,8 +24,7 @@ const ioConcurrency = 16;
 /** Extra-file dest that means "merge this directory into the image/unit root". */
 export const CONTEXT_ROOT_DEST = ".";
 
-export const isContextRootDest = (dest: string): boolean =>
-  dest === "." || dest === "";
+export const isContextRootDest = (dest: string): boolean => dest === "." || dest === "";
 
 /**
  * Hash extra-file trees without gitignore (a parent `dist` rule would
@@ -111,8 +110,7 @@ export const resolveExtraSource = (
   },
 ) => (path.isAbsolute(source) ? source : path.resolve(initialCwd, source));
 
-const skipCopySegment = (segment: string) =>
-  segment === ".git" || segment === ".alchemy";
+const skipCopySegment = (segment: string) => segment === ".git" || segment === ".alchemy";
 
 export const hashExtraFiles = Effect.fn(function* (
   extraFiles: ReadonlyArray<ExtraFile> | undefined,
@@ -121,16 +119,14 @@ export const hashExtraFiles = Effect.fn(function* (
   const path = yield* Path.Path;
   const runtimeBase = process.cwd();
   const dotAlchemy = yield* dotAlchemyDirectory;
-  const entries = yield* Effect.all(
-    (extraFiles ?? []).map((extra) =>
+  const entries = yield* Effect.forEach(
+    extraFiles ?? [],
+    (extra) =>
       Effect.gen(function* () {
         const dest = extraFileDestination(extra.dest);
         const source = resolveExtraSource(extra.source, path);
-        const exists = yield* fs
-          .exists(source)
-          .pipe(Effect.orElseSucceed(() => false));
-        if (!exists || isPathWithin(dotAlchemy, source, runtimeBase))
-          return [dest, ""] as const;
+        const exists = yield* fs.exists(source).pipe(Effect.orElseSucceed(() => false));
+        if (!exists || isPathWithin(dotAlchemy, source, runtimeBase)) return [dest, ""] as const;
         const stat = yield* fs.stat(source);
         const hash =
           stat.type === "Directory"
@@ -144,7 +140,6 @@ export const hashExtraFiles = Effect.fn(function* (
             : yield* sha256(yield* fs.readFile(source));
         return [dest, hash] as const;
       }),
-    ),
     { concurrency: ioConcurrency },
   );
   return Object.fromEntries(entries) as Record<string, string>;
@@ -163,9 +158,7 @@ export const copyTree = Effect.fn(function* (from: string, to: string) {
   const runtimeBase = process.cwd();
   const dotAlchemy = yield* dotAlchemyDirectory;
   if (isPathWithin(dotAlchemy, from, runtimeBase)) return;
-  const stat = yield* fs
-    .stat(from)
-    .pipe(Effect.catch(() => Effect.succeed(undefined)));
+  const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => undefined));
   if (stat === undefined) return;
   if (stat.type !== "Directory") {
     if (stat.type !== "File") return;
@@ -186,9 +179,7 @@ export const copyTree = Effect.fn(function* (from: string, to: string) {
       return [
         Effect.gen(function* () {
           const src = path.join(from, name);
-          const item = yield* fs
-            .stat(src)
-            .pipe(Effect.catch(() => Effect.succeed(undefined)));
+          const item = yield* fs.stat(src).pipe(Effect.orElseSucceed(() => undefined));
           if (item === undefined || item.type !== "File") return;
           const dst = path.join(to, name);
           yield* fs.makeDirectory(path.dirname(dst), { recursive: true });
@@ -213,14 +204,13 @@ export const copyExtraFiles = Effect.fn(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* Effect.all(
-    (extraFiles ?? []).map((extra) =>
+  yield* Effect.forEach(
+    extraFiles ?? [],
+    (extra) =>
       Effect.gen(function* () {
         const source = resolveExtraSource(extra.source, path);
         const destName = extraFileDestination(extra.dest);
-        const exists = yield* fs
-          .exists(source)
-          .pipe(Effect.orElseSucceed(() => false));
+        const exists = yield* fs.exists(source).pipe(Effect.orElseSucceed(() => false));
         if (!exists) {
           if (options?.onMissing !== undefined) {
             yield* options.onMissing({ source, dest: destName });
@@ -231,17 +221,13 @@ export const copyExtraFiles = Effect.fn(function* (
           const stat = yield* fs.stat(source);
           if (stat.type === "Directory") {
             const names = yield* fs.readDirectory(source);
-            yield* Effect.all(
-              names.map((name) =>
-                copyTree(path.join(source, name), path.join(contextDir, name)),
-              ),
+            yield* Effect.forEach(
+              names,
+              (name) => copyTree(path.join(source, name), path.join(contextDir, name)),
               { concurrency: ioConcurrency },
             );
           } else {
-            yield* copyTree(
-              source,
-              path.join(contextDir, path.basename(source)),
-            );
+            yield* copyTree(source, path.join(contextDir, path.basename(source)));
           }
           return;
         }
@@ -252,7 +238,6 @@ export const copyExtraFiles = Effect.fn(function* (
         yield* fs.makeDirectory(path.dirname(dest), { recursive: true });
         yield* copyTree(source, dest);
       }),
-    ),
     { concurrency: ioConcurrency },
   );
 });

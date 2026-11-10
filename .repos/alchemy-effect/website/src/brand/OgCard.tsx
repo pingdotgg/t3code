@@ -11,9 +11,8 @@
  *
  *   - `blog` — dark variant inspired by Bun's release-note cards. Title
  *     anchored top-left, dense multi-line description filling the body,
- *     publish date + yantra mark in the footer. Designed to look full
- *     and editorial; relies on posts having a meaty `description`/
- *     `excerpt` in frontmatter.
+ *     publish date + yantra mark in the footer. The description is
+ *     clamped to three lines so long excerpts can't push into the footer.
  *
  * Title and description are rendered verbatim from the source page's
  * frontmatter. Fonts come from npm bundles, with variable Source Serif for
@@ -21,6 +20,7 @@
  */
 
 import type { ReactNode } from "react";
+import { sriYantraPattern } from "./sriYantra";
 import { yantraSvg } from "./yantra";
 
 const COLORS = {
@@ -56,46 +56,15 @@ const W = 1200;
 const H = 630;
 
 /**
- * Sri Yantra geometry for the card backgrounds, echoing the landing page's
- * hero rings and section patterns: concentric rings, a lotus of 16 petals,
- * and nine interlocking triangles (four apex-up, five apex-down) around a
- * bindu. Returned as an SVG data URL so Takumi can draw it as an <img>.
+ * The landing page's lotus pattern (`yantra-2`: lotus rings around the nine
+ * triangles), drawn from the same exact construction. Returned as an SVG data
+ * URL so Takumi can draw it as an <img>.
  */
 function yantraField(stroke: string, opacity: number): string {
-  const c = 500;
-  const circle = (r: number) => `<circle cx="${c}" cy="${c}" r="${r}"/>`;
-  const tri = (r: number, down: boolean, dy: number) => {
-    const pts = [0, 1, 2]
-      .map((k) => {
-        const a = (((down ? 90 : -90) + 120 * k) * Math.PI) / 180;
-        return `${(c + r * Math.cos(a)).toFixed(1)},${(c + dy + r * Math.sin(a)).toFixed(1)}`;
-      })
-      .join(" ");
-    return `<polygon points="${pts}"/>`;
-  };
-  const petals = Array.from({ length: 16 }, (_, k) => {
-    const a = (2 * Math.PI * k) / 16;
-    const h = (Math.PI / 16) * 0.6;
-    const p = (r: number, t: number) =>
-      `${(c + r * Math.cos(t)).toFixed(1)},${(c + r * Math.sin(t)).toFixed(1)}`;
-    return `<path d="M${p(330, a - h)} Q${p(395, a - h * 1.1)} ${p(420, a)} Q${p(395, a + h * 1.1)} ${p(330, a + h)}"/>`;
-  }).join("");
-  const r = 250;
-  const shapes = [
-    ...[90, 170, 330, 425, 470, 495].map(circle),
-    petals,
-    tri(r, false, -0.1 * r),
-    tri(r * 0.8, false, -0.02 * r),
-    tri(r * 0.6, false, 0.06 * r),
-    tri(r * 0.4, false, 0.12 * r),
-    tri(r, true, 0.1 * r),
-    tri(r * 0.84, true, 0.03 * r),
-    tri(r * 0.68, true, -0.04 * r),
-    tri(r * 0.5, true, -0.1 * r),
-    tri(r * 0.32, true, -0.02 * r),
-    `<circle cx="${c}" cy="${c}" r="5" fill="${stroke}"/>`,
-  ].join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" opacity="${opacity}">${shapes}</svg>`;
+  const svg = sriYantraPattern("yantra-2", { color: stroke, strokeWidth: 1.6 }).replace(
+    "<svg ",
+    `<svg opacity="${opacity}" `,
+  );
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
@@ -377,6 +346,9 @@ function BlogCard({ title, description, date }: OgCardProps): any {
             lineHeight: 1.5,
             color: COLORS.darkFg2,
             maxWidth: 1040,
+            lineClamp: 3,
+            textOverflow: "ellipsis",
+            overflow: "hidden",
           }}
         >
           {description}
