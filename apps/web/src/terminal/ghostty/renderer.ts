@@ -349,15 +349,25 @@ export function renderGhosttySnapshot(options: {
       context.strokeStyle = cssColor(snapshot.cursor);
       context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
     } else {
-      context.fillRect(left, top, metrics.width, metrics.height);
-      const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
+      const cells = snapshot.rowData[snapshot.cursorY]?.cells ?? [];
+      const cell = cells[snapshot.cursorX];
+      const wide = isWideGlyph(cells, snapshot.cursorX);
+      const width = wide ? metrics.width * 2 : metrics.width;
+      context.fillRect(left, top, width, metrics.height);
       if (cell?.text) {
         context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics);
         } else {
           context.font = fontForCell(cell, fontSize, fontFamily);
-          context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+          context.textAlign = wide ? "center" : "start";
+          context.fillText(
+            cell.text,
+            wide ? left + metrics.width : left,
+            top + metrics.baseline,
+            width,
+          );
+          context.textAlign = "start";
         }
       }
     }
