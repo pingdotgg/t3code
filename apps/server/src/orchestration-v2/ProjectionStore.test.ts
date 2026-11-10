@@ -145,7 +145,14 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const trimmed = (
     row: Pick<
       ProjectionStore.ActiveShellIndexEntry,
-      "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+      | "id"
+      | "projectId"
+      | "lineage"
+      | "settledOverride"
+      | "settledAt"
+      | "pinnedAt"
+      | "pinOrderKey"
+      | "snoozedUntil"
     >,
   ) => ({
     id: row.id,
@@ -154,6 +161,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     settledOverride: row.settledOverride,
     settledAt: iso(row.settledAt),
     pinnedAt: iso(row.pinnedAt),
+    pinOrderKey: row.pinOrderKey ?? null,
     snoozedUntil: iso(row.snoozedUntil),
   });
   assert.deepEqual(index.map(trimmed), shells.map(trimmed));

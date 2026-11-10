@@ -18,9 +18,12 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
+import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -358,6 +361,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
               Effect.succeed(
                 McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
               ),
+            listActiveShellIndex: () => Effect.succeed([]),
             dispatch: () => Effect.succeed({ sequence: 1 } as never),
           }),
         ),
@@ -572,6 +576,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
                   deletedAt: null,
                 },
               } as never),
+            listActiveShellIndex: () => Effect.succeed([]),
             dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
           }),
         ),
@@ -579,6 +584,82 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     ),
   ),
 );
+
+it.effect("an MCP pin lands above every existing pin, as a client pin does", () => {
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const indexReads: Array<number> = [];
+  let targetPinnedAt: DateTime.Utc | null = null;
+  const pinnedAt = DateTime.makeUnsafe("2026-11-10T00:00:00.000Z");
+  const indexEntry = (id: string, pinned: boolean, pinOrderKey: string | null) => ({
+    ...McpToolAccessTestkit.liveThreadShell(ThreadId.make(id)),
+    pinnedAt: pinned ? pinnedAt : null,
+    pinOrderKey,
+    mayBeLive: false,
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const pin = server
+      .callTool({
+        name: "t3_thread_organize",
+        arguments: { action: "pin", threadId: "pin-target" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+
+    const first = yield* pin;
+    expect(first.isError).toBe(false);
+    const orderKey = (dispatched[0] as { readonly orderKey?: string }).orderKey;
+    expect(dispatched[0]).toMatchObject({ type: "thread.pin", threadId: "pin-target" });
+    // The smallest key among pinned threads is "g"; the unpinned "b" and keyless pin are ignored.
+    expect(orderKey).toBe(pinOrderKeyBetween(null, "g"));
+    expect(orderKey! < "g").toBe(true);
+
+    // A thread the handler last saw pinned still gets a key: an unpin can commit
+    // before this command, and the reducer ignores the key if the pin holds.
+    targetPinnedAt = pinnedAt;
+    const again = yield* pin;
+    expect(again.isError).toBe(false);
+    expect(dispatched[1]).toMatchObject({ type: "thread.pin", orderKey });
+    expect(indexReads).toHaveLength(2);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: ({ threadId: id }) => {
+              const projection = McpToolAccessTestkit.idleThreadProjection(
+                McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" }),
+              );
+              return Effect.succeed({
+                ...projection,
+                thread: { ...projection.thread, pinnedAt: targetPinnedAt },
+              });
+            },
+            listActiveShellIndex: () => {
+              indexReads.push(1);
+              return Effect.succeed([
+                indexEntry("pinned-late", true, "t"),
+                indexEntry("pinned-top", true, "g"),
+                indexEntry("pinned-keyless", true, null),
+                indexEntry("unpinned-stale-key", false, "b"),
+              ]);
+            },
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {

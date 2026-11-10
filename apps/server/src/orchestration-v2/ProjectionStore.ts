@@ -426,7 +426,14 @@ export interface ShellSnapshotOptions {
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
 export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pinnedAt"
+  | "pinOrderKey"
+  | "snoozedUntil"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -7298,6 +7305,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
+        readonly pin_order_key: string | null;
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
       }>`
@@ -7311,6 +7319,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
+          json_extract(t.payload_json, '$.pinOrderKey') AS pin_order_key,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
@@ -7370,6 +7379,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : null,
         settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
+        pinOrderKey: row.pin_order_key,
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
       }));

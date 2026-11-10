@@ -542,6 +542,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./pinOrderKey": {
+      "types": "./src/pinOrderKey.ts",
+      "import": "./src/pinOrderKey.ts"
     }
   },
   "scripts": {
