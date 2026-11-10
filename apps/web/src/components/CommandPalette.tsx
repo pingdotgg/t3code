@@ -1133,6 +1133,12 @@ function OpenCommandPaletteDialog(props: {
     return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
   };
 
+  const clearProjectFolder = useStableCallback(() => {
+    setSelectedProjectFolder(null);
+    if (projectName === autoFilledProjectName) setProjectName("");
+    setAutoFilledProjectName(null);
+  });
+
   const startAddProjectSourceSelection = (environmentId: EnvironmentId): void => {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
     if (!canCreateProjectInEnvironment(environment?.connection.phase)) {
@@ -1145,7 +1151,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    setSelectedProjectFolder(null);
+    clearProjectFolder();
     setAddProjectEnvironmentId(environmentId);
     setAddProjectCloneFlow(null);
     pushPaletteView({
@@ -1265,6 +1271,25 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const openNewProjectFlow = () => {
+    if (newProjectEnvironmentOptions.length > 1) {
+      pushPaletteView({
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "environments",
+            label: "Environments",
+            items: newProjectEnvironmentOptions.map((option) =>
+              buildEnvironmentItem(
+                option,
+                `action:new-project:environment:${option.environmentId}`,
+                startAddProjectSourceSelection,
+              ),
+            ),
+          },
+        ],
+      });
+      return;
+    }
     const firstOption = newProjectEnvironmentOptions[0];
     if (firstOption) startAddProjectSourceSelection(firstOption.environmentId);
   };
@@ -2920,11 +2945,7 @@ function OpenCommandPaletteDialog(props: {
           setProjectName(name);
           setAutoFilledProjectName(null);
         }}
-        onClearFolder={() => {
-          setSelectedProjectFolder(null);
-          if (projectName === autoFilledProjectName) setProjectName("");
-          setAutoFilledProjectName(null);
-        }}
+        onClearFolder={clearProjectFolder}
         onClose={() => setOpen(false)}
         {...(viewStack.length > 1 ? { onBack: popView } : {})}
         onSelectSource={(source) => {

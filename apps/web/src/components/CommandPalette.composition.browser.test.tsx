@@ -394,28 +394,44 @@ it("keeps unconfigured integrations disabled and their setup actions reachable",
   expect(commands.run).not.toHaveBeenCalled();
 });
 
-it("returns to machine selection without carrying a folder into another environment", async () => {
-  setup();
-  state.multipleEnvironments = true;
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-  await act(() => openCommandPalette({ open: "add-project" }));
-  await page.getByRole("option", { name: /^This device/ }).click();
-  await page.getByRole("textbox", { name: "Project name" }).fill("Keep me");
-  await page.getByRole("button", { name: "Local folder", exact: true }).click();
-  await page.getByRole("combobox").fill("/workspace/project");
-  await userEvent.keyboard("{Enter}");
-  await userEvent.keyboard("{Shift>}{Tab}{Tab}{/Shift}");
-  await expect.element(page.getByRole("button", { name: "Back", exact: true })).toHaveFocus();
-  await userEvent.keyboard("{Enter}");
-  await page.getByRole("option", { name: /^Remote/ }).click();
-  await expect.element(page.getByRole("textbox", { name: "Project name" })).toHaveValue("Keep me");
-  await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() =>
-    expect(commands.createNew).toHaveBeenCalledWith({
-      environmentId: "remote",
-      name: "Keep me",
-      publishTo: null,
-    }),
-  );
-  expect(commands.run).not.toHaveBeenCalled();
-});
+it.each([
+  { entry: "add-project", name: "" },
+  { entry: "add-project", name: "Keep me" },
+  { entry: "new-project", name: "" },
+  { entry: "new-project", name: "Keep me" },
+])(
+  "returns to machine selection without carrying a folder: $entry $name",
+  async ({ entry, name }) => {
+    setup();
+    state.multipleEnvironments = true;
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() =>
+      openCommandPalette(
+        entry === "add-project" ? { open: "add-project" } : { query: "New project" },
+      ),
+    );
+    if (entry === "new-project") {
+      await page.getByRole("option", { name: /^New project/ }).click();
+    }
+    await page.getByRole("option", { name: /^This device/ }).click();
+    await page.getByRole("textbox", { name: "Project name" }).fill(name);
+    await page.getByRole("button", { name: "Local folder", exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/project");
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Shift>}{Tab}{Tab}{/Shift}");
+    await expect.element(page.getByRole("button", { name: "Back", exact: true })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await page.getByRole("option", { name: /^Remote/ }).click();
+    await expect.element(page.getByRole("textbox", { name: "Project name" })).toHaveValue(name);
+    await page.getByRole("textbox", { name: "Project name" }).fill("Remote project");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(commands.createNew).toHaveBeenCalledWith({
+        environmentId: "remote",
+        name: "Remote project",
+        publishTo: null,
+      }),
+    );
+    expect(commands.run).not.toHaveBeenCalled();
+  },
+);
