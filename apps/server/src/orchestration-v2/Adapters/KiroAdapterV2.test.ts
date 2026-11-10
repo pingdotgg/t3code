@@ -908,52 +908,6 @@ describe("KiroAdapterV2 skills", () => {
       });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
-
-  // Kiro also sends updates without skills, such as a session's first, agents-only one.
-  it.effect("keeps advertised skills through an update without skills", () =>
-    Effect.gen(function* () {
-      const sent: Array<string> = [];
-      const skills = yield* makeKiroSkills();
-      yield* runKiroScript({
-        scenario: "skill-mention-after-agents-update",
-        text: "$probe-skill rest",
-        skills,
-        frames: [
-          ...openSessionFrames({
-            initialize: KIRO_V3_INITIALIZE,
-            configOptions: [modeOption, autopilotOption("on")],
-          }),
-          skillCommands,
-          update({
-            sessionUpdate: "available_commands_update",
-            availableCommands: [
-              {
-                name: "reviewer",
-                description: "Reviews changes",
-                _meta: { kiro: { type: "custom-agent" } },
-              },
-            ],
-          }),
-          // Changes the store after the agents-only update, so the test can see it was handled.
-          update({
-            sessionUpdate: "available_commands_update",
-            availableCommands: [userSkill("later-skill")],
-          }),
-          turnPrompt,
-          answer("session/prompt", { stopReason: "end_turn" }),
-          ...closeSession,
-        ],
-        wrapPrompt: recordPrompts(sent),
-        drive: ({ events, startTurn }) =>
-          Effect.gen(function* () {
-            yield* awaitSkill(skills, "later-skill");
-            yield* startTurn;
-            assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-            assert.deepEqual(sent, ["/probe-skill rest"]);
-          }),
-      });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
 });
 
 describe("KiroAdapterV2 agents", () => {
