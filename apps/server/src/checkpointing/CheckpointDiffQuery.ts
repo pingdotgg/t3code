@@ -181,11 +181,7 @@ export const make = Effect.gen(function* () {
       )?.scopeId;
       let firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) =>
-              firstScopeId === undefined
-                ? scope.kind === "root_run" && scope.runId === firstRun?.id
-                : scope.id === firstScopeId,
-            )
+          ? projection.checkpointScopes.find((scope) => scope.id === firstScopeId)
           : undefined;
       if (input.fromTurnCount === 0 && firstScope === undefined && firstRun !== undefined) {
         const initialRun = yield* threads
@@ -212,6 +208,9 @@ export const make = Effect.gen(function* () {
           );
         }
       }
+      firstScope ??= projection.checkpointScopes.find(
+        (scope) => scope.kind === "root_run" && scope.runId === firstRun?.id,
+      );
       const fromCheckpoint =
         parentCheckpoint ??
         readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);

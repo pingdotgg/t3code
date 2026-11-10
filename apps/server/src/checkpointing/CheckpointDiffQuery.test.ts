@@ -419,6 +419,14 @@ it.effect("retains the thread baseline when its first run failed without a check
       layerFor({
         projection: Effect.succeed({
           ...projection,
+          checkpointScopes: [
+            {
+              ...projection.checkpointScopes[0]!,
+              id: CheckpointScopeId.make("unused-scope"),
+              runId: firstRunId,
+            },
+            ...projection.checkpointScopes,
+          ],
           runs: projection.runs.map((run) =>
             run.id === firstRunId ? { ...run, status: "failed" as const } : run,
           ),
