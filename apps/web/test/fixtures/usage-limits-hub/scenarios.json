@@ -512,5 +512,42 @@
         [20, 4480]
       ]
     }
+  },
+  "P": {
+    "c1": {
+      "provider": "codex",
+      "email": "c1.codex.owner@example.com",
+      "windows": [
+        [30, 120],
+        [60, 7560.0]
+      ]
+    },
+    "a1": {
+      "provider": "claude",
+      "email": "a1.claude.owner@example.com",
+      "windows": [
+        [50, 150.0],
+        [10, 9273.6],
+        [0, 10140]
+      ]
+    },
+    "x1": {
+      "provider": "xai",
+      "email": "x1.grok.owner@example.com",
+      "windows": [[35, 4320]]
+    },
+    "g1": {
+      "provider": "antigravity",
+      "email": "g1.antigravity.owner@example.com",
+      "windows": [
+        [60, 200],
+        [25, 6000]
+      ]
+    },
+    "k1": {
+      "provider": "kiro",
+      "email": "k1.kiro.owner@example.com",
+      "windows": [[10, 60]]
+    }
   }
 }

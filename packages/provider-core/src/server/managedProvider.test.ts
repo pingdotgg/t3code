@@ -609,10 +609,16 @@ describe("makeManagedServerProvider", () => {
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:05:00.000Z",
           windows: [{ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 25 }],
+          authLabel: "tier-1",
         });
-        yield* provider.applyUsageLimits({ checkedAt: "2026-04-10T00:06:00.000Z", windows: [] });
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:06:00.000Z",
+          windows: [],
+          authLabel: "tier-2",
+        });
 
         const [update] = Array.from(yield* Fiber.join(updatesFiber));
+        assert.strictEqual(update?.auth.label, "tier-1");
         assert.deepStrictEqual(update?.usageLimits, {
           checkedAt: "2026-04-10T00:05:00.000Z",
           windows: [

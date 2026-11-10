@@ -202,10 +202,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           update,
           checkedAt: update.checkedAt,
         });
-        if (usageLimits === state.snapshot.usageLimits) {
+        const { auth } = state.snapshot;
+        const label = update.windows.length > 0 ? update.authLabel : undefined;
+        const relabel = label !== undefined && label !== auth.label;
+        if (usageLimits === state.snapshot.usageLimits && !relabel) {
           return [null, state] as const;
         }
-        const snapshot = withUsageLimits(state.snapshot, usageLimits);
+        const snapshot = withUsageLimits(
+          relabel ? { ...state.snapshot, auth: { ...auth, label } } : state.snapshot,
+          usageLimits,
+        );
         return [snapshot, { ...state, snapshot }] as const;
       });
       if (snapshotToPublish !== null) {
