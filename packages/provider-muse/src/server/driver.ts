@@ -117,7 +117,7 @@ export const MuseDriver: ProviderDriver<
           report
             ? {
                 ...provider,
-                ...(report?.authLabel
+                ...(report.authLabel
                   ? { auth: { ...provider.auth, label: report.authLabel } }
                   : {}),
                 usageLimits: makeUsageLimits({
