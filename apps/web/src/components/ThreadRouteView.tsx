@@ -56,12 +56,14 @@ export function ThreadRouteView({
   target,
   background = false,
   asPane = false,
+  ownsRoute = true,
   className,
   onTargetUnavailable,
 }: {
   target: ThreadRouteTarget;
   background?: boolean;
   asPane?: boolean;
+  ownsRoute?: boolean;
   className?: string;
   onTargetUnavailable?: (() => void) | undefined;
 }) {
@@ -257,7 +259,7 @@ export function ThreadRouteView({
         inert={background}
       >
         <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
-        {background || (unavailable && onTargetUnavailable) ? null : redirect}
+        {background || !ownsRoute || (unavailable && onTargetUnavailable) ? null : redirect}
       </div>
     );
   }

@@ -55,6 +55,10 @@ describe("splitChatStore", () => {
     expect(success).toBe(true);
     expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(2);
     expect(useSplitChatStore.getState().activePaneIndex).toBe(1);
+
+    expect(useSplitChatStore.getState().openToSide(thread3, thread3)).toBe(true);
+    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(2);
+    expect(useSplitChatStore.getState().activePaneIndex).toBe(0);
   });
 
   it("enforces the maximum limit of 4 chats total (3 secondary)", () => {

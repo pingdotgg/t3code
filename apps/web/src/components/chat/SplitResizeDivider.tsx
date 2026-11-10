@@ -48,7 +48,12 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
         return value;
       },
       finish(value, moved) {
-        if (moved) onResize(value / size);
+        if (moved) {
+          onResize(value / size);
+          return;
+        }
+        container.style.setProperty(property, `${start * 100}%`);
+        handleRef.current?.setAttribute("aria-valuenow", String(Math.round(start * 100)));
       },
       cleanup(committed) {
         container.removeAttribute("data-split-resizing");

@@ -156,9 +156,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const appDataDirectory = Option.getOrElse(
-    config.desktopAppDataDirectory,
-    () => defaultAppDataDirectory,
+  // Electron's setPath needs an absolute path, so a relative override is ignored.
+  const appDataDirectory = config.desktopAppDataDirectory.pipe(
+    Option.filter((directory) => path.isAbsolute(directory)),
+    Option.getOrElse(() => defaultAppDataDirectory),
   );
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,

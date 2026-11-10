@@ -32,7 +32,7 @@ interface SplitChatState {
   readonly rightColumnRatio: number;
   readonly resizeLayout: "rows" | "columns";
 
-  readonly openToSide: (target: ThreadRouteTarget) => boolean;
+  readonly openToSide: (target: ThreadRouteTarget, primary?: ThreadRouteTarget | null) => boolean;
   readonly replaceSecondaryPanes: (
     panes: readonly ThreadRouteTarget[],
     activeIndex: number,
@@ -67,10 +67,14 @@ export const useSplitChatStore = create<SplitChatState>()(
       rightColumnRatio: DEFAULT_RATIO,
       resizeLayout: "rows",
 
-      openToSide: (target: ThreadRouteTarget) => {
+      openToSide: (target, primary) => {
         const state = get();
         const targetKey = threadTargetKey(target);
         if (!targetKey) return false;
+        if (targetKey === threadTargetKey(primary)) {
+          set({ activePaneIndex: 0 });
+          return true;
+        }
 
         const existingIndex = state.secondaryPanes.findIndex(
           (pane) => threadTargetKey(pane) === targetKey,

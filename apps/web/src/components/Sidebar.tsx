@@ -117,7 +117,7 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { useSplitChatStore } from "../splitChatStore";
+import { MAX_SPLIT_CHATS, useSplitChatStore } from "../splitChatStore";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -2678,12 +2678,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
         switch (clicked.value) {
           case "open-to-side": {
-            const opened = useSplitChatStore.getState().openToSide({ kind: "server", threadRef });
+            // With no chat open there is no workspace to split, so open the thread itself.
+            if (routeTarget === null) {
+              void navigateToThread(threadRef);
+              return;
+            }
+            const opened = useSplitChatStore
+              .getState()
+              .openToSide({ kind: "server", threadRef }, routeTarget);
             if (!opened) {
               toastManager.add({
                 type: "info",
                 title: "Split chat limit reached",
-                description: "You can open up to 4 chats simultaneously.",
+                description: `You can open up to ${MAX_SPLIT_CHATS} chats simultaneously.`,
               });
             }
             return;

@@ -5,7 +5,7 @@ need a separate branch and working directory.
 
 ## Work with threads side by side
 
-On web and desktop, choose **Open to the Side** from a thread's context menu,
+On web and desktop, choose **Open to the side** from a thread's menu in the sidebar,
 or drag one thread from the sidebar into the chat area. The highlighted area
 shows where it will open. You can keep up to four chats open together.
 Each app launch starts with a single chat. Adding or closing a chat redistributes

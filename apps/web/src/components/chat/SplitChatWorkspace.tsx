@@ -12,7 +12,7 @@ import { ThreadRouteView } from "../ThreadRouteView";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { SplitChatPaneControlsContext } from "./splitChatPaneContext";
+import { SplitChatPaneActiveContext, SplitChatPaneControlsContext } from "./splitChatPaneContext";
 import { SplitResizeDivider } from "./SplitResizeDivider";
 import { SplitChatDragHandle } from "./SplitChatDragHandle";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -20,7 +20,6 @@ import {
   registerThreadWorkspaceDrop,
   moveThreadContextDrag,
   endThreadContextDrag,
-  dropThreadContext,
 } from "./threadContextDrag";
 
 interface SplitChatWorkspaceProps {
@@ -119,21 +118,29 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       void navigate({ to: "/draft/$draftId", params: { draftId: target.draftId }, replace: true });
     }
   };
-  const close = (index: number) => {
-    setMaximizedPaneIndex((current) =>
-      current === null || current === index ? null : current > index ? current - 1 : current,
+  // Reads the live store so several panes closing in one commit don't restore each other.
+  const close = (key: string) => {
+    const latest = useSplitChatStore.getState();
+    const current = effectivePrimary
+      ? [effectivePrimary, ...latest.secondaryPanes]
+      : [...latest.secondaryPanes];
+    const index = current.findIndex((pane) => threadTargetKey(pane) === key);
+    if (index < 0) return;
+    setMaximizedPaneIndex((value) =>
+      value === null || value === index ? null : value > index ? value - 1 : value,
     );
-    const next = panes.filter((_, paneIndex) => paneIndex !== index);
+    const next = current.filter((_, paneIndex) => paneIndex !== index);
     const nextPrimary = next[0];
     if (!nextPrimary) return;
+    const activeIndex = latest.activePaneIndex;
     const active =
-      activePaneIndex > index
-        ? activePaneIndex - 1
-        : activePaneIndex === index
+      activeIndex > index
+        ? activeIndex - 1
+        : activeIndex === index
           ? Math.min(index, next.length - 1)
-          : activePaneIndex;
+          : activeIndex;
     if (index === 0) navigatePrimary(nextPrimary);
-    if (activePaneIndex === index) focusTargetRef.current = threadTargetKey(next[active]);
+    if (activeIndex === index) focusTargetRef.current = threadTargetKey(next[active]);
     store.replaceSecondaryPanes(next.slice(1), active);
   };
   const resolveDrop = (
@@ -286,11 +293,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       >
         {panes.map((target, index) => (
           <div
-            key={
-              target.kind === "server"
-                ? `${target.threadRef.environmentId}:${target.threadRef.threadId}`
-                : `draft:${target.draftId}`
-            }
+            // The primary pane keeps one key so draft promotion keeps its ChatView mounted.
+            key={index === 0 ? "primary" : threadTargetKey(target)}
             data-split-pane-index={index}
             data-split-pane-key={threadTargetKey(target)}
             tabIndex={-1}
@@ -327,13 +331,11 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                           target={target}
                           onMove={(point, title) => {
                             sourceRef.current = target;
-                            moveThreadContextDrag(point, { title, count: 1 });
+                            moveThreadContextDrag(point, { title, count: 1, pane: true });
                           }}
                           onDrop={(point) => {
                             sourceRef.current = target;
-                            if (target.kind === "server")
-                              dropThreadContext(point, [target.threadRef]);
-                            else dropThread(point, [target]);
+                            dropThread(point, [target]);
                           }}
                           onEnd={() => {
                             sourceRef.current = null;
@@ -399,7 +401,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                             variant="ghost"
                             size="icon-xs"
                             aria-label="Close chat pane"
-                            onClick={() => close(index)}
+                            onClick={() => close(threadTargetKey(target))}
                           >
                             <X />
                           </Button>
@@ -409,12 +411,19 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                   ) : null
                 }
               >
-                <ThreadRouteView
-                  target={target}
-                  asPane
-                  background={modalOpen}
-                  onTargetUnavailable={count > 1 ? () => close(index) : undefined}
-                />
+                <SplitChatPaneActiveContext
+                  value={count < 2 || Math.min(activePaneIndex, count - 1) === index}
+                >
+                  <ThreadRouteView
+                    target={target}
+                    asPane
+                    ownsRoute={index === 0}
+                    background={modalOpen}
+                    onTargetUnavailable={
+                      count > 1 ? () => close(threadTargetKey(target)) : undefined
+                    }
+                  />
+                </SplitChatPaneActiveContext>
               </SplitChatPaneControlsContext>
             </div>
           </div>

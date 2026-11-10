@@ -86,9 +86,15 @@ function findDropTarget(point: { x: number; y: number }): HTMLElement | null {
 
 export function moveThreadContextDrag(
   point: { x: number; y: number },
-  label: { title: string; count: number; threads?: ReadonlyArray<ScopedThreadRef> },
+  label: {
+    title: string;
+    count: number;
+    threads?: ReadonlyArray<ScopedThreadRef>;
+    pane?: boolean;
+  },
 ) {
-  const target = findDropTarget(point);
+  // A split pane drag only rearranges panes; it never attaches to a composer.
+  const target = label.pane ? null : findDropTarget(point);
   if (target !== overTarget) {
     overTarget?.removeAttribute(DROP_OVER_ATTRIBUTE);
     target?.setAttribute(DROP_OVER_ATTRIBUTE, "true");
