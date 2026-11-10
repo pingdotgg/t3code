@@ -1,10 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { SERVICE_USER_WORKER } from "../internal/constants.ts";
 import * as Plugin from "../Plugin.ts";
 import * as PluginContext from "../PluginContext.ts";
 import type { RuntimeWorker } from "../RuntimeWorker.ts";
-import { SERVICE_USER_WORKER } from "../internal/constants.ts";
 
 const makeWorker = (overrides: Partial<RuntimeWorker> = {}): RuntimeWorker => ({
   name: "test",
@@ -15,10 +15,9 @@ const makeWorker = (overrides: Partial<RuntimeWorker> = {}): RuntimeWorker => ({
   ...overrides,
 });
 
-class Greeter extends Plugin.Service<
-  Greeter,
-  { greet: (name: string) => string }
->()("cloudflare-runtime/plugin/Greeter") {}
+class Greeter extends Plugin.Service<Greeter, { greet: (name: string) => string }>()(
+  "cloudflare-runtime/plugin/Greeter",
+) {}
 
 const GreeterLive = Layer.succeed(
   Greeter,
@@ -84,14 +83,10 @@ describe("Plugin / PluginContext", () => {
       );
       const config = yield* ctx.config;
       expect(config.entry === "mw:a" || config.entry === "mw:b").toBe(true);
-      const middlewareServices = config.services.filter((s) =>
-        s.name?.startsWith("mw:"),
-      );
+      const middlewareServices = config.services.filter((s) => s.name?.startsWith("mw:"));
       expect(middlewareServices).toHaveLength(2);
       const lastMiddleware = middlewareServices[middlewareServices.length - 1];
-      const lastBindings = (
-        lastMiddleware as { worker: { bindings: Array<any> } }
-      ).worker.bindings;
+      const lastBindings = (lastMiddleware as { worker: { bindings: Array<any> } }).worker.bindings;
       const upstream = lastBindings.find((b) => b.name === "NEXT");
       expect(upstream?.service?.name).toBe(SERVICE_USER_WORKER);
     }),
@@ -100,9 +95,9 @@ describe("Plugin / PluginContext", () => {
   it.effect("Plugin.useSync reads a plugin field synchronously", () =>
     Effect.gen(function* () {
       const ctx = yield* PluginContext.make(makeWorker());
-      const greeting = yield* Plugin.useSync(Greeter, (g) =>
-        g.api.greet("ctx"),
-      ).pipe(Effect.provideService(PluginContext.PluginContext, ctx));
+      const greeting = yield* Plugin.useSync(Greeter, (g) => g.api.greet("ctx")).pipe(
+        Effect.provideService(PluginContext.PluginContext, ctx),
+      );
       expect(greeting).toBe("hello, ctx!");
     }).pipe(Effect.provide(GreeterLive)),
   );
