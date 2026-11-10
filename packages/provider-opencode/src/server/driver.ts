@@ -621,6 +621,7 @@ export const OpenCodeDriver: ProviderDriver<
                 }),
               ),
             ),
+      invalidateCaches: openCode2Server.forget,
       afterUpdate,
       orchestrationAdapter,
       textGeneration,
