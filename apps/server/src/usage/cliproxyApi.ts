@@ -192,7 +192,10 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 
 type AuthFile = typeof AuthFile.Type;
 /** Sends one upstream request with the account's token, as GET or as a JSON POST of `data`. */
-type HubCall = (url: string, data?: unknown) => Effect.Effect<string, UsageLimitSourceError>;
+type HubCall = (
+  url: string,
+  data?: unknown,
+) => Effect.Effect<string, UsageLimitSourceError | Schema.SchemaError>;
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
@@ -371,13 +374,11 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
           Effect.flatMap(antigravityAccountFingerprint),
           Effect.option,
         );
+        const usageLimits = makeUsageLimits({ checkedAt, windows });
         return Option.match(fingerprint, {
-          onNone: () => ({
-            ...listedIdentity(account),
-            usageLimits: makeUsageLimits({ checkedAt, windows }),
-          }),
+          onNone: () => ({ ...listedIdentity(account), usageLimits }),
           onSome: (credentialFingerprint) => ({
-            usageLimits: { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint },
+            usageLimits: { ...usageLimits, credentialFingerprint },
           }),
         });
       }),
@@ -453,14 +454,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const call: HubCall = (url, data) =>
-      apiCall(hub, account, provider.header(account), url, data).pipe(
-        Effect.mapError((error) =>
-          isUsageLimitSourceError(error)
-            ? error
-            : new UsageLimitSourceError({ detail: "The hub returned an unexpected response." }),
-        ),
-      );
+    const call: HubCall = (url, data) => apiCall(hub, account, provider.header(account), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.orElseSucceed(() => ({

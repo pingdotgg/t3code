@@ -436,6 +436,17 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  const antigravitySummary = {
+    buckets: [
+      {
+        bucketId: "gemini-weekly",
+        window: "weekly",
+        remainingFraction: 0.75,
+        resetTime: "2099-01-01T00:00:00Z",
+      },
+    ],
+  };
+
   it.effect("reads an xAI account as Grok with Grok CLI headers", () =>
     Effect.gen(function* () {
       const test = fixture({
@@ -480,18 +491,7 @@ describe("CLIProxyAPI built-in management API", () => {
         ],
         upstream: (request) => ({
           status: 200,
-          body: request.url?.endsWith("/userinfo")
-            ? { id: "google-42" }
-            : {
-                buckets: [
-                  {
-                    bucketId: "gemini-weekly",
-                    window: "weekly",
-                    remainingFraction: 0.75,
-                    resetTime: "2099-01-01T00:00:00Z",
-                  },
-                ],
-              },
+          body: request.url?.endsWith("/userinfo") ? { id: "google-42" } : antigravitySummary,
         }),
       });
       const [account] = yield* (yield* test.api).readAccounts(config);
@@ -538,16 +538,7 @@ describe("CLIProxyAPI built-in management API", () => {
             ? { status: 403, body: { error: "denied" } }
             : {
                 status: 200,
-                body: {
-                  buckets: [
-                    {
-                      bucketId: "gemini-weekly",
-                      window: "weekly",
-                      remainingFraction: 0.75,
-                      resetTime: "2099-01-01T00:00:00Z",
-                    },
-                  ],
-                },
+                body: antigravitySummary,
               },
       });
       const result = yield* (yield* test.api).readAccounts(config);
