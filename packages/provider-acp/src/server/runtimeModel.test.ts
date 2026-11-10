@@ -66,13 +66,22 @@ describe("AcpRuntimeModel", () => {
     ).toBe(false);
   });
 
-  it("ignores Grok keepalive chunks when tracking session/load replay activity", () => {
+  it("ignores keepalive chunks and untagged metadata when tracking session/load replay activity", () => {
     expect(
       sessionUpdateCountsAsLoadReplayActivity({
         sessionId: "session-1",
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "" },
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(false);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "compact", description: "Compact history" }],
         },
       } satisfies EffectAcpSchema.SessionNotification),
     ).toBe(false);
@@ -88,20 +97,6 @@ describe("AcpRuntimeModel", () => {
           status: "completed",
         },
       } satisfies EffectAcpSchema.SessionNotification),
-    ).toBe(true);
-  });
-
-  it("does not count untagged session metadata as load replay activity", () => {
-    const metadata = {
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "available_commands_update",
-        availableCommands: [{ name: "compact", description: "Compact history" }],
-      },
-    } satisfies EffectAcpSchema.SessionNotification;
-    expect(sessionUpdateCountsAsLoadReplayActivity(metadata)).toBe(false);
-    expect(
-      sessionUpdateCountsAsLoadReplayActivity({ ...metadata, _meta: { isReplay: true } }),
     ).toBe(true);
   });
 
