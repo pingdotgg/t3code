@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { createComposerImageThumbnail } from "../../lib/imageCompression";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 
@@ -15,6 +15,10 @@ it("keeps a native preview available after thumbnail generation has failed", asy
     .mockRejectedValue(new Error("Thumbnail decoder unavailable"));
   expect(await createComposerImageThumbnail(file)).toBeNull();
 
+  const container = document.createElement("div");
+  const holdLoad = (event: Event) => event.stopPropagation();
+  container.addEventListener("load", holdLoad, true);
+  using complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(false);
   await using screen = await render(
     <ComposerImageThumbnail
       file={file}
@@ -22,10 +26,18 @@ it("keeps a native preview available after thumbnail generation has failed", asy
       className="size-16 object-cover"
       fallback={<span>Preview unavailable</span>}
     />,
+    { container },
   );
   using revoke = vi.spyOn(URL, "revokeObjectURL");
+  await expect.element(screen.getByText("Preview unavailable")).toBeVisible();
+  const loadingImage = screen.container.querySelector("img")!;
+  await loadingImage.decode();
+  complete.mockRestore();
+  container.removeEventListener("load", holdLoad, true);
+  await act(() => loadingImage.dispatchEvent(new Event("load")));
   const image = screen.getByRole("img", { name: file.name });
   await expect.element(image).toBeVisible();
+  await expect.element(screen.getByText("Preview unavailable")).not.toBeInTheDocument();
   const src = image.element().getAttribute("src");
   expect(src).toMatch(/^blob:/);
   await screen.unmount();

@@ -62,16 +62,19 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
   }, [file]);
 
   return src && failedSrc !== src ? (
-    <img
-      ref={(image) => {
-        if (image?.complete && image.naturalWidth > 0) setLoadedSrc(src);
-      }}
-      src={src}
-      alt={alt}
-      onLoad={() => setLoadedSrc(src)}
-      onError={() => setFailedSrc(src)}
-      className={cn(className, loadedSrc !== src && "invisible")}
-    />
+    <span className="relative block size-full">
+      {loadedSrc !== src && fallback}
+      <img
+        ref={(image) => {
+          if (image?.complete && image.naturalWidth > 0) setLoadedSrc(src);
+        }}
+        src={src}
+        alt={alt}
+        onLoad={() => setLoadedSrc(src)}
+        onError={() => setFailedSrc(src)}
+        className={cn(className, loadedSrc !== src && "invisible absolute inset-0")}
+      />
+    </span>
   ) : (
     fallback
   );
