@@ -2,6 +2,11 @@
   "name": "cloudflare-website-react-router",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-react-router"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -15,6 +20,8 @@
     "react-router": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@vitejs/plugin-react": "catalog:",
@@ -27,10 +34,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/cloudflare-website-react-router"
   }
 }
