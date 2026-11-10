@@ -142,7 +142,7 @@ function ComposerSpeechStatus(props: {
   );
 }
 
-function ComposerSpeechCancelButton(props: {
+export function ComposerSpeechCancelButton(props: {
   state: VoiceInputState;
   shortcutLabel?: string | null;
   onCancel(): void;
