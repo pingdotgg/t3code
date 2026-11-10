@@ -1,0 +1,145 @@
+---
+title: MCP
+description: Give an agent the commands and reads of an Api as tools, inside the app with Effect AI, or outside it over MCP.
+---
+
+An Api already lists what one kind of client may do. `@alchemy.run/domain/Ai` turns that list into tools for an agent: an Effect AI `Toolkit` for an agent inside your app, and an MCP server for agents outside it. You declare nothing twice. Each tool calls the Api, so its middleware, its `decide` and `validate` checks and its rejections work for an agent as they do for every other client.
+
+## Tools from an Api
+
+`DomainAi.toToolkit` makes one tool for each call of the Api that returns once:
+
+| Served    | Tools                 | Kind of tool |
+| --------- | --------------------- | ------------ |
+| Command   | `send`                | write        |
+| View      | `get`, `list`, `snapshot` | read     |
+| Stream    | `peek`, `list`        | read         |
+| Aggregate | `get`                 | read         |
+
+`watch` and `events` are streams, not one result, so they are not tools. Clients that need them use the Api's own client.
+
+```typescript
+import * as DomainAi from "@alchemy.run/domain/Ai";
+
+const { toolkit, layer } = DomainAi.toToolkit(CustomerApi);
+Object.keys(toolkit.tools);
+// ["CustomerApi_DepositMoney_send", "CustomerApi_AccountSummary_get", "CustomerApi_AccountSummary_list", ...]
+```
+
+A tool is named `<api>_<name>_<operation>`, with any character other than a letter, a digit, `_` or `-` turned into `_`, since model providers and MCP clients accept only those:
+
+```typescript
+DomainAi.toolName({ api: "CustomerApi", name: "DepositMoney", operation: "send" });
+// "CustomerApi_DepositMoney_send"
+```
+
+A name longer than 64 characters, or two calls with one name, fail the toolkit's Layer with a `DefinitionError`.
+
+A tool's parameters, success and failure are its call's own schemas, the JSON the Api's RPC server reads and writes. MCP requires an object as a tool's output, so a success that is not one, such as a view's `state | null`, comes back as `{ value }`:
+
+```json
+{ "value": { "balance": 1000 } }
+```
+
+A read is marked read-only and idempotent, and a command destructive, as an MCP client's `tools/list` shows:
+
+```json
+{
+  "name": "CustomerApi_DepositMoney_send",
+  "description": "Send the DepositMoney command.",
+  "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
+}
+```
+
+`layer` holds the tools' handlers. It needs what the Api needs to serve: the hosted model and the Layers of the middleware of what it serves.
+
+## An agent in the app
+
+Give the toolkit to `LanguageModel`, and provide `layer` with the model:
+
+```typescript
+import * as DomainAi from "@alchemy.run/domain/Ai";
+import { LanguageModel } from "effect/ai";
+import * as Effect from "effect/Effect";
+
+const { toolkit, layer } = DomainAi.toToolkit(CustomerApi, {
+  // Who the agent acts for: the signed-in customer's session.
+  headers: Effect.map(CurrentSession, (session) => ({ authorization: `Bearer ${session.token}` })),
+});
+
+const answer = LanguageModel.generateText({
+  prompt: "Move 20 dollars to my savings account",
+  toolkit,
+}).pipe(Effect.provide(layer));
+```
+
+A rejection (`InsufficientFunds`) or a middleware error (`Unauthenticated`) comes back to the model as the tool's typed failure, so the model can tell the user or try again. Any other error is a defect: the model does not see it.
+
+## An MCP server
+
+`DomainAi.toMcp` registers the tools on Effect's `McpServer`. Provide a transport and the model:
+
+```typescript
+import * as DomainAi from "@alchemy.run/domain/Ai";
+import { McpProtocol, McpServer } from "effect/ai";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as Layer from "effect/Layer";
+
+const BankMcp = DomainAi.toMcp(CustomerApi).pipe(
+  Layer.provide(
+    McpServer.layerHttp({
+      name: "bank",
+      version: "1.0.0",
+      path: "/mcp",
+      protocols: [McpProtocol.v2025_11_25],
+    }),
+  ),
+  Layer.provide(BankLive),
+);
+
+const { handler } = HttpRouter.toWebHandler(BankMcp);
+// handler(request) answers MCP requests on /mcp
+```
+
+`McpServer.layerHttp` keeps one server running for all requests. On a host where work must end with the request, such as a Cloudflare Worker, use `McpServer.layerHttpRequestScoped` with the sessionless protocol `McpProtocol.v2026_07_28`.
+
+## Who the agent acts for
+
+Each tool call sends headers to the Api's middleware, as an HTTP client does. Set them with the `headers` option, an Effect that runs for each call. By default, a call sends the headers of the current `HttpServerRequest`, if there is one. So an MCP client signs in to your MCP server with the same header or cookie that your Api's session middleware reads, and an in-app agent that runs inside a request acts for the user who sent it.
+
+The client half of a middleware never runs for a tool call. A server that provides one for its own calls still can't sign an agent in as itself:
+
+```typescript
+// held by the server for the calls it makes; an agent's call still carries only its own headers
+const ServerCredential = RpcMiddleware.layerClient(Session, ({ request, next }) =>
+  next({ ...request, headers: Headers.set(request.headers, "authorization", serverToken) }),
+);
+```
+
+A call with no session fails as it does for any client:
+
+```json
+{ "isError": true, "content": [{ "type": "text", "text": "{\"_tag\":\"Unauthenticated\"}" }] }
+```
+
+## Limits
+
+`watch` and `events` are not tools; an MCP resource subscription can serve them later.
+
+`tools/list` shows every tool to every MCP client. The Api still checks each call, so a caller who may not use a tool gets a rejection. Listing only the tools a caller may use needs `McpServer` to filter per request, which Effect does not do yet.
+
+Nothing asks a person before a dangerous write. `LanguageModel` can ask when a tool sets `needsApproval`, and an MCP server can ask with elicitation, but neither is set from the Api yet.
+
+Every call the Api serves is a tool, so give agents their own Api with only what they may reach:
+
+```typescript
+export class AgentApi extends Domain.Api("AgentApi", {
+  model: Bank,
+  commands: ["DepositMoney", "RequestTransfer"],
+  views: ["AccountSummary"],
+  streams: [],
+  aggregates: [],
+}) {}
+
+const BankMcp = DomainAi.toMcp(AgentApi);
+```
