@@ -681,6 +681,8 @@ export const enMessages = {
   "settings.system.saved.webhooksNotHeldBody":
     "Requests to an offline environment now fail. Anything already held is still delivered.",
   "settings.system.saved.connectTitle": "T3 Connect",
+  "settings.system.saved.connectLinkOnHost":
+    "Run `t3 connect link` on the host, then restart T3 Code there.",
   "settings.system.saved.connectSignedOut":
     "Sign in to make this environment available to your other devices through T3 Connect.",
   "settings.system.saved.connectRevoked":
@@ -1240,8 +1242,6 @@ export const enMessages = {
   "settings.search.items.telemetry-export": "OpenTelemetry export",
   "settings.search.items.diagnostics": "Diagnostics",
   "settings.search.items.open-source-licenses": "Open source licenses",
-  "settings.search.items.legacy-plan-mode": "Plan mode (legacy)",
-  "settings.search.items.legacy-context-window-indicator": "Context window indicator (legacy)",
   "settings.search.items.keybindings": "Keybindings",
   "settings.search.items.snap-shot-enabled": "SnapShots",
   "settings.search.items.snap-shot-accessibility": "Include app text",
@@ -2002,6 +2002,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.saved.webhooksNotHeldBody":
     "发往离线环境的请求现在会失败。已保留的请求仍会送达。",
   "settings.system.saved.connectTitle": "T3 Connect",
+  "settings.system.saved.connectLinkOnHost":
+    "在主机上运行 `t3 connect link`，然后在那里重启 T3 Code。",
   "settings.system.saved.connectSignedOut":
     "登录后，可通过 T3 Connect 让你的其他设备访问这个环境。",
   "settings.system.saved.connectRevoked": "该环境已从 T3 Connect 移除。开启后可重新链接。",
@@ -2539,8 +2541,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.search.items.telemetry-export": "OpenTelemetry 导出",
   "settings.search.items.diagnostics": "诊断",
   "settings.search.items.open-source-licenses": "开源许可",
-  "settings.search.items.legacy-plan-mode": "计划模式（旧版）",
-  "settings.search.items.legacy-context-window-indicator": "上下文窗口指示器（旧版）",
   "settings.search.items.keybindings": "快捷键",
   "settings.search.items.snap-shot-enabled": "SnapShots",
   "settings.search.items.snap-shot-accessibility": "包含应用文本",

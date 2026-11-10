@@ -747,8 +747,8 @@ function ConfiguredCloudLinkRow({
         />
       ) : isElectron ? (
         <SettingsRow
-          title={searchableSetting("t3-connect").title}
-          description="Run `t3 connect link` on the host, then restart T3 Code there."
+          title={t("settings.system.saved.connectTitle")}
+          description={t("settings.system.saved.connectLinkOnHost")}
         />
       ) : null}
       {signedOut && showSwitch ? null : (

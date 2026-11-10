@@ -1805,8 +1805,6 @@ export const SETTINGS_SEARCH_TITLE_KEYS = {
   "telemetry-export": "settings.search.items.telemetry-export",
   diagnostics: "settings.search.items.diagnostics",
   "open-source-licenses": "settings.search.items.open-source-licenses",
-  "legacy-plan-mode": "settings.search.items.legacy-plan-mode",
-  "legacy-context-window-indicator": "settings.search.items.legacy-context-window-indicator",
   keybindings: "settings.search.items.keybindings",
   "snap-shot-enabled": "settings.search.items.snap-shot-enabled",
   "snap-shot-accessibility": "settings.search.items.snap-shot-accessibility",
