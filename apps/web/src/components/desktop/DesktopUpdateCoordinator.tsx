@@ -1,6 +1,7 @@
 import type { DesktopUpdateCommandRequest, DesktopUpdateState } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { downloadLocalUpdate, installLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverything } from "../sidebar/useUpdateEverything";
 import { UpdateEverythingDialog } from "../sidebar/UpdateEverythingDialog";
@@ -22,6 +23,8 @@ export function DesktopUpdateCoordinator() {
   const localVersion =
     prepared && action !== "none" ? getDesktopUpdateDownloadedVersion(prepared) : null;
   const everything = useUpdateEverything(localVersion);
+  const checkProviderUpdates = useCheckProviderUpdates();
+  const [checkingProviders, setCheckingProviders] = useState(false);
 
   const receive = useEffectEvent(async (incoming: DesktopUpdateCommandRequest) => {
     if (!command) return;
@@ -29,6 +32,9 @@ export function DesktopUpdateCoordinator() {
     // The host serializes requests. A newer token supersedes a cancelled or expired confirmation.
     latestRequestId.current = incoming.requestId;
     setRequest(null);
+    // Machines that still cache an older latest version add their rows while the dialog is open.
+    setCheckingProviders(true);
+    void checkProviderUpdates({ quiet: true }).finally(() => setCheckingProviders(false));
     let current = await bridge.getUpdateState();
     if (latestRequestId.current !== incoming.requestId) return;
     if (
@@ -164,6 +170,7 @@ export function DesktopUpdateCoordinator() {
       providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
+      checking={checkingProviders}
       onConfirm={() => void confirm()}
     />
   );
