@@ -60,11 +60,13 @@ import {
   buildLayoutTabMenuItems,
   closeLayoutTabOnMiddleClick,
   ghostTabTooltip,
+  finishLayoutTabRename,
   isLayoutTabMenuId,
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
   useLayoutTabGhostOf,
   useLayoutTabGhostShown,
+  useLayoutTabRenameRequested,
 } from "../../layout/PaneTabs";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
@@ -190,12 +192,24 @@ export const ChatHeader = memo(function ChatHeader({
   ) {
     setRenaming(null);
   }
+  const renameRequested = useLayoutTabRenameRequested(layoutTabId);
+  if (renaming === null && renameRequested && canOperateThread && isServerThread) {
+    setRenaming({
+      environmentId: activeThreadEnvironmentId,
+      threadId: activeThreadId,
+      title: activeThreadTitle,
+    });
+  }
   const renamingTitle =
     canOperateThread &&
     renaming?.threadId === activeThreadId &&
     renaming.environmentId === activeThreadEnvironmentId
       ? renaming.title
       : null;
+  const stopRenaming = () => {
+    setRenaming(null);
+    finishLayoutTabRename(layoutTabId);
+  };
   const renameCommittedRef = useRef(false);
   const startRename = () => {
     if (
@@ -211,7 +225,7 @@ export const ChatHeader = memo(function ChatHeader({
     });
   };
   const commitRename = (title: string) => {
-    setRenaming(null);
+    stopRenaming();
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
     const resolution = resolveRenameCommit({
       title,
@@ -307,7 +321,7 @@ export const ChatHeader = memo(function ChatHeader({
       commitRename(event.currentTarget.value);
     } else if (event.key === "Escape") {
       renameCommittedRef.current = true;
-      setRenaming(null);
+      stopRenaming();
     }
   };
   const tabIcon = ghostOf ? (
@@ -377,12 +391,15 @@ export const ChatHeader = memo(function ChatHeader({
                     event.relatedTarget instanceof HTMLElement &&
                     event.relatedTarget.closest("button")
                   ) {
-                    setRenaming(null);
+                    stopRenaming();
                     return;
                   }
                   commitRename(event.currentTarget.value);
                 }}
-                onFocus={(event) => event.currentTarget.select()}
+                onFocus={(event) => {
+                  renameCommittedRef.current = false;
+                  event.currentTarget.select();
+                }}
                 onKeyDown={handleRenameKeyDown}
               />
             </div>
