@@ -150,8 +150,8 @@ it.live.each(
           assert.notInclude(provider, "env_key");
           const refreshIntervalMs = Number(/refresh_interval_ms=(\d+)/u.exec(provider)?.[1]);
           assert.isTrue(
-            refreshIntervalMs > 0 && refreshIntervalMs <= TOKEN_RENEWAL_MARGIN_MS,
-            `refresh_interval_ms=${refreshIntervalMs} must be in (0, ${TOKEN_RENEWAL_MARGIN_MS}]: 0 makes Codex reuse the launch token forever for model catalog requests, and a longer interval outlives the broker's renewal margin`,
+            refreshIntervalMs > 0 && refreshIntervalMs < TOKEN_RENEWAL_MARGIN_MS,
+            `refresh_interval_ms=${refreshIntervalMs} must be in (0, ${TOKEN_RENEWAL_MARGIN_MS}): 0 makes Codex reuse the launch token forever for model catalog requests, and a longer interval outlives the broker's renewal margin`,
           );
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.

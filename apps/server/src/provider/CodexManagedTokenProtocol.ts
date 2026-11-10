@@ -18,8 +18,9 @@ export const RESPONSE_BYTES = 64 * 1024;
 export const SOCKET_IDLE_MS = 5_000;
 // Existing lock retry (40s), OAuth (20s), plus startup/store headroom (20s).
 export const COMMAND_TIMEOUT_MS = 80_000;
-// Codex caches helper tokens this long, so the broker must renew at least this early.
-export const TOKEN_RENEWAL_MARGIN_MS = 60_000;
+// Codex reuses a helper token this long; the broker renews earlier, leaving room for helper latency.
+export const TOKEN_REFRESH_INTERVAL_MS = 60_000;
+export const TOKEN_RENEWAL_MARGIN_MS = TOKEN_REFRESH_INTERVAL_MS + 30_000;
 class ProtocolError extends Schema.TaggedError<ProtocolError>()("ManagedTokenProtocolError", {}) {
   override get message(): string {
     return "The managed token frame was invalid or incomplete.";
