@@ -228,7 +228,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   };
 
   // An Android bottom sheet reads a RefreshControl's list as unable to scroll up and drags itself
-  // instead, so Android sheets refresh from the AppBar.
+  // instead, so Android sheets omit it; status still refreshes in the background.
   const inAndroidSheet =
     Platform.OS === "android" && (!isInspector || closeInspectorSheet !== null);
 
