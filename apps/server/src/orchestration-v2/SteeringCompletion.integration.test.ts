@@ -1584,8 +1584,58 @@ const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
   return { ...harness, send, read };
 });
 
-// The fork never lets /goal reach a provider turn (8a9854151b), so only plain
-// text is promoted here; upstream's native /goal steering tests do not apply.
+// The provider goal banner's Resume and Clear are the only /goal text that reaches a provider.
+it.effect.each([
+  { text: "/goal resume", goal: "paused", accepted: true },
+  { text: "/goal clear", goal: "active", accepted: true },
+  { text: "/goal clear", goal: null, accepted: false },
+  { text: "/goal ship it", goal: "active", accepted: false },
+] as const)("$text with provider goal $goal is accepted: $accepted", ({ text, goal, accepted }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        `provider-goal-${text.replaceAll(" ", "-").replace("/", "")}-${goal ?? "none"}`,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = yield* startFirstTurn;
+        if (goal !== null) {
+          const providerThread = (yield* orchestrator.getThreadProjection(threadId))
+            .providerThreads[0]!;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:provider-goal"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...providerThread, goal: { objective: "Ship it", status: goal } },
+              },
+            ],
+          });
+        }
+        const result = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("provider-goal-control"),
+            threadId,
+            messageId: MessageId.make("message:provider-goal-control"),
+            text,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(Effect.result);
+        assert.equal(result._tag, accepted ? "Success" : "Failure");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// The fork keeps /goal out of provider turns except the banner's controls (8a9854151b), so only
+// plain text is promoted here; upstream's native /goal steering tests do not apply.
 // A fresh message skips compaction as its own turn, which steering a running turn would not.
 it.effect.each(["next", "fresh next"])(
   "promoting %s into a compaction stops it and sends it next",

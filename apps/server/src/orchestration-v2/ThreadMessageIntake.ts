@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import { parseThreadGoalCommand } from "../goals/threadGoalCommand.ts";
+import {
+  isBlockedGoalText,
+  isProviderGoalControl,
+  parseThreadGoalCommand,
+} from "../goals/threadGoalCommand.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -89,7 +93,16 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
-  if (command.type === "message.dispatch" && parseThreadGoalCommand(command.text) !== null) {
+  if (
+    command.type === "message.dispatch" &&
+    parseThreadGoalCommand(command.text) !== null &&
+    (!isProviderGoalControl(command) ||
+      // An unreadable thread fails closed.
+      (yield* threads.getThreadSnapshotWindow(command.threadId, { rowLimit: 1 }).pipe(
+        Effect.map(({ projection }) => isBlockedGoalText(command, projection)),
+        Effect.orElseSucceed(() => true),
+      )))
+  ) {
     return yield* new Orchestrator.OrchestratorCommandRejectedError({
       commandId: command.commandId,
       commandType: command.type,

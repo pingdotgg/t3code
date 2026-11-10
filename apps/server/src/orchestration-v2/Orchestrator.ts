@@ -104,7 +104,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { parseThreadGoalCommand } from "../goals/threadGoalCommand.ts";
+import { isBlockedGoalText, parseThreadGoalCommand } from "../goals/threadGoalCommand.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
   isCheckpointRestoreIsolated,
@@ -13907,7 +13907,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
       case "message.dispatch": {
-        if (parseThreadGoalCommand(command.text) !== null) {
+        // Only a native goal control reaches a provider, and only one that runs /goal natively.
+        const goalProjection =
+          parseThreadGoalCommand(command.text) === null
+            ? null
+            : yield* getProjectionWithPendingEvents(command.threadId, events);
+        if (
+          goalProjection !== null &&
+          (isBlockedGoalText(command, goalProjection) ||
+            (yield* goalDriverFor(
+              command,
+              (command.modelSelection ?? goalProjection.thread.modelSelection).instanceId,
+            )) === undefined)
+        ) {
           return yield* new OrchestratorCommandRejectedError({
             commandId: command.commandId,
             commandType: command.type,
