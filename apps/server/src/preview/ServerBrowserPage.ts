@@ -954,10 +954,13 @@ export const evaluate = async (
 export const stopUnresponsiveScript = async (cdp: CDPSession, budgetMs = SCRIPT_PROBE_MS) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      void cdp.send("Runtime.terminateExecution").catch(constVoid);
-      resolve();
-    }, Math.min(SCRIPT_PROBE_MS, budgetMs));
+    timer = setTimeout(
+      () => {
+        void cdp.send("Runtime.terminateExecution").catch(constVoid);
+        resolve();
+      },
+      Math.min(SCRIPT_PROBE_MS, budgetMs),
+    );
   });
   const probe = cdp.send("Runtime.evaluate", { expression: "0" }).then(constVoid, constVoid);
   await Promise.race([probe, expired]).finally(() => clearTimeout(timer));
