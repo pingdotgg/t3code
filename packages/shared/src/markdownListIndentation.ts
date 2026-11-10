@@ -1,3 +1,5 @@
+import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
+
 interface MarkdownPosition {
   readonly start?: { readonly line?: number; readonly column?: number; readonly offset?: number };
   readonly end?: { readonly line?: number; readonly column?: number; readonly offset?: number };
@@ -128,6 +130,9 @@ function blocksFromIndentedCode(
       });
     child.children?.forEach(restorePositions);
   };
+  if (keepsOrderedListNumbers(parser)) {
+    for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
+  }
   const first = recovered.blocks[0];
   return {
     ...recovered,
