@@ -30,6 +30,7 @@ describe("composer footer collapse order", () => {
 
   function settle(
     availableWidth: number,
+    compactBelow: number,
     previous: { strip: ContextStripCompaction; controls: RestingComposerControlsLayout },
   ) {
     let { strip, controls: layout } = previous;
@@ -51,51 +52,103 @@ describe("composer footer collapse order", () => {
         hostWidth: availableWidth - chipsWidth(strip) - stripGap,
         previous: layout,
         stripCompaction: strip,
+        compactLabels: availableWidth < compactBelow,
       });
     }
     return { strip, controls: layout };
   }
 
+  const order = ["mode", "effort", "env", "model", "branch", "overflow"] as const;
+  const controlLabels = ["mode", "effort", "model"];
   const collapsed = ({
     strip,
     controls: layout,
   }: {
     strip: ContextStripCompaction;
     controls: RestingComposerControlsLayout;
-  }) => [
-    (layout.iconOnlyCount ?? 0) > 0,
-    layout.traitsIconOnly === true,
-    strip !== "none",
-    layout.pickerIconOnly === true,
-    strip === "branch",
-    layout.hiddenCount > 0,
-  ];
+  }) =>
+    order.filter(
+      (_, index) =>
+        [
+          (layout.iconOnlyCount ?? 0) > 0,
+          layout.traitsIconOnly === true,
+          strip !== "none",
+          layout.pickerIconOnly === true,
+          strip === "branch",
+          layout.hiddenCount > 0,
+        ][index],
+    );
 
-  it("collapses one item at a time in priority order and expands in reverse", () => {
-    let state = {
-      strip: "none" as ContextStripCompaction,
-      controls: { hiddenCount: 0, visible: true } as RestingComposerControlsLayout,
-    };
-    const visit = (widths: number[]) => {
-      const steps: number[] = [];
-      for (const width of widths) {
-        state = settle(width, state);
-        const items = collapsed(state);
-        const step = items.filter(Boolean).length;
-        expect(items).toEqual(items.map((_, index) => index < step));
-        if (!state.controls.pickerIconOnly) {
-          const hostWidth = width - chipsWidth(state.strip) - stripGap;
-          expect(
-            resolveRestingComposerControlsLayout({ ...controls, hostWidth }).pickerIconOnly,
-          ).toBe(false);
+  it("collapses one item at a time above the label cutoff and every control label below it", () => {
+    const sweep = (compactBelow: number) => {
+      let state = {
+        strip: "none" as ContextStripCompaction,
+        controls: { hiddenCount: 0, visible: true } as RestingComposerControlsLayout,
+      };
+      const visit = (widths: number[]) => {
+        const steps: string[][] = [];
+        for (const width of widths) {
+          state = settle(width, compactBelow, state);
+          const items = collapsed(state);
+          const ordered =
+            width < compactBelow
+              ? [...controlLabels, ...order.filter((item) => !controlLabels.includes(item))]
+              : order;
+          expect(items.toSorted()).toEqual(ordered.slice(0, items.length).toSorted());
+          if (width < compactBelow) expect(items).toEqual(expect.arrayContaining(controlLabels));
+          if (!state.controls.pickerIconOnly) {
+            const hostWidth = width - chipsWidth(state.strip) - stripGap;
+            expect(
+              resolveRestingComposerControlsLayout({ ...controls, hostWidth }).pickerIconOnly,
+            ).toBe(false);
+          }
+          if (steps.at(-1)?.join() !== items.join()) steps.push(items);
         }
-        if (steps.at(-1) !== step) steps.push(step);
-      }
-      return steps;
+        return steps.map((items) => items.join(" "));
+      };
+      const widths = Array.from({ length: 501 }, (_, index) => 700 - index);
+      return { narrowing: visit(widths), widening: visit(widths.toReversed()) };
     };
-    const widths = Array.from({ length: 501 }, (_, index) => 700 - index);
-    expect(visit(widths)).toEqual([0, 1, 2, 3, 4, 5, 6]);
-    expect(visit(widths.toReversed())).toEqual([6, 5, 4, 3, 2, 1, 0]);
+
+    expect(sweep(0)).toEqual({
+      narrowing: [
+        "",
+        "mode",
+        "mode effort",
+        "mode effort env",
+        "mode effort env model",
+        "mode effort env model branch",
+        "mode effort env model branch overflow",
+      ],
+      widening: [
+        "mode effort env model branch overflow",
+        "mode effort env model branch",
+        "mode effort env model",
+        "mode effort env",
+        "mode effort",
+        "mode",
+        "",
+      ],
+    });
+    expect(sweep(550)).toEqual({
+      narrowing: [
+        "",
+        "mode",
+        "mode effort model",
+        "mode effort env model",
+        "mode effort env model branch",
+        "mode effort env model branch overflow",
+      ],
+      widening: [
+        "mode effort env model branch overflow",
+        "mode effort env model branch",
+        "mode effort env model",
+        "mode effort model",
+        "mode",
+        "",
+      ],
+    });
+    expect(sweep(470)).toEqual(sweep(0));
   });
 });
 

@@ -1,6 +1,5 @@
 import { isElectron } from "../../env";
 import { isMacPlatform } from "../../lib/utils";
-import { setDevArtworkPreview } from "../../devArtworkPreview";
 import { RestoreDeviceDefaultsButton } from "./SettingsPanels";
 import type { CSSProperties } from "react";
 import { useState } from "react";
@@ -35,7 +34,6 @@ import {
   SettingsSearchTarget,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
@@ -164,9 +162,9 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-style" title="Style" variant="plain" hideTitle>
-        <SettingsSearchTarget className="space-y-3" id={searchableSetting("surface-style").id}>
-          <div className="flex min-h-8 items-center px-3 sm:px-4">
-            <h3 className="text-label text-dim-foreground">
+        <SettingsSearchTarget className="space-y-2.5" id={searchableSetting("surface-style").id}>
+          <div className="flex min-h-7 items-center">
+            <h3 className="text-title text-dim-foreground">
               {searchableSetting("surface-style").title}
             </h3>
           </div>
@@ -265,7 +263,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ chatWidth: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Chat width"
+                >
                   <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -300,7 +303,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ effortDisplay: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Effort display"
+                >
                   <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -336,112 +344,104 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
-        <AdvancedSettings
-          targetIds={[
-            searchableSetting("panel-animations").id,
-            searchableSetting("environment-identification").id,
-            // Environment identification's search result lands on this section.
-            "appearance-interface",
-          ]}
-        >
-          <SettingsRow
-            {...searchableSetting("panel-animations")}
-            description="Set how fast panels open and close."
-            control={
-              <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
-                <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
-                <div className="flex w-full items-center gap-3">
-                  <output
-                    className="min-w-16 rounded-control surface-card px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                    htmlFor="panel-animation-duration"
-                  >
-                    {settings.panelAnimationDurationMs} ms
-                  </output>
-                  <input
-                    aria-label="Panel animation duration"
-                    className="settings-slider min-w-0 flex-1"
-                    id="panel-animation-duration"
-                    max={MAX_PANEL_ANIMATION_DURATION_MS}
-                    min={MIN_PANEL_ANIMATION_DURATION_MS}
-                    onChange={(event) => {
-                      const panelAnimationDurationMs = Number(event.currentTarget.value);
-                      if (
-                        Number.isInteger(panelAnimationDurationMs) &&
-                        panelAnimationDurationMs >= MIN_PANEL_ANIMATION_DURATION_MS &&
-                        panelAnimationDurationMs <= MAX_PANEL_ANIMATION_DURATION_MS
-                      ) {
-                        updateSettings({ panelAnimationDurationMs });
-                      }
-                    }}
-                    step={25}
-                    style={panelAnimationDurationSliderStyle}
-                    type="range"
-                    value={settings.panelAnimationDurationMs}
-                  />
-                </div>
-              </div>
-            }
-            resetAction={
-              settings.panelAnimationDurationMs !==
-              DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs ? (
-                <SettingResetButton
-                  label="panel animations"
-                  onClick={() =>
-                    updateSettings({
-                      panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
-                    })
-                  }
-                />
-              ) : null
-            }
-          />
-          <SettingsRow
-            {...searchableSetting("environment-identification")}
-            description={environmentIdentificationDescription}
-            resetAction={
-              settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
-                <SettingResetButton
-                  label="environment identification"
-                  onClick={() => {
-                    setDevArtworkPreview(null);
-                    updateSettings({
-                      environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
-                    });
-                  }}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={settings.environmentIdentificationMode}
-                onValueChange={(value) => {
-                  const option = environmentIdentificationOptionList.find(
-                    ([optionValue]) => optionValue === value,
-                  );
-                  if (option) {
-                    setDevArtworkPreview(null);
-                    updateSettings({ environmentIdentificationMode: option[0] });
-                  }
+        <SettingsRow
+          {...searchableSetting("environment-identification")}
+          description={environmentIdentificationDescription}
+          resetAction={
+            settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
+              <SettingResetButton
+                label="environment identification"
+                onClick={() => {
+                  updateSettings({
+                    environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+                  });
                 }}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.environmentIdentificationMode}
+              onValueChange={(value) => {
+                const option = environmentIdentificationOptionList.find(
+                  ([optionValue]) => optionValue === value,
+                );
+                if (option) {
+                  updateSettings({ environmentIdentificationMode: option[0] });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Environment identification"
               >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label="Environment identification"
+                <SelectValue>{environmentIdentificationLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {environmentIdentificationOptionList.map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="appearance-motion" title="Motion">
+        <SettingsRow
+          {...searchableSetting("panel-animations")}
+          description="Set how fast panels open and close."
+          control={
+            <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
+              <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
+              <div className="flex w-full items-center gap-3">
+                <output
+                  className="min-w-16 rounded-control surface-card px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                  htmlFor="panel-animation-duration"
                 >
-                  <SelectValue>{environmentIdentificationLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {environmentIdentificationOptionList.map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
-        </AdvancedSettings>
+                  {settings.panelAnimationDurationMs} ms
+                </output>
+                <input
+                  aria-label="Panel animation duration"
+                  className="settings-slider min-w-0 flex-1"
+                  id="panel-animation-duration"
+                  max={MAX_PANEL_ANIMATION_DURATION_MS}
+                  min={MIN_PANEL_ANIMATION_DURATION_MS}
+                  onChange={(event) => {
+                    const panelAnimationDurationMs = Number(event.currentTarget.value);
+                    if (
+                      Number.isInteger(panelAnimationDurationMs) &&
+                      panelAnimationDurationMs >= MIN_PANEL_ANIMATION_DURATION_MS &&
+                      panelAnimationDurationMs <= MAX_PANEL_ANIMATION_DURATION_MS
+                    ) {
+                      updateSettings({ panelAnimationDurationMs });
+                    }
+                  }}
+                  step={25}
+                  style={panelAnimationDurationSliderStyle}
+                  type="range"
+                  value={settings.panelAnimationDurationMs}
+                />
+              </div>
+            </div>
+          }
+          resetAction={
+            settings.panelAnimationDurationMs !==
+            DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs ? (
+              <SettingResetButton
+                label="panel animations"
+                onClick={() =>
+                  updateSettings({
+                    panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
+                  })
+                }
+              />
+            ) : null
+          }
+        />
       </SettingsSection>
 
       <TypographySection />

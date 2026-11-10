@@ -45,16 +45,23 @@ try {
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
 
+const macosMajorVersion =
+  clientPlatform === "darwin" ? Number.parseInt(process.getSystemVersion()) : 0;
+
 if (clientPlatform === "darwin") {
   // Native buttons ignore Chromium zoom; reserve native points even after reload.
-  const syncWindowControlInset = () => {
-    document.documentElement.style.setProperty(
-      "--desktop-window-controls-inset",
-      `${30 + 67 / webFrame.getZoomFactor()}px`,
-    );
+  const syncWindowGeometry = () => {
+    const rootStyle = document.documentElement.style;
+    const zoomFactor = webFrame.getZoomFactor();
+    rootStyle.setProperty("--desktop-window-controls-inset", `${90 / zoomFactor}px`);
+    // Measured from macOS 27 window captures; earlier releases draw other corners.
+    if (macosMajorVersion >= 27) {
+      rootStyle.setProperty("--desktop-window-corner-radius", `${31.5 / zoomFactor}px`);
+      rootStyle.setProperty("--desktop-window-corner-shape", "superellipse(2.12)");
+    }
   };
-  window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
-  window.addEventListener("resize", syncWindowControlInset);
+  window.addEventListener("DOMContentLoaded", syncWindowGeometry, { once: true });
+  window.addEventListener("resize", syncWindowGeometry);
 }
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
@@ -373,6 +380,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
     getPreviewConfig: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    setForwardedKeyChords: (shortcuts) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL, { shortcuts }),
+    onForwardedKeyChord: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, input: unknown) => {
+        if (typeof input !== "object" || input === null) return;
+        listener(input as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL,
+          wrappedListener,
+        );
+    },
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     setAnnotationSendEnabled: (tabId, enabled) =>

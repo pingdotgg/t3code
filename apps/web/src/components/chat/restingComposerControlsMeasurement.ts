@@ -157,5 +157,8 @@ export function measureRestingComposerControls(
     ...(pickerIconOnlyWidth === undefined
       ? {}
       : { iconOnlyFixedWidth: pickerIconOnlyWidth + separatorAndGapWidth + fixedIconOnly }),
+    ...(style.getPropertyValue("--composer-compact-labels").trim() === "1"
+      ? { compactLabels: true }
+      : {}),
   };
 }

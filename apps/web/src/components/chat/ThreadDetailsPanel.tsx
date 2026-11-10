@@ -80,7 +80,6 @@ interface ThreadDetailsPanelProps extends Pick<
   usage: ThreadDetailsUsageInput;
   onCompactContext?: () => void;
   compactDisabled?: boolean;
-  compactDisabledReason?: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -172,19 +171,21 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                               : {})}
                             autoEnvironmentLabel={props.autoEnvironmentLabel}
                             onAutoEnvironment={props.onAutoEnvironment}
+                            panelEnvironmentActions={
+                              show.openIn ? (
+                                <OpenInPicker
+                                  keybindings={props.keybindings}
+                                  environmentId={props.environmentId}
+                                  availableEditors={props.availableEditors}
+                                  openInCwd={props.gitCwd}
+                                  enableShortcut={props.openInShortcutEnabled}
+                                  presentation="menu"
+                                />
+                              ) : undefined
+                            }
                             {...branchToolbarProps}
                           />
                         </div>
-                        {show.openIn ? (
-                          <OpenInPicker
-                            keybindings={props.keybindings}
-                            environmentId={props.environmentId}
-                            availableEditors={props.availableEditors}
-                            openInCwd={props.gitCwd}
-                            enableShortcut={props.openInShortcutEnabled}
-                            displayMode="panel"
-                          />
-                        ) : null}
                       </div>
                     ) : show.openIn ? (
                       <OpenInPicker
@@ -245,7 +246,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       usage={props.usage.contextWindow}
                       onCompact={props.onCompactContext}
                       compactDisabled={props.compactDisabled}
-                      compactDisabledReason={props.compactDisabledReason}
                     />
                   ) : null}
                 </section>

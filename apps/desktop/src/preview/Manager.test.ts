@@ -689,6 +689,22 @@ describe("PreviewManager", () => {
         );
         expect(focus).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledTimes(2);
+        yield* manager.setForwardedKeyChords([
+          { key: "z", metaKey: true, ctrlKey: false, altKey: true, shiftKey: false },
+        ]);
+        const layoutPreventDefault = vi.fn();
+        beforeInput(
+          { preventDefault: layoutPreventDefault } as never,
+          { ...key, key: "z", code: "KeyY", alt: true, shift: false } as never,
+        );
+        expect(layoutPreventDefault).toHaveBeenCalledOnce();
+        layoutPreventDefault.mockClear();
+        beforeInput(
+          { preventDefault: layoutPreventDefault } as never,
+          { ...key, key: "y", code: "KeyZ", alt: true, shift: false } as never,
+        );
+        expect(layoutPreventDefault).not.toHaveBeenCalled();
+        yield* manager.setForwardedKeyChords([]);
         send.mockClear();
         yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
 

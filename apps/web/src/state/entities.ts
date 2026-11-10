@@ -329,6 +329,15 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** The shell list leaves out idle subagents, so an open one's lineage comes from its detail. */
+export function readThreadLineage(ref: ScopedThreadRef) {
+  return (
+    readThreadShell(ref)?.lineage ??
+    appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection.thread.lineage ??
+    null
+  );
+}
+
 export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Promise<boolean> {
   return waitForAtomValue({
     registry: appAtomRegistry,
@@ -409,9 +418,14 @@ export function selectThreadRelationshipShells(
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
-  return threads.filter(
-    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
-  );
+  return threads.filter((thread) => {
+    const parentId = shellParentThreadId(thread);
+    return (
+      named.has(thread.id) ||
+      parentId === threadId ||
+      (currentParentId !== null && parentId === currentParentId)
+    );
+  });
 }
 
 const relationshipShellsAtomFamily = Atom.family((key: string) => {

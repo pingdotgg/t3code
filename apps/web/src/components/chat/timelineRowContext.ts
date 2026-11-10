@@ -108,6 +108,8 @@ export interface TimelineRowActivityState {
   activeTurnStartedAt: string | null;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  /** The setup card is on screen with its own header, so the working row steps aside. */
+  worktreeSetupCardOwnsHeader: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;
@@ -122,6 +124,9 @@ export interface TimelineRowActivityState {
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+
+/** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
+export const TimelineWakeUpsRailCtx = createContext<ReadonlyMap<string, "body" | "end">>(new Map());
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;

@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const buttonVariants = cva(
-  "[--control-icon-color:currentColor] kbd-in-control [&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border text-label outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "[--control-icon-color:currentColor] kbd-in-control [&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-(--button-gap) [--button-gap:--spacing(2)] has-[>[data-slot=kbd]:last-child]:pe-[calc(var(--button-gap)-1px)] whitespace-nowrap rounded-[var(--control-radius)] border text-label outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     defaultVariants: {
       size: "default",
@@ -14,12 +14,13 @@ const buttonVariants = cva(
     },
     variants: {
       size: {
-        chip: "h-5 gap-1 rounded-md px-[6px] text-meta before:rounded-md [&_svg:not([class*='size-'])]:size-3",
+        chip: "h-5 [--button-gap:--spacing(1)] rounded-md px-[6px] text-meta before:rounded-md [&_svg:not([class*='size-'])]:size-3",
         compact:
-          "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
+          "h-7 [--button-gap:--spacing(1)] rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
-        action: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)]",
-        standard: "h-7 gap-1.5 px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
+        action: "h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)]",
+        standard: "h-7 [--button-gap:--spacing(1.5)] px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
+        notice: "h-6.5 [--button-gap:--spacing(1.5)] px-[calc(--spacing(3)-1px)] text-meta",
         icon: "size-9 sm:size-8",
         "icon-micro":
           "size-5 rounded-sm p-0 before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3",
@@ -29,16 +30,16 @@ const buttonVariants = cva(
         "icon-xs":
           "size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5",
         micro:
-          "h-5 gap-1 rounded-sm px-[calc(--spacing(1.5)-1px)] text-caption before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3",
+          "h-5 [--button-gap:--spacing(1)] rounded-sm px-[calc(--spacing(1.5)-1px)] text-caption before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3",
         multiline:
           "min-h-9 px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] whitespace-normal sm:min-h-8",
-        sm: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:h-7 [&_svg:not([class*='size-'])]:[scale:calc(14/18)] sm:[&_svg:not([class*='size-'])]:[scale:calc(14/16)]",
-        "sm-pill": "h-8 gap-1.5 rounded-full px-2.5 sm:h-7",
+        sm: "h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)] sm:h-7 [&_svg:not([class*='size-'])]:[scale:calc(14/18)] sm:[&_svg:not([class*='size-'])]:[scale:calc(14/16)]",
+        "sm-pill": "h-8 [--button-gap:--spacing(1.5)] rounded-full px-2.5 sm:h-7",
         "sm-multiline":
-          "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
-        xs: "h-7 gap-1 px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
+          "min-h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
+        xs: "h-7 [--button-gap:--spacing(1)] px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
         "xs-pill":
-          "h-5.5 gap-1 rounded-full px-[6px] text-meta before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
+          "h-5.5 [--button-gap:--spacing(1)] rounded-full px-[6px] text-meta before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
         "icon-xs-pill":
           "size-5.5 rounded-full p-0 before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
       },
@@ -64,14 +65,14 @@ const buttonVariants = cva(
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground [:hover,[data-pressed]]:surface-ghost-hover [:hover,[data-pressed]]:text-destructive-foreground",
         // Floats over content: a solid round chip.
         floating:
-          "bg-background [--control-icon-color:var(--contrast-muted-foreground)] rounded-full border-border/60 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-border",
+          "surface-floating [--control-icon-color:var(--contrast-muted-foreground)] rounded-full text-foreground before:rounded-full [:hover,[data-pressed]]:surface-floating-hover",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         "media-close":
-          "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white shadow-sm ring-1 ring-white/20 [:hover,[data-pressed]]:bg-black/80 focus-visible:outline-white",
+          "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white surface-media-control [:hover,[data-pressed]]:bg-black/80 focus-visible:outline-white",
         "media-navigation":
           "[--control-icon-color:currentColor] absolute top-1/2 z-20 -translate-y-1/2 border-transparent text-white/90 [:hover,[data-pressed]]:bg-white/10 [:hover,[data-pressed]]:text-white focus-visible:outline-white",
         overlay: "border-transparent bg-black/70 text-white/65 [:hover,[data-pressed]]:bg-black/90",
-        pill: "surface-pill [--pill-fill:var(--ss-default-pill-fill)] [--pill-foreground:var(--ss-default-pill-foreground)] [--pill-icon:var(--ss-default-pill-icon)] [--pill-rim:var(--ss-default-pill-rim,var(--ss-default-raised-rim))] [--pill-shadow:var(--ss-default-pill-shadow)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
+        pill: "surface-neutral-pill text-foreground [:hover,[data-pressed]]:surface-raised-hover",
         // Secondary: the raised recipe.
         secondary:
           "surface-raised focus-visible:[--surface-rim:var(--surface-fill)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
@@ -100,8 +101,16 @@ type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>["size"]>;
 const contentButtonVariants = cva("outline-none", {
   variants: {
     variant: {
+      "card-row":
+        "flex min-w-0 items-center gap-3 rounded-card px-4 py-3 hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      "inset-row":
+        "flex h-6.5 w-full cursor-pointer items-center gap-2 rounded-row px-2 text-left hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      "inset-row-multiline":
+        "flex min-h-6.5 w-full cursor-pointer items-center gap-2 rounded-row px-2 py-1 text-left hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       transport:
         "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-row text-white hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70",
+      "panel-row":
+        "flex h-8.5 w-full cursor-pointer items-center gap-2 px-3 text-left text-meta hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       "selection-card":
         "cursor-pointer overflow-hidden rounded-card border border-transparent text-left transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:bg-settings-effective-fill not-aria-pressed:surface-card-settings-rim not-aria-pressed:hover:surface-ghost-hover aria-pressed:shadow-[inset_0_0_0_1px_var(--settings-active-rim)]",
       "drag-chip":
@@ -113,8 +122,10 @@ const contentButtonVariants = cva("outline-none", {
       "action-row-destructive":
         "flex h-7.5 items-center gap-2 rounded-control px-2 text-start text-label text-destructive-foreground hover:surface-ghost-hover focus-visible:surface-ghost-hover disabled:pointer-events-none disabled:opacity-64",
       tab: "inline-flex h-7 min-w-0 max-w-80 cursor-pointer items-center gap-1.75 rounded-control px-2.5 text-left text-control text-muted-foreground [-webkit-app-region:no-drag] hover:surface-ghost-hover hover:text-foreground focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
+      breadcrumb:
+        "inline-flex h-7 min-w-0 cursor-pointer items-center gap-1.75 rounded-control px-2.5 text-left text-control [&>:first-child]:shrink-0 text-muted-foreground [-webkit-app-region:no-drag] hover:surface-ghost-hover hover:text-foreground focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
       "tab-close":
-        "flex size-4 cursor-pointer items-center justify-center rounded-kbd text-foreground opacity-0 [-webkit-app-region:no-drag] hover:opacity-100 focus-visible:opacity-100 focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
+        "flex size-4 cursor-pointer items-center justify-center rounded-kbd text-foreground opacity-0 [-webkit-app-region:no-drag] group-hover/tab:opacity-100 focus-visible:opacity-100 focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
     },
   },
 });
@@ -180,8 +191,6 @@ const inlineButtonVariants = cva(
           "rounded-kbd px-0.5 [font-weight:inherit] text-muted-foreground hover:surface-ghost-hover hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         "ghost-dim":
           "rounded-kbd px-0.5 [font-weight:inherit] text-muted-foreground/70 hover:surface-ghost-hover hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        picker:
-          "gap-1.5 text-inherit [font-weight:inherit] underline decoration-current/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid",
       },
     },
   },

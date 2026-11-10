@@ -134,7 +134,7 @@ function CommandInput({
   // 1px sooner) and the text starts on their label line: content inset, then a
   // 14px icon and 8px gap, less the field's 1px border.
   return (
-    <div className="relative [box-shadow:inset_0_-1px_var(--divider)] px-[var(--command-shell-inset)] py-2 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)-1px)] sm:[&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset))]">
+    <div className="relative surface-command-input px-[var(--command-shell-inset)] py-2 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)-1px)] sm:[&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset))]">
       <AutocompleteInput
         autoFocus
         className={cn(
@@ -261,7 +261,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-pane)-1px)] [box-shadow:inset_0_1px_var(--divider)] bg-transparent px-[var(--command-content-inset)] py-1.5 text-caption text-muted-foreground [&_[data-slot=kbd-group]]:font-sans",
+        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-pane)-1px)] surface-command-footer px-[var(--command-content-inset)] py-1.5 text-caption text-muted-foreground [&_[data-slot=kbd-group]]:font-sans",
         "in-[[data-slot=command-dialog-popup][data-surface=dialog]]:[--kbd-background:var(--kbd-fill)] in-[[data-slot=command-dialog-popup][data-surface=dialog]]:[--kbd-radius:var(--radius-badge)] in-[[data-slot=command-dialog-popup][data-surface=dialog]]:font-normal in-[[data-slot=command-dialog-popup][data-surface=dialog]]:text-dim-foreground",
         className,
       )}

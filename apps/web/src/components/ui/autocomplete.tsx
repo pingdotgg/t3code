@@ -39,9 +39,11 @@ function AutocompleteInput({
         className={cn(
           startAddon &&
             "data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=autocomplete-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(8)-1px)]",
-          sizeValue === "sm"
-            ? "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-6.5"
-            : "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-7",
+          // Room for the trigger or clear button that follows the input.
+          (showTrigger || showClear) &&
+            (sizeValue === "sm"
+              ? "*:data-[slot=autocomplete-input]:pe-6.5"
+              : "*:data-[slot=autocomplete-input]:pe-7"),
           className,
         )}
         data-slot="autocomplete-input"
@@ -152,7 +154,7 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
   );
 }
 
-const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-dim-foreground";
+const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-muted-foreground";
 
 function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
   return (

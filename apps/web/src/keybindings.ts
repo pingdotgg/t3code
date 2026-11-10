@@ -36,6 +36,8 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
+  /** macOS, where mod is Cmd. Optional: derived from the platform unless given. */
+  isMac?: boolean;
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -66,6 +68,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     previewOpen: false,
     isWeb: !isElectron,
     isDesktop: isElectron,
+    isMac: isMacPlatform(resolvePlatform(options)),
     editableFocus: false,
     ...options?.context,
   };
@@ -128,16 +131,34 @@ function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMa
   return shortcut;
 }
 
-export function effectiveShortcutsForCommand(
+type EffectiveShortcutsByCommand = ReadonlyMap<KeybindingCommand, readonly KeybindingShortcut[]>;
+
+// Label lookups run on every render of many components; one walk per keybindings array and context.
+const effectiveShortcutsCache = new WeakMap<
+  ResolvedKeybindingsConfig,
+  Map<string, EffectiveShortcutsByCommand>
+>();
+
+function effectiveShortcutsByCommand(
   keybindings: ResolvedKeybindingsConfig,
-  command: KeybindingCommand,
-  options?: ShortcutMatchOptions,
-): KeybindingShortcut[] {
+  options: ShortcutMatchOptions | undefined,
+): EffectiveShortcutsByCommand {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
-  const claimedShortcuts = new Set<string>();
-  const effective: KeybindingShortcut[] = [];
+  const cacheKey = `${platform}|${Object.keys(context)
+    .toSorted()
+    .map((name) => `${name}:${context[name] ? 1 : 0}`)
+    .join(",")}`;
+  let byContext = effectiveShortcutsCache.get(keybindings);
+  if (!byContext) {
+    byContext = new Map();
+    effectiveShortcutsCache.set(keybindings, byContext);
+  }
+  const cached = byContext.get(cacheKey);
+  if (cached) return cached;
 
+  const claimedShortcuts = new Set<string>();
+  const effective = new Map<KeybindingCommand, KeybindingShortcut[]>();
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
@@ -150,12 +171,20 @@ export function effectiveShortcutsForCommand(
     }
 
     claimedShortcuts.add(conflictKey);
-    if (binding.command === command) {
-      effective.push(shortcut);
-    }
+    const shortcuts = effective.get(binding.command);
+    if (shortcuts) shortcuts.push(shortcut);
+    else effective.set(binding.command, [shortcut]);
   }
-
+  byContext.set(cacheKey, effective);
   return effective;
+}
+
+export function effectiveShortcutsForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut[] {
+  return [...(effectiveShortcutsByCommand(keybindings, options).get(command) ?? [])];
 }
 
 function findEffectiveShortcutForCommand(
@@ -163,7 +192,7 @@ function findEffectiveShortcutForCommand(
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
 ): KeybindingShortcut | null {
-  return effectiveShortcutsForCommand(keybindings, command, options)[0] ?? null;
+  return effectiveShortcutsByCommand(keybindings, options).get(command)?.[0] ?? null;
 }
 
 function matchesCommandShortcut(
@@ -186,9 +215,12 @@ export function resolveShortcutCommand(
     context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
   }
 
+  // Every scope resolves every keydown, so rule out other keys before the full match.
+  const eventKeys = resolveEventKeys(event);
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
+    if (!eventKeys.has(binding.shortcut.key)) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
     return binding.command;
@@ -477,4 +509,38 @@ export function terminalNavigationShortcutData(
   }
 
   return null;
+}
+
+const ELECTRON_KEY_NAMES: Record<string, string> = {
+  arrowleft: "Left",
+  arrowright: "Right",
+  arrowup: "Up",
+  arrowdown: "Down",
+  escape: "Escape",
+  enter: "Enter",
+  " ": "Space",
+  home: "Home",
+  end: "End",
+  tab: "Tab",
+};
+
+/**
+ * A command's key for a context menu row: the label the web menu shows and
+ * the accelerator the desktop menu shows beside the item. Empty when the
+ * command has no key.
+ */
+export function contextMenuShortcutFields(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+): { shortcut?: string; accelerator?: string } {
+  const shortcut = findEffectiveShortcutForCommand(keybindings, command);
+  if (!shortcut) return {};
+  const parts: string[] = [];
+  if (shortcut.modKey) parts.push("CmdOrCtrl");
+  if (shortcut.metaKey) parts.push("Super");
+  if (shortcut.ctrlKey) parts.push("Ctrl");
+  if (shortcut.altKey) parts.push("Alt");
+  if (shortcut.shiftKey) parts.push("Shift");
+  parts.push(ELECTRON_KEY_NAMES[shortcut.key] ?? shortcut.key.toUpperCase());
+  return { shortcut: formatShortcutLabel(shortcut), accelerator: parts.join("+") };
 }

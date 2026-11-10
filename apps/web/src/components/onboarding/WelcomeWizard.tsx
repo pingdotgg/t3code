@@ -1,4 +1,5 @@
 import { useAuth } from "@clerk/react";
+import { Link } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
@@ -83,7 +84,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
-import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
@@ -107,6 +107,7 @@ import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { OnboardingAgentRow } from "./OnboardingAgentRow";
 
 type WizardStep = "connection" | "agents" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
@@ -235,17 +236,18 @@ export function WelcomeWizard({
       }}
     >
       <WizardPopup
-        size="wide"
+        size="setup"
         bottomStickOnMobile={false}
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
+          layout="inline"
           title="Set up T3 Code"
           identity={
             // The brand lockup (pen FB3cD): "Code" shares the mark's color at 600.
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-semibold tracking-tight">Code</span>
+              <span className="text-title tracking-tight [--type-title:1.125rem]">Code</span>
             </div>
           }
         >
@@ -260,7 +262,7 @@ export function WelcomeWizard({
           />
         </WizardHeader>
 
-        <WizardPanel holdHeight={isLoadingProjects}>
+        <WizardPanel surface="setup" holdHeight={isLoadingProjects}>
           {step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
@@ -296,7 +298,6 @@ export function WelcomeWizard({
           )}
         </WizardPanel>
       </WizardPopup>
-      <ChatGptWelcomeCoordinator />
     </Dialog>
   );
 }
@@ -343,10 +344,8 @@ function ConnectionStep({
   }, [ready]);
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-strong-foreground">
-        Connect your computers
-      </h1>
-      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+      <h1 className="text-title tracking-tight text-strong-foreground">Connect your computers</h1>
+      <p className="mt-2.5 text-body leading-relaxed text-muted-foreground">
         Choose one or more computers. We’ll set up agents and projects on each.
       </p>
       {directEnvironments.length > 0 ? (
@@ -369,17 +368,15 @@ function ConnectionStep({
               <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 text-sm font-medium break-words">
-                    {environment.label}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="min-w-0 text-label break-words">{environment.label}</span>
+                  <span className="shrink-0 text-meta text-muted-foreground">
                     {!environment.entry.enabled && environment.connection.phase !== "unsupported"
                       ? "Off"
                       : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
                   </span>
                 </span>
                 {environment.displayUrl ? (
-                  <span className="mt-0.5 block text-xs break-all text-muted-foreground">
+                  <span className="mt-0.5 block text-meta break-all text-muted-foreground">
                     {environment.displayUrl}
                   </span>
                 ) : null}
@@ -404,22 +401,20 @@ function ConnectionStep({
         ) : null}
         <div className="rounded-control border border-border surface-card">
           <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
-            <CollapsibleTrigger
-              disabled={isPairing}
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm-multiline"
-                  className="min-h-14 w-full justify-start"
+            <div className="py-1.5">
+              <CollapsibleTrigger
+                disabled={isPairing}
+                render={
+                  <Button variant="ghost" size="sm-multiline" className="w-full justify-start" />
+                }
+              >
+                <LinkIcon className="size-4 text-muted-foreground" />
+                <span className="flex-1 text-left">Add a computer</span>
+                <ChevronRightIcon
+                  className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
                 />
-              }
-            >
-              <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1 text-left">Add a computer</span>
-              <ChevronRightIcon
-                className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
-              />
-            </CollapsibleTrigger>
+              </CollapsibleTrigger>
+            </div>
             <CollapsiblePanel>
               <div className="px-3 pb-3">
                 <PairingForm
@@ -437,13 +432,13 @@ function ConnectionStep({
         </div>
       </div>
       {skippedLabels.length > 0 ? (
-        <p className="mt-4 text-xs text-muted-foreground">
+        <p className="mt-4 text-meta text-muted-foreground">
           Not connected, so setup skips {skippedLabels.join(", ")}. You can set{" "}
           {skippedLabels.length === 1 ? "it" : "them"} up later from Settings.
         </p>
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+        <p className="min-w-0 text-meta leading-relaxed text-muted-foreground">
           {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
           more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
           see our{" "}
@@ -456,6 +451,7 @@ function ConnectionStep({
           .
         </p>
         <Button
+          size="standard"
           className="shrink-0 self-end"
           ref={continueRef}
           autoFocus={!expandPairingInitially}
@@ -506,7 +502,7 @@ function ConnectAccountOption({
         >
           <CloudIcon className="size-4 text-muted-foreground" />
           <span className="flex-1 text-left">T3 Connect</span>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-meta text-muted-foreground">
             {!isLoaded
               ? "Loading sign-in…"
               : !isSignedIn
@@ -531,16 +527,16 @@ function ConnectAccountOption({
                   selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
                   refreshWhileEmpty
                   empty={
-                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
+                    <p className="py-3 text-body text-muted-foreground">No computers linked yet.</p>
                   }
                 />
               ) : null}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
             <InstallT3Commands command="t3 connect" className="mt-3" />
-            <p className="mt-3 text-xs text-muted-foreground">
+            <p className="mt-3 text-meta text-muted-foreground">
               Keep T3 Code running. Select the computers you want to set up above.
             </p>
           </div>
@@ -598,7 +594,7 @@ function PairingForm({
         }}
       >
         <div>
-          <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
+          <label className="block text-body text-muted-foreground" htmlFor="onboarding-pairing-url">
             Pairing link
           </label>
           <Input
@@ -607,7 +603,7 @@ function PairingForm({
             aria-invalid={errorMessage.length > 0}
             aria-describedby={errorMessage ? "onboarding-pairing-error" : undefined}
             className="mt-2"
-            size="lg"
+            size="default"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -636,19 +632,23 @@ function PairingForm({
           <div className="flex items-center justify-between gap-3">
             <CollapsibleTrigger
               type="button"
-              className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              className="group flex items-center gap-1 text-body text-muted-foreground hover:text-foreground"
             >
               <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
               Need a pairing link?
             </CollapsibleTrigger>
-            <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
+            <Button
+              size="standard"
+              type="submit"
+              disabled={isPairing || pairingUrl.trim().length === 0}
+            >
               {isPairing ? "Pairing..." : "Pair"}
             </Button>
           </div>
           <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">On the computer with your code:</p>
+            <p className="pt-3 text-body text-muted-foreground">On the computer with your code:</p>
             <InstallT3Commands command="t3 pair" className="mt-2" />
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-2 text-meta leading-relaxed text-muted-foreground">
               Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
               <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
               <code className="font-mono">t3 pair --tailscale</code> instead.
@@ -681,11 +681,8 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
-    >
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
+    <StepShell title="Your agents" description="Agents available on your selected computers.">
+      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(24rem,40dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
             <ConnectedAgentsStep
@@ -701,7 +698,7 @@ function AgentsStep({
       </ScrollArea>
       <CliPathSetup />
       <div className="mt-6 flex justify-end">
-        <Button autoFocus onClick={onContinue}>
+        <Button size="standard" autoFocus onClick={onContinue}>
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
@@ -737,13 +734,13 @@ function ConnectedAgentsStep({
   }, [environmentId, refreshProviders]);
 
   const byDriver = selectOnboardingProvidersByDriver(providers);
+
   const managedPolicy = serverConfig?.managedPolicy;
-  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
   const chatGptAllowed =
+    isManagedDriverAllowed(managedPolicy, ProviderDriverKind.make("codex")) &&
     managedInstanceLocks(managedPolicy, ProviderDriverKind.make("codex"))?.configKeys.has(
       "setupMode",
     ) !== true;
-
   const primaryAgents = PRIMARY_AGENT_DRIVERS.filter((driver) =>
     isManagedDriverAllowed(managedPolicy, ProviderDriverKind.make(driver)),
   ).flatMap((driver) => {
@@ -753,7 +750,7 @@ function ConnectedAgentsStep({
       ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
       : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
   });
-  if (createdAccount) {
+  if (createdAccount && chatGptAllowed) {
     const index = primaryAgents.findIndex(
       (agent) => agent.instanceId === createdAccount.instanceId,
     );
@@ -768,9 +765,9 @@ function ConnectedAgentsStep({
   }
   return (
     <section>
-      <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
+      <h2 className="mb-2 text-label">{machineLabel}</h2>
       {!canOperateTerminal ? (
-        <p className="mb-2 text-sm text-muted-foreground">
+        <p className="mb-2 text-body text-muted-foreground">
           This connection cannot control terminals.
         </p>
       ) : null}
@@ -783,9 +780,6 @@ function ConnectedAgentsStep({
               provider={provider}
               serverConfig={serverConfig}
               createdAccount={instanceId === createdAccount?.instanceId ? createdAccount : null}
-              onAutoStartConsumed={() =>
-                setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
-              }
               terminalOpen={terminalSession?.driver === driver}
               onOpenTerminal={() => {
                 if (
@@ -848,6 +842,52 @@ function ConnectedAgentsStep({
           ),
         )}
       </div>
+      {providers?.some(
+        (provider) =>
+          provider.driver !== "codex" &&
+          provider.driver !== "claudeAgent" &&
+          isManagedDriverAllowed(managedPolicy, provider.driver),
+      ) ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {providers
+            .filter(
+              (provider) =>
+                provider.driver !== "codex" &&
+                provider.driver !== "claudeAgent" &&
+                isManagedDriverAllowed(managedPolicy, provider.driver),
+            )
+            .map((provider) => (
+              <OnboardingAgentRow
+                key={provider.instanceId}
+                driver={provider.driver}
+                title={
+                  provider.displayName ??
+                  providerClients.get(provider.driver)?.label ??
+                  provider.driver
+                }
+                description={getProviderSummary(provider).headline}
+                control={
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    render={
+                      <Link
+                        to="/settings/providers"
+                        search={{
+                          environmentId,
+                          instanceId: provider.instanceId,
+                          resumeEnvironmentId: environmentId,
+                        }}
+                      />
+                    }
+                  >
+                    Set up
+                  </Button>
+                }
+              />
+            ))}
+        </div>
+      ) : null}
       {chatGptAllowed &&
       providers?.some(
         (provider) =>
@@ -859,7 +899,7 @@ function ConnectedAgentsStep({
           </Button>
         </div>
       ) : null}
-      {addingAccount ? (
+      {addingAccount && chatGptAllowed ? (
         <AddManagedCodexAccountDialog
           environmentId={environmentId}
           onClose={() => setAddingAccount(false)}
@@ -884,7 +924,6 @@ function ConnectedAgentsStep({
 
 function OnboardingCodexSetup({
   createdAccount,
-  onAutoStartConsumed,
   environmentId,
   provider,
   serverConfig,
@@ -901,7 +940,6 @@ function OnboardingCodexSetup({
     displayName: string;
     autoStart: boolean;
   } | null;
-  readonly onAutoStartConsumed: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
@@ -917,10 +955,11 @@ function OnboardingCodexSetup({
   const mode = readCodexSetupMode(instance.config);
   const existingChosen =
     mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
+    ((instance.config !== null &&
+      typeof instance.config === "object" &&
+      "setupMode" in instance.config &&
+      instance.config.setupMode === "existing") ||
+      getOnboardingProviderState(provider) === "ready");
   const changeMode = (setupMode: "managed" | "existing") => {
     void update({
       environmentId,
@@ -953,10 +992,15 @@ function OnboardingCodexSetup({
     />
   ) : (
     <CodexSetupSection
-      presentation="onboarding"
-      autoStart={createdAccount?.autoStart === true}
-      displayName={createdAccount?.displayName}
-      onAutoStartConsumed={onAutoStartConsumed}
+      onboarding
+      renderRow={({ description, control }) => (
+        <OnboardingAgentRow
+          driver={ProviderDriverKind.make("codex")}
+          title={provider?.displayName || "Codex"}
+          description={description}
+          control={control}
+        />
+      )}
       environmentId={environmentId}
       instanceId={instanceId}
       provider={provider}
@@ -987,33 +1031,36 @@ function AgentCard({
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-control border border-border surface-card px-4 py-4">
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(driver)}
-        displayName={displayName}
-        iconClassName="size-5"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? (
-            <span className="block">{summary.detail}</span>
-          ) : null}
-        </p>
-      </div>
-      <div className="shrink-0">
-        {providerState === "ready" ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
+    <OnboardingAgentRow
+      driver={ProviderDriverKind.make(driver)}
+      title={displayName}
+      description={
+        providerState !== "ready" && (summary.detail || summary.authLabel) ? (
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>{summary.headline}</TooltipTrigger>
+            <TooltipPopup>
+              {summary.authLabel ? <span className="block">{summary.authLabel}</span> : null}
+              {summary.detail ? <span className="block">{summary.detail}</span> : null}
+            </TooltipPopup>
+          </Tooltip>
+        ) : providerState === "ready" ? (
+          "Ready to code."
+        ) : (
+          summary.headline
+        )
+      }
+      control={
+        providerState === "ready" ? (
+          <span className="inline-flex items-center gap-1.5 text-meta text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
         ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">Checking...</span>
+          <span className="text-meta text-muted-foreground">Checking...</span>
         ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
+          <span className="text-meta text-muted-foreground">Disabled</span>
         ) : providerState === "attention" ? (
-          <span className="text-xs text-muted-foreground">{summary.headline}</span>
+          <span className="text-meta text-muted-foreground">{summary.headline}</span>
         ) : (
           <Button
             size="xs"
@@ -1024,9 +1071,9 @@ function AgentCard({
             <TerminalIcon className="size-3.5" />
             {providerState === "signIn" ? "Sign in" : "Install"}
           </Button>
-        )}
-      </div>
-    </div>
+        )
+      }
+    />
   );
 }
 
@@ -1134,7 +1181,7 @@ function AgentInstallTerminal({
       className="mt-4 overflow-hidden rounded-control border border-border surface-card text-foreground"
     >
       <div className="flex items-center justify-between border-b border-border surface-card px-3 py-1.5">
-        <span className="text-2xs font-medium text-muted-foreground">
+        <span className="text-caption text-muted-foreground">
           {!canOperateTerminal ? (
             "This connection cannot control terminals."
           ) : setupState === "writeFailed" ? (
@@ -1441,17 +1488,15 @@ function ImportStep({
   if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
     return (
       <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-strong-foreground">
-          Your projects
-        </h1>
+        <h1 className="text-title tracking-tight text-strong-foreground">Your projects</h1>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
           <Spinner size="lg" tone="muted" />
-          <p className="text-center text-sm text-muted-foreground">
+          <p className="text-center text-body text-muted-foreground">
             Looking for projects from Claude Code and Codex…
           </p>
         </div>
         <div className="flex justify-end">
-          <Button variant="ghost-muted" onClick={() => void onDone()}>
+          <Button size="standard" variant="ghost-muted" onClick={() => void onDone()}>
             Do not import projects
           </Button>
         </div>
@@ -1461,11 +1506,11 @@ function ImportStep({
 
   return (
     <StepShell
-      title="Import your projects"
-      description="Import projects and conversations from Claude Code and Codex on your selected computers."
+      title="Choose your projects"
+      description="Import projects and conversations from your selected computers."
     >
       {candidates.length > 0 ? (
-        <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <div className="mt-5 flex items-center justify-between gap-3 text-meta text-muted-foreground">
           <span role="status">
             {selected.length} of {candidates.length} selected
           </span>
@@ -1501,21 +1546,19 @@ function ImportStep({
             return (
               <fieldset
                 key={scan.environmentId}
-                className="min-w-0 space-y-0.5"
+                className="min-w-0 space-y-2"
                 disabled={isImporting}
               >
-                {scans.length > 1 ? (
-                  <legend className="mb-2 text-sm font-medium">{label}</legend>
-                ) : null}
+                {scans.length > 1 ? <legend className="mb-2 text-label">{label}</legend> : null}
                 {scan.isPending && scan.data === null ? (
-                  <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-2 py-3 text-body text-muted-foreground">
                     <Spinner size="md" />
                     Looking for projects…
                   </div>
                 ) : scan.error !== null ? (
                   <div
                     role="alert"
-                    className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+                    className="flex items-center justify-between gap-3 text-body text-muted-foreground"
                   >
                     <span>Could not check projects. {scan.error}</span>
                     <Button variant="ghost" size="sm" onClick={scan.refresh}>
@@ -1523,14 +1566,25 @@ function ImportStep({
                     </Button>
                   </div>
                 ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
+                  <p className="py-2 text-body text-muted-foreground">
                     No existing Claude Code or Codex projects found.
                   </p>
                 ) : null}
                 {scan.data?.truncated ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {SCAN_LIMIT_MESSAGE}
-                  </p>
+                  <div
+                    className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground"
+                    role="status"
+                  >
+                    <p>{SCAN_LIMIT_MESSAGE}</p>
+                    <Button
+                      size="standard"
+                      variant="secondary"
+                      disabled={isImporting || scan.isPending}
+                      onClick={scan.refresh}
+                    >
+                      {scan.isPending ? "Scanning…" : "Scan more"}
+                    </Button>
+                  </div>
                 ) : null}
                 <ImportCandidateList
                   candidates={scanCandidates}
@@ -1543,13 +1597,19 @@ function ImportStep({
         </div>
       </ScrollArea>
       {visibleImportError ? (
-        <p className="mt-3 text-sm text-destructive">{visibleImportError}</p>
+        <p className="mt-3 text-body text-destructive">{visibleImportError}</p>
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+        <Button
+          size="standard"
+          variant="ghost-muted"
+          disabled={isImporting}
+          onClick={finishAfterImport}
+        >
           Do not import projects
         </Button>
         <Button
+          size="standard"
           autoFocus
           disabled={!canImport || isImporting || selected.length === 0}
           onClick={() => void runImport(selected)}
@@ -1613,8 +1673,8 @@ function ImportCandidateList({
             />
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-              <span className="truncate text-sm text-muted-foreground">Other folders</span>
-              <span className="ml-auto shrink-0 text-xs text-dim-foreground tabular-nums">
+              <span className="truncate text-body text-muted-foreground">Other folders</span>
+              <span className="ml-auto shrink-0 text-meta text-dim-foreground tabular-nums">
                 {other.length} {other.length === 1 ? "folder" : "folders"}
               </span>
             </CollapsibleTrigger>
@@ -1671,7 +1731,7 @@ function ImportRepositoryGroup({
         />
         <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-          <span className="truncate text-sm font-medium">{group.label}</span>
+          <span className="truncate text-label">{group.label}</span>
           <ImportRowMeta
             sources={[...new Set(group.candidates.flatMap((c) => c.sources))]}
             threadCount={group.threadCount}
@@ -1729,21 +1789,16 @@ function ImportCandidateRow({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-row px-2 py-1.5 hover:surface-ghost-hover has-disabled:cursor-default",
+        "flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5 has-disabled:cursor-default",
         nested && "pl-8",
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
       <Tooltip>
-        <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
-        >
+        <TooltipTrigger render={<span className="flex min-w-0 flex-1 flex-col gap-0.5" />}>
           {label !== undefined ? <span className="truncate text-label">{label}</span> : null}
           {path !== undefined ? (
-            <ProjectPathText
-              path={path}
-              className={label === undefined ? "text-caption" : "text-micro text-dim-foreground"}
-            />
+            <ProjectPathText path={path} className="w-full text-meta text-muted-foreground" />
           ) : null}
         </TooltipTrigger>
         <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
@@ -1775,22 +1830,22 @@ function ImportRowMeta({
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-dim-foreground tabular-nums">
-      {AgentSessionSource.literals.map((source) => (
-        <span key={source} className="flex size-4 items-center justify-center">
-          {sources?.includes(source) ? (
-            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
-              <ProviderInstanceIcon
-                driverKind={ProviderDriverKind.make(source)}
-                displayName={IMPORT_SOURCE_NAMES[source]}
-                iconClassName="size-3"
-              />
-            </span>
-          ) : null}
+    <span className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-meta text-muted-foreground tabular-nums">
+      <span className="flex items-center gap-1">
+        {sources?.map((source) => (
+          <span key={source} role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+            <ProviderInstanceIcon
+              driverKind={ProviderDriverKind.make(source)}
+              displayName={IMPORT_SOURCE_NAMES[source]}
+              iconClassName="size-3"
+            />
+          </span>
+        ))}
+        <span>
+          {threadCount} {threadCount === 1 ? "conversation" : "conversations"}
         </span>
-      ))}
-      <span className="text-right">{threadCount}</span>
-      <span className="text-right whitespace-nowrap">{age}</span>
+      </span>
+      <span className="text-caption text-dim-foreground">{age}</span>
     </span>
   );
 }
@@ -1802,7 +1857,7 @@ function CliPathSetup() {
   if (!setup) return null;
   return (
     <div className="mt-5 flex items-center justify-between gap-3">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         {setup.added ? (
           <>
             Added to {setup.file}. Open a new terminal to use <code className="font-mono">t3</code>.

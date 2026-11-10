@@ -29,6 +29,10 @@ export function useRestingComposerControlsLayout(
   const measure = () => {
     const currentHost = useControlsAsHost ? controls : host;
     if (currentHost === null || !controls) return;
+    // A hidden tab still lays out at the full stage width. Measuring it there
+    // leaves labels sized for that width, and no resize corrects them once the
+    // tab returns at its old size.
+    if (!controls.checkVisibility()) return;
 
     const measurement = measureRestingComposerControls(controls);
     if (!measurement) return;
@@ -70,6 +74,8 @@ export function useRestingComposerControlsLayout(
     });
   };
 
+  // Measure in ResizeObserver after layout is computed, then commit before paint. Mount or mutation
+  // measurements would force the whole chat to lay out.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes control resize, DOM mutations and font loading to measure which controls fit
   useLayoutEffect(() => {
     const currentHost = useControlsAsHost ? controls : host;
@@ -87,7 +93,6 @@ export function useRestingComposerControlsLayout(
         ],
         measure,
       );
-      measure();
     };
     observeControls();
     const mutations = new MutationObserver(observeControls);
@@ -95,12 +100,12 @@ export function useRestingComposerControlsLayout(
     const stripMutations = new MutationObserver(measure);
     const strip = controls.closest(CONTEXT_STRIP_SELECTOR);
     if (strip) stripMutations.observe(strip, { attributeFilter: ["data-compact"] });
-    document.fonts.addEventListener("loadingdone", measure);
+    document.fonts.addEventListener("loadingdone", observeControls);
     return () => {
       stopObserving();
       mutations.disconnect();
       stripMutations.disconnect();
-      document.fonts.removeEventListener("loadingdone", measure);
+      document.fonts.removeEventListener("loadingdone", observeControls);
     };
   }, [host, controls, useControlsAsHost, measure]);
 

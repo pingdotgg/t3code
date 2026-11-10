@@ -33,6 +33,16 @@ import {
 } from "../ui/menu";
 import { StatusDot, type StatusDotTone } from "../ui/status-dot";
 
+function reportFailure(title: string, error: unknown) {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
+
 const STATUS_DOT_TONE: Record<ScheduledTask["lastRunStatus"], StatusDotTone> = {
   never: "neutral",
   running: "info",
@@ -63,20 +73,12 @@ export function ThreadAutomationsPanel(props: {
     (task) => task.threadId === props.threadId,
   );
 
+  if (boundTasks.length === 0 && tasksQuery.error === null) return null;
+
   const nextRun = boundTasks
     .filter((task) => task.enabled && task.nextRunAt !== null)
     .map((task) => task.nextRunAt!)
     .sort()[0];
-
-  const reportFailure = (title: string, error: unknown) => {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : String(error),
-      }),
-    );
-  };
 
   const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {
     if (
@@ -125,9 +127,7 @@ export function ThreadAutomationsPanel(props: {
               </>
             ) : null}
           </>
-        ) : (
-          "None scheduled"
-        )
+        ) : undefined
       }
       action={
         <ThreadDetailsControl
@@ -145,12 +145,6 @@ export function ThreadAutomationsPanel(props: {
       }
       data-thread-automations-panel
     >
-      {boundTasks.length === 0 && tasksQuery.error === null ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
-          <CalendarClockIcon className="size-4" />
-          No automations scheduled
-        </div>
-      ) : null}
       <div className="max-h-[13.5rem] overflow-y-auto">
         {boundTasks.map((task) => (
           <Menu key={task.id}>
@@ -165,8 +159,8 @@ export function ThreadAutomationsPanel(props: {
                   ) : null}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-meta">{task.title}</span>
-                  <span className="truncate text-caption text-muted-foreground">
+                  <span className="truncate text-label leading-4">{task.title}</span>
+                  <span className="truncate text-caption leading-4 text-muted-foreground">
                     {task.blockedByPolicy ??
                       (!task.enabled
                         ? "Paused"

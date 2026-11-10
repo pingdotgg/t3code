@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_LAYOUT_SETTINGS,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -17,6 +21,7 @@ import {
   ensureClientSettingsHydrated,
   getClientSettings,
   mergeEnvironmentSettings,
+  migrateLegacyLayoutSettings,
   persistClientSettingsPatch,
   persistClientSettingsUpdate,
   prepareModelPreferencesPatch,
@@ -39,8 +44,7 @@ describe("client settings hydration", () => {
     timestampFormat: "12-hour" as const,
     favorites: [{ provider: ProviderInstanceId.make("codex_work"), model: "gpt-5.6" }],
   };
-  const onboardingCompletedAt = "2026-09-05T12:00:00.000Z";
-  const complete = (current: ClientSettings) => ({ ...current, onboardingCompletedAt });
+  const complete = (current: ClientSettings) => ({ ...current, fontSmoothing: false });
 
   it("waits for saved model preferences before applying the first server edit", async () => {
     const provider = ProviderInstanceId.make("codex_work");
@@ -92,7 +96,7 @@ describe("client settings hydration", () => {
     expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
     expect(getClientSettings()).toBe(DEFAULT_CLIENT_SETTINGS);
 
-    const completedSettings = { ...savedSettings, onboardingCompletedAt };
+    const completedSettings = { ...savedSettings, fontSmoothing: false };
     await expect(persistClientSettingsUpdate(complete)).resolves.toEqual(completedSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(completedSettings);
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
@@ -160,7 +164,7 @@ describe("client settings hydration", () => {
     await completion;
     await finalWrite;
 
-    const expected = { ...savedSettings, onboardingCompletedAt, wordWrap: true };
+    const expected = { ...savedSettings, fontSmoothing: false, wordWrap: true };
     expect(getClientSettings()).toEqual(expected);
     expect(durableSettings).toEqual(expected);
   });
@@ -283,8 +287,8 @@ describe("mergeEnvironmentSettings", () => {
   });
 });
 
-describe("onboarding completion persistence", () => {
-  it("keeps onboarding incomplete after a failed save and preserves preferences on retry", async () => {
+describe("client settings update persistence", () => {
+  it("keeps the old value after a failed save and preserves preferences on retry", async () => {
     const failure = new Error("disk full");
     const persist = vi
       .fn<(settings: typeof DEFAULT_CLIENT_SETTINGS) => Promise<void>>()
@@ -301,17 +305,16 @@ describe("onboarding completion persistence", () => {
       ],
     };
     __setClientSettingsForTests(existingSettings);
-    const onboardingCompletedAt = "2026-09-01T12:00:00.000Z";
     const complete = (current: typeof DEFAULT_CLIENT_SETTINGS) => ({
       ...current,
-      onboardingCompletedAt,
+      fontSmoothing: false,
     });
 
     await expect(persistClientSettingsUpdate(complete, persist)).rejects.toBe(failure);
     expect(getClientSettings()).toBe(existingSettings);
-    expect(getClientSettings().onboardingCompletedAt).toBeNull();
+    expect(getClientSettings().fontSmoothing).toBe(true);
 
-    const completedSettings = { ...existingSettings, onboardingCompletedAt };
+    const completedSettings = { ...existingSettings, fontSmoothing: false };
     await expect(persistClientSettingsUpdate(complete, persist)).resolves.toEqual(
       completedSettings,
     );
@@ -335,4 +338,90 @@ it("uses the environment's model preferences after migration, including empty li
   );
   expect(merged.favorites).toEqual([]);
   expect(merged.providerModelPreferences).toEqual({});
+});
+
+describe("legacy layout migration", () => {
+  const legacyLayout = { ...DEFAULT_LAYOUT_SETTINGS, terminalPlacement: "new-column" as const };
+
+  it("copies layout once after hydration and preserves the client's other preferences", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      wordWrap: false,
+    });
+    await migrateLegacyLayoutSettings(legacyLayout);
+    expect(getClientSettings()).toMatchObject({ layout: legacyLayout, wordWrap: false });
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(getClientSettings());
+
+    await migrateLegacyLayoutSettings({ ...legacyLayout, newTabPosition: "end" });
+    expect(getClientSettings().layout).toEqual(legacyLayout);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an existing client layout even when it matches the defaults", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      layout: DEFAULT_LAYOUT_SETTINGS,
+    });
+    await migrateLegacyLayoutSettings(legacyLayout);
+    expect(getClientSettings().layout).toEqual(DEFAULT_LAYOUT_SETTINGS);
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+
+  it("leaves migration retryable when persistence fails", async () => {
+    const failure = new Error("disk full");
+    persistenceMocks.setClientSettings.mockRejectedValueOnce(failure);
+    await expect(migrateLegacyLayoutSettings(legacyLayout)).rejects.toBe(failure);
+    expect(getClientSettings().layout).toBeUndefined();
+    await migrateLegacyLayoutSettings(legacyLayout);
+    expect(getClientSettings().layout).toEqual(legacyLayout);
+  });
+
+  it("keeps an edit made while migration is being persisted", async () => {
+    let finishMigration!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishMigration = resolve;
+    });
+    let signalWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWrite = resolve;
+    });
+    persistenceMocks.setClientSettings.mockImplementationOnce(async () => {
+      signalWrite();
+      await pending;
+    });
+    const migration = migrateLegacyLayoutSettings(legacyLayout);
+    await writeStarted;
+    const edit = persistClientSettingsPatch({ layout: { sidePaneOpensOn: "files" } });
+    finishMigration();
+    await Promise.all([migration, edit]);
+    expect(getClientSettings().layout).toEqual({
+      ...DEFAULT_LAYOUT_SETTINGS,
+      sidePaneOpensOn: "files",
+    });
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(getClientSettings());
+  });
+
+  it("merges layout patches without losing the template or other behavior", async () => {
+    await migrateLegacyLayoutSettings(legacyLayout);
+    await persistClientSettingsPatch({ layout: { sidePaneOpensOn: "files" } });
+    await persistClientSettingsPatch({ layout: { newTabPosition: "end" } });
+    expect(getClientSettings().layout).toEqual({
+      ...legacyLayout,
+      sidePaneOpensOn: "files",
+      newTabPosition: "end",
+    });
+  });
+
+  it("ignores a connected server's legacy layout when merging settings", () => {
+    const serverSettings = { ...DEFAULT_SERVER_SETTINGS, layout: legacyLayout };
+    expect(
+      mergeEnvironmentSettings(serverSettings, DEFAULT_CLIENT_SETTINGS).layout,
+    ).toBeUndefined();
+    expect(
+      mergeEnvironmentSettings(serverSettings, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        layout: DEFAULT_LAYOUT_SETTINGS,
+      }).layout,
+    ).toEqual(DEFAULT_LAYOUT_SETTINGS);
+  });
 });

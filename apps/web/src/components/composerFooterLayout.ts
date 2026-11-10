@@ -52,6 +52,7 @@ export interface RestingComposerControlsMeasurement {
   traitsIconOnlyFixedWidth?: number;
   /** The leading picker's width with only its icon, when it has one. */
   iconOnlyFixedWidth?: number;
+  compactLabels?: boolean;
 }
 
 function restingComposerControlsWidth(
@@ -159,7 +160,9 @@ export function resolveRestingComposerControlsLayout(
           ? traitsStep
           : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
     : 0;
-  const [firstStep, lastStep] = stepRange(input.stripCompaction);
+  const [rangeStart, rangeEnd] = stepRange(input.stripCompaction);
+  const firstStep = input.compactLabels ? Math.max(rangeStart, labelSteps) : rangeStart;
+  const lastStep = input.compactLabels ? Math.max(rangeEnd, labelSteps) : rangeEnd;
   let step = firstStep;
   // Use 1px slack for natural-width jitter on promotion; demote immediately to avoid clipping.
   while (
