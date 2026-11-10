@@ -57,6 +57,11 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets T3 stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
@@ -233,7 +238,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
@@ -259,19 +264,26 @@ vp run dist:desktop:linux
 vp run dist:desktop:win
 ```
 
+`dist:desktop:linux` targets x64. For a native Linux ARM64 build, run:
+
+```sh
+vp run dist:desktop:artifact --platform linux --target AppImage --arch arm64
+```
+
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
 ### Prepared server bytecode
 
-Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
-Electron executable, after ASAR creation and before signing. Linux builds skip generation until
-native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
-hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
-cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
-existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
-Worker-only modules compile normally.
+Native macOS and Windows desktop artifact builds, and native Linux x64 and ARM64 builds, generate server
+bytecode with the packaged Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
+module declarations without launching server services; worker-only modules compile normally.
+AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
+reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
+stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
+under Rosetta to generate the cache. Other cross-platform and cross-architecture builds skip
+generation explicitly. CLI, SEA and WSL runtimes keep their existing behavior.
 
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
@@ -281,7 +293,7 @@ differ or resource permissions prevent linking. Protected installations therefor
 prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
-packaged engine produced the expected CLI entry and fails the build if that format changes.
+packaged engine produced the expected CLI and server entries and fails the build if that format changes.
 The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
 Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
 explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
@@ -290,25 +302,30 @@ keeps the explicit flush needed when Windows force-kills the backend.
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
+Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
+toolchain as release CI does.
 
-Ubuntu and Debian:
+Ubuntu 24.04 and Debian 13:
 
 ```sh
 sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
+sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 ```
+
+On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the `t64` packages.
 
 Fedora:
 
 ```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
+sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 ```
 
 Arch Linux:
 
 ```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
+sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
 ```
 
 The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.
