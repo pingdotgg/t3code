@@ -285,31 +285,6 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // regression: #33552 a daemon left by a previous server survived every later graceful quit
-  it.effect("stops a daemon recorded by a previous server when the host stops", () =>
-    Effect.gen(function* () {
-      const { host, stateDir, runs } = yield* agentFixture(
-        () => Effect.die("A session that never readies agent tools must not start the daemon"),
-        processOutput(0),
-        {
-          httpPort: 12345,
-          token: "previous-token",
-          pid: process.pid,
-          version: AGENT_DEVICE_VERSION,
-        },
-      );
-      yield* host.stop;
-      const daemonCommands = runs.map((run) => run.args).filter((args) => args.includes("daemon"));
-      expect(daemonCommands).toContainEqual([
-        expect.stringMatching(/agent-device\.mjs$/),
-        "daemon",
-        "stop",
-        "--state-dir",
-        stateDir,
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("stops a previous server's daemon with the agent-device version it recorded", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -334,16 +309,17 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #33552 a daemon left by a previous server survived every later graceful quit
   it.effect("stops a previous server's daemon with the current pin when its version is gone", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const { host, baseDir, runs } = yield* agentFixture(
+      const { host, baseDir, stateDir, runs } = yield* agentFixture(
         () => Effect.die("A session that never readies agent tools must not start the daemon"),
         processOutput(0),
         { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
       );
       yield* host.stop;
-      expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(
+      expect(runs.find((run) => run.args.includes("daemon"))?.args).toEqual([
         path.join(
           baseDir,
           "tools",
@@ -354,7 +330,11 @@ describe("AgentDevice startup", () => {
           "bin",
           "agent-device.mjs",
         ),
-      );
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
