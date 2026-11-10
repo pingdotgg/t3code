@@ -549,7 +549,10 @@ function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined 
     nonEmptyString(rawInput?.command) ??
     nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.command);
   if (command !== undefined) {
-    return command.length > 80 ? `${command.slice(0, 77)}...` : command;
+    if (command.length <= 80) return command;
+    const splitsPair =
+      /[\uD800-\uDBFF]/.test(command.charAt(76)) && /[\uDC00-\uDFFF]/.test(command.charAt(77));
+    return `${command.slice(0, splitsPair ? 76 : 77)}...`;
   }
   return nonEmptyString(toolCall.title);
 }
