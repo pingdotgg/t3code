@@ -25,6 +25,7 @@ function source(initial: Uint8Array, options: { etag?: string | null } = {}) {
 async function sample() {
   const zip = new JSZip();
   zip.folder("docs");
+  // @effect-diagnostics-next-line globalDate:off -- JSZip stores entry times from a JS Date.
   zip.file("docs/café.txt", "unicode name", { date: new Date(Date.UTC(2024, 4, 6, 7, 8, 10)) });
   zip.file("123", "integer-like names sort first, as in JSZip");
   zip.file("stored.bin", new Uint8Array(4096).fill(7), { compression: "STORE" });
