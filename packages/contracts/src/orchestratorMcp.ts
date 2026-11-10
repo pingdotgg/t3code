@@ -32,6 +32,7 @@ import {
   ThreadPullRequestKey,
   ThreadPullRequestLinkSource,
 } from "./threadPullRequest.ts";
+import { secretRequestPageUrl } from "./secretRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
@@ -201,6 +202,12 @@ export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
   "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
 const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
 
+// Optional: linked environments on older versions omit it.
+const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
+  description:
+    "Model the provider reported running, or null when unavailable. Can differ from the requested `model`.",
+});
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
@@ -221,6 +228,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
+  executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
@@ -463,6 +471,7 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   status: OrchestrationV2RunStatus,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
+  executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
@@ -504,6 +513,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  freshContext: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
@@ -662,6 +677,12 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
       description: "Default true: runs post in this thread. False: new thread per run.",
     }),
   ),
+  freshSession: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Runs share one thread but each starts a fresh session without earlier runs' context. Unbound: the first run makes the thread.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -683,6 +704,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
+  freshSession: Schema.Boolean,
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
@@ -725,6 +747,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  freshSession: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
@@ -739,7 +762,16 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
     description: "Card title, such as 'GitHub webhook secret'.",
   }),
   reason: TrimmedNonEmptyString.annotate({
-    description: "What it is for and where to get it.",
+    description: "What it is for and where to get it. A link goes in `url`.",
+  }),
+  url: Schema.optional(
+    TrimmedNonEmptyString.check(
+      Schema.makeFilter((value) => secretRequestPageUrl(value) !== null, {
+        expected: "an http(s) URL",
+      }),
+    ),
+  ).annotate({
+    description: "Sign-in or setup page for the value. Shown as a button.",
   }),
   placeholder: Schema.optional(TrimmedNonEmptyString),
   delivery: Schema.optional(Schema.Literals(["secretRef", "file"])).annotate({
