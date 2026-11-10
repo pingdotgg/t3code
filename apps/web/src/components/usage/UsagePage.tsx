@@ -1088,7 +1088,7 @@ function UsageCoverageNotice({
   }
 
   return (
-    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs wrap-anywhere text-muted-foreground">
       {failed.map((environment) => (
         <span key={environment.label}>
           {environment.label}: {environment.error}
@@ -1160,7 +1160,7 @@ function UsageEnvironmentFilter({
           )}
         </span>
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" className="max-w-[min(24rem,calc(100vw_-_2rem))]">
         <MenuCheckboxItem
           checked={allSelected}
           closeOnClick={false}
