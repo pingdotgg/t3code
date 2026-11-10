@@ -28,7 +28,7 @@ import { useRouter } from "@tanstack/react-router";
 
 import {
   getFallbackThreadIdAfterDelete,
-  isSidebarSubagentThread,
+  isSidebarHiddenThread,
   pinOrderKeyBetween,
 } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -724,7 +724,7 @@ export function useThreadActions() {
     for (const thread of readThreadShells()) {
       if (
         thread.archivedAt !== null ||
-        isSidebarSubagentThread(thread) ||
+        isSidebarHiddenThread(thread) ||
         thread.settledOverride !== "settled" ||
         thread.settledAt === null ||
         !readEnvironmentServerConfigLoaded(thread.environmentId) ||
