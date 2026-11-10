@@ -104,6 +104,7 @@ export const make = Effect.gen(function* () {
           updatedAt: Option.getOrNull(Option.map(record.updatedAt, DateTime.formatIso)),
         },
         maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+        immediate: true,
       })
       .pipe(
         Effect.map((updatedAt) => ({

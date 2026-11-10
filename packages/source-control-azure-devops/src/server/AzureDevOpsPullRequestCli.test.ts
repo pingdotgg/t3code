@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -17,6 +18,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
+import { decodeAzureDevOpsPullRequestJson } from "./azureDevOpsPullRequests.ts";
 
 const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>();
 
@@ -465,6 +467,26 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const settling = yield* Effect.forkChild(page.settleUpdatedAt!);
       yield* Deferred.await(fourStarted);
       expect(threadReads).toEqual([1, 2, 3, 4]);
+      const sourceControl = yield* AzureDevOpsSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+            getPullRequest: () =>
+              Effect.succeed(
+                Result.getOrThrow(
+                  decodeAzureDevOpsPullRequestJson(JSON.stringify(pullRequestRows(1, 6)[0])),
+                ),
+              ),
+          }),
+        ),
+      );
+      const reference = yield* Effect.forkChild(
+        sourceControl.getChangeRequest({ cwd: "/listed", reference: "6" }),
+        { startImmediately: true },
+      );
+      expect(threadReads).toEqual([1, 2, 3, 4, 6]);
+      expect(Option.map((yield* Fiber.join(reference)).updatedAt, DateTime.formatIso)).toEqual(
+        Option.some(commentedAt(6)),
+      );
       // Opening a pull request still queued behind the list reads it at once.
       const summary = yield* provider.getChangeRequestSummary!({
         cwd: "/listed",
