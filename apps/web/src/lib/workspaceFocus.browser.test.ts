@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+import appCss from "~/index.css?inline";
 import { fakeTimers } from "../../test/render";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
@@ -207,15 +209,23 @@ describe("workspace area focus", () => {
     expect(timeline.scrollTop).toBe(300);
   });
 
-  it("returns focus to the area when its focused control disappears", async () => {
+  it.each([
+    ["panel", "panel", "removed"],
+    ["conversation", "composer", "removed"],
+    ["conversation", "composer", "disabled"],
+  ])("recovers focus from a %s control to the %s when %s", async (source, destination, change) => {
     using fixture = setup();
-    const panel = fixture.area("panel", 3);
-    const tab = document.createElement("button");
-    tab.textContent = "Files tab";
-    panel.element.append(tab);
-    tab.focus();
-    tab.remove();
-    await vi.waitFor(() => expect(document.activeElement).toBe(panel.button));
+    const composer = fixture.area("composer", 2);
+    const area = fixture.area(source, 3);
+    const control = document.createElement("button");
+    control.id = "pending-request";
+    control.textContent = "Submit";
+    area.element.append(control);
+    control.focus();
+    if (change === "disabled") control.disabled = true;
+    else control.remove();
+    const expected = destination === "composer" ? composer.button : area.button;
+    await vi.waitFor(() => expect(document.activeElement).toBe(expected));
   });
 
   it("falls back to the main content when the whole area disappears", async () => {
@@ -248,6 +258,27 @@ describe("workspace area focus", () => {
     panel.element.dataset.workspaceFocusKey = "panel:file:print-guide.md";
     expect(fixture.controller.focus("panel")).toBe(true);
     expect(document.activeElement).toBe(clickedRow);
+  });
+
+  it("focuses a side chat's message input when the panel opens on it", () => {
+    using fixture = setup();
+    const panel = fixture.area("panel", 3);
+    const content = document.createElement("div");
+    content.setAttribute("data-right-panel-surface-content", "");
+    const bringBack = document.createElement("button");
+    bringBack.textContent = "Bring back";
+    content.append(bringBack);
+    panel.element.append(content);
+    fixture.area("conversation", 1, content);
+    const composer = fixture.area("composer", 2, content);
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    composer.element.append(editor);
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+    // F6 from the message input moves on to the panel's own controls.
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(bringBack);
   });
 
   it("waits for a requested area to mount", async () => {
@@ -300,5 +331,54 @@ describe("workspace area focus", () => {
     composer.button.focus();
     expect(fixture.controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(terminal.button);
+  });
+
+  it("rings an area reached with F6, but not a clicked one after a bare key press", async () => {
+    using fixture = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const sidebar = fixture.area("sidebar", 0);
+    const home = fixture.append(
+      '<main data-workspace-area="home" data-workspace-order="1" tabindex="-1" style="height: 200px"></main>',
+    );
+    const outline = () => getComputedStyle(home).outlineStyle;
+
+    await userEvent.click(home);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("none");
+    // A window switch can deliver a lone modifier key without moving focus.
+    await userEvent.keyboard("{Shift}");
+    expect(outline(), "a clicked area shows the focus ring after a bare key press").toBe("none");
+    // Window activation refocuses the element that had focus, with nothing focused in between.
+    home.blur();
+    home.focus();
+    expect(outline(), "a clicked area rings when the window regains focus").toBe("none");
+
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(sidebar.button);
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("solid");
+
+    // A dialog opened from the keyboard returns focus to the area when it closes.
+    await userEvent.keyboard("{Enter}");
+    sidebar.button.focus();
+    await userEvent.keyboard("{Escape}");
+    home.focus();
+    expect(outline(), "an area loses its ring when keyboard focus returns to it").toBe("solid");
+
+    await userEvent.click(home);
+    expect(outline(), "clicking the ringed area removes its ring").toBe("none");
+
+    // With no other area visible, F6 lands on the area that already has focus.
+    sidebar.element.hidden = true;
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline(), "F6 onto the only, already focused area shows no ring").toBe("solid");
   });
 });
