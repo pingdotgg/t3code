@@ -11,16 +11,20 @@ const working: ThreadNotificationObservation = {
   requestId: null,
   settled: false,
   completedAt: null,
-  heldAt: null,
+  backgroundWake: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
   requestId: null,
   settled: true,
   completedAt: at,
-  heldAt: null,
+  backgroundWake: false,
 });
-const held = (at: number): ThreadNotificationObservation => ({ ...working, heldAt: at });
+const waking: ThreadNotificationObservation = { ...working, backgroundWake: true };
+const woke = (at: number): ThreadNotificationObservation => ({
+  ...completed(at),
+  backgroundWake: true,
+});
 const visible = { archived: false, quiet: false };
 
 function fakeTimers(): Disposable {
@@ -137,14 +141,14 @@ describe("createThreadNotificationGate", () => {
     }
   });
 
-  it("waits out the grace before notifying a released hold, and a final wake replaces it", () => {
+  it("waits out the grace before notifying a wake's completion, and a final wake replaces it", () => {
     using _timers = fakeTimers();
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe(working);
-    observe(held(2));
-    observe(completed(2));
+    // Held until the monitor left, or completing after it already had: either way unheld here.
+    observe(waking);
+    observe(woke(2));
     expect(notify).toHaveBeenCalledTimes(1);
     observe(working);
     vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
@@ -157,32 +161,34 @@ describe("createThreadNotificationGate", () => {
     ]);
   });
 
-  it("notifies a released hold once after the grace when no run follows", () => {
+  it("notifies a wake's completion once after the grace when no run follows, even across a pause", () => {
     using _timers = fakeTimers();
-    const { notify, observe } = harness();
-    observe(working);
-    observe(held(1));
-    observe(completed(1));
+    const { gate, notify, observe } = harness();
+    observe(waking);
+    observe(woke(1));
+    gate.pause();
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).not.toHaveBeenCalled();
+    observe({ ...woke(1) });
     vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS - 1);
-    observe({ ...completed(1) });
+    observe({ ...woke(1) });
     expect(notify).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(notify.mock.calls).toEqual([["thread", "completion"]]);
-    observe({ ...completed(1) });
+    observe({ ...woke(1) });
     vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("drops a pending released hold when the thread is removed or the gate is cleared", () => {
+  it("drops a pending wake completion when the thread is removed or the gate is cleared", () => {
     using _timers = fakeTimers();
     for (const reset of [
       (gate: ReturnType<typeof createThreadNotificationGate<string>>) => gate.retain(new Set()),
       (gate: ReturnType<typeof createThreadNotificationGate<string>>) => gate.clear(),
     ]) {
       const { gate, notify, observe } = harness();
-      observe(working);
-      observe(held(1));
-      observe(completed(1));
+      observe(waking);
+      observe(woke(1));
       reset(gate);
       vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
       expect(notify).not.toHaveBeenCalled();

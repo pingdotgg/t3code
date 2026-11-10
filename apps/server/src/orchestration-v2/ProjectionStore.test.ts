@@ -787,13 +787,15 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
     const initial = yield* store.getThreadProjection(threadId);
     const at = initial.updatedAt;
     let ordinal = 1;
-    for (const [id, source, expected] of [
-      ["background-task", { kind: "background_task" }, true],
-      ["monitor", { kind: "monitor" }, true],
-      ["command", { kind: "command" }, true],
-      ["subagent", { kind: "subagent" }, false],
-      ["delegated", { kind: "delegated_task", taskIds: [] }, false],
-      ["steered", { kind: "background_task" }, false],
+    for (const [id, source, outcome, expected] of [
+      ["background-task", { kind: "background_task" }, "updated", true],
+      ["monitor", { kind: "monitor" }, "updated", true],
+      ["command", { kind: "command" }, "updated", true],
+      ["command-finished", { kind: "command" }, "completed", false],
+      ["monitor-stopped", { kind: "monitor" }, "cancelled", false],
+      ["subagent", { kind: "subagent" }, "updated", false],
+      ["delegated", { kind: "delegated_task", taskIds: [] }, "updated", false],
+      ["steered", { kind: "background_task" }, "updated", false],
     ] as const) {
       const messageId = MessageId.make(`message:background-wake:${id}`);
       yield* store.apply({
@@ -814,7 +816,7 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
           streaming: false,
           createdAt: at,
           updatedAt: at,
-          notification: { source, outcome: "updated", summary: "Background activity updated" },
+          notification: { source, outcome, summary: "Background activity updated" },
           ...(id === "delegated"
             ? {
                 delegatedCompletion: {

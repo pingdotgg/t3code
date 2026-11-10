@@ -1765,7 +1765,9 @@ function isBackgroundWakeRunForShell(
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
   return (
     message?.delegatedCompletion === undefined &&
-    BACKGROUND_WAKE_SOURCE_KINDS.has(message?.notification?.source.kind ?? "") &&
+    // Only progress wakes; a terminal one ("Command … finished") is the work reporting its end.
+    message?.notification?.outcome === "updated" &&
+    BACKGROUND_WAKE_SOURCE_KINDS.has(message.notification.source.kind) &&
     // A follow-up the user steered into the wake makes the run theirs.
     !projection.messages.some(
       (candidate) => candidate.runId === run.id && candidate.createdBy === "user",
@@ -6289,6 +6291,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(wake.payload_json, '$.notification.source.kind')
             IN ('background_task', 'background_command', 'command', 'monitor')
           AND json_extract(wake.payload_json, '$.notification.source.work') IS NULL
+          AND json_extract(wake.payload_json, '$.notification.outcome') = 'updated'
           AND json_extract(wake.payload_json, '$.delegatedCompletion') IS NULL
       ) AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_messages steer

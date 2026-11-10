@@ -108,7 +108,7 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
   }
 }
 
-/** A monitor wakes the agent once per line, so a wake run's completion waits for the monitor to end. */
+/** A monitor wakes the agent once per line, so a progress wake run's completion waits for the monitor to end. */
 export function monitorHoldsWakeCompletion(
   thread: Pick<OrchestrationV2ThreadShell, "latestRunBackgroundWake" | "pendingBackgroundTasks">,
 ): boolean {

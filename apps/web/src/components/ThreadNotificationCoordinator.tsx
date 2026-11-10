@@ -265,8 +265,7 @@ export function startThreadNotifications(
         ? `${thread.latestRun?.runId ?? ""}:${status}:${requestId ?? ""}`
         : null;
       const completed = status === "ready" && thread.latestRun?.status === "completed";
-      const held = completed && monitorHoldsWakeCompletion(rawThread);
-      const settled = completed && !held;
+      const settled = completed && !monitorHoldsWakeCompletion(rawThread);
       const parsedCompletedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const completedAt = Number.isFinite(parsedCompletedAt) ? parsedCompletedAt : null;
       const state = {
@@ -278,7 +277,7 @@ export function startThreadNotifications(
         requestId,
         settled,
         completedAt: settled ? completedAt : null,
-        heldAt: held ? completedAt : null,
+        backgroundWake: rawThread.latestRunBackgroundWake === true,
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -317,6 +316,7 @@ export function startThreadNotifications(
           return;
         }
         entry.reconnecting = true;
+        entry.gate.pause();
       },
       { immediate: true },
     );
