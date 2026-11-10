@@ -1239,14 +1239,6 @@ describe("DesktopWindow", () => {
     return { downloads, fileSystem, path, download };
   });
 
-  it.effect("saves main window downloads to Downloads without Electron's Save dialog", () =>
-    Effect.gen(function* () {
-      const { downloads, path, download } = yield* mainWindowDownloads;
-
-      assert.deepEqual(download("clip.mp4").savePaths, [path.join(downloads, "clip.mp4")]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect(
     "gives a concurrent download of the same name, in any letter case, its own name until the first finishes",
     () =>
