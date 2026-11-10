@@ -2309,7 +2309,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const closeAgentRequest = (agentRequests: Set<string>, requestId: string) =>
           Effect.suspend(() =>
             agentRequests.delete(requestId) && agentRequests === openAgentRequests
-              ? notePromptProgress()
+              ? notePromptProgress().pipe(Effect.andThen(rearmActiveDeferredFinalize))
               : Effect.void,
           );
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
@@ -3771,6 +3771,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        const awaitsRequestOrTool = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          countsTool: (tool: AcpToolCallState) => boolean,
+        ) {
+          if (openAgentRequests.size > 0) return true;
+          if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
+          for (const tool of context.tools.values()) {
+            const status = toolStatus(tool.status);
+            if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            if (countsTool(tool)) return true;
+          }
+          return false;
+        });
+
+        // Background tools and subagents are `hasDeferredBackgroundWork`'s, which skips
+        // persistent tasks that never end.
+        const isForegroundTool = (tool: AcpToolCallState) =>
+          flavor.extractBackgroundTaskId?.(tool) === undefined &&
+          extractSubagentUpdate(tool) === undefined;
+
+        const blocksDeferredFinalize = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          if (hasDeferredBackgroundWork(context)) return true;
+          return yield* awaitsRequestOrTool(context, isForegroundTool);
+        });
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
@@ -3779,6 +3804,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (hasDeferredBackgroundWork(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
+        const rearmActiveDeferredFinalize = Ref.get(activeTurn).pipe(
+          Effect.flatMap((context) =>
+            context === null ? Effect.void : rearmDeferredFinalize(context),
+          ),
+        );
+        const forgetPendingRuntimeRequest = (requestId: string) =>
+          Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.delete(requestId);
+            return updated;
+          }).pipe(Effect.andThen(rearmActiveDeferredFinalize));
 
         // let breaks circular inference from monitor hydration re-entry.
         let emitTool: (
@@ -5868,11 +5904,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.ensuring(
                     runRuntimeCallbackAtGeneration(
                       generation,
-                      Ref.update(pendingRuntimeRequests, (current) => {
-                        const updated = new Map(current);
-                        updated.delete(String(requestId));
-                        return updated;
-                      }),
+                      forgetPendingRuntimeRequest(String(requestId)),
                     ).pipe(Effect.asVoid),
                   ),
                 );
@@ -6609,11 +6641,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
                     handlerGeneration,
-                    Ref.update(pendingRuntimeRequests, (current) => {
-                      const updated = new Map(current);
-                      updated.delete(String(requestId));
-                      return updated;
-                    }),
+                    forgetPendingRuntimeRequest(String(requestId)),
                   ).pipe(Effect.asVoid),
                 ),
               );
@@ -7791,7 +7819,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
           if (!flavor.deferFinalizeForBackgroundWork) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
-          if (hasDeferredBackgroundWork(context)) return;
+          if (yield* blocksDeferredFinalize(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
           yield* Effect.gen(function* () {
@@ -7803,7 +7831,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
+            if (yield* blocksDeferredFinalize(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -7816,12 +7844,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
         ) {
-          if (openAgentRequests.size > 0) return true;
-          if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
-          for (const tool of context.tools.values()) {
-            const status = toolStatus(tool.status);
-            if (status === "pending" || status === "running" || status === "waiting") return true;
-          }
+          if (yield* awaitsRequestOrTool(context, () => true)) return true;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return true;
           }
