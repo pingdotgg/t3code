@@ -389,7 +389,38 @@ describe("CLIProxyAPI built-in management API", () => {
         nextExpiresAt: "2099-01-01T00:00:00.000Z",
       });
       expect(test.requests.find((request) => request.body?.url)?.body?.url).toContain(
-        "cedar_ember=1",
+        "cedar_ember=1&at_wall=1",
+      );
+    }),
+  );
+
+  it.effect("offers a Claude hub account's weekly reset first and claims it by program", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: "org-1" } } }
+            : request.url?.endsWith("/reset_rate_limits")
+              ? { status: 200, body: { result: "reset" } }
+              : { status: 200, body: { ...claudeUsage, juniper_tide: { available: true } } },
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.usageLimits.resetCredits).toEqual({
+        availableCount: 2,
+        nextCreditId: "weekly:juniper_tide",
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(yield* api.consume(config, "first.json", "weekly:juniper_tide")).toEqual({
+        outcome: "reset",
+      });
+      const claim = test.requests.find((request) =>
+        request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
+      );
+      expect(JSON.parse(claim?.body?.data ?? "{}")).toEqual({ program: "juniper_tide" });
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
+        1,
       );
     }),
   );

@@ -121,6 +121,8 @@ when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
+A Claude account at its weekly limit can also have a free weekly reset; it counts as one more
+credit and **Use reset** spends it before any banked credit.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
 Keychain; a hub reports them on any platform. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
@@ -173,8 +175,9 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex and Claude accounts show banked reset credits;
-select an account and choose **Use reset** to redeem one. No hub plugin is required.
+The accounts appear under **Usage → Limits**. Codex and Claude accounts show banked reset credits,
+and Claude accounts also show their weekly reset; select an account and choose **Use reset** to
+redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

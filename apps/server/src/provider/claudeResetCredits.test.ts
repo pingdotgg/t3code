@@ -85,6 +85,32 @@ describe("claudeResetCreditsToContract", () => {
     ).toBeUndefined();
     expect(ClaudeResetCredits.claudeResetCreditsToContract(undefined, NOW)).toBeUndefined();
   });
+
+  it("uses an available weekly reset before banked grants", () => {
+    const banked = {
+      eligible: true,
+      next_grant_id: "grant_a",
+      grants: [grant({ resets_left: 2, ends_at: "2026-10-01T00:00:00Z" })],
+    };
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(banked, NOW, { available: true }),
+    ).toEqual({
+      availableCount: 3,
+      nextCreditId: ClaudeResetCredits.WEEKLY_RESET_ID,
+      nextExpiresAt: "2026-10-01T00:00:00.000Z",
+    });
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract({ eligible: false }, NOW, {
+        eligible: true,
+        available: true,
+      }),
+    ).toEqual({ availableCount: 1, nextCreditId: ClaudeResetCredits.WEEKLY_RESET_ID });
+    for (const weekly of [{ available: false }, { available: "true" }, null]) {
+      expect(ClaudeResetCredits.claudeResetCreditsToContract(banked, NOW, weekly)).toMatchObject({
+        nextCreditId: "grant_a",
+      });
+    }
+  });
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
@@ -94,7 +120,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
-        expect(UrlParams.toString(request.urlParams)).toBe("cedar_ember=1&skip_spend=1");
+        expect(UrlParams.toString(request.urlParams)).toBe("cedar_ember=1&at_wall=1&skip_spend=1");
         expect(request.headers.authorization).toBe("Bearer oauth-token");
         expect(request.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
         expect(request.headers["user-agent"]).toBe("claude-cli/2.1.0 (external, cli)");
@@ -136,7 +162,7 @@ const ClaimBody = Schema.fromJsonString(
 );
 const decodeClaimBody = Schema.decodeEffect(ClaimBody);
 
-const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requestId: "r-1" }) =>
+const consume = (client: HttpClient.HttpClient, ids = { creditId: "grant_a", requestId: "r-1" }) =>
   Effect.gen(function* () {
     const login = yield* writeLogin;
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
@@ -171,6 +197,25 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         }).pipe(Effect.orDie),
       );
       expect(yield* consume(client)).toMatchObject({ _tag: "Success", success: "reset" });
+    }),
+  );
+
+  it.effect("claims the weekly reset by its program alone", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) => {
+        expect(request.url).toBe(
+          "https://api.anthropic.com/api/organizations/org-1/reset_rate_limits",
+        );
+        const body =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        expect(JSON.parse(body)).toEqual({ program: "juniper_tide" });
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ result: "reset" })),
+        );
+      });
+      expect(
+        yield* consume(client, { creditId: ClaudeResetCredits.WEEKLY_RESET_ID, requestId: "r-1" }),
+      ).toMatchObject({ _tag: "Success", success: "reset" });
     }),
   );
 
@@ -209,8 +254,8 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
   it.effect("refuses malformed ids without sending anything", () =>
     Effect.gen(function* () {
       for (const ids of [
-        { grantId: "Bad Grant", requestId: "r-1" },
-        { grantId: "grant_a", requestId: "has space" },
+        { creditId: "Bad Grant", requestId: "r-1" },
+        { creditId: "grant_a", requestId: "has space" },
       ]) {
         expect(yield* consume(refuseRequests, ids)).toMatchObject({ _tag: "Failure" });
       }

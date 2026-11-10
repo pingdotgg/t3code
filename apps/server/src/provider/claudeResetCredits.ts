@@ -12,8 +12,10 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const API_BASE = "https://api.anthropic.com";
-export const PROGRAM = "cedar_ember";
-export const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
+const PROGRAM = "cedar_ember";
+const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
+/** The weekly at-limit reset (`juniper_tide`) has no grant; the colon keeps this id out of GRANT_ID. */
+export const WEEKLY_RESET_ID = "weekly:juniper_tide";
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const COMPLETE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -40,8 +42,12 @@ const CedarEmber = Schema.Struct({
 });
 const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  juniper_tide: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
+const decodeJuniperTide = Schema.decodeUnknownOption(
+  Schema.Struct({ available: Schema.optional(Schema.Boolean) }),
+);
 export const ClaimResponse = Schema.Struct({
   result: Schema.Literals([
     "reset",
@@ -95,10 +101,28 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
+/**
+ * Maps the usage endpoint's `cedar_ember` (banked grants) and `juniper_tide` (weekly
+ * at-limit reset) blocks. An available weekly reset is used first: it is free and
+ * comes back every week, while banked grants expire.
+ */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
+  weeklyBlock?: unknown,
 ): ServerProviderResetCredits | undefined {
+  const banked = bankedCredits(block, nowMs);
+  if (!Option.exists(decodeJuniperTide(weeklyBlock), (weekly) => weekly.available === true)) {
+    return banked;
+  }
+  return {
+    ...banked,
+    availableCount: (banked?.availableCount ?? 0) + 1,
+    nextCreditId: WEEKLY_RESET_ID,
+  };
+}
+
+function bankedCredits(block: unknown, nowMs: number): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
   const live = (parsed.value.grants ?? [])
@@ -157,7 +181,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
-        urlParams: { cedar_ember: "1", skip_spend: "1" },
+        urlParams: { cedar_ember: "1", at_wall: "1", skip_spend: "1" },
       }).pipe(withClaudeHeaders(token, version)),
     );
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
@@ -166,6 +190,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     return claudeResetCreditsToContract(
       body.cedar_ember,
       DateTime.toEpochMillis(yield* DateTime.now),
+      body.juniper_tide,
     );
   },
   Effect.timeout("10 seconds"),
@@ -194,15 +219,30 @@ export const CLAIM_OUTCOMES = {
   ineligible: "noCredit",
 } as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
+/**
+ * Builds the body Claude's CLI posts to `reset_rate_limits` for each attempt: the weekly
+ * reset names only its program, a grant also carries its id and the attempt's request id.
+ * Undefined for a malformed credit id.
+ */
+export const claudeClaim = (
+  creditId: string,
+): ((requestId: string) => Record<string, string>) | undefined =>
+  creditId === WEEKLY_RESET_ID
+    ? () => ({ program: "juniper_tide" })
+    : GRANT_ID.test(creditId)
+      ? (requestId) => ({ program: PROGRAM, grant_id: creditId, request_id: requestId })
+      : undefined;
+
 /** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;
   readonly accountConfigPath: string;
   readonly version: string;
-  readonly grantId: string;
+  readonly creditId: string;
   readonly requestId: string;
 }) {
-  if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
+  const claim = claudeClaim(input.creditId);
+  if (!claim || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
   }
   const token = yield* readAccessToken(input.configDir).pipe(
@@ -225,11 +265,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
         ),
       ).pipe(
         withClaudeHeaders(token, input.version),
-        HttpClientRequest.bodyJsonUnsafe({
-          program: PROGRAM,
-          grant_id: input.grantId,
-          request_id: input.requestId,
-        }),
+        HttpClientRequest.bodyJsonUnsafe(claim(input.requestId)),
       ),
     )
     .pipe(

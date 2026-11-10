@@ -20,8 +20,7 @@ import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
 import {
   CLAIM_OUTCOMES as CLAUDE_CLAIM_OUTCOMES,
   ClaimResponse as ClaudeClaimResponse,
-  GRANT_ID as CLAUDE_GRANT_ID,
-  PROGRAM as CLAUDE_RESET_PROGRAM,
+  claudeClaim,
   claudeResetCreditsToContract,
 } from "../provider/claudeResetCredits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
@@ -97,6 +96,7 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  juniper_tide: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const ClaudeProfile = Schema.Struct({
   organization: Schema.optional(Schema.NullOr(Schema.Struct({ uuid: Schema.String }))),
@@ -306,11 +306,17 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(hub, account, `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1`);
+        // at_wall=1 adds the weekly at-limit reset (juniper_tide) beside the banked grants.
+        const body = yield* apiCall(
+          hub,
+          account,
+          `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1&at_wall=1`,
+        );
         const usage = yield* decodeClaudeUsage(body);
         const resetCredits = claudeResetCreditsToContract(
           usage.cedar_ember,
           DateTime.toEpochMillis(yield* DateTime.now),
+          usage.juniper_tide,
         );
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -444,14 +450,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     )[response.code];
   });
 
-  // Same claim the Claude CLI sends; request_id is the idempotency key, so a retry
-  // addresses the claim already made.
+  // Same claim the Claude CLI sends; a grant's request_id is the idempotency key, so a
+  // retry addresses the claim already made.
   const claimClaudeGrant = Effect.fn("CliproxyApi.claimClaudeGrant")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
-    grantId: string,
+    creditId: string,
   ) {
-    if (!CLAUDE_GRANT_ID.test(grantId)) {
+    const claimBody = claudeClaim(creditId);
+    if (!claimBody) {
       return yield* new UsageLimitSourceError({ detail: "The Claude reset grant is not valid." });
     }
     const profile = yield* decodeClaudeProfile(
@@ -470,14 +477,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
       detail: "The Claude hub account needs to sign in again.",
     });
     return yield* resetCreditCoordinator.redeem(
-      yield* encodeJson([hub.url, organization, grantId]),
+      yield* encodeJson([hub.url, organization, creditId]),
       (requestId) =>
         Effect.gen(function* () {
           const body = yield* apiCall(
             hub,
             account,
             `${CLAUDE_BASE}/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
-            { program: CLAUDE_RESET_PROGRAM, grant_id: grantId, request_id: requestId },
+            claimBody(requestId),
             (status) =>
               status === 429
                 ? coolingDown
