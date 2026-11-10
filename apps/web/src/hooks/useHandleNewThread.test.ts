@@ -233,6 +233,7 @@ vi.mock("../state/entities", () => {
     useThread: () => null,
   };
 });
+vi.mock("../state/projects", () => ({ defaultProjectFallbackReadyAtom: () => true }));
 vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/presentation", () => ({
   environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
@@ -388,6 +389,9 @@ describe("default project selection", () => {
       environmentId: "last-used",
       projectId: "project",
     });
+    expect(
+      resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project", false),
+    ).toBeNull();
     expect(resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project")).toEqual({
       environmentId: "first",
       projectId: "project",

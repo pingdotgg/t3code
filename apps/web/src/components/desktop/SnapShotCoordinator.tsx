@@ -232,6 +232,7 @@ export function SnapShotCoordinator() {
     activeDraftThread,
     activeThread,
     defaultProjectRef,
+    defaultProjectFallbackReady,
     handleNewThread,
     routeDraftId,
     routeThreadRef,
@@ -366,6 +367,7 @@ export function SnapShotCoordinator() {
             ? resolveExistingSnapShotTarget(capturedTarget, routeThreadRef)
             : null;
           if (!target) {
+            if (!defaultProjectFallbackReady) continue;
             await dismissSnapShotAnimation(item.id);
             reportOnce(
               item.id,
@@ -425,6 +427,7 @@ export function SnapShotCoordinator() {
   };
 
   const drainPending = useEffectEvent(() => drain());
+  const hasDefaultProject = defaultProjectRef !== null;
   const handleSnapShotEvent = useEffectEvent(
     (bridge: DesktopBridge, event: DesktopSnapShotEvent) => {
       if (!getClientSettings().snapShotEnabled) return;
@@ -495,10 +498,15 @@ export function SnapShotCoordinator() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to SnapShot events from the desktop bridge and drains pending ones while enabled
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
-    if (!bridge || !enabled) return;
-    void drainPending();
+    if (
+      !bridge ||
+      !enabled ||
+      (!defaultProjectFallbackReady && !hasDefaultProject && !lastRouteTarget)
+    )
+      return;
+    void Promise.resolve(drainingRef.current).then(() => drainPending());
     return bridge.onSnapShotEvent((event) => handleSnapShotEvent(bridge, event));
-  }, [enabled]);
+  }, [enabled, defaultProjectFallbackReady, hasDefaultProject, lastRouteTarget]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches window blur, focus and visibilitychange listeners to dismiss or drain SnapShot animations
   useEffect(() => {

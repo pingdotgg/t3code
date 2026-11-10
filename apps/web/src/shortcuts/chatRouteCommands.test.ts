@@ -7,6 +7,8 @@ import * as settings from "../hooks/useSettings";
 import * as storage from "../hooks/useLocalStorage";
 import * as threadActions from "../lib/chatThreadActions";
 import * as entities from "../state/entities";
+import * as projectsState from "../state/projects";
+import { Atom } from "effect/reactivity";
 import type { Project } from "../types";
 import { installChatRouteCommands } from "./chatRouteCommands";
 import * as dispatcher from "./dispatcher";
@@ -39,6 +41,9 @@ describe("new thread commands", () => {
     using _projects = vi
       .spyOn(entities, "readProjects")
       .mockReturnValue([project("active"), project("idle")].slice(0, scenario.count));
+    using _ready = vi
+      .spyOn(projectsState, "defaultProjectFallbackReadyAtom")
+      .mockReturnValue(Atom.make(true));
     using storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:active");
     using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
     using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
