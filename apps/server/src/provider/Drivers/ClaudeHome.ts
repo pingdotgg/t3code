@@ -30,6 +30,15 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   return path.resolve(path.join(home, ".claude"));
 });
 
+// The home directory a spawned Claude resolves `~` against: Node reads USERPROFILE on Windows, HOME elsewhere.
+const resolveClaudeChildHome = Effect.fn("resolveClaudeChildHome")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
+  const name = (yield* HostProcess.Platform) === "win32" ? "USERPROFILE" : "HOME";
+  const value = Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1];
+  return value?.trim() || (yield* HostProcess.HomeDirectory);
+});
+
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
@@ -39,10 +48,14 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   const path = yield* Path.Path;
-  const childHome = resolvedBaseEnv.HOME?.trim() || (yield* HostProcess.HomeDirectory);
+  const windows = (yield* HostProcess.Platform) === "win32";
+  const defaultHomePath = path.resolve(yield* resolveClaudeChildHome(resolvedBaseEnv), ".claude");
   // Claude Code picks its Keychain item and `.claude.json` by whether CLAUDE_CONFIG_DIR is set, not by value.
-  if (resolvedHomePath === path.resolve(childHome, ".claude")) {
-    const windows = (yield* HostProcess.Platform) === "win32";
+  if (
+    windows
+      ? resolvedHomePath.toLowerCase() === defaultHomePath.toLowerCase()
+      : resolvedHomePath === defaultHomePath
+  ) {
     return Object.fromEntries(
       Object.entries(resolvedBaseEnv).filter(
         ([key]) => (windows ? key.toUpperCase() : key) !== "CLAUDE_CONFIG_DIR",
@@ -55,6 +68,18 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
+
+/** Claude keeps its account in `<CLAUDE_CONFIG_DIR>/.claude.json` when set, otherwise `~/.claude.json`. */
+export const resolveClaudeAccountConfigPath = Effect.fn("resolveClaudeAccountConfigPath")(
+  function* (config: Pick<ClaudeSettings, "homePath">, baseEnv: NodeJS.ProcessEnv) {
+    const path = yield* Path.Path;
+    const environment = yield* makeClaudeEnvironment(config, baseEnv);
+    const directory = environment.CLAUDE_CONFIG_DIR?.trim()
+      ? yield* resolveClaudeHomePath(config, environment)
+      : yield* resolveClaudeChildHome(environment);
+    return path.join(directory, ".claude.json");
+  },
+);
 
 // A Claude Code session that launched T3 exports these. A claude spawned with them acts as part of
 // that session: its session id, messaging socket and token, and effort.

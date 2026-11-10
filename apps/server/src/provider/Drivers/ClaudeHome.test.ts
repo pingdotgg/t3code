@@ -13,6 +13,7 @@ import {
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   mergeClaudeProcessEnvironment,
+  resolveClaudeAccountConfigPath,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -68,7 +69,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
-    it.effect("keeps CLAUDE_CONFIG_DIR when the instance HOME moves Claude's default home", () =>
+    it.effect("compares against the child's home, not the server's", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const environment = yield* makeClaudeEnvironment(
@@ -76,6 +77,18 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           { HOME: "/accounts/shell" },
         );
         expect(environment.CLAUDE_CONFIG_DIR).toBe(path.resolve(NodeOS.homedir(), ".claude"));
+        // Windows resolves Claude's default home from USERPROFILE, not HOME.
+        const windowsEnv = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude" },
+          { UserProfile: "/accounts/windows" },
+        ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        expect(windowsEnv.CLAUDE_CONFIG_DIR).toBe(path.resolve(NodeOS.homedir(), ".claude"));
+        expect(
+          yield* resolveClaudeAccountConfigPath(
+            { homePath: "/accounts/shell/.claude" },
+            { HOME: "/accounts/shell" },
+          ),
+        ).toBe("/accounts/shell/.claude.json");
       }),
     );
 
