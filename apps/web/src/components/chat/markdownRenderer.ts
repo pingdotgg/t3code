@@ -82,7 +82,7 @@ export function createMarkdownRenderer({
     }
   };
 
-  return (text: string, cache: boolean): ReactElement => {
+  const render = (text: string, cache: boolean): ReactElement => {
     const key = keyPrefix + text;
     const cached = rendered.get(key);
     if (cached !== undefined) {
@@ -106,4 +106,11 @@ export function createMarkdownRenderer({
     if (cache) remember(key, element);
     return element;
   };
+
+  return Object.assign(render, {
+    remember(text: string, element: ReactElement) {
+      const key = keyPrefix + text;
+      if (!rendered.has(key)) remember(key, element);
+    },
+  });
 }
