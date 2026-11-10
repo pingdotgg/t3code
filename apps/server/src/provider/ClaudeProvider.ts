@@ -2,6 +2,7 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ServerProvider,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -32,8 +33,9 @@ import {
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   providerModelsFromSettings,
+  providerProbeEnvironment,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -54,11 +56,25 @@ import {
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
+  withUltracodeToggle,
 } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+function claudeProviderModels(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  customModels: ClaudeSettings["customModels"],
+): ReadonlyArray<ServerProviderModel> {
+  return providerModelsFromSettings(
+    builtInModels,
+    customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  ).map((model) =>
+    model.isCustom ? { ...model, capabilities: withUltracodeToggle(model.capabilities) } : model,
+  );
+}
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -217,7 +233,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     mcpServers: {},
     ...(input.managedMcpConfig ? {} : { strictMcpConfig: true }),
     env: {
-      ...input.environment,
+      ...providerProbeEnvironment(input.environment),
       // Disable claude.ai MCP separately; it is discovered outside filesystem config.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
       // Skipping this avoids a Windows tasklist | findstr process tree on every refresh.
@@ -513,10 +529,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
+  const allModels = claudeProviderModels(
     modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
@@ -538,7 +553,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
     ["--version"],
-    resolvedEnvironment,
+    providerProbeEnvironment(resolvedEnvironment),
     cwd,
   ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
 
@@ -582,7 +597,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const version = versionProbe.success.value;
-  const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
+  const parsedVersion = parseCliVersionResult(version);
   if (version.code !== 0) {
     yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
       exitCode: version.code,
@@ -614,13 +629,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const models = providerModelsFromSettings(
+  const models = claudeProviderModels(
     [
       ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
       ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
     ],
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
@@ -737,10 +751,9 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
     modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
+    const models = claudeProviderModels(
       modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {
