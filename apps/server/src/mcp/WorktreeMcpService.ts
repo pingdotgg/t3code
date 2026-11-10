@@ -460,15 +460,21 @@ const make = Effect.gen(function* () {
         Effect.retry(RELEASE_RETRY),
         Effect.ignore,
       );
-      yield* gitWorkflow
-        .removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: input.force })
-        .pipe(Effect.retry(RELEASE_RETRY));
-      if (input.deleteBranch && input.branch !== null) {
-        yield* gitWorkflow.deleteLocalBranch({
-          cwd: input.projectCwd,
-          refName: input.branch,
-          force: true,
-        });
+      // A thread can bind to the worktree while the session winds down; this one's binding is already cleared.
+      const sharing = yield* threadManagement.getShellSnapshot({
+        worktreePath: input.worktreePath,
+      });
+      if (sharing.threads.length + sharing.archivedThreads.length === 0) {
+        yield* gitWorkflow
+          .removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: input.force })
+          .pipe(Effect.retry(RELEASE_RETRY));
+        if (input.deleteBranch && input.branch !== null) {
+          yield* gitWorkflow.deleteLocalBranch({
+            cwd: input.projectCwd,
+            refName: input.branch,
+            force: true,
+          });
+        }
       }
       yield* vcsStatusBroadcaster
         .refreshStatus(input.projectCwd)
