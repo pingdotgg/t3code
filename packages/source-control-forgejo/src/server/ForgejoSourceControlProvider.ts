@@ -1,5 +1,11 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -268,6 +274,26 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
+type Pulls = ReadonlyArray<ReturnType<typeof toForgejoChangeRequest>>;
+
+class RepositoryPullsLookup {
+  readonly key: string;
+  readonly lookup: Effect.Effect<Pulls, ForgejoCli.ForgejoCliError>;
+  constructor(
+    repo: ForgejoCli.ForgejoRepository,
+    lookup: Effect.Effect<Pulls, ForgejoCli.ForgejoCliError>,
+  ) {
+    this.key = JSON.stringify([repo.command, repo.baseUrl, repo.login, repo.repository]);
+    this.lookup = lookup;
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof RepositoryPullsLookup && this.key === that.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
@@ -322,6 +348,27 @@ export const make = Effect.gen(function* () {
       ForgejoPullRequestSchema,
     );
   });
+  const repositoryPulls = yield* Cache.makeWith((key: RepositoryPullsLookup) => key.lookup, {
+    capacity: 16,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(1) : Duration.zero),
+  });
+  const scanPulls = Effect.fn("ForgejoSourceControlProvider.scanPulls")(function* (
+    input: ForgejoCli.ForgejoRepositoryInput,
+    repo: ForgejoCli.ForgejoRepository,
+  ) {
+    const pulls: Array<ReturnType<typeof toForgejoChangeRequest>> = [];
+    for (let page = 1; ; page++) {
+      const items = yield* request(
+        {
+          ...input,
+          path: `${repositoryPath(repo.repository)}/pulls?state=all&sort=recentupdate&limit=50&page=${page}`,
+        },
+        Schema.Array(ForgejoPullRequestSchema),
+      );
+      if (items.length === 0) return pulls;
+      pulls.push(...items.map(toForgejoChangeRequest));
+    }
+  });
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
@@ -334,6 +381,19 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
+        if (limit <= 0) return results;
+        const matches = (pr: ReturnType<typeof toForgejoChangeRequest>) =>
+          pr.headRefName === branch &&
+          (!source?.repository || pr.headRepositoryNameWithOwner === source.repository) &&
+          (!source?.owner || pr.headRepositoryOwnerLogin === source.owner) &&
+          (input.state === "all" || pr.state === input.state);
+        const lookup = new RepositoryPullsLookup(repo, scanPulls(input, repo));
+        if (input.allowCached) {
+          const cached = yield* Cache.getOption(repositoryPulls, lookup);
+          if (Option.isSome(cached)) return cached.value.filter(matches).slice(0, limit);
+        } else {
+          yield* Cache.invalidate(repositoryPulls, lookup);
+        }
         for (let page = 1; results.length < limit; page++) {
           const items = yield* request(
             {
@@ -342,15 +402,12 @@ export const make = Effect.gen(function* () {
             },
             Schema.Array(ForgejoPullRequestSchema),
           );
+          if (input.allowCached && items.some((item) => item.head.ref !== branch)) {
+            return (yield* Cache.get(repositoryPulls, lookup)).filter(matches).slice(0, limit);
+          }
           for (const item of items) {
-            if (
-              item.head.ref !== branch ||
-              (source?.repository && item.head.repo?.full_name !== source.repository) ||
-              (source?.owner && item.head.repo?.owner.login !== source.owner)
-            )
-              continue;
             const normalized = toForgejoChangeRequest(item);
-            if (input.state === "all" || normalized.state === input.state) results.push(normalized);
+            if (matches(normalized)) results.push(normalized);
           }
           if (items.length === 0) break;
         }
