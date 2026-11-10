@@ -57,6 +57,7 @@ import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginWorkspace from "./PluginWorkspace.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 
@@ -245,6 +246,7 @@ const make = Effect.gen(function* () {
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
+    workspace: yield* PluginWorkspace.PluginWorkspace,
   };
   const settingsStore = services.settings;
 

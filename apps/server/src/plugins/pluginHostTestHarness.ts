@@ -20,6 +20,7 @@ import * as PluginHost from "./PluginHost.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginWorkspace from "./PluginWorkspace.ts";
 
 export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url)
   .pathname;
@@ -57,6 +58,8 @@ export const layerHost = (
             ),
           ).pipe(Layer.provide(PluginSettingsStore.layer)),
           PluginStorage.layer,
+          // PluginWorkspace.test.ts covers it with real stores and files.
+          Layer.mock(PluginWorkspace.PluginWorkspace)({}),
         ),
       ),
       Layer.provide(ServerSecretStore.layer),

@@ -143,8 +143,43 @@ socket and stream you create an `'error'` listener.
   `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
   to start and says why.
 
-The server API can't read T3's threads, projects or providers. A tool can keep its own data per
-thread in `storage` under the `threadId`, but it can't look that thread up.
+The server API can't look up T3's threads, projects or providers, but it can read the files a
+thread works on, as below. A tool can keep its own data per thread in `storage` under the
+`threadId`.
+
+## Reading a thread's files
+
+`api.workspace` reads the folder a thread works in: its worktree, or its project's folder when the
+thread has none. It needs server API version 2.
+
+```js
+api.mcp.registerTool(
+  {
+    name: "readme_size",
+    description: "Counts the lines of the thread's README.md.",
+    inputSchema: { type: "object", properties: {} },
+    access: "read",
+  },
+  async (_input, { threadId }) => {
+    if (api.version < 2 || threadId === null) return "Needs a thread on a newer T3 Code.";
+    const { entries } = await api.workspace.listEntries({ threadId });
+    if (!entries.some((entry) => entry.path === "README.md")) return "No README.md here.";
+    const file = await api.workspace.readFile({ threadId, relativePath: "README.md" });
+    return { lines: file.contents.split("\n").length, truncated: file.truncated };
+  },
+);
+```
+
+A method the web half calls can take the thread id as its input instead.
+
+- Paths are relative to the thread's folder and use `/`. An absolute path, `..` or a symlink that
+  leads out of the folder fails, and so does a thread or project that doesn't exist or was deleted.
+- `listEntries` lists one folder's direct children, the thread's folder when `directoryPath` is
+  omitted, and leaves out `.git` and links that lead out of the folder.
+- `readFile` returns UTF-8 text and fails for a binary file, a folder or a missing file. It reads at
+  most the first 1 MiB; `truncated` says there was more and `byteLength` is the whole size.
+- It reads what is on disk now, uncommitted changes included, and only for this environment's
+  threads. Nothing in `api.workspace` writes.
 
 ## Web half
 

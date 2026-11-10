@@ -58,6 +58,25 @@ export type PluginMcpToolHandler = (
   },
 ) => JsonValue | Promise<JsonValue>;
 
+export interface PluginWorkspaceEntry {
+  /** Relative to the thread's folder, with `/` between segments. */
+  readonly path: string;
+  readonly kind: "file" | "directory";
+  /** True when git ignores it. */
+  readonly ignored?: boolean | undefined;
+}
+
+export interface PluginWorkspaceFile {
+  /** `relativePath` as given, normalized. */
+  readonly relativePath: string;
+  /** UTF-8 text, at most the file's first 1 MiB. */
+  readonly contents: string;
+  /** The whole file's size in bytes. */
+  readonly byteLength: number;
+  /** True when the file is over 1 MiB and `contents` holds only its start. */
+  readonly truncated: boolean;
+}
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -123,6 +142,26 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
      * lists, and a call to it fails as an unknown tool.
      */
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
+  };
+  /**
+   * Reads the folder a thread works in: its worktree, or its project's folder when it has none.
+   * Paths are relative to that folder and can't leave it, through `..` or a symlink. Calls fail
+   * for a thread or project that doesn't exist or was deleted. Added in version 2.
+   */
+  readonly workspace: {
+    /**
+     * The files and folders directly in `directoryPath`, the thread's folder when omitted. Leaves
+     * out `.git`.
+     */
+    readonly listEntries: (input: {
+      readonly threadId: string;
+      readonly directoryPath?: string;
+    }) => Promise<{ readonly entries: ReadonlyArray<PluginWorkspaceEntry> }>;
+    /** Fails for a missing file, a folder, or a binary file. */
+    readonly readFile: (input: {
+      readonly threadId: string;
+      readonly relativePath: string;
+    }) => Promise<PluginWorkspaceFile>;
   };
 }
 

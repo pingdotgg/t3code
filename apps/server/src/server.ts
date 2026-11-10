@@ -102,6 +102,7 @@ import * as PluginUploads from "./plugins/PluginUploads.ts";
 import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginStorage from "./plugins/PluginStorage.ts";
+import * as PluginWorkspace from "./plugins/PluginWorkspace.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
@@ -786,7 +787,13 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
 const layerRuntimeDependenciesWithPlugins = PluginUploads.layer.pipe(
   Layer.provideMerge(
     PluginHost.layer.pipe(
-      Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          PluginSettingsStore.layer,
+          PluginStorage.layer,
+          PluginWorkspace.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+        ),
+      ),
       Layer.provideMerge(layerRuntimeDependencies),
     ),
   ),
