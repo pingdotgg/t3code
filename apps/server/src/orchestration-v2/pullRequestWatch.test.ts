@@ -239,6 +239,18 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(hold.next, heldDone, noRemarks).changes, [
       { kind: "checks-failed", failed: [check("lint", "failure")] },
     ]);
+    const gate = { ...check("CI", "action-required"), url: run(4) };
+    const gateRead = evaluatePullRequestWatch(watch(), detail({ checks: [gate] }), noRemarks);
+    const omitted = detail({ checks: [check("lint", "failure")] });
+    const lintOnly = evaluatePullRequestWatch(gateRead.next, omitted, noRemarks);
+    assert.deepEqual(lintOnly.changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
+    const gateRan = { ...check("e2e", "success"), url: `${run(4)}/job/1` };
+    const gateDone = detail({ checks: [check("lint", "failure"), gateRan] });
+    assert.deepEqual(evaluatePullRequestWatch(lintOnly.next, gateDone, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
 
     const second = detail({ checks: [check("lint", "failure"), check("test", "failure"), bot] });
     const test = evaluatePullRequestWatch(lint.next, second, noRemarks);

@@ -147,7 +147,7 @@ export function evaluatePullRequestWatch(
         changes.push({ kind: "checks-failed", failed });
       }
       const owing = newlyFailed.length > 0 || owedBefore.length > 0;
-      owedChecks = owing && holding ? (unfinished.length > 0 ? unfinished : owedBefore) : [];
+      owedChecks = owing && holding ? [...unfinished, ...awaitingApproval] : [];
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
