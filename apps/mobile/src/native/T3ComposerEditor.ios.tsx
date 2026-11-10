@@ -3,6 +3,7 @@ import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerParagraphDirections } from "@t3tools/shared/textDirection";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import {
   useCallback,
@@ -23,7 +24,7 @@ import {
   contextChipPresentation,
   contextRecordFileName,
 } from "../lib/composerChipPresentation";
-import { contextChipIconUri } from "../lib/contextChipIconSource";
+import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -41,6 +42,7 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const EMPTY_MODELS: NonNullable<ComposerEditorProps["models"]> = [];
 const NO_RESET = () => 0;
 
 type NativeEditorEvent = NativeSyntheticEvent<{
@@ -138,6 +140,7 @@ function basename(path: string): string {
 export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
+  models = EMPTY_MODELS,
   selection,
   style,
   textStyle,
@@ -179,9 +182,10 @@ export function ComposerEditor({
   const fontFamily = FONT_FAMILIES.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
+  const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
   const editorTokens = useMemo(
-    () => composerContextEditorTokens(props.value, tokens, skillLabels),
-    [props.value, tokens, skillLabels],
+    () => composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens),
+    [props.value, tokens, skillLabels, modelTokens],
   );
   const paragraphDirections = useMemo(
     () => composerParagraphDirections(props.value, editorTokens),
@@ -191,6 +195,7 @@ export function ComposerEditor({
   const tokensJson = useMemo(() => {
     return JSON.stringify(
       editorTokens.map((token) => {
+        const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -208,20 +213,26 @@ export function ComposerEditor({
           source: token.source,
           start: token.start,
           end: token.end,
-          accent: contextChipAccent(presentation.accent, theme, chipTextColor),
+          accent: contextChipAccent(
+            model ? modelChipIcon(model).accent : presentation.accent,
+            theme,
+            chipTextColor,
+          ),
           label:
             token.type === "skill"
               ? (skillLabels.get(token.value) ?? token.value)
-              : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
+              : model
+                ? model.label
+                : token.type === "context"
+                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          iconUri: contextChipIconUri(icon),
-          tintsIcon: icon.kind === "chip",
+          iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
+          tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
         };
       }),
     );
-  }, [editorTokens, props.context, skillLabels, theme, chipTextColor]);
+  }, [editorTokens, props.context, skillLabels, modelsBySource, theme, chipTextColor]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
