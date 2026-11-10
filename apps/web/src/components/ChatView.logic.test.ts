@@ -63,6 +63,7 @@ import {
   deriveLockedProvider,
   hasCompactableConversation,
   hasServerAcknowledgedLocalDispatch,
+  shouldShowComposerTasks,
   waitForRevertedMessage,
 } from "./ChatView.logic";
 
@@ -173,6 +174,18 @@ describe("buildExpiredTerminalContextToastCopy", () => {
     expect(buildExpiredTerminalContextToastCopy(1, "omitted").description).toBe(
       "Re-add it if you want that terminal output included.",
     );
+  });
+});
+
+describe("shouldShowComposerTasks", () => {
+  it("hides a settled run's finished plan while the next send is pending", () => {
+    expect(
+      shouldShowComposerTasks({
+        steps: [{ status: "completed" }],
+        planRunSettled: true,
+        isSendBusy: true,
+      }),
+    ).toBe(false);
   });
 });
 
