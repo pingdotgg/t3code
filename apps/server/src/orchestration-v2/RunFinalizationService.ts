@@ -115,10 +115,10 @@ export const layerObserver = Layer.effect(
       const root = Option.getOrUndefined(yield* projects.getById(projectId))?.workspaceRoot;
       if (root === undefined) return false;
       if (root === cwd) return true;
-      const [realRoot, realCwd] = yield* Effect.all([fs.realPath(root), fs.realPath(cwd)]).pipe(
-        Effect.orElseSucceed(() => [null, cwd]),
+      return yield* Effect.all([fs.realPath(root), fs.realPath(cwd)]).pipe(
+        Effect.map(([realRoot, realCwd]) => realRoot === realCwd),
+        Effect.orElseSucceed(() => false),
       );
-      return realRoot === realCwd;
     });
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
