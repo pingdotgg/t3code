@@ -2641,7 +2641,10 @@ describe("ClaudeAdapterV2 native fork", () => {
           prefix: "t3-claude-v2-side-chat-goal-",
         });
         const prompts: Array<{ readonly session: string | undefined; readonly text: string }> = [];
+        const closedSessions: Array<string | undefined> = [];
         let goalClearUuid: string | undefined;
+        let goalClearReply: "success" | "error" | "end" | "silent" = "success";
+        const goalClearOffered = yield* Deferred.make<void>();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -2656,7 +2659,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             open: (input) =>
               Effect.gen(function* () {
                 const session = input.options.resume ?? input.options.sessionId;
-                const messages = yield* Queue.unbounded<SDKMessage>();
+                const messages = yield* Queue.unbounded<SDKMessage, Cause.Done>();
                 return {
                   messages: Stream.fromQueue(messages),
                   offer: (message: SDKUserMessage) =>
@@ -2671,13 +2674,17 @@ describe("ClaudeAdapterV2 native fork", () => {
                       prompts.push({ session, text });
                       if (!text.startsWith("/goal clear")) return;
                       goalClearUuid = message.uuid;
+                      if (goalClearReply === "end") return yield* Queue.end(messages);
+                      if (goalClearReply === "silent") {
+                        return yield* Deferred.succeed(goalClearOffered, undefined);
+                      }
                       // Claude Code answers /goal clear locally, without a model turn.
                       yield* Queue.offer(messages, {
                         type: "result",
-                        subtype: "success",
+                        subtype: goalClearReply === "error" ? "error_during_execution" : "success",
                         duration_ms: 1,
                         duration_api_ms: 0,
-                        is_error: false,
+                        is_error: goalClearReply === "error",
                         num_turns: 0,
                         result: "Goal cleared: The user has sent a later chat message",
                         stop_reason: null,
@@ -2704,10 +2711,16 @@ describe("ClaudeAdapterV2 native fork", () => {
                   listPermissionRules: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
-                  close: Queue.shutdown(messages),
+                  close: Effect.sync(() => closedSessions.push(session)).pipe(
+                    Effect.andThen(Queue.shutdown(messages)),
+                  ),
                 };
               }),
-            forkSession: () => Effect.succeed({ sessionId: "side-chat-native-session" }),
+            forkSession: () =>
+              Effect.succeed({
+                sessionId: "side-chat-native-session",
+                headMessageId: "inherited-fork-head",
+              }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
@@ -2771,6 +2784,10 @@ describe("ClaudeAdapterV2 native fork", () => {
           targetThreadId: ThreadId.make("thread-claude-goal-side-chat-at-head"),
           sideChat: true,
         });
+        yield* runtime.forkThread({
+          sourceProviderThread,
+          targetThreadId: ThreadId.make("thread-claude-goal-plain-fork"),
+        });
         assert.deepEqual(prompts, []);
 
         const sideChat = yield* runtime.forkThread({
@@ -2800,6 +2817,54 @@ describe("ClaudeAdapterV2 native fork", () => {
         // Rewinding the side chat to its start resumes here; an earlier cursor restores the goal.
         assert.isDefined(goalClearUuid);
         assert.strictEqual(sideChat.nativeMetadata?.forkHeadMessageId, goalClearUuid);
+
+        // The clear is best effort: a side chat whose clear fails still opens at the inherited head.
+        for (const reply of ["error", "end", "silent"] as const) {
+          goalClearReply = reply;
+          prompts.length = 0;
+          closedSessions.length = 0;
+          const threadId = ThreadId.make(`thread-claude-goal-side-chat-${reply}`);
+          const failedRuntime = yield* adapter.openSession({
+            threadId: sourceThreadId,
+            providerSessionId: ProviderSessionId.make(`provider-session-claude-goal-${reply}`),
+            modelSelection,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          const fork = yield* failedRuntime
+            .forkThread({ sourceProviderThread, targetThreadId: threadId, sideChat: true })
+            .pipe(Effect.forkChild);
+          if (reply === "silent") {
+            yield* Deferred.await(goalClearOffered);
+            assert.deepEqual(closedSessions, []);
+            yield* TestClock.adjust("15 seconds");
+          }
+          const failedSideChat = yield* Fiber.join(fork);
+          assert.deepEqual(closedSessions, ["side-chat-native-session"], reply);
+          assert.strictEqual(
+            failedSideChat.nativeMetadata?.forkHeadMessageId,
+            "inherited-fork-head",
+            reply,
+          );
+          yield* failedRuntime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: failedSideChat,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`side-chat-goal-${reply}-attempt`),
+              text: "still answers",
+              attachments: [],
+              modelSelection,
+            }),
+          );
+          assert.deepEqual(
+            prompts,
+            [
+              { session: "side-chat-native-session", text: "/goal clear" },
+              { session: "side-chat-native-session", text: "still answers" },
+            ],
+            reply,
+          );
+        }
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
