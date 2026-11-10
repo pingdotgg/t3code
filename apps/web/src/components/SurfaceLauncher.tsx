@@ -5,6 +5,7 @@ import {
   Globe2,
   MessagesSquare,
   Smartphone,
+  SquarePen,
   TerminalSquare,
 } from "lucide-react";
 import {
@@ -18,7 +19,17 @@ import {
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Kbd } from "~/components/ui/kbd";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { openLayerMatches } from "~/lib/openLayers";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { registerCommands } from "~/shortcuts/dispatcher";
@@ -123,6 +134,132 @@ export interface SurfaceLauncherAction {
   /** Shown on the row while unavailable; defaults to the surface's hint. */
   readonly disabledReason?: string;
   readonly onClick: () => void;
+}
+
+export interface SurfaceMenuAction {
+  readonly kind: LauncherSurfaceKind | "new-thread";
+  readonly label: string;
+  readonly icon: ComponentType<{ className?: string }>;
+  readonly shortcut: string;
+  readonly available: boolean;
+  readonly disabledReason?: string | undefined;
+  readonly onClick: () => void;
+}
+
+/** The "+" menus' rows: a new thread when offered, then the launcher's surfaces in its order. */
+export function surfaceMenuActions(input: {
+  readonly onNewThread?: (() => void) | undefined;
+  readonly surfaces: Partial<
+    Record<
+      LauncherSurfaceKind,
+      {
+        readonly available: boolean;
+        readonly disabledReason?: string | undefined;
+        readonly onClick: () => void;
+      }
+    >
+  >;
+}): SurfaceMenuAction[] {
+  const actions: SurfaceMenuAction[] = input.onNewThread
+    ? [
+        {
+          kind: "new-thread",
+          label: "New thread",
+          icon: SquarePen,
+          shortcut: "N",
+          available: true,
+          onClick: input.onNewThread,
+        },
+      ]
+    : [];
+  for (const entry of SURFACE_LAUNCHER_ENTRIES) {
+    const surface = input.surfaces[entry.kind];
+    if (!surface) continue;
+    actions.push({
+      kind: entry.kind,
+      label: entry.label,
+      icon: entry.icon,
+      shortcut: entry.shortcut,
+      available: surface.available,
+      disabledReason: surface.disabledReason,
+      onClick: surface.onClick,
+    });
+  }
+  return actions;
+}
+
+function MenuKbd(props: { readonly shortcut: string }) {
+  return (
+    <span className="ms-auto shrink-0 ps-4">
+      <Kbd>{props.shortcut}</Kbd>
+    </span>
+  );
+}
+
+/**
+ * The rows of a "+" menu. Browser offers its profiles as a submenu once
+ * there is more than one, as the launcher's chevron does.
+ */
+export function SurfaceMenuItems(props: {
+  readonly actions: readonly SurfaceMenuAction[];
+  readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly onAddBrowserInProfile: (profileId: string) => void;
+  readonly onClose: () => void;
+}) {
+  return props.actions.map((action) => {
+    const Icon = action.icon;
+    if (action.kind === "browser" && action.available && props.browserProfiles.length > 1) {
+      return (
+        <MenuSub key={action.kind}>
+          <MenuSubTrigger
+            className="[&>svg:last-child]:ms-0"
+            aria-keyshortcuts={action.shortcut}
+            onClick={(event) => {
+              const pointerType =
+                "pointerType" in event.nativeEvent &&
+                typeof event.nativeEvent.pointerType === "string"
+                  ? event.nativeEvent.pointerType
+                  : undefined;
+              if (pointerType === "touch") return;
+              props.onClose();
+              action.onClick();
+            }}
+          >
+            <Icon />
+            {action.label}
+            <MenuKbd shortcut={action.shortcut} />
+          </MenuSubTrigger>
+          <MenuSubPopup className="max-w-56">
+            {props.browserProfiles.map((profile) => (
+              <MenuItem key={profile.id} onClick={() => props.onAddBrowserInProfile(profile.id)}>
+                <span className="min-w-0 truncate">{profile.name}</span>
+              </MenuItem>
+            ))}
+          </MenuSubPopup>
+        </MenuSub>
+      );
+    }
+    const item = (
+      <MenuItem
+        key={action.kind}
+        className={!action.available ? "data-disabled:pointer-events-auto" : undefined}
+        onClick={action.onClick}
+        disabled={!action.available}
+        aria-keyshortcuts={action.shortcut}
+      >
+        <Icon />
+        {action.label}
+        <MenuKbd shortcut={action.shortcut} />
+      </MenuItem>
+    );
+    if (action.available || !action.disabledReason) return item;
+    return (
+      <Tooltip key={action.kind}>
+        <TooltipTrigger render={item} />
+        <TooltipPopup side="top">{action.disabledReason}</TooltipPopup>
+      </Tooltip>
+    );
+  });
 }
 
 type SurfaceShortcutEvent = Pick<
