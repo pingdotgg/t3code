@@ -203,8 +203,8 @@ function accountKey(
     : `${driver}:credential:${limits.credentialFingerprint}`;
 }
 
-// OpenCode derives resets from now plus a rounded remaining duration, so one anchor drifts by seconds.
-const SUBSCRIPTION_ANCHOR_TOLERANCE_MS = 60_000;
+// OpenCode derives resets from now plus a remaining duration rounded to seconds, so anchors drift by 1s.
+const SUBSCRIPTION_ANCHOR_TOLERANCE_MS = 1_000;
 
 // Go keys of one subscription share its monthly reset, anchored to the subscription start.
 // Each key takes its freshest anchor so its own readings still merge across a monthly rollover.
@@ -221,16 +221,14 @@ function goSubscriptions(reports: readonly AccountReport[]): ReadonlyMap<string,
     }
   }
   const subscriptions = new Map<string, string>();
-  let previous: { readonly owner: string; readonly anchor: number } | undefined;
+  let group: { readonly owner: string; readonly anchor: number } | undefined;
   for (const [fingerprint, { anchor }] of [...anchors].sort(
     ([, a], [, b]) => a.anchor - b.anchor,
   )) {
-    const owner =
-      previous && anchor - previous.anchor <= SUBSCRIPTION_ANCHOR_TOLERANCE_MS
-        ? previous.owner
-        : fingerprint;
-    subscriptions.set(fingerprint, owner);
-    previous = { owner, anchor };
+    if (!group || anchor - group.anchor > SUBSCRIPTION_ANCHOR_TOLERANCE_MS) {
+      group = { owner: fingerprint, anchor };
+    }
+    subscriptions.set(fingerprint, group.owner);
   }
   return subscriptions;
 }
