@@ -284,7 +284,7 @@ describe("resolveTranscriptCommit", () => {
       "at the start of the selection",
       { start: 6, end: 11 },
       "hello [cite]world",
-      "hello [cite]new text",
+      "hello [cite]world new text",
     ],
     [
       "inside the selection",
@@ -320,6 +320,18 @@ describe("resolveTranscriptCommit", () => {
       "en-US",
     );
     expect(result).toMatchObject({ kind: "commit", text: expected });
+  });
+
+  it("keeps every citation when several were inserted while recording", () => {
+    const captured = draft({ text: "[todo", selection: { start: 0, end: 1 } });
+    const current = "[A](t3-citation://v1/a)[todo[B](t3-citation://v1/b)";
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "spoken",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: `${current} spoken` });
   });
 
   it("keeps surrogate pairs whole when an emoji changed while recording", () => {
@@ -712,7 +724,7 @@ describe("VoiceInputController", () => {
       errorAction: null,
     });
     expect(harness.commits).toEqual([
-      { text: "> cited line\n\nhello new text", selection: { start: 28, end: 28 } },
+      { text: "> cited line\n\nhello world new text", selection: { start: 34, end: 34 } },
     ]);
   });
 
