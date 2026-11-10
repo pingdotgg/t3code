@@ -644,7 +644,7 @@ export function AddProviderInstanceDialog({
                     <Input
                       id="add-provider-label"
                       aria-describedby="add-provider-label-description"
-                      size="sm"
+                      size="settings"
                       className="w-full @min-[26rem]/settings-row:w-56"
                       placeholder="e.g. Work"
                       value={label}
@@ -678,7 +678,7 @@ export function AddProviderInstanceDialog({
                           ? "add-provider-instance-id-description add-provider-instance-id-error"
                           : "add-provider-instance-id-description"
                       }
-                      size="sm"
+                      size="settings"
                       className="w-full @min-[26rem]/settings-row:w-56"
                       placeholder={`${driver}_work`}
                       value={instanceId}

@@ -371,11 +371,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="secondary" onClick={() => setIsRevealDialogOpen(false)}>
+                <Button
+                  size="standard"
+                  variant="secondary"
+                  onClick={() => setIsRevealDialogOpen(false)}
+                >
                   Done
                 </Button>
                 {canCopyToClipboard ? (
-                  <Button variant="secondary" onClick={handleCopyCode}>
+                  <Button size="standard" variant="secondary" onClick={handleCopyCode}>
                     Copy code
                   </Button>
                 ) : null}
@@ -667,7 +671,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   if (part === "revoke") {
     return (
       <Button
-        size="xs"
+        size="standard"
         variant="destructive-outline"
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
         onClick={() => void onRevokeOtherClients()}
@@ -685,7 +689,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       </Button>
       {pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
-          <Button size="xs" variant="default" disabled>
+          <Button size="standard" variant="default" disabled>
             <QrCodeIcon />
             Create pairing link
           </Button>
@@ -706,7 +710,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         {pairingDenial === undefined ? (
           <DialogTrigger
             render={
-              <Button size="xs" variant="default">
+              <Button size="standard" variant="default">
                 <QrCodeIcon />
                 Create pairing link
               </Button>
@@ -810,6 +814,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
+              size="standard"
               variant="secondary"
               disabled={isCreatingPairingLink}
               onClick={() => setDialogOpen(false)}
@@ -817,6 +822,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               Cancel
             </Button>
             <Button
+              size="standard"
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >
