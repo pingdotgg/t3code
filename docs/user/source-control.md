@@ -24,8 +24,7 @@ setting in **Settings → Diffs**.
 
 The Diff pane starts with the thread's repository. Its changes include submodule commit
 pointers, as in Git. Use the repository picker to review an initialized submodule, including
-nested submodules, without opening another project. Each entry shows its repository name and
-branch. Detached checkouts show HEAD; repository paths distinguish matching names.
+nested submodules, without opening another project. Detached checkouts appear as HEAD.
 
 Changes, Uncommitted, commit lists and comparison branches use the selected repository.
 Switching repositories resets the comparison branch to Automatic. File paths are relative to

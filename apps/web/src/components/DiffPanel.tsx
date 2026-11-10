@@ -295,12 +295,13 @@ export default function DiffPanel({
     repositoryMissing && isRepositoryDiff
       ? { kind: "branch" as const, baseRef: null }
       : storedDiffSelection;
-  const repositoryCwd =
-    requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data
-      ? undefined
-      : selectedRepository?.path
-        ? selectedRepository.cwd
-        : workspaceCwd;
+  const repositoryPending =
+    !!requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data;
+  const repositoryCwd = repositoryPending
+    ? undefined
+    : selectedRepository?.path
+      ? selectedRepository.cwd
+      : workspaceCwd;
   const activeCwd = isRepositoryDiff ? repositoryCwd : workspaceCwd;
   const isChildRepository = isRepositoryDiff && !!selectedRepository?.path;
   const repositoryLabel = selectedRepository
@@ -540,9 +541,12 @@ export default function DiffPanel({
       ? activeCheckpointDiff
       : branchDiffPreview;
   const isLoadingSelectedPatch =
-    selectedPatchQuery.isPending &&
-    (selectedPatchQuery.data === null ||
-      (isGitSelection && preview?.incomplete === true && selectedGitSource?.files?.length === 0));
+    (isGitSelection && repositoryPending) ||
+    (selectedPatchQuery.isPending &&
+      (selectedPatchQuery.data === null ||
+        (isGitSelection &&
+          preview?.incomplete === true &&
+          selectedGitSource?.files?.length === 0)));
   const selectedPatchError = toolCallSelection
     ? toolCallDetail.error
     : selectedTurn

@@ -273,3 +273,15 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("keeps the loading state while a saved repository is still being discovered", async () => {
+  using context = setup(null);
+  state.repositories = Atom.make(AsyncResult.initial(true));
+  useDiffPanelStore.getState().selectRepository(context.threadRef, `${cwd}/packages/auth`);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByRole("status", { name: "Loading changes..." })).toBeVisible();
+});

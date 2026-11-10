@@ -7,7 +7,7 @@ import {
 } from "@t3tools/shared/path";
 
 import { useRightPanelStore } from "./rightPanelStore";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 interface OpenDiffFilePrimaryActionInput {
   readonly threadRef: ScopedThreadRef | null;
@@ -99,7 +99,10 @@ export function openDiffFilePrimaryAction({
   openInEditor,
 }: OpenDiffFilePrimaryActionInput): void {
   const workspaceFilePath = resolveDiffPathForWorkspace({
-    filePath: fileCwd ? resolvePathLinkTarget(filePath, fileCwd) : filePath,
+    // Git paths are literal: a trailing ":12" is part of the name, not a line position.
+    filePath: fileCwd
+      ? joinPath(fileCwd, filePath, fileCwd.startsWith("/") ? "/" : "\\")
+      : filePath,
     workspaceRoot: activeCwd,
     repositoryRoot,
   });

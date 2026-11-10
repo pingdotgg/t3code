@@ -37,6 +37,13 @@ describe("openDiffFilePrimaryAction", () => {
       fileCwd: "/repo/packages/auth",
       expected: "auth/src/policy.ts",
     },
+    {
+      filePath: "notes:1-2",
+      activeCwd: "/repo",
+      repositoryRoot: "/repo",
+      fileCwd: "/repo/packages/auth",
+      expected: "packages/auth/notes:1-2",
+    },
   ])(
     "opens a diff in its workspace at $expected",
     ({ filePath, activeCwd, repositoryRoot, fileCwd, expected }) => {
