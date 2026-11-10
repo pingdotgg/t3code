@@ -608,6 +608,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     accountId: string,
     creditId: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
+    // The enclosing CliproxyApi.consume span covers this inline helper.
     const redeem = Effect.fnUntraced(function* (account: AuthFile) {
       const body = yield* apiCall(
         hub,

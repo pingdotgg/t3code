@@ -449,7 +449,11 @@ export function UsageLimitsSection({
                     key={account.key}
                     className="flex-row items-center gap-3 rounded-[24px] border-continuous bg-grouped-card p-4"
                   >
-                    {account.email ? <AccountChip email={account.email} /> : null}
+                    <View className="size-5 items-center justify-center rounded-md bg-subtle-strong">
+                      <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+                        {pool.accounts.indexOf(account) + 1}
+                      </Text>
+                    </View>
                     <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">
                       {accountName(account)}
                     </Text>

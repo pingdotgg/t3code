@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   buildSubscriptionUsageSnapshot,
+  subscriptionUsageTimeline,
   createWidgetRefresher,
   WIDGET_REFRESH_INTERVAL,
 } from "./subscriptionUsageSnapshot";
@@ -118,7 +119,7 @@ describe("subscription widget snapshots", () => {
                       id: "failed-account",
                       email: "failed@example.com",
                       usageLimits: {
-                        checkedAt,
+                        checkedAt: windows.length > 0 ? checkedAt : "2026-09-05T11:00:00.000Z",
                         windows,
                         unavailable: { reason: "probeFailed" as const },
                       },
@@ -143,6 +144,9 @@ describe("subscription widget snapshots", () => {
     const partial = buildSubscriptionUsageSnapshot(failedInput([], true), deepLink);
     expect(partial.providers[0]?.detail).toBe("Available subscription limits");
     expect(partial.providers[0]?.windows[0]?.remaining).toBe(60);
+    expect(partial.checkedAt).toBe(now);
+    expect(partial.providers[0]?.expiresAt).toBe(now + 10 * 60_000);
+    expect(subscriptionUsageTimeline(partial, now)[0]?.props.providers[0]?.windows).toHaveLength(1);
     const retained = buildSubscriptionUsageSnapshot(failedInput(limits.windows), deepLink);
     expect(retained.providers[0]?.detail).toBe("Last known limits");
     expect(retained.providers[0]?.windows[0]).toMatchObject({
