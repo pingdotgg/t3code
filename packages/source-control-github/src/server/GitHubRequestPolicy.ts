@@ -149,8 +149,8 @@ function retryAtFrom(
 
 /**
  * HTTP 200 GraphQL rate limits use RATE_LIMITED or untyped errors with quota headers. A 403 is a
- * limit only when GitHub names one, by an exhausted quota or its body: a proxy in front of GitHub
- * Enterprise can refuse with `Retry-After` and nothing else.
+ * limit only when GitHub names one, by an exhausted quota or its body (older hosts say "abuse
+ * detection"): a proxy in front of GitHub Enterprise can refuse with `Retry-After` and nothing else.
  */
 export function isRateLimited(input: {
   readonly status: number;
@@ -170,7 +170,8 @@ export function isRateLimited(input: {
               /rate limit (already )?exceeded/i.test(error.message)),
         ))) ||
     (status === 403 &&
-      (headers["x-ratelimit-remaining"] === "0" || /rate limit/i.test(input.body ?? "")))
+      (headers["x-ratelimit-remaining"] === "0" ||
+        /rate limit|abuse detection/i.test(input.body ?? "")))
   );
 }
 
