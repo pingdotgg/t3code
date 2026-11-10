@@ -293,7 +293,7 @@ function AnnotationEditor({
   };
 
   const save = async () => {
-    if (!source) return;
+    if (!source || saving) return;
     const pendingText = commitTextDraft();
     setSaving(true);
     setSaveError(null);
