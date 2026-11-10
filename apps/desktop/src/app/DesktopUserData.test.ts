@@ -93,6 +93,25 @@ it.effect.each([
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("keeps GPU caches built on the first launch of a fresh install", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const appData = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-fresh-" });
+    const userDataPath = path.join(appData, "t3code-v2");
+
+    yield* clearStaleGpuCaches({ userDataPath, electronVersion: "44.10.1" });
+    yield* fs.makeDirectory(path.join(userDataPath, "GPUCache"));
+    yield* fs.writeFileString(path.join(userDataPath, "GPUCache", "data_0"), "44.10.1 shaders");
+    yield* clearStaleGpuCaches({ userDataPath, electronVersion: "44.10.1" });
+
+    assert.equal(
+      yield* fs.readFileString(path.join(userDataPath, "GPUCache", "data_0")),
+      "44.10.1 shaders",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("retries on the next launch when a GPU cache cannot be removed", () =>
   Effect.gen(function* () {
     const writes: Array<string> = [];

@@ -121,6 +121,7 @@ export const clearStaleGpuCaches = Effect.fn("desktop.userData.clearStaleGpuCach
     for (const name of GPU_CACHE_DIRECTORIES) {
       yield* fs.remove(path.join(input.userDataPath, name), { recursive: true, force: true });
     }
+    yield* fs.makeDirectory(input.userDataPath, { recursive: true });
     yield* fs.writeFileString(markerPath, input.electronVersion);
   },
   (effect, input) =>
