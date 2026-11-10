@@ -526,6 +526,13 @@ const reportOutcome = (state: string | undefined) =>
 const shellCommandOf = (input: Readonly<Record<string, unknown>> | undefined) =>
   stringField(input, "command")?.trim();
 
+const isShellId = Schema.is(Shell.ID);
+// Any tool can report a shellID; only one OpenCode accepts back can be checked or removed.
+const launchedShell = (metadata: Readonly<Record<string, unknown>> | undefined) => {
+  const shellId = metadata?.["status"] === "running" ? metadata["shellID"] : undefined;
+  return isShellId(shellId) ? shellId : undefined;
+};
+
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
 
@@ -2321,7 +2328,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const holderOf = (sessionId: string) => {
       const own = threads.get(sessionId);
       if (own !== undefined) return own.wakes.at(-1)?.running === true ? own : undefined;
-      const parent = announced.get(sessionId)?.parentID;
+      // A held subagent's own subagents have no state either; the nearest ancestor with state holds.
+      let parent = announced.get(sessionId)?.parentID;
+      while (parent !== undefined && !threads.has(parent)) parent = announced.get(parent)?.parentID;
       const holder = parent === undefined ? undefined : threads.get(parent);
       return holder !== undefined && holder.active === undefined && holder.wakes.length > 0
         ? holder
@@ -2351,8 +2360,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       metadata: Readonly<Record<string, unknown>> | undefined,
       input: Readonly<Record<string, unknown>> | undefined,
     ) => {
-      const shellId = stringField(metadata, "shellID");
-      if (metadata?.["status"] !== "running" || shellId === undefined) return false;
+      const shellId = launchedShell(metadata);
+      if (shellId === undefined) return false;
       if (state.endedShells.delete(shellId) || state.shells.has(shellId)) return false;
       state.shells.set(shellId, { directory: state.directory, command: shellCommandOf(input) });
       return true;
@@ -2402,6 +2411,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       return false;
     };
+
+    // A shell a discarded wake handed to its caller still reports its end to the session that launched it.
+    const releaseAdoptedShell = Effect.fnUntraced(function* (
+      event: OpenCode2Client.OpenCode2StreamEvent,
+    ) {
+      if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return;
+      const { metadata } = event.data.item.payload;
+      if (stringField(metadata, "source") !== "shell") return;
+      const shellId = stringField(metadata, "shellID") ?? "";
+      for (const state of threads.values()) {
+        if (!state.shells.delete(shellId)) continue;
+        // The report wakes that session; Stop's stray pass ends what a removal started.
+        if (state.stopped.has(shellId)) strays.set(event.data.sessionID, state);
+        yield* syncRosterAncestors(state);
+      }
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       const sessionId = sessionOfEvent(event);
@@ -2461,6 +2486,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           held.running = false;
         }
       } else {
+        if (tracked === undefined) yield* releaseAdoptedShell(event);
         yield* route(event, sessionId);
       }
       if (shellsChanged) yield* syncRosterAncestors(tracked);
@@ -3355,16 +3381,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     // Shells a held wake started in sessions it had not named yet; replay would count them.
-    const heldShells = (caller: ThreadState) => {
-      const running = new Set<string>();
-      for (const event of caller.wakes.flatMap((wake) => wake.events)) {
+    const heldShells = (wakes: ReadonlyArray<Wake>) => {
+      const inputs = new Map<string, Readonly<Record<string, unknown>>>();
+      const running = new Map<string, string | undefined>();
+      for (const event of wakes.flatMap((wake) => wake.events)) {
         if (!untracked.has(event)) continue;
-        if (
-          event.type === "session.tool.success" &&
-          event.data.metadata?.["status"] === "running"
-        ) {
-          const shellId = stringField(event.data.metadata, "shellID");
-          if (shellId !== undefined) running.add(shellId);
+        if (event.type === "session.tool.called") inputs.set(event.data.id, event.data.input);
+        if (event.type === "session.tool.success") {
+          const shellId = launchedShell(event.data.metadata);
+          if (shellId !== undefined)
+            running.set(shellId, shellCommandOf(inputs.get(event.data.id)));
         }
         if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
           const { metadata } = event.data.item.payload;
@@ -3376,7 +3402,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return running;
     };
 
+    // Shells a dropped wake started keep running, so its caller tracks them until they end or are removed.
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
+      for (const [id, command] of heldShells(wakes)) {
+        if (!caller.shells.has(id)) caller.shells.set(id, { directory: caller.directory, command });
+      }
       const retired = new Set<string>();
       const retire = (childId: string) => {
         const info = announced.get(childId);
@@ -3496,6 +3526,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(wakes ? state.wakes : [])
             .filter((wake) => wake.running)
             .map((wake) => ({ key: wake, sessionId: state.sessionId, caller: undefined })),
+          // Subagents a held wake started have no call yet; their wake holds what they launch until they end.
+          ...(wakes ? state.wakes : []).flatMap((wake) =>
+            [...wake.children].map((sessionId) => ({
+              key: sessionId,
+              sessionId,
+              caller: undefined,
+            })),
+          ),
         ].filter(({ key }) => !interrupted.has(key));
       const unreached = new Set<string>();
       // Succeeds with the sessions it interrupted.
@@ -3535,7 +3573,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               id,
               directory: shell.directory,
             })),
-            ...[...heldShells(caller)].map((id) => ({ caller, id, directory: caller.directory })),
+            ...[...heldShells(caller.wakes).keys()].map((id) => ({
+              caller,
+              id,
+              directory: caller.directory,
+            })),
           ])
           .filter(({ id }) => !attempted.has(id));
       const removed: Array<{ readonly caller: ThreadState; readonly id: string }> = [];
@@ -3587,14 +3629,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             for (const caller of sessionsOf(state)) {
               for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
             }
-            for (const { caller, id } of removed) caller.shells.delete(id);
-            for (const caller of new Set(removed.map(({ caller }) => caller))) {
-              yield* syncRosterAncestors(caller);
-            }
             // Interrupted above but not yet ended: its end must not finish the thread's next turn.
             if (state.wakes.some((wake) => wake.running)) markUnsettled(state);
+            // Hands held shells to the thread first, so one whose remove failed stays tracked.
             discardWakes(state, state.wakes.splice(0));
-            yield* syncRosterAncestors(state);
+            for (const { caller, id } of removed) caller.shells.delete(id);
+            for (const caller of new Set([state, ...removed.map(({ caller }) => caller)])) {
+              yield* syncRosterAncestors(caller);
+            }
             return true;
           }),
         );

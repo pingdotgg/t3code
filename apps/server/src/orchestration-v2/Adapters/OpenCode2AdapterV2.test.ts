@@ -1238,6 +1238,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.interrupt", { sessionID: CHILD }),
           reply("session.interrupt", { interrupted: true }),
           event("session.execution.interrupted", { sessionID: CHILD }),
+          // Its wake is discarded once it ended; the stray pass interrupts what a removal restarted.
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
           drained,
         ],
         { replayGate: gate },
@@ -1252,6 +1255,188 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.isTrue(gate.hasReached("removing"));
       yield* watch.until(() => watch.state.variant === "drained");
       assert.lengthOf(offers, 1);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  const GRANDCHILD = "ses_f1485c529ffeGGGGGGGGGGGGGG";
+  // The held subagent starts its own background subagent, whose shell arrives before either call is named.
+  const heldGrandchildShell = (): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: CHILD, assistantMessageID: "msg_child", id: "call-nested" };
+    return [
+      event("session.execution.started", { sessionID: SESSION }),
+      ...backgroundLaunch(CHILD).slice(3),
+      returnedRunning("call-background"),
+      event("session.execution.started", { sessionID: CHILD }),
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Nested", prompt: "sleep", background: true },
+        executed: false,
+      }),
+      event("session.created", { ...childCreated(GRANDCHILD), parentID: CHILD }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: GRANDCHILD, status: "running" },
+      }),
+      event("session.tool.success", {
+        ...tool,
+        content: [{ type: "text", text: "The subagent is working in the background." }],
+        metadata: { sessionID: GRANDCHILD, status: "running", truncated: false },
+        executed: false,
+      }),
+      event("session.execution.started", { sessionID: GRANDCHILD }),
+      ...shellLaunched(GRANDCHILD, "sh_grandchild"),
+      event("session.execution.succeeded", { sessionID: SESSION }),
+      heldVariant("held"),
+    ];
+  };
+
+  it.effect("lists a grandchild's shell from a held wake once the wake runs", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["after"]);
+      const { runtime, thread } = yield* resumed(
+        [...heldGrandchildShell(), heldVariant("after", "after")],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      gate.release("after");
+      yield* watch.until(() => watch.state.variant === "after");
+      const [, , shell] = watch.state.roster ?? [];
+      assert.deepEqual(shell, {
+        taskId: "sh_grandchild",
+        kind: "command",
+        description: SHELL_COMMAND,
+        parentTaskId: `${CHILD}:call-nested`,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a held subagent's shell tracked when a reconnect discards its wake", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...heldSubagentShell(),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", { [CHILD]: { type: "running" } }),
+        // A failed check keeps the shell, so this reply needs no full shell.
+        out("shell.get", { id: "sh_child", "location[directory]": WORK }),
+        reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      // The held wake keeps work pending until the reconnect discards it and lists what it kept.
+      yield* watch.until(() => watch.state.pending === false || watch.state.roster?.length === 1);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+      ]);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("retries a held subagent's shell whose remove failed on the next Stop", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: they only record which entries were emitted.
+      const gate = makeProviderReplayGate(["first", "second"]);
+      gate.release("first");
+      gate.release("second");
+      const { runtime, thread } = yield* resumed(
+        [
+          ...heldSubagentShell(),
+          removeShell("sh_child"),
+          reply("shell.remove", { status: 500, body: { name: "UnknownError", data: {} } }),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }, "first"),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          removeShell("sh_child"),
+          shellReport(CHILD, "sh_child", "error", "Shell.NotFoundError", "second"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      const stop = runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* stop;
+      assert.isTrue(gate.hasReached("first"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+      ]);
+      yield* stop;
+      assert.isTrue(gate.hasReached("second"));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell a held subagent launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(CHILD, "sh_late");
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: it only records that the remove's report was emitted.
+      const gate = makeProviderReplayGate(["removing"]);
+      gate.release("removing");
+      const { runtime, thread } = yield* resumed(
+        [
+          event("session.execution.started", { sessionID: SESSION }),
+          ...backgroundLaunch(CHILD).slice(3),
+          returnedRunning("call-background"),
+          event("session.execution.started", { sessionID: CHILD }),
+          ...launch.slice(0, -1),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          heldVariant("held"),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          // The subagent's shell starts after the interrupt returns, before its execution ends.
+          launch.at(-1)!,
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          removeShell("sh_late"),
+          shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError", "removing"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isTrue(gate.hasReached("removing"));
+      yield* watch.until(() => watch.state.variant === "drained");
       assert.isFalse(watch.state.pending);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
@@ -5310,11 +5495,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.interrupt", { sessionID: CHILD_B }),
           reply("session.interrupt", { interrupted: true }),
           event("session.execution.interrupted", { sessionID: CHILD_B }),
-          out("session.interrupt", { sessionID: SPAWNED }),
-          reply("session.interrupt", {
-            status: 500,
-            body: { _tag: "UnknownError", message: "interrupt failed" },
-          }),
+          // Stop interrupts the held wake's subagent, then retries it as a stray.
+          ...[1, 2].flatMap(() => [
+            out("session.interrupt", { sessionID: SPAWNED }),
+            reply("session.interrupt", {
+              status: 500,
+              body: { _tag: "UnknownError", message: "interrupt failed" },
+            }),
+          ]),
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
           event("session.execution.started", { sessionID: SESSION }),
