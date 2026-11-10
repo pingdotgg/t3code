@@ -24,13 +24,14 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import {
   chooseVoiceDestination,
+  cloudVoiceConnectionAtom,
   voiceConnectionAtom,
   voiceGrantAtom,
-  voiceSpeechStatusAtom,
   hasEnvironmentVoiceCapture,
 } from "../voice-input/voiceDestination";
-import { VoiceModelSection } from "./VoiceModelSection";
-import { CloudVoiceSection } from "./CloudVoiceSection";
+import { LocalModelChoice } from "./VoiceModelSection";
+import { CloudVoiceChoice } from "./CloudVoiceSection";
+import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -127,42 +128,78 @@ function saveDestination(id: EnvironmentId | null) {
 function EnvironmentChoice({
   environment,
   selected,
+  onCloudOnly,
 }: {
   environment: EnvironmentPresentation;
   selected: boolean;
+  /** Called instead of a local grant when the environment only offers cloud transcription. */
+  onCloudOnly: () => void;
 }) {
-  const usable = useAtomValue(voiceConnectionAtom(environment.environmentId)) !== null;
-  const status = AsyncResult.getOrElse(
-    useAtomValue(voiceSpeechStatusAtom(environment.environmentId)),
-    () => null,
-  );
+  const local = useAtomValue(voiceConnectionAtom(environment.environmentId)) !== null;
+  const cloud = useAtomValue(cloudVoiceConnectionAtom(environment.environmentId)) !== null;
+  const usable = local || cloud;
   return (
     <ListChoiceRow
       label={environment.label}
       selected={selected}
       disabled={!usable}
       description={
-        !usable
-          ? environment.connection.phase !== "connected"
-            ? "Not connected"
-            : "Transcription unavailable"
-          : status?.supported === false
-            ? status.reason
-            : status?.state === "missing-model"
-              ? "No transcription model installed"
-              : (environment.displayUrl ?? "Send finished recordings to this environment.")
+        environment.connection.phase !== "connected"
+          ? "Not connected"
+          : !usable
+            ? "Transcription unavailable"
+            : (environment.displayUrl ?? "Send finished recordings to this environment.")
       }
       separated
       onPress={() => {
-        if (!selected)
-          Dialog.confirm({
-            title: `Send microphone audio to ${environment.label}?`,
-            message: `Finished recordings will be sent to ${environment.displayUrl ?? environment.label} for transcription. You can switch back to This device at any time.`,
-            confirmText: "Use environment",
-            onConfirm: () => saveDestination(environment.environmentId),
-          });
+        if (selected) return;
+        if (!local) return onCloudOnly();
+        Dialog.confirm({
+          title: `Send microphone audio to ${environment.label}?`,
+          message: `Finished recordings will be sent to ${environment.displayUrl ?? environment.label} for transcription. You can switch back to This device at any time.`,
+          confirmText: "Use environment",
+          onConfirm: () => saveDestination(environment.environmentId),
+        });
       }}
     />
+  );
+}
+
+/** How the selected environment transcribes: its own model or a cloud provider. */
+function EnvironmentMethodSection({
+  environment,
+  grant,
+  cloudOpen,
+  onCloudOpenChange,
+}: {
+  environment: EnvironmentPresentation;
+  grant: VoiceGrant | null;
+  cloudOpen: boolean;
+  onCloudOpenChange: (open: boolean) => void;
+}) {
+  const id = environment.environmentId;
+  const destination = grant?.destination.environmentId === id ? grant.destination : null;
+  const cloudCapable =
+    environment.serverConfig?.environment.capabilities.cloudVoiceTranscription === true ||
+    destination?.kind === "cloud";
+  return (
+    <SettingsSection title={`Method on ${environment.label}`}>
+      <LocalModelChoice
+        environmentId={id}
+        label={environment.label}
+        selected={destination?.kind === "environment"}
+        // The user already agreed to send audio to this environment.
+        onSelect={() => saveDestination(id)}
+      />
+      {cloudCapable ? (
+        <CloudVoiceChoice
+          environment={environment}
+          active={destination?.kind === "cloud" ? destination : null}
+          open={cloudOpen}
+          onOpenChange={onCloudOpenChange}
+        />
+      ) : null}
+    </SettingsSection>
   );
 }
 
@@ -175,6 +212,15 @@ export function SettingsVoiceRouteScreen() {
         (environment) => environment.environmentId === grant.destination.environmentId,
       )
     : undefined;
+  // An environment whose cloud sheet is open; it may not hold the grant yet.
+  const [cloudSheet, setCloudSheet] = useState<EnvironmentId | null>(null);
+  // A sheet whose environment lost cloud transcription is gone, so its pending choice is too.
+  const sheetEnvironment = environments.find(
+    (environment) =>
+      environment.environmentId === cloudSheet &&
+      environment.serverConfig?.environment.capabilities.cloudVoiceTranscription === true,
+  );
+  const methodEnvironment = sheetEnvironment ?? grantEnvironment;
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -234,8 +280,11 @@ export function SettingsVoiceRouteScreen() {
           <ListChoiceRow
             label="This device"
             description="Audio stays on this device and is transcribed here."
-            selected={!grant}
-            onPress={() => saveDestination(null)}
+            selected={!grant && !sheetEnvironment}
+            onPress={() => {
+              setCloudSheet(null);
+              saveDestination(null);
+            }}
           />
           {hasEnvironmentVoiceCapture &&
             environments.map((environment) => (
@@ -243,9 +292,11 @@ export function SettingsVoiceRouteScreen() {
                 key={environment.environmentId}
                 environment={environment}
                 selected={
-                  grant?.destination.kind === "environment" &&
-                  grant.destination.environmentId === environment.environmentId
+                  sheetEnvironment
+                    ? sheetEnvironment.environmentId === environment.environmentId
+                    : grant?.destination.environmentId === environment.environmentId
                 }
+                onCloudOnly={() => setCloudSheet(environment.environmentId)}
               />
             ))}
           {isReady && grant && !grantEnvironment ? (
@@ -259,30 +310,14 @@ export function SettingsVoiceRouteScreen() {
             />
           ) : null}
         </SettingsSection>
-        {hasEnvironmentVoiceCapture &&
-          environments
-            .filter(
-              (env) =>
-                env.serverConfig?.environment.capabilities.cloudVoiceTranscription ||
-                (grant?.destination.kind === "cloud" &&
-                  grant.destination.environmentId === env.environmentId),
-            )
-            .map((environment) => (
-              <CloudVoiceSection
-                key={environment.environmentId}
-                environment={environment}
-                active={
-                  grant?.destination.kind === "cloud" &&
-                  grant.destination.environmentId === environment.environmentId
-                    ? grant.destination
-                    : null
-                }
-              />
-            ))}
-        {grantEnvironment && grant?.destination.kind === "environment" ? (
-          <VoiceModelSection
-            environmentId={grantEnvironment.environmentId}
-            label={grantEnvironment.label}
+        {hasEnvironmentVoiceCapture && methodEnvironment ? (
+          <EnvironmentMethodSection
+            environment={methodEnvironment}
+            grant={grant}
+            cloudOpen={cloudSheet === methodEnvironment.environmentId}
+            onCloudOpenChange={(open) =>
+              setCloudSheet(open ? methodEnvironment.environmentId : null)
+            }
           />
         ) : null}
         {!grant && transcriber === null ? (
