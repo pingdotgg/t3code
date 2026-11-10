@@ -2321,6 +2321,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     active: Record<string, unknown>,
     ended?: "succeeded",
     assistant: Record<string, unknown> = {},
+    deliveredSteer?: string,
   ) => [
     { type: "runtime_exit", status: "success" } as const,
     out("event.subscribe"),
@@ -2357,6 +2358,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           finish: "stop",
           ...assistant,
         },
+        ...(deliveredSteer === undefined
+          ? []
+          : [{ id: deliveredSteer, time: { created: 2 }, text: "steered", type: "user" }]),
         {
           id: "msg_0eb735d41001NJee1EvVePJAK5",
           time: { created: 1 },
@@ -2381,6 +2385,41 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     collected.flatMap((event) =>
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
+
+  it.effect("recovers a steer's missed delivery from history after reconnect", () =>
+    Effect.gen(function* () {
+      const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        out("session.prompt", "<any>"),
+        replyData("session.prompt", {
+          id: steerId,
+          sessionID: SESSION,
+          time: { created: 2 },
+          type: "user",
+          payload: { text: "steered" },
+          delivery: "steer",
+        }),
+        ...reconnected({}, "succeeded", {}, steerId),
+        event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.steerTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        threadId,
+        runId: turnInput(thread).runId,
+        message: {
+          ...turnInput(thread).message,
+          messageId: MessageId.make("message:opencode2-adapter:steer"),
+          text: "steered",
+        },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("does not end a turn from an earlier turn's history when its prompt is not there", () =>
     Effect.gen(function* () {

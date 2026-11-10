@@ -2574,6 +2574,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const found = start === null || read.at(-1)?.id === start;
       if (!found) return undefined;
       const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+      for (const message of recent) {
+        if (message.type === "user" && turn.steers.delete(message.id)) {
+          turn.settledInbox.add(message.id);
+        }
+      }
       const idle = recent.find((message) => message.type === "idle");
       const assistant = recent.find((message) => message.type === "assistant");
       if (assistant?.retry !== undefined) {
