@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   metadata: vi.fn(),
   runtime: vi.fn(),
   interaction: vi.fn(),
+  releaseRuntimeMode: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
   modelUnavailable: vi.fn(() => false),
@@ -150,6 +151,7 @@ vi.mock("./use-composer-drafts", async () => {
     mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
       state.draftText += `\n${input.text}`;
     }),
+    releaseComposerDraftRuntimeMode: state.releaseRuntimeMode,
     replaceComposerDraftAttachments: vi.fn(),
     setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
@@ -212,6 +214,7 @@ beforeEach(() => {
   state.config.shellThreadFamilies = false;
   state.modelUnavailable.mockReset().mockReturnValue(false);
   state.familyMount.mockReset().mockReturnValue(() => {});
+  state.releaseRuntimeMode.mockReset();
   appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
@@ -404,6 +407,28 @@ describe("queued task operation access", () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
   });
+
+  it.each([
+    { runtimeMode: "approval-required", refused: false, released: true },
+    { runtimeMode: "full-access", refused: false, released: true },
+    { runtimeMode: "approval-required", refused: true, released: false },
+  ] as const)(
+    "releases the composer's mode pick only once delivery applied it ($runtimeMode, refused: $refused)",
+    async ({ runtimeMode, refused, released }) => {
+      setOperateGrant("secondary", true);
+      await state.manager.enqueue(message({ runtimeMode }));
+      if (refused) {
+        state.runtime.mockResolvedValueOnce(
+          AsyncResult.failure(Cause.fail(new Error("Mode change refused."))),
+        );
+      }
+      await runDrain();
+      expect(state.runtime).toHaveBeenCalledTimes(runtimeMode === state.thread.runtimeMode ? 0 : 1);
+      expect(state.releaseRuntimeMode.mock.calls).toEqual(
+        released ? [["secondary:thread", runtimeMode]] : [],
+      );
+    },
+  );
 
   it.each([
     { isCreation: false, accepted: false },

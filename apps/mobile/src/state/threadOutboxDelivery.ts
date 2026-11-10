@@ -78,6 +78,7 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
+  releaseComposerDraftRuntimeMode,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -809,6 +810,10 @@ export function createThreadOutboxDelivery(): {
         return false;
       }
     }
+    releaseComposerDraftRuntimeMode(
+      scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+      settings.runtimeMode,
+    );
 
     if (settings.interactionMode !== thread.interactionMode) {
       if (!hasAccess()) return true;

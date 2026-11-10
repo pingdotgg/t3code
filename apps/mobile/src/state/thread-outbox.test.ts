@@ -283,13 +283,11 @@ describe("thread outbox", () => {
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [edited],
     });
-    expect(registry.get(manager.loadedAtom)).toBe(false);
     await expect(manager.confirmQueued(edited)).resolves.toBe(true);
 
     await manager.remove(edited);
     await expect(manager.load()).resolves.toBe(true);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
-    expect(registry.get(manager.loadedAtom)).toBe(true);
     expect(load).toHaveBeenCalledTimes(2);
   });
 
