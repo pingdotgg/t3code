@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -69,14 +70,19 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
-it.effect(
-  "starts the backend and window while Linux registration is stalled and cancels it on shutdown",
-  () =>
+it.effect.each([false, true])(
+  "stops backends together before flushing history and cancels Linux registration, stop defect=%s",
+  (stopDefect) =>
     Effect.gen(function* () {
       const registrationStarted = yield* Deferred.make<void>();
       const releaseRegistration = yield* Deferred.make<void>();
       const registrationStopped = yield* Deferred.make<void>();
       const windowStarted = yield* Deferred.make<void>();
+      const firstStopStarted = yield* Deferred.make<void>();
+      const secondStopStarted = yield* Deferred.make<void>();
+      const releaseStops = yield* Deferred.make<void>();
+      const historyStarted = yield* Deferred.make<void>();
+      const releaseHistory = yield* Deferred.make<void>();
       const quitting = yield* Ref.make(false);
       const events: string[] = [];
       const record = (event: string) =>
@@ -111,6 +117,7 @@ it.effect(
           Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
             installIntoProcess: Effect.succeed(true),
             awaitDiscovery: Effect.succeed(true),
+            awaitUserShellDiscovery: Effect.succeed(true),
             updates: Stream.empty,
           }),
           Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
@@ -169,7 +176,21 @@ it.effect(
               start: record("backend"),
               currentConfig: Effect.succeedSome({ preflightFailure: Option.none() }),
             }),
-            list: Effect.succeed([]),
+            list: Effect.succeed([
+              {
+                stop: () =>
+                  Deferred.succeed(firstStopStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseStops)),
+                    Effect.andThen(stopDefect ? Effect.die("stop defect") : Effect.void),
+                  ),
+              },
+              {
+                stop: () =>
+                  Deferred.succeed(secondStopStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseStops)),
+                  ),
+              },
+            ]),
           } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]),
           Effect.provideService(DesktopServerExposure.DesktopServerExposure, {
             configureFromSettings: () => Effect.succeed({ mode: "local-only" }),
@@ -182,7 +203,10 @@ it.effect(
             start: Effect.void,
           } as unknown as DesktopAppActivation.DesktopAppActivation["Service"]),
           Effect.provideService(DesktopRendererHistory.DesktopRendererHistory, {
-            shutdown: Effect.void,
+            shutdown: Deferred.succeed(historyStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseHistory)),
+              Effect.asVoid,
+            ),
           } as DesktopRendererHistory.DesktopRendererHistory["Service"]),
         );
       const app = yield* runApp.pipe(
@@ -226,8 +250,19 @@ it.effect(
       yield* Deferred.await(windowStarted);
       assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
-      yield* (yield* DesktopShutdown.DesktopShutdown).request;
-      yield* Fiber.join(app);
+      const shutdown = yield* DesktopShutdown.DesktopShutdown;
+      yield* shutdown.request;
+      yield* Deferred.await(firstStopStarted);
+      yield* Deferred.await(secondStopStarted);
+      assert.isFalse(yield* Deferred.isDone(historyStarted));
+      assert.isFalse(yield* shutdown.isComplete);
+      yield* Deferred.succeed(releaseStops, undefined);
+      yield* Deferred.await(historyStarted);
+      assert.isFalse(yield* shutdown.isComplete);
+      yield* Deferred.succeed(releaseHistory, undefined);
+      const result = yield* Fiber.await(app);
+      assert.equal(Exit.isFailure(result), stopDefect);
+      assert.isTrue(yield* shutdown.isComplete);
       assert.isTrue(yield* Deferred.isDone(registrationStopped));
     }).pipe(Effect.provide(DesktopShutdown.layer)),
 );
