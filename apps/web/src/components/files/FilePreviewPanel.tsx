@@ -749,6 +749,16 @@ function EditableFileSurface({
     setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
     changeFileSaveSession(saveTarget, file.contents);
     if (!nextLineAnnotations) return;
+    const keptIds = new Set(
+      nextLineAnnotations.flatMap((annotation) => annotation.metadata.entries.map(({ id }) => id)),
+    );
+    for (const annotation of lineAnnotations) {
+      for (const entry of annotation.metadata.entries) {
+        if (entry.kind === "comment" && !keptIds.has(entry.id)) {
+          removeReviewComment(composerDraftTarget, entry.id);
+        }
+      }
+    }
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
     setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));

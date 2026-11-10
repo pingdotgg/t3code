@@ -384,6 +384,72 @@ describe("file view comments", () => {
     expect(screen.getByText("Removed from the composer").query()).toBeNull();
   });
 
+  it("deleting a commented line removes its comment instead of moving it", async () => {
+    using _settings = setup();
+    const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const store = useComposerDraftStore.getState();
+    const comment = buildFileReviewComment({
+      id: "file-comment-deleted-line",
+      filePath: "config.ts",
+      startLine: 2,
+      endLine: 2,
+      text: "This is about b",
+      contents,
+    });
+    store.addReviewComment(threadRef, comment);
+    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
+
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("This is about b")).toBeVisible();
+    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
+    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+    const firstText = (lineNumber: number) =>
+      document
+        .createTreeWalker(
+          shadowRoot()!.querySelector(`[data-line="${lineNumber}"]`)!,
+          NodeFilter.SHOW_TEXT,
+        )
+        .nextNode()!;
+    const input = (inputType: string, data: string | null = null) =>
+      act(async () => {
+        content()!.dispatchEvent(
+          new InputEvent("beforeinput", {
+            inputType,
+            data,
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+          }),
+        );
+      });
+
+    content()!.focus();
+    const selectionSynced = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.setBaseAndExtent(firstText(2), 0, firstText(3), 0);
+    await selectionSynced;
+    await input("deleteContentBackward");
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe("const a = 1;\nconst c = 3;\n"));
+    await expect.element(screen.getByText("This is about b")).not.toBeInTheDocument();
+    // The caret stays at the start of the line that moved up.
+    await input("insertText", "x");
+    await vi.waitFor(() =>
+      expect(state.optimistic?.contents).toBe("const a = 1;\nxconst c = 3;\n"),
+    );
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(draft?.reviewComments ?? []).toEqual([]);
+    expect(screen.getByText("This is about b").query()).toBeNull();
+  });
+
   it("keeps a linked line revealed when the thread changes under the file view", async () => {
     using _settings = setup();
     const contents = Array.from(
