@@ -19,6 +19,7 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
     "`ws.ts:3`, `index.ts:5`, `src/index.ts`, `src/worker.ts`",
     "[worker.ts](/home/user/work/worker/src/worker.ts)",
     "[http](cloud/http.ts#L4), [ws](./ws.ts)",
+    "[`src/ws.ts`](/home/user/app/packages/server/src/ws.ts), [`src/index.ts` boots it](/home/user/app/packages/server/src/ws.ts)",
     "`/usr/bin/node`, `git rebase --onto`",
   ].join("\n");
   const pills = Object.fromEntries(
@@ -34,6 +35,7 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
     "./ws.ts": false,
     "index.ts:5": false,
     "src/index.ts": false,
+    "/home/user/app/packages/server/src/ws.ts": true,
     "src/worker.ts": false,
   });
 });

@@ -4,6 +4,8 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
+  normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
   resolveMarkdownFileLinkTarget,
 } from "@t3tools/shared/markdownLinks";
@@ -28,9 +30,19 @@ export const fileLinkPills = (
   worldFiles: ReadonlyArray<string>,
 ) => {
   const files = worldFiles.map((file) => (file.startsWith("/") ? file : `${cwd}/${file}`));
+  // A link whose label names its own file renders as one pill, so code in that label is no pill.
+  const withoutFileLabels = finalText.replace(
+    /\[([^\]\n]*)\]\(([^)\s]+)\)/g,
+    (link, label: string, href: string) =>
+      isMarkdownFileLinkLabel(label.replaceAll("`", ""), normalizeMarkdownLinkDestination(href))
+        ? `[](${href})`
+        : link,
+  );
   const sources = [
     ...extractMarkdownLinkHrefs(finalText),
-    ...extractInlineCodeSpans(finalText).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
+    ...extractInlineCodeSpans(withoutFileLabels).flatMap(
+      (span) => inlineCodeFilePathCandidate(span) ?? [],
+    ),
   ];
   return [...new Set(sources)].flatMap((source) => {
     const target = resolveMarkdownFileLinkTarget(source, cwd);
