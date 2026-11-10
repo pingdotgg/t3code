@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
@@ -1142,7 +1143,8 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
-    const windir = process.env.WINDIR ?? "C:\\Windows";
+    // Not Config: Windows variable names are case-insensitive only on the live process.env.
+    const windir = (yield* HostProcess.Environment).WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
       effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,

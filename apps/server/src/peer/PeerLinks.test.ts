@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs certificate bytes.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
+import * as NodeHttps from "node:https";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -35,6 +39,8 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
+
+import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
 
 /** What B's probe saw: the calling client and the modes it may start work with. */
 const Probe = Schema.Struct({ caller: Schema.String, modes: Schema.String });
@@ -114,6 +120,47 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
     Effect.flatMap((server) => serveB(descriptor).pipe(Effect.provideContext(server))),
   );
+
+it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* layerLinkingEnvironment(
+        laptop,
+        ServerSecretStore.layer,
+        layerReaderDatabase,
+      ).pipe(Layer.build);
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const sql = Context.get(context, SqlClient.SqlClient);
+      yield* sql`
+      INSERT INTO peer_environment_links (
+        environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
+      ) VALUES (
+        ${box.environmentId}, 'test-secret', 'Box', '[]', 'auto',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
+      )
+    `;
+      const { queries, trace } = traceSqlRouting();
+      yield* links.list.pipe(trace);
+      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+      const reads = queries.filter(({ query }) =>
+        query.includes("SELECT * FROM peer_environment_links"),
+      );
+      expect(reads).toHaveLength(2);
+      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+            "Uncommitted box",
+          );
+          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+        }),
+      );
+      expect(yield* links.unlink(box.environmentId)).toBe(true);
+      expect(yield* links.list).toEqual([]);
+    }),
+  ),
+);
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
   Effect.scoped(
@@ -410,6 +457,27 @@ it.effect("reads one stored link without asking the peer", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a linked peer that is renamed shows its new name", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(b.descriptor, descriptorOf(box.environmentId, "Box Mini"));
+      expect((yield* a.links.resolve(box.environmentId)).link.label).toBe("Box Mini");
+      const stored = yield* a.links.get(box.environmentId);
+      expect(Option.map(stored, (link) => link.label)).toEqual(Option.some("Box Mini"));
+
+      yield* Ref.set(b.descriptor, descriptorOf(box.environmentId, "Box Studio"));
+      expect((yield* a.links.list).map((link) => link.label)).toEqual(["Box Studio"]);
+      const storedAfterList = yield* a.links.get(box.environmentId);
+      expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -580,3 +648,70 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+/** An https listener whose certificate this machine does not trust. */
+const serveUntrusted = Layer.build(
+  Layer.fresh(
+    NodeHttpServer.layerServer(
+      () =>
+        NodeHttps.createServer({
+          key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+          cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+        }),
+      { port: 0, host: "127.0.0.1" },
+    ),
+  ),
+).pipe(
+  Effect.map((server) => {
+    const address = Context.get(server, HttpServer.HttpServer).address;
+    if (address._tag === "UnixPathAddress") throw new Error("expected a TCP address");
+    return `https://127.0.0.1:${address.port}`;
+  }),
+);
+
+it.effect("names an untrusted certificate instead of calling the peer something else", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const untrusted = yield* serveUntrusted;
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({ url: untrusted, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(failed.reason).toBe("unreachable");
+      expect(failed.message).toContain("certificate this machine rejected");
+      expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(yield* a.links.list).toEqual([]);
+
+      // A stored link tries its next address past an untrusted one.
+      const b = yield* serveB(box);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* a.sql`
+        UPDATE peer_environment_links
+        SET urls_json = ${JSON.stringify([untrusted, b.url])}
+        WHERE environment_id = ${box.environmentId}
+      `;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it("reads Node's TLS verification code from anywhere in a cause chain", () => {
+  for (const code of [
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "HOSTNAME_MISMATCH",
+    "INVALID_CA",
+    "INVALID_PURPOSE",
+    "PATH_LENGTH_EXCEEDED",
+  ]) {
+    expect(PeerLinks.certificateErrorCode({ code })).toBe(code);
+  }
+  const wrapped = { message: "fetch failed", cause: { cause: { code: "INVALID_CA" } } };
+  expect(PeerLinks.certificateErrorCode(wrapped)).toBe("INVALID_CA");
+  expect(PeerLinks.certificateErrorCode({ cause: { code: "ECONNREFUSED" } })).toBeUndefined();
+  expect(PeerLinks.certificateErrorCode(new Error("timed out"))).toBeUndefined();
+});
