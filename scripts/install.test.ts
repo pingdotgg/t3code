@@ -63,10 +63,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
 // regression: #22490
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
   it.each([
-    ["stable", "1.2.3", 0],
-    ["preview", "1.2.4-preview.20261019.50", 0],
     // regression: #32897
     ["stable", "1.2.3", 1],
+    ["preview", "1.2.4-preview.20261019.50", 0],
   ])("finds %s %s behind nightlies and %i HTTP 504s", async (channel, version, failures) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-index-"));
     const target = NodePath.join(root, "home/runtime/versions", version);
