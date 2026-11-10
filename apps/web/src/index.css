@@ -1268,7 +1268,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   box-shadow: var(--tray-shadow);
 }
 @utility surface-composer-banner {
-  background: var(--composer-banner-fill, transparent);
+  position: relative;
+  isolation: isolate;
+  border-start-start-radius: var(--radius-2xl);
+  border-start-end-radius: var(--radius-2xl);
+  /* Continue the fill behind the next surface's rounded top corners. */
+  &::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    inset: 0 0 calc(-1 * var(--radius-composer));
+    border-radius: inherit;
+    background: var(--composer-banner-fill, transparent);
+  }
 }
 @utility surface-app-panel {
   border: 1px solid
