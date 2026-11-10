@@ -2535,8 +2535,16 @@ it.effect("shows a queued close before the action ahead of it answers", () =>
       yield* Deferred.await(firstSent);
 
       expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toEqual([]);
+
+      const reopen = atoms.runAction.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...actionReference, number: 1, action: "reopen" },
+      });
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(list))).entries.map((row) => row.number),
+      ).toEqual([1]);
       yield* Deferred.succeed(release, undefined);
-      yield* Effect.promise(() => Promise.all(closes));
+      yield* Effect.promise(() => Promise.all([...closes, reopen]));
     }),
   ),
 );

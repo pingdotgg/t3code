@@ -167,7 +167,7 @@ type EditedField = "state" | "isDraft" | "autoMergeEnabled" | "title" | "body";
 interface EditableReader {
   readonly environmentId: EnvironmentId;
   readonly concerns: (reference: PullRequestRef) => boolean;
-  readonly edit: (value: never, edit: PullRequestPendingEdit) => unknown;
+  readonly edit: (value: never, edits: ReadonlyArray<PullRequestPendingEdit>) => unknown;
 }
 
 // Module-wide like the reply patches, so separately built readers see the same writes.
@@ -220,6 +220,22 @@ function withLabelEdit<T extends { readonly labels: ReadonlyArray<PullRequestLab
   return labels.length === value.labels.length ? value : { ...value, labels };
 }
 
+function withLabelCandidateEdit(
+  value: PullRequestLabelCandidateList,
+  edit: PullRequestPendingEdit,
+): PullRequestLabelCandidateList {
+  if (edit.labels === undefined) return value;
+  const { applied, labels } = edit.labels;
+  let changed = false;
+  const candidates = value.candidates.map((candidate) => {
+    if (candidate.isApplied === applied || !labels.some((label) => label.name === candidate.name))
+      return candidate;
+    changed = true;
+    return { ...candidate, isApplied: applied };
+  });
+  return changed ? { ...value, candidates } : value;
+}
+
 /**
  * The reader with every write in flight for its pull request applied. Writes go to the reader
  * underneath, so a refused edit never stays behind in what the host said.
@@ -227,7 +243,7 @@ function withLabelEdit<T extends { readonly labels: ReadonlyArray<PullRequestLab
 function editedQuery<A, E>(
   inner: Atom.Writable<AsyncResult.AsyncResult<A, E>>,
   reader: Omit<EditableReader, "edit"> & {
-    readonly edit: (value: A, edit: PullRequestPendingEdit) => A;
+    readonly edit: (value: A, edits: ReadonlyArray<PullRequestPendingEdit>) => A;
   },
   idleTtlMs = 5 * 60_000,
 ): Atom.Writable<AsyncResult.AsyncResult<A, E>> {
@@ -236,13 +252,12 @@ function editedQuery<A, E>(
   const shown = Atom.writable(
     (get) => {
       const result = get(inner);
-      const edits = get(pullRequestPendingEditsAtom(reader.environmentId));
+      const edits = get(pullRequestPendingEditsAtom(reader.environmentId)).filter((edit) =>
+        reader.concerns(edit.reference),
+      );
       const value = AsyncResult.value(result);
       if (edits.length === 0 || Option.isNone(value)) return result;
-      const next = edits.reduce(
-        (current, edit) => (reader.concerns(edit.reference) ? reader.edit(current, edit) : current),
-        value.value,
-      );
+      const next = reader.edit(value.value, edits);
       return next === value.value ? result : AsyncResult.map(result, () => next);
     },
     (context, value: AsyncResult.AsyncResult<A, E>) => context.set(inner, value),
@@ -287,13 +302,13 @@ function settleEdit(
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
     const shown = loadedValue<never>(registry, atom as Atom.Atom<unknown>);
-    if (Option.isNone(shown) || reader.edit(shown.value, edit) === shown.value) continue;
+    if (Option.isNone(shown) || reader.edit(shown.value, [edit]) === shown.value) continue;
     const writable = atom as Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
     // A read still waiting may predate the write, unless the caller started it after the commit.
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     registry.update(
       writable,
-      AsyncResult.map((value) => reader.edit(value, edit) as never),
+      AsyncResult.map((value) => reader.edit(value, [edit]) as never),
     );
   }
 }
@@ -430,12 +445,17 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
 function editListEntries<Entry extends PullRequestListEntry>(
   input: PullRequestListInput,
   entries: ReadonlyArray<Entry>,
-  edit: PullRequestPendingEdit,
+  edits: ReadonlyArray<PullRequestPendingEdit>,
 ): ReadonlyArray<Entry> {
   let changed = false;
   const edited = entries.flatMap((entry): Entry[] => {
-    if (!samePullRequest(entry, edit.reference)) return [entry];
-    const next = withLabelEdit(withEdit(entry, edit, ["state", "isDraft", "title"]), edit);
+    const next = edits.reduce(
+      (current, edit) =>
+        samePullRequest(entry, edit.reference)
+          ? withLabelEdit(withEdit(current, edit, ["state", "isDraft", "title"]), edit)
+          : current,
+      entry,
+    );
     if (next === entry) return [entry];
     changed = true;
     return listAccepts(input, next.state, next.isDraft) ? [next] : [];
@@ -482,7 +502,7 @@ function actionPatchedQuery<Input, A, E>(
     /** False for reads the refresh stream does not restart; defaults to true. */
     readonly refreshedByServer?: (input: Input) => boolean;
     /** Shows a write in flight; absent where the reader holds nothing such a write changes. */
-    readonly edit?: (input: Input, value: A, edit: PullRequestPendingEdit) => A;
+    readonly edit?: (input: Input, value: A, edits: ReadonlyArray<PullRequestPendingEdit>) => A;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -626,8 +646,12 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
               number: value.number,
               ...(value.observedAt === undefined ? {} : { observedAt: value.observedAt }),
             },
-      edit: (_input, value, edit) =>
-        withEdit(value, edit, ["state", "isDraft", "autoMergeEnabled", "title"]),
+      edit: (_input, value, edits) =>
+        edits.reduce(
+          (current, edit) =>
+            withEdit(current, edit, ["state", "isDraft", "autoMergeEnabled", "title"]),
+          value,
+        ),
     },
   );
 }
@@ -764,10 +788,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           const { autoMergeMethod: _disarmed, ...withoutAutoMerge } = patched;
           return withoutAutoMerge;
         },
-        edit: (_input, value, edit) =>
-          withLabelEdit(
-            withEdit(value, edit, ["state", "isDraft", "autoMergeEnabled", "title", "body"]),
-            edit,
+        edit: (_input, value, edits) =>
+          edits.reduce(
+            (current, edit) =>
+              withLabelEdit(
+                withEdit(current, edit, ["state", "isDraft", "autoMergeEnabled", "title", "body"]),
+                edit,
+              ),
+            value,
           ),
       },
     ),
@@ -831,7 +859,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
                       "observedAt",
                     ]),
                   },
-          edit: (_input, value, edit) => withEdit(value, edit, ["state", "isDraft", "title"]),
+          edit: (_input, value, edits) =>
+            edits.reduce(
+              (current, edit) => withEdit(current, edit, ["state", "isDraft", "title"]),
+              value,
+            ),
         },
       ),
     );
@@ -851,21 +883,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     editedQuery(labelCandidateQueries(target), {
       environmentId: target.environmentId,
       concerns: (reference) => samePullRequest(target.input, reference),
-      edit: (value, edit) => {
-        if (edit.labels === undefined) return value;
-        const { applied, labels } = edit.labels;
-        let changed = false;
-        const candidates = value.candidates.map((candidate) => {
-          if (
-            candidate.isApplied === applied ||
-            !labels.some((label) => label.name === candidate.name)
-          )
-            return candidate;
-          changed = true;
-          return { ...candidate, isApplied: applied };
-        });
-        return changed ? { ...value, candidates } : value;
-      },
+      edit: (value, edits) => edits.reduce(withLabelCandidateEdit, value),
     }),
   );
   const labelEdit = (
