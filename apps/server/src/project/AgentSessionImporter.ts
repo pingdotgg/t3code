@@ -91,6 +91,7 @@ function dateTime(value: string): DateTime.Utc {
 
 function messageEvents(input: {
   readonly threadId: ThreadId;
+  readonly eventId: (id: string) => EventId;
   readonly index: number;
   readonly message: AgentSessionScanner.AgentSessionThreadMessage;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
@@ -152,14 +153,14 @@ function messageEvents(input: {
         };
   return [
     {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
+      id: input.eventId(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
       type: "message.updated",
       threadId: input.threadId,
       occurredAt: at,
       payload: message,
     },
     {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`),
+      id: input.eventId(`${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`),
       type: "turn-item.updated",
       threadId: input.threadId,
       occurredAt: at,
@@ -178,19 +179,16 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   // Deleting a project soft-deletes its imported threads but keeps their import records.
+  const isDeletedElsewhere = (thread: OrchestrationV2AppThread, projectId: ProjectId) =>
+    thread.deletedAt !== null &&
+    thread.projectId !== projectId &&
+    thread.historyOrigin === "v1_import";
   const restoreDeletedImport = Effect.fn("AgentSessionImporter.restoreDeletedImport")(function* (
     thread: OrchestrationV2AppThread,
     projectId: ProjectId,
   ) {
-    if (
-      thread.deletedAt === null ||
-      thread.projectId === projectId ||
-      thread.historyOrigin !== "v1_import"
-    ) {
-      return thread;
-    }
+    if (!isDeletedElsewhere(thread, projectId)) return;
     const now = yield* DateTime.now;
-    const restored = { ...thread, projectId, deletedAt: null, updatedAt: now };
     yield* eventSink.write({
       events: [
         {
@@ -199,11 +197,10 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           providerInstanceId: thread.providerInstanceId,
           occurredAt: now,
-          payload: restored,
+          payload: { ...thread, projectId, deletedAt: null, updatedAt: now },
         },
       ],
     });
-    return restored;
   });
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
@@ -338,11 +335,13 @@ const make = Effect.gen(function* () {
             { onConflict: "ignore" },
           );
           const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
-          if (Option.isSome(existing)) {
-            const existingThread = yield* restoreDeletedImport(
-              existing.value.thread,
-              input.projectId,
-            );
+          const restoring = Option.isSome(existing)
+            ? isDeletedElsewhere(existing.value.thread, input.projectId)
+              ? existing.value.thread
+              : undefined
+            : undefined;
+          if (Option.isSome(existing) && restoring === undefined) {
+            const existingThread = existing.value.thread;
             if (existingThread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
@@ -425,21 +424,39 @@ const make = Effect.gen(function* () {
             updatedAt,
           };
 
+          // A restored thread's earlier import events already hold the deterministic ids.
+          const eventId = (id: string) =>
+            EventId.make(restoring === undefined ? id : `${id}:restored:${input.projectId}`);
           const committed = yield* eventSink.write({
             unlessNativeThreadOwned: providerThread,
             events: [
-              {
-                id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
-                type: "thread.created",
-                threadId,
-                providerInstanceId: thread.providerInstanceId,
-                occurredAt: createdAt,
-                payload: appThread,
-              },
+              restoring === undefined
+                ? {
+                    id: eventId(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
+                    type: "thread.created" as const,
+                    threadId,
+                    providerInstanceId: thread.providerInstanceId,
+                    occurredAt: createdAt,
+                    payload: appThread,
+                  }
+                : {
+                    id: eventId(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
+                    type: "thread.metadata-updated" as const,
+                    threadId,
+                    providerInstanceId: thread.providerInstanceId,
+                    occurredAt: updatedAt,
+                    payload: {
+                      ...restoring,
+                      projectId: input.projectId,
+                      deletedAt: null,
+                      activeProviderThreadId: providerThreadId,
+                      updatedAt,
+                    },
+                  },
               ...(thread.omittedMessageCount > 0
                 ? [
                     {
-                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                      id: eventId(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
                       type: "turn-item.updated" as const,
                       threadId,
                       occurredAt: createdAt,
@@ -465,10 +482,10 @@ const make = Effect.gen(function* () {
                   ]
                 : []),
               ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
+                messageEvents({ threadId, eventId, index, message }),
               ),
               {
-                id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
+                id: eventId(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
                 type: "provider-thread.updated",
                 threadId,
                 driver,

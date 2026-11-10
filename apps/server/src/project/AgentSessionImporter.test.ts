@@ -383,8 +383,20 @@ it.effect("re-imports sessions whose imported threads were deleted with their pr
     }
 
     const readdedProjectId = ProjectId.make("agent-session-import-readded-project");
+    const continued = {
+      ...changed,
+      source: { ...changed.source, size: 200 },
+      thread: {
+        ...changed.thread,
+        messages: [
+          ...changed.thread.messages,
+          { role: "user" as const, text: "And the tests", createdAt: timestamp },
+          { role: "assistant" as const, text: "Tests added", createdAt: timestamp },
+        ],
+      },
+    };
     const importer = yield* makeImporter(
-      [{ _tag: "AlreadyImported", source: unchanged.source }, changed],
+      [{ _tag: "AlreadyImported", source: unchanged.source }, continued],
       Effect.void,
       ServerSettings.layerTest(),
       readdedProjectId,
@@ -397,6 +409,13 @@ it.effect("re-imports sessions whose imported threads were deleted with their pr
         deletedAt: null,
       });
     }
+    const { messages } = yield* projections.getThreadRecords(importId(changed), ["messages"]);
+    expect(messages.map((message) => message.text)).toEqual([
+      "Fix it",
+      "Fixed",
+      "And the tests",
+      "Tests added",
+    ]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
