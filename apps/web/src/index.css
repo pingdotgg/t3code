@@ -1150,7 +1150,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --surface-shadow: var(--popover-shadow);
   border: 1px solid transparent;
   background:
-    linear-gradient(180deg, var(--popover-top), var(--popover-bottom)) padding-box,
+    var(--popover-fill, linear-gradient(180deg, var(--popover-top), var(--popover-bottom)))
+      padding-box,
     var(--popover-rim) border-box;
   box-shadow: var(--surface-shadow);
 }
@@ -1159,9 +1160,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --surface-shadow: var(--surface-base-shadow);
   border: 1px solid transparent;
   background:
-    linear-gradient(180deg, var(--popover-top), var(--popover-bottom)) padding-box,
+    var(--popover-fill, linear-gradient(180deg, var(--popover-top), var(--popover-bottom)))
+      padding-box,
     var(--popover-rim) border-box,
-    linear-gradient(180deg, var(--popover-top), var(--popover-bottom)) border-box;
+    var(--popover-fill, linear-gradient(180deg, var(--popover-top), var(--popover-bottom)))
+      border-box;
   box-shadow: var(--surface-shadow);
 }
 /* Popover recipes with the command palette's and dialogs' deeper shadows. */
@@ -1183,9 +1186,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    the popover rim and a short shadow. */
 @utility surface-card {
   background: var(--card-background, var(--card-fill));
+  box-shadow: var(--card-shadow, none);
 }
 @utility surface-card-settings {
   background: var(--card-settings-background, var(--card-settings-fill));
+  box-shadow: var(--card-shadow, none);
 }
 @utility surface-card-settings-rim {
   border: 1px solid transparent;
@@ -1364,6 +1369,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 @utility surface-selected {
   background: var(--selected-fill);
+  box-shadow: var(--selected-shadow, none);
 }
 @utility surface-selected-soft {
   background: var(--selected-soft-fill);
@@ -1376,7 +1382,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 @utility surface-sidebar-row-selected {
   background: var(--sidebar-row-selected-fill);
-  box-shadow: inset 0 0 0 1px var(--sidebar-row-selected-rim);
+  box-shadow: var(--sidebar-selected-shadow, inset 0 0 0 1px var(--sidebar-row-selected-rim));
 }
 @utility surface-sidebar-row-active {
   background: var(--sidebar-row-active);
@@ -3590,9 +3596,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --merged-foreground: oklch(from var(--merged) max(l, 0.75) c h);
 }
 
-/* The composer's mic + send pill stays neutral in every theme and style:
-   black in dark mode, light gray in both light appearances, with no channel art. */
-[data-composer-send-pill] {
+/* Preserve the default pill; other styles inherit their card's pill recipe. */
+:root:is(
+    :not([data-surface-style]),
+    [data-surface-style="gradient-rim"],
+    [data-surface-style="flat"]
+  )
+  [data-composer-send-pill] {
   --pill-fill: var(--composer-pill-fill, linear-gradient(#0e0e0e, #0e0e0e));
   --pill-foreground: #d4d4d4;
   --pill-icon: #9e9e9e;
@@ -3601,7 +3611,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --error-foreground: #f85149;
 }
 
-:root:not(.dark) [data-composer-send-pill] {
+:root:not(.dark):is(
+    :not([data-surface-style]),
+    [data-surface-style="gradient-rim"],
+    [data-surface-style="flat"]
+  )
+  [data-composer-send-pill] {
   --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
   --pill-foreground: #252525;
   --pill-icon: #525252;
