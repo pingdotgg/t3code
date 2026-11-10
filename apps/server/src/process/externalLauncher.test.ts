@@ -95,34 +95,37 @@ const layerTest = (input: {
   );
 };
 
-it.effect("opens home-relative app bundles using the server home directory", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
-    yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
-    yield* fs.chmod(path.join(bin, "open"), 0o755);
-    const spawned: ChildProcess.StandardCommand[] = [];
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-        yield* launcher.launchEditor({ editor: "file-manager", cwd });
-      }
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "darwin",
-          env: { PATH: bin },
-          onSpawn: (command) => spawned.push(command),
-        }),
-      ),
-      Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
-    );
-    assert.deepEqual(
-      spawned.map((command) => command.args),
-      [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
-    );
-  }).pipe(Effect.provide(NodeServices.layer)),
+// macOS command lookup cannot search a Windows drive-letter PATH.
+it.effect.skipIf(windowsHost)(
+  "opens home-relative app bundles using the server home directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, "open"), 0o755);
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+          yield* launcher.launchEditor({ editor: "file-manager", cwd });
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: bin },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.args),
+        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(windowsHost)(
