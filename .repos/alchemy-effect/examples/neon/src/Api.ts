@@ -1,8 +1,8 @@
-import * as Neon from "alchemy/Neon";
-import * as SQL from "alchemy/SQL/Postgres";
+import * as Neon from "@alchemy.run/neon";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
 import { makeAuthenticate } from "./authenticate.ts";
 import {
   corsHeaders,
@@ -53,10 +53,7 @@ export default class Api extends Neon.Function<Api>()(
       },
       Effect.fn(function* (event) {
         const object = yield* files.head(event.objectKey);
-        if (!object)
-          return yield* Effect.fail(
-            new Error("Uploaded object is not readable yet"),
-          );
+        if (!object) return yield* Effect.fail(new Error("Uploaded object is not readable yet"));
         const bytes = object.ContentLength ?? 0;
         // Record delivery and transition the row atomically; duplicate invocations do no work.
         yield* sql`
@@ -76,28 +73,19 @@ export default class Api extends Neon.Function<Api>()(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* Neon.FunctionRequest;
-        const headers = corsHeaders(
-          request.headers.get("origin"),
-          env.APP_ORIGIN,
-        );
-        if (!headers)
-          return HttpServerResponse.text("Untrusted origin", { status: 403 });
+        const headers = corsHeaders(request.headers.get("origin"), env.APP_ORIGIN);
+        if (!headers) return HttpServerResponse.text("Untrusted origin", { status: 403 });
         const respond = (value: unknown, status = 200) =>
           HttpServerResponse.json(value, { status, headers });
-        if (request.method === "OPTIONS")
-          return HttpServerResponse.empty({ status: 204, headers });
+        if (request.method === "OPTIONS") return HttpServerResponse.empty({ status: 204, headers });
         const path = yield* Effect.sync(() => new URL(request.url).pathname);
-        if (path === "/health")
-          return yield* respond({ ok: true, runtime: "effect" });
+        if (path === "/health") return yield* respond({ ok: true, runtime: "effect" });
         const verify = yield* authenticate;
-        const owner = yield* Effect.tryPromise(() =>
-          verify(request.headers.get("authorization")),
-        );
+        const owner = yield* Effect.tryPromise(() => verify(request.headers.get("authorization")));
         if (!owner)
           return yield* respond(
             {
-              error:
-                "Sign in again: your token is missing, invalid, or expired.",
+              error: "Sign in again: your token is missing, invalid, or expired.",
             },
             401,
           );
@@ -111,9 +99,7 @@ export default class Api extends Neon.Function<Api>()(
             SELECT id, filename, object_key, content_type, expected_bytes, actual_bytes, status, created_at
             FROM uploads WHERE owner_id = ${owner} ORDER BY created_at DESC LIMIT 100
           `;
-          return yield* respond(
-            yield* Effect.sync(() => rows.map(serializeUploadRow)),
-          );
+          return yield* respond(yield* Effect.sync(() => rows.map(serializeUploadRow)));
         }
         if (path === "/api/uploads" && request.method === "POST") {
           const json = yield* Effect.tryPromise(() => request.json()).pipe(
@@ -123,8 +109,7 @@ export default class Api extends Neon.Function<Api>()(
           if (!input)
             return yield* respond(
               {
-                error:
-                  "Choose a nonempty file up to 10 MiB with a valid content type.",
+                error: "Choose a nonempty file up to 10 MiB with a valid content type.",
               },
               400,
             );
@@ -138,23 +123,16 @@ export default class Api extends Neon.Function<Api>()(
             INSERT INTO uploads (id, owner_id, object_key, filename, content_type, expected_bytes)
             VALUES (${id}, ${owner}, ${key}, ${input.filename}, ${input.contentType}, ${input.size})
           `;
-          return yield* respond(
-            { id, url, contentType: input.contentType },
-            201,
-          );
+          return yield* respond({ id, url, contentType: input.contentType }, 201);
         }
         const match = /^\/api\/uploads\/([^/]+)\/download$/.exec(path);
         if (match && request.method === "GET") {
-          if (!UUID.test(match[1]!))
-            return yield* respond({ error: "Not found" }, 404);
+          if (!UUID.test(match[1]!)) return yield* respond({ error: "Not found" }, 404);
           const [row] =
             yield* sql<UploadRecord>`SELECT * FROM uploads WHERE id = ${match[1]!} AND owner_id = ${owner}`;
           if (!row) return yield* respond({ error: "Not found" }, 404);
           if (row.status !== "ready")
-            return yield* respond(
-              { error: "This upload is not ready to download." },
-              409,
-            );
+            return yield* respond({ error: "This upload is not ready to download." }, 409);
           return yield* respond({
             url: yield* files.presignGet(row.object_key, { expiresIn: 60 }),
           });
@@ -165,14 +143,11 @@ export default class Api extends Neon.Function<Api>()(
           Effect.gen(function* () {
             yield* Effect.logError("Upload API request failed");
             const request = yield* Neon.FunctionRequest;
-            const headers = corsHeaders(
-              request.headers.get("origin"),
-              env.APP_ORIGIN,
-            );
-            return HttpServerResponse.text(
-              "Upload service unavailable. Retry the request.",
-              { status: 500, headers },
-            );
+            const headers = corsHeaders(request.headers.get("origin"), env.APP_ORIGIN);
+            return HttpServerResponse.text("Upload service unavailable. Retry the request.", {
+              status: 500,
+              headers,
+            });
           }),
         ),
       ),
