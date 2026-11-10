@@ -8,8 +8,10 @@ import {
   parseChangeRequestPath,
   parseCommitPath,
   projectChangeRequestHost,
+  remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
+import { gitLabReferenceAutolinks } from "./referenceAutolinks.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
@@ -38,14 +40,16 @@ export const definition = defineSourceControl({
   publishHost: () => "gitlab.com",
   newRepositoryOwner: (account) => ({ owner: account }),
   defaultCloneTransport: "ssh",
-  changeRequestUrl: ({ host, repository, number, webUrl }) =>
+  changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) =>
     webUrl
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
-      : `https://${host}/${repository}/-/merge_requests/${number}`,
+      : `${remoteWebOrigin(host, remoteUrl)}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
   commitUrl: (input) => buildCommitUrl(input, "-/commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
-  changeRequestUrlFromReferenceAutolink: () => null,
+  // `!12` already links the merge request itself; `#12` is always an issue.
+  changeRequestUrlFromReferenceAutolink: (url) =>
+    CHANGE_REQUEST_PATH.test(url.pathname) ? url.toString() : null,
   changeRequestActions: new Set([
     "merge",
     "ready",
@@ -55,11 +59,16 @@ export const definition = defineSourceControl({
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "delete-branch",
   ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
-  changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,
+  // `accept` is glab's alias for `merge`.
+  changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|accept|close)\b/u,
   changeRequestCreateCommand: /\bglab\s+mr\s+create\b/u,
-  authorProfileUrl: () => null,
+  // Bot users, unlike GitHub's, have real profile pages.
+  authorProfileUrl: (login, repositoryUrl) =>
+    new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
+  referenceAutolinks: gitLabReferenceAutolinks,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
