@@ -535,6 +535,11 @@ export function resolvePromptInjectedEffort(
   return null;
 }
 
+/** Command names allow any token without a second slash, so `/src/app.ts` is a path. */
+export function isSlashCommandText(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/u.test(text.trim());
+}
+
 export function applyClaudePromptEffortPrefix(
   text: string,
   effort: string | null | undefined,
@@ -543,8 +548,8 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  // Prefixing slash commands prevents Claude invocation; command names allow any token without a second slash.
-  if (effort !== "ultrathink" || /^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
+  // Prefixing slash commands prevents Claude invocation.
+  if (effort !== "ultrathink" || isSlashCommandText(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("Ultrathink:")) {

@@ -5,6 +5,8 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { isSlashCommandText, modelSelectionsEqual } from "@t3tools/shared/model";
+import { mergeQueuedMessages } from "@t3tools/shared/queuedMessageMerge";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -39,7 +41,11 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+  readonly sendAsOneBlockedReason: string | null;
+  readonly sendEachBlockedReason: string | null;
 }
+
+const SEND_NOT_NOW_REASON = "The current turn can't take messages right now.";
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
@@ -161,21 +167,67 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     };
   });
 
+  const canSendNow =
+    activeRun === null &&
+    projection.thread.archivedAt == null &&
+    projection.thread.deletedAt == null;
+  const canPromoteToSteer =
+    promoteSkipsCompaction ||
+    (hasSteerableProviderTurn &&
+      (capabilities?.supportsActiveSteering === true ||
+        capabilities?.supportsSteeringByInterruptRestart === true));
+  const merged = mergeQueuedMessages(queuedRuns);
+
   return {
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canSendNow:
-      activeRun === null &&
-      projection.thread.archivedAt == null &&
-      projection.thread.deletedAt == null,
-    canPromoteToSteer:
-      promoteSkipsCompaction ||
-      (hasSteerableProviderTurn &&
-        (capabilities?.supportsActiveSteering === true ||
-          capabilities?.supportsSteeringByInterruptRestart === true)),
+    canSendNow,
+    canPromoteToSteer,
     promoteSkipsCompaction,
+    sendAsOneBlockedReason:
+      merged._tag === "Blocked"
+        ? merged.reason
+        : canSendNow || canPromoteToSteer
+          ? null
+          : SEND_NOT_NOW_REASON,
+    sendEachBlockedReason: canSendNow
+      ? null
+      : resolveSteerEachBlockedReason({
+          activeRun,
+          queuedRuns,
+          canPromoteToSteer,
+          promoteSkipsCompaction,
+          capabilities,
+        }),
   };
+}
+
+/**
+ * The server rejects a steer into a run that a previous steer restarted, so steering a whole
+ * queue in a row only works when each message joins the running turn as it is.
+ */
+function resolveSteerEachBlockedReason(input: {
+  readonly activeRun: Run | null;
+  readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
+  readonly canPromoteToSteer: boolean;
+  readonly promoteSkipsCompaction: boolean;
+  readonly capabilities: ProviderSession["capabilities"]["turns"] | undefined;
+}): string | null {
+  const { activeRun, capabilities } = input;
+  if (!input.canPromoteToSteer || activeRun === null) return SEND_NOT_NOW_REASON;
+  if (input.promoteSkipsCompaction) return "Send them as one to skip the compaction.";
+  if (capabilities?.supportsActiveSteering !== true) {
+    return "This agent restarts its turn for every message. Send them as one instead.";
+  }
+  const joinsRunningTurn = ({ run, message, attachments }: QueuedThreadRun) =>
+    run.freshContext !== true &&
+    !isSlashCommandText(message?.text ?? "") &&
+    modelSelectionsEqual(run.modelSelection, activeRun.modelSelection) &&
+    (attachments.length === 0 || capabilities.activeSteeringAcceptsAttachments !== false);
+  return input.queuedRuns.every(joinsRunningTurn)
+    ? null
+    : "Some queued messages can't join the current turn.";
 }
 
 export function canForkProjectedAssistantItem(input: {

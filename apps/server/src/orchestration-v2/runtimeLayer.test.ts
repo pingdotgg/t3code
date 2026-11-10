@@ -10,6 +10,8 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
+  ChatAttachmentId,
+  ComposerContextId,
   CheckpointId,
   CheckpointRef,
   CommandId,
@@ -20,6 +22,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
   type ModelSelection,
+  type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
@@ -7107,6 +7110,217 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
+    }),
+  );
+
+  const queueBehindActiveRun = (
+    threadId: ThreadId,
+    queued: ReadonlyArray<
+      Partial<Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>>
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Merge queued work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, fields] of [{ text: "Active" }, ...queued].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text: `Message ${index}`,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+          ...fields,
+        });
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const merge = (id: string, runIds: ReadonlyArray<RunId>) =>
+        orchestrator.dispatch({
+          type: "queued-run.merge",
+          commandId: CommandId.make(`${threadId}:merge:${id}`),
+          threadId,
+          runIds,
+        });
+      return {
+        orchestrator,
+        merge,
+        active: projection.runs[0]!,
+        queued: projection.runs.filter((run) => run.status === "queued"),
+      };
+    });
+
+  it.effect("merges queued runs into the first, moving their attachments and context", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("runtime-layer-queued-merge");
+      const image = (id: string) => ({
+        attachments: [
+          {
+            type: "image" as const,
+            id: ChatAttachmentId.make(id),
+            name: `${id}.png`,
+            mimeType: "image/png",
+            sizeBytes: 64,
+          },
+        ],
+        context: {
+          version: 1 as const,
+          records: [
+            {
+              version: 1 as const,
+              kind: "image" as const,
+              contextId: ComposerContextId.make(`image_${id}`),
+              label: `${id}.png`,
+              attachmentId: id,
+              name: `${id}.png`,
+              mimeType: "image/png",
+              sizeBytes: 64,
+            },
+          ],
+        },
+      });
+      const { orchestrator, merge, active, queued } = yield* queueBehindActiveRun(threadId, [
+        { text: "First", ...image("merge-a") },
+        { text: "Second" },
+        { text: "Third", ...image("merge-b") },
+      ]);
+      const [first, second, third] = queued;
+      assert.isDefined(first);
+      assert.isDefined(second);
+      assert.isDefined(third);
+
+      for (const [id, runIds, cause] of [
+        ["reordered", [second.id, first.id], "The queue changed. Review it and try again."],
+        ["skipping", [first.id, third.id], "The queue changed. Review it and try again."],
+        ["unknown", [first.id, RunId.make("run:missing")], "Run run:missing is not queued."],
+        ["active", [active.id, first.id], `Run ${active.id} is not queued.`],
+      ] as const) {
+        assert.deepInclude(yield* Effect.flip(merge(id, runIds)), {
+          _tag: "OrchestratorCommandRejectedError",
+          cause,
+        });
+      }
+
+      yield* merge("all", [first.id, second.id, third.id]);
+      const merged = yield* orchestrator.getThreadProjection(threadId);
+      const message = merged.messages.find((candidate) => candidate.id === first.userMessageId);
+      assert.equal(message?.text, "First\n\nSecond\n\nThird");
+      assert.deepEqual(
+        message?.attachments.map((attachment) => attachment.id),
+        ["merge-a", "merge-b"],
+      );
+      assert.deepEqual(
+        message?.context?.records.map((record) => record.contextId),
+        ["image_merge-a", "image_merge-b"],
+      );
+      assert.deepEqual(
+        merged.runs.filter((run) => run.status === "queued").map((run) => run.id),
+        [first.id],
+      );
+      assert.deepEqual(
+        [second, third].map((run) => merged.runs.find((row) => row.id === run.id)?.status),
+        ["cancelled", "cancelled"],
+      );
+      assert.deepInclude(yield* Effect.flip(merge("again", [first.id, second.id])), {
+        _tag: "OrchestratorCommandRejectedError",
+        cause: `Run ${second.id} is not queued.`,
+      });
+
+      const now = yield* DateTime.now;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:active-done`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            occurredAt: now,
+            payload: { ...active, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const delivered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(delivered.runs.find((run) => run.id === first.id)?.status, "starting");
+      assert.equal(
+        delivered.messages.find((candidate) => candidate.id === first.userMessageId)?.text,
+        "First\n\nSecond\n\nThird",
+      );
+    }),
+  );
+
+  it.effect.each([
+    [
+      "an agent's message",
+      {
+        createdBy: "agent",
+        creationSource: "provider",
+        senderThreadId: ThreadId.make("runtime-layer-queued-merge-sender"),
+      },
+      "Messages from agents and automations are sent on their own.",
+    ],
+    [
+      "an automation's message",
+      { scheduledTaskId: ScheduledTaskId.make("runtime-layer-queued-merge-task") },
+      "Messages from agents and automations are sent on their own.",
+    ],
+    [
+      "a notification",
+      {
+        createdBy: "agent",
+        creationSource: "provider",
+        notification: { source: { kind: "monitor" }, outcome: "updated", summary: "PR update" },
+      },
+      null,
+    ],
+    ["a command", { text: "/review" }, "Commands are sent on their own."],
+    [
+      "a fresh-session message",
+      { freshContext: true },
+      "A message that starts a fresh session is sent on its own.",
+    ],
+    [
+      "another model",
+      { modelSelection: { ...modelSelection, model: "gpt-5.5" } },
+      "Queued messages use different models.",
+    ],
+  ] as const)("refuses to merge %s and leaves the queue as it was", ([name, fields, cause]) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make(
+        `runtime-layer-queued-merge-refused-${name.replace(/\W+/g, "-")}`,
+      );
+      const { orchestrator, merge, queued } = yield* queueBehindActiveRun(threadId, [
+        { text: "Mine" },
+        fields,
+      ]);
+      const [first, second] = queued;
+      assert.isDefined(first);
+      assert.isDefined(second);
+      const before = yield* orchestrator.getThreadProjection(threadId);
+
+      assert.deepInclude(yield* Effect.flip(merge("refused", [first.id, second.id])), {
+        _tag: "OrchestratorCommandRejectedError",
+        cause: cause ?? `Run ${second.id} is not queued.`,
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.runs, before.runs);
+      assert.deepEqual(after.messages, before.messages);
     }),
   );
 });

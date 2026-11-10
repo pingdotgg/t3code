@@ -250,6 +250,10 @@ export interface CancelQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
 }
 
+export interface MergeQueuedRunsInput extends ThreadCommandInput {
+  readonly runIds: ReadonlyArray<RunId>;
+}
+
 export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
 }
@@ -1058,6 +1062,17 @@ export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
+  });
+});
+
+export const mergeQueuedRuns = Effect.fn("EnvironmentCommands.mergeQueuedRuns")(function* (
+  input: MergeQueuedRunsInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.merge",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runIds: input.runIds,
   });
 });
 

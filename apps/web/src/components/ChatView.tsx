@@ -2732,6 +2732,8 @@ export default function ChatView(props: ChatViewProps) {
         routeKind !== "draft" &&
         composerRef.current?.isCaretAtStart() === true &&
         queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+      "thread.sendQueuedMessagesAsOne": ({ event }) =>
+        routeKind !== "draft" && queuedRunsControlRef.current?.sendAllAsOne(event.repeat) === true,
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3006,6 +3008,11 @@ export default function ChatView(props: ChatViewProps) {
           editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
             context: { composerFocus: true },
           })}
+          sendAllAsOneShortcutLabel={shortcutLabelForCommand(
+            keybindings,
+            "thread.sendQueuedMessagesAsOne",
+            { context: { terminalFocus: false } },
+          )}
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
           optimisticMessages={optimisticUserMessages}

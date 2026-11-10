@@ -12,6 +12,7 @@ const capabilities = (input?: {
   readonly queued?: boolean;
   readonly steer?: boolean;
   readonly restartSteer?: boolean;
+  readonly steerAttachments?: boolean;
   readonly nativeFork?: boolean;
   readonly portableFork?: boolean;
 }) =>
@@ -20,6 +21,7 @@ const capabilities = (input?: {
       supportsQueuedMessages: input?.queued ?? false,
       supportsActiveSteering: input?.steer ?? false,
       supportsSteeringByInterruptRestart: input?.restartSteer ?? false,
+      activeSteeringAcceptsAttachments: input?.steerAttachments ?? true,
     },
     threads: {
       canForkThread: input?.nativeFork ?? false,
@@ -344,6 +346,143 @@ describe("thread workflows", () => {
       } as never);
 
       expect(state.canPromoteToSteer).toBe(false);
+    },
+  );
+
+  const selection = { instanceId: "codex", model: "gpt-5.4" };
+  const image = { type: "image", id: "image", name: "a.png", mimeType: "image/png", sizeBytes: 8 };
+  const cannotJoin = "Some queued messages can't join the current turn.";
+  it.each([
+    { name: "a steerable turn", asOne: null, each: null },
+    {
+      name: "an agent that restarts to steer",
+      provider: { restartSteer: true },
+      asOne: null,
+      each: "This agent restarts its turn for every message. Send them as one instead.",
+    },
+    { name: "a stopped thread", activeStatus: "completed", asOne: null, each: null },
+    {
+      name: "a turn not yet steerable",
+      activeStatus: "starting",
+      asOne: "The current turn can't take messages right now.",
+      each: "The current turn can't take messages right now.",
+    },
+    {
+      name: "a guest's message",
+      second: { context: { version: 1, records: [], guest: { name: "Sam", text: "Hi" } } },
+      asOne: "A guest's message can't be combined with others.",
+      each: null,
+    },
+    {
+      name: "an agent's message",
+      second: { createdBy: "agent", senderThreadId: "thread:lead" },
+      asOne: "Messages from agents and automations are sent on their own.",
+      each: null,
+    },
+    {
+      name: "a command",
+      second: { text: "/compact" },
+      asOne: "Commands are sent on their own.",
+      each: cannotJoin,
+    },
+    {
+      name: "a fresh-session message",
+      secondRun: { freshContext: true },
+      asOne: "A message that starts a fresh session is sent on its own.",
+      each: cannotJoin,
+    },
+    {
+      name: "a plan implementation",
+      secondRun: { sourcePlanRef: { threadId: "thread", planId: "plan" } },
+      asOne: "Plan and continuation messages are sent on their own.",
+      each: null,
+    },
+    {
+      name: "another model",
+      secondRun: { modelSelection: { ...selection, model: "gpt-5.5" } },
+      asOne: "Queued messages use different models.",
+      each: cannotJoin,
+    },
+    {
+      name: "attachments the turn cannot take",
+      provider: { steerAttachments: false },
+      second: { attachments: [image] },
+      asOne: null,
+      each: cannotJoin,
+    },
+  ] as const)(
+    "offers sending the whole queue for $name",
+    (row: {
+      readonly provider?: { readonly restartSteer?: boolean; readonly steerAttachments?: boolean };
+      readonly activeStatus?: string;
+      readonly second?: Record<string, unknown>;
+      readonly secondRun?: Record<string, unknown>;
+      readonly asOne: string | null;
+      readonly each: string | null;
+    }) => {
+      const message = (id: string, fields?: Record<string, unknown>) => ({
+        id,
+        role: "user",
+        text: id,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        ...fields,
+      });
+      const queued = (id: string, ordinal: number, fields?: Record<string, unknown>) => ({
+        id,
+        status: "queued",
+        userMessageId: `message-${id}`,
+        modelSelection: selection,
+        ordinal,
+        ...fields,
+      });
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [
+          {
+            id: "active",
+            status: row.activeStatus ?? "running",
+            userMessageId: "message-active",
+            providerThreadId: "provider-thread",
+            activeAttemptId: "attempt-active",
+            modelSelection: selection,
+            ordinal: 1,
+          },
+          queued("first", 2),
+          queued("second", 3, row.secondRun),
+        ],
+        messages: [
+          message("message-active"),
+          message("message-first"),
+          message("message-second", row.second),
+        ],
+        providerTurns: [
+          { id: "provider-turn-active", runAttemptId: "attempt-active", status: "running" },
+        ],
+        providerThreads: [
+          { id: "provider-thread", appThreadId: "thread", providerSessionId: "provider-session" },
+        ],
+        providerSessions: [
+          {
+            id: "provider-session",
+            status: "running",
+            capabilities: capabilities({
+              queued: true,
+              steer: row.provider?.restartSteer !== true,
+              restartSteer: true,
+              ...(row.provider?.steerAttachments === undefined
+                ? {}
+                : { steerAttachments: row.provider.steerAttachments }),
+            }),
+          },
+        ],
+      } as never);
+
+      expect([state.sendAsOneBlockedReason, state.sendEachBlockedReason]).toEqual([
+        row.asOne,
+        row.each,
+      ]);
     },
   );
 

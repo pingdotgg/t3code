@@ -186,7 +186,7 @@ it.effect("drops guest attribution that a client sends on its own message", () =
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("keeps a queued guest message unchanged when the owner tries to edit it", () =>
+it.effect("keeps a queued guest message unchanged when the owner tries to edit or merge it", () =>
   Effect.gen(function* () {
     const orchestrator = yield* setup;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -241,10 +241,39 @@ it.effect("keeps a queued guest message unchanged when the owner tries to edit i
       text: "My own words",
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(edit)));
-    const message = (yield* projections.getThreadProjection(threadId)).messages.find(
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("owner-queued"),
+      threadId,
+      messageId: MessageId.make("owner-queued"),
+      text: "And mine",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const ownQueued = (yield* projections.getThreadProjection(threadId)).runs.find(
+      (run) => run.userMessageId === MessageId.make("owner-queued"),
+    );
+    assert.isDefined(ownQueued);
+    const mergeError = yield* Effect.flip(
+      orchestrator.dispatch({
+        type: "queued-run.merge",
+        commandId: CommandId.make("merge"),
+        threadId,
+        runIds: [queued.id, ownQueued.id],
+      }),
+    );
+    assert.deepInclude(mergeError, {
+      _tag: "OrchestratorCommandRejectedError",
+      cause: "A guest's message can't be combined with others.",
+    });
+    const after = yield* projections.getThreadProjection(threadId);
+    const message = after.messages.find(
       (candidate) => candidate.id === MessageId.make("send-queued"),
     );
     assert.equal(message?.context?.guest?.text, "Why?");
+    assert.equal(after.runs.find((run) => run.id === ownQueued.id)?.status, "queued");
   }).pipe(Effect.provide(layerTest)),
 );
 

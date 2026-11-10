@@ -3311,6 +3311,13 @@ export const OrchestrationV2Command = Schema.Union([
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
   Schema.Struct({
+    type: Schema.Literal("queued-run.merge"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    // The queue as the client saw it, in delivery order; the first run keeps the combined message.
+    runIds: Schema.Array(RunId).check(Schema.isMinLength(2)),
+  }),
+  Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
     commandId: CommandId,
     threadId: ThreadId,

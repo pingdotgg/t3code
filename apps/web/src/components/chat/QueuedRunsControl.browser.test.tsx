@@ -8,6 +8,8 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  commands: [] as Array<readonly [string, unknown]>,
+  results: [] as Array<"Success" | "Failure">,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -31,7 +33,10 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: ((command: { readonly label: string }) => async (value: unknown) => {
+    state.commands.push([command.label.split(":").at(-1) ?? command.label, value]);
+    return { _tag: state.results.shift() ?? "Success" };
+  }) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -47,6 +52,8 @@ import { QueuedRunsControl } from "./QueuedRunsControl";
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.commands = [];
+  state.results = [];
 }
 
 const baseProps = {
@@ -202,4 +209,145 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   await expect.element(page.getByText("Later", { exact: true })).toBeInTheDocument();
   const column = screen.getByTestId("column").element();
   expect(column.scrollHeight).toBe(column.clientHeight);
+});
+
+function queueOfTwo(workflow: Record<string, unknown>) {
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canSendNow: false,
+    canPromoteToSteer: true,
+    sendAsOneBlockedReason: null,
+    sendEachBlockedReason: null,
+    queuedRuns: ["run:first", "run:second"].map((runId) => ({
+      run: { id: runId, userMessageId: `${runId}:message` },
+      text: runId,
+      attachments: [],
+    })),
+    ...workflow,
+  };
+}
+
+const sendAllAsOne = () => page.getByRole("button", { name: "Send all as one" });
+const sendOneByOne = () => page.getByRole("button", { name: "Send one by one" });
+
+it.each([
+  {
+    name: "steers the combined message into the running turn",
+    workflow: {},
+    send: ["promote-queued-run", { queuedRunId: "run:first", targetRunId: "run:active" }],
+  },
+  {
+    name: "starts a turn with the combined message when the thread is stopped",
+    workflow: { activeRun: null, canSendNow: true, canPromoteToSteer: false },
+    send: ["resume-queue", { runId: "run:first" }],
+  },
+] as const)("$name", async ({ workflow, send }) => {
+  setup();
+  queueOfTwo(workflow);
+  await using _screen = await renderQueue();
+
+  await sendAllAsOne().click();
+  await vi.waitFor(() => expect(state.commands).toHaveLength(2));
+  expect(state.commands).toEqual([
+    [
+      "merge-queued-runs",
+      expect.objectContaining({
+        input: expect.objectContaining({ runIds: ["run:first", "run:second"] }),
+      }),
+    ],
+    [send[0], expect.objectContaining({ input: expect.objectContaining(send[1]) })],
+  ]);
+});
+
+it("sends nothing when combining fails", async () => {
+  setup();
+  queueOfTwo({});
+  state.results = ["Failure"];
+  await using _screen = await renderQueue();
+
+  await sendAllAsOne().click();
+  await expect.element(sendAllAsOne()).toBeEnabled();
+  expect(state.commands.map(([command]) => command)).toEqual(["merge-queued-runs"]);
+});
+
+it("steers queued messages one by one and stops at the first failure", async () => {
+  setup();
+  queueOfTwo({});
+  state.results = ["Failure"];
+  await using _screen = await renderQueue();
+
+  await sendOneByOne().click();
+  await expect.element(sendOneByOne()).toBeEnabled();
+  expect(state.commands).toEqual([
+    [
+      "promote-queued-run",
+      expect.objectContaining({ input: expect.objectContaining({ queuedRunId: "run:first" }) }),
+    ],
+  ]);
+
+  state.commands = [];
+  await sendOneByOne().click();
+  await vi.waitFor(() => expect(state.commands).toHaveLength(2));
+  expect(
+    state.commands.map(
+      ([, value]) => (value as { input: { queuedRunId: string } }).input.queuedRunId,
+    ),
+  ).toEqual(["run:first", "run:second"]);
+});
+
+it("resumes the whole queue one by one when the thread is stopped", async () => {
+  setup();
+  queueOfTwo({ activeRun: null, canSendNow: true, canPromoteToSteer: false });
+  await using _screen = await renderQueue();
+
+  await sendOneByOne().click();
+  await vi.waitFor(() => expect(state.commands).toHaveLength(1));
+  expect(state.commands).toEqual([
+    ["resume-queue", { environmentId: "environment:test", input: { threadId: "thread:test" } }],
+  ]);
+});
+
+it.each<{
+  readonly name: string;
+  readonly props: Partial<ComponentProps<typeof QueuedRunsControl>>;
+  readonly workflow: Record<string, unknown>;
+}>([
+  {
+    name: "while a queued message is edited",
+    props: { editingRunId: "run:second" as never },
+    workflow: {},
+  },
+  {
+    name: "while a queued message is saving",
+    props: {
+      optimisticMessages: [
+        { id: "message:saving" as never, inputIntent: "queued_turn", text: "Saving" },
+      ],
+    },
+    workflow: {},
+  },
+  {
+    name: "when the server would refuse",
+    props: {},
+    workflow: { sendAsOneBlockedReason: "No", sendEachBlockedReason: "No" },
+  },
+])("offers neither queue action $name", async ({ props, workflow }) => {
+  setup();
+  queueOfTwo(workflow);
+  await using _screen = await renderQueue(props);
+
+  await expect.element(sendAllAsOne()).toBeDisabled();
+  await expect.element(sendOneByOne()).toBeDisabled();
+});
+
+it("shows no queue actions for a single queued message", async () => {
+  setup();
+  queueOfTwo({});
+  const workflow = state.workflow as { queuedRuns: ReadonlyArray<unknown> };
+  state.workflow = { ...workflow, queuedRuns: workflow.queuedRuns.slice(0, 1) };
+  await using _screen = await renderQueue();
+
+  await expect.element(page.getByText("run:first", { exact: true })).toBeVisible();
+  await expect.element(sendAllAsOne()).not.toBeInTheDocument();
 });
