@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
+import { AppRouteModal } from "../AppRouteModal";
 import { ProjectOrderList } from "./ProjectOrderList";
 
 const state = vi.hoisted(() => ({
@@ -53,7 +54,11 @@ async function moveDown(name: string) {
 describe("ProjectOrderList", () => {
   it("saves a dragged project's checkouts together", async () => {
     setup([group("alpha", ["a-local", "a-remote"]), group("beta", ["b"]), group("gamma", ["g"])]);
-    await using _screen = await render(<ProjectOrderList />);
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <ProjectOrderList />
+      </AppRouteModal>,
+    );
 
     await moveDown("alpha");
 
