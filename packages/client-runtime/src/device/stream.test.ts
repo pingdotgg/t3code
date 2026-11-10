@@ -267,6 +267,21 @@ describe("serve-emu frames", () => {
     expect(packet.data.length).toBe(4);
   });
 
+  it("strips the v2 SEMU header, which adds the server send time", () => {
+    const buffer = new ArrayBuffer(24 + 3);
+    const view = new DataView(buffer);
+    view.setUint32(0, 0x53454d55);
+    view.setUint8(4, 2);
+    view.setUint8(5, 1);
+    view.setBigUint64(8, 987654n);
+    view.setBigUint64(16, 42n);
+    new Uint8Array(buffer).set([1, 2, 3], 24);
+    const packet = parseSemuPacket(buffer);
+    expect(packet.isKey).toBe(true);
+    expect(packet.timestamp).toBe(987654);
+    expect(Array.from(packet.data)).toEqual([1, 2, 3]);
+  });
+
   it("finds the SPS and IDR NAL units in an Annex-B access unit", () => {
     const unit = new Uint8Array([0, 0, 0, 1, 0x67, 0x64, 0x00, 0x1f, 0, 0, 1, 0x65, 0xaa]);
     const scanned = scanAccessUnit(unit);
@@ -337,7 +352,14 @@ function recoveryFixture(
     }
   }
   vi.stubGlobal("VideoDecoder", Decoder);
-  vi.stubGlobal("EncodedVideoChunk", vi.fn());
+  const encodedChunks: EncodedVideoChunkInit[] = [];
+  vi.stubGlobal(
+    "EncodedVideoChunk",
+    vi.fn(function (this: unknown, init: EncodedVideoChunkInit) {
+      encodedChunks.push(init);
+      return init;
+    }),
+  );
   const videoBodies: ReadableStreamDefaultController<Uint8Array>[] = [];
   const signals: AbortSignal[] = [];
   const fetch = vi.fn((url: string, init: RequestInit) => {
@@ -400,6 +422,7 @@ function recoveryFixture(
     return close;
   };
   const sps = new Uint8Array([0, 0, 0, 1, 0x67, 0x64, 0, 0x1f, 0, 0, 1, 0x65]).buffer;
+  const delta = new Uint8Array([0, 0, 0, 1, 0x41, 0xaa]).buffer;
   return {
     client,
     events,
@@ -413,7 +436,9 @@ function recoveryFixture(
     Decoder,
     drawImage,
     decodedFrame,
+    encodedChunks,
     sps,
+    delta,
   };
 }
 
@@ -563,6 +588,80 @@ describe("shared device stream readiness and recovery", () => {
     decodedFrame();
     expect(drawImage).toHaveBeenCalledOnce();
     expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    client.stop();
+  });
+
+  it("keeps the frames that arrive while the decoder is being configured", async () => {
+    const { client, sockets, sps, delta, decoders, Decoder, encodedChunks } =
+      recoveryFixture("android");
+    let resolveSupport!: (support: { supported: boolean }) => void;
+    Decoder.isConfigSupported.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSupport = resolve;
+        }),
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    // The key frame that carries the SPS starts the decoder configuration.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(0);
+    // The frames that arrive before the decoder is ready are kept, not dropped.
+    sockets[0]!.onmessage?.({ data: delta });
+    sockets[0]!.onmessage?.({ data: delta });
+    resolveSupport({ supported: true });
+    await vi.advanceTimersByTimeAsync(0);
+    // The key frame and the frames that followed it are decoded, in order.
+    expect(decoders[0]!.decode).toHaveBeenCalledTimes(3);
+    expect(encodedChunks.map((chunk) => chunk.type)).toEqual(["key", "delta", "delta"]);
+    client.stop();
+  });
+
+  it("keeps the decoder when the encoder restarts at the same size", async () => {
+    const { client, sockets, sps, decoders, decodedFrame } = recoveryFixture("android");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(1);
+    // The frames are decoded at this size, so the hub restarts at the same one.
+    decodedFrame();
+    const session = JSON.stringify({ type: "video-session", size: { width: 400, height: 800 } });
+    sockets[0]!.onmessage?.({ data: session });
+    await vi.advanceTimersByTimeAsync(0);
+    // The decoder stays: its configuration still describes the stream.
+    expect(decoders).toHaveLength(1);
+    expect(decoders[0]!.configs).toHaveLength(1);
+    expect(decoders[0]!.state).toBe("configured");
+    // The key frame that follows the restart is decoded right away.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(1);
+    expect(decoders[0]!.decode).toHaveBeenCalledTimes(2);
+    client.stop();
+  });
+
+  it("rebuilds the decoder when the encoder restarts at another size", async () => {
+    const { client, sockets, sps, decoders, decodedFrame } = recoveryFixture("android");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    decodedFrame();
+    // The device rotated: the frames come at another size from now on.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "video-session", size: { width: 800, height: 400 } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.state).toBe("closed");
+    // The next key frame builds a new decoder from its own SPS.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(2);
     client.stop();
   });
 
