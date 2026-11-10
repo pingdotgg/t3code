@@ -106,7 +106,7 @@ function resolveSpawnExecutableWithNode(
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
+    const normalizedPathEntry = stripWrappingQuotes(trimPathEntry(pathEntry, platform));
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -188,7 +188,7 @@ export function mergePathEntries(
   for (const pathValue of [preferredPath, inheritedPath]) {
     if (!pathValue) continue;
     for (const entry of pathValue.split(delimiter)) {
-      const trimmedEntry = entry.trim();
+      const trimmedEntry = trimPathEntry(entry, platform);
       if (!trimmedEntry || seen.has(trimmedEntry)) {
         continue;
       }
@@ -409,12 +409,16 @@ function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
 }
 
+function trimPathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.trim() : entry;
+}
+
 function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
   return platform === "win32" ? WINDOWS_PATH_DELIMITER : POSIX_PATH_DELIMITER;
 }
 
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(entry.trim());
+  const normalized = stripWrappingQuotes(trimPathEntry(entry, platform));
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
@@ -435,7 +439,7 @@ export function mergePathValues(
     if (!rawValue) continue;
 
     for (const entry of rawValue.split(delimiter)) {
-      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      const sanitized = sanitizePathEntry(trimPathEntry(entry, platform), platform);
       if (sanitized.length === 0) continue;
 
       const normalized = normalizePathEntryForComparison(sanitized, platform);
@@ -649,7 +653,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(entry.trim());
+    const pathEntry = stripWrappingQuotes(trimPathEntry(entry, platform));
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);

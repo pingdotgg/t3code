@@ -207,6 +207,9 @@ describe("mergePathEntries", () => {
     expect(
       mergePathEntries("/opt/homebrew/bin:/usr/bin", "/Users/test/.local/bin:/usr/bin", "darwin"),
     ).toBe("/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+    expect(mergePathEntries("/opt/bin :/opt/bin", "/opt/bin :/usr/bin", "linux")).toBe(
+      "/opt/bin :/opt/bin:/usr/bin",
+    );
   });
 });
 
@@ -467,10 +470,38 @@ describe("mergePathValues", () => {
     expect(mergePathValues("/usr/local/bin:/usr/bin", "/usr/bin:/USR/BIN", "linux")).toBe(
       "/usr/local/bin:/usr/bin:/USR/BIN",
     );
+    expect(mergePathValues("/opt/bin :/opt/bin", "/opt/bin :/usr/bin", "linux")).toBe(
+      "/opt/bin :/opt/bin:/usr/bin",
+    );
   });
 });
 
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
+  it.effect.each(["linux", "darwin"] as const)(
+    "finds executables in a PATH directory ending in whitespace on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ directory: ".", prefix: "t3-path-" });
+        const directory = `${cwd}/bin \u00a0`;
+        yield* fs.makeDirectory(directory);
+        const executable = `${directory}/audit-command`;
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const env = { PATH: directory };
+
+        expect(
+          yield* resolveCommandPath("audit-command", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          ),
+        ).toBe(path.join(directory, "audit-command"));
+        const resolveExecutable = yield* SpawnExecutableResolution;
+        expect(resolveExecutable("audit-command", platform, env)).toBe(executable);
+      }),
+  );
+
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];
