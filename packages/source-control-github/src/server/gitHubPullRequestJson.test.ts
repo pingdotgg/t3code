@@ -6,6 +6,8 @@ import {
   buildReviewSubmission,
   buildReviewerRequest,
   pullRequestLookup,
+  referenceSearchQuery,
+  toRepositoryReferences,
   toPullRequestWatchFingerprint,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
@@ -106,6 +108,7 @@ const reactionGroups = (groups: ReadonlyArray<Json> | undefined) =>
 const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
+  isMinimized: false,
   url: "https://github.com/acme/web/pull/1#discussion",
   ...raw,
   author: actor(author),
@@ -170,6 +173,7 @@ const withReviewDefaults = (raw: string): string => {
       latestReviews: {
         nodes: nodesIn(latestReviews).map((node) => ({
           state: "COMMENTED",
+          isMinimized: false,
           ...node,
           author: actor(node["author"]),
         })),
@@ -231,7 +235,16 @@ function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
                       ),
                     },
                   }),
-              ...(latestReviews === undefined ? {} : { latestReviews: { nodes: latestReviews } }),
+              ...(latestReviews === undefined
+                ? {}
+                : {
+                    latestReviews: {
+                      nodes: (latestReviews as ReadonlyArray<Json>).map((review) => ({
+                        isMinimized: false,
+                        ...review,
+                      })),
+                    },
+                  }),
               ...(checks === undefined
                 ? {}
                 : { commits: { nodes: [{ commit: { statusCheckRollup: { state: checks } } }] } }),
@@ -281,6 +294,13 @@ describe("pull request list decoding", () => {
             reviewDecision: null,
             latestReviews: [{ author: user("octocat"), state: "COMMENTED" }],
           },
+          {
+            reviewDecision: null,
+            latestReviews: [
+              { author: user("octocat"), state: "APPROVED" },
+              { author: user("drive-by"), state: "CHANGES_REQUESTED", isMinimized: true },
+            ],
+          },
         ]),
       ),
     );
@@ -289,7 +309,22 @@ describe("pull request list decoding", () => {
       "changes-requested",
       "approved",
       null,
+      "approved",
     ]);
+  });
+
+  it("keeps review required when an approval falls short of the branch's required count", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [{ author: user("octocat"), state: "APPROVED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual(["review-required"]);
   });
 
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
@@ -362,6 +397,7 @@ describe("pull request detail decoding", () => {
             baseRefName: "main",
             headRefOid: "abc123",
             isCrossRepository: false,
+            maintainerCanModify: true,
             headRepositoryOwner: null,
             headRepository: null,
             headRef: null,
@@ -378,7 +414,10 @@ describe("pull request detail decoding", () => {
                 {
                   commit: {
                     statusCheckRollup: {
-                      contexts: { nodes: rollup, pageInfo: { hasNextPage: false } },
+                      contexts: {
+                        nodes: rollup,
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
                     },
                   },
                 },
@@ -393,6 +432,30 @@ describe("pull request detail decoding", () => {
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
+
+  it.each([
+    [{}, true],
+    [{ viewerDidAuthor: false }, false],
+    [{ isCrossRepository: false }, false],
+    [{ state: "CLOSED" }, false],
+    [{ headRepositoryOwner: { __typename: "Organization", login: "team" } }, false],
+    [{ headRepository: null }, false],
+  ])(
+    "reads maintainer edits and lets only the author of an open personal fork change them: %j",
+    (overrides, allowed) => {
+      const detail = detailOf([], {
+        maintainerCanModify: false,
+        isCrossRepository: true,
+        viewerDidAuthor: true,
+        headRepositoryOwner: { __typename: "User", login: "octocat" },
+        headRepository: { nameWithOwner: "octocat/t3code", viewerPermission: "ADMIN" },
+        headRef: { id: "REF_7" },
+        ...overrides,
+      });
+      expect(detail.maintainerCanModify).toBe(false);
+      expect(detail.canEditMaintainerEdits).toBe(allowed);
+    },
+  );
 
   const detailJson = JSON.stringify({
     comments: [{ id: "c1", body: "second", createdAt: "2026-07-04T00:00:00Z" }],
@@ -425,6 +488,7 @@ describe("pull request detail decoding", () => {
                 (comment) => ({
                   lastEditedAt: null,
                   url: "https://github.com/c",
+                  isMinimized: false,
                   author: null,
                   ...comment,
                 }),
@@ -436,6 +500,7 @@ describe("pull request detail decoding", () => {
                 (review) => ({
                   lastEditedAt: null,
                   url: "https://github.com/r",
+                  isMinimized: false,
                   author: null,
                   submittedAt: null,
                   ...review,
@@ -575,6 +640,29 @@ describe("pull request detail decoding", () => {
     );
 
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r5"]);
+  });
+
+  it("leaves out the comments and reviews a maintainer hid", () => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          { id: "c1", body: "kept", createdAt: "2026-07-04T00:00:00Z" },
+          { id: "c2", body: "spam", createdAt: "2026-07-05T00:00:00Z", isMinimized: true },
+        ],
+        reviews: [
+          {
+            id: "r1",
+            body: "spam",
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2026-07-03T00:00:00Z",
+            isMinimized: true,
+          },
+          { id: "r2", body: "", state: "APPROVED", submittedAt: "2026-07-06T00:00:00Z" },
+        ],
+      }),
+    );
+
+    expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r2"]);
   });
 
   it.each(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"])(
@@ -816,6 +904,37 @@ describe("review thread decoding", () => {
     expect(comments.map((comment) => comment.id)).toEqual(["t1", "t2"]);
   });
 
+  it("leaves out hidden thread comments, and a thread with none left", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_hidden_root",
+            path: "apps/server/src/ws.ts",
+            comments: {
+              nodes: [
+                { id: "t1", createdAt: "2026-07-01T00:00:00Z", isMinimized: true },
+                { id: "t2", createdAt: "2026-07-01T01:00:00Z" },
+              ],
+            },
+          },
+          {
+            id: "PRRT_all_hidden",
+            path: "apps/web/src/main.tsx",
+            comments: {
+              nodes: [{ id: "t3", createdAt: "2026-07-01T00:00:00Z", isMinimized: true }],
+            },
+          },
+        ]),
+      ),
+    );
+
+    expect(result.threads.map((entry) => [entry.thread.id, entry.commentCount])).toEqual([
+      ["PRRT_hidden_root", 1],
+    ]);
+    expect(result.threads[0]?.thread.comments.map((comment) => comment.id)).toEqual(["t2"]);
+  });
+
   it("keeps GitHub's own count of a thread whose comments were not all read", () => {
     const result = expectSuccess(
       decodeReviewThreadsJson(
@@ -839,7 +958,7 @@ describe("review thread decoding", () => {
     });
   });
 
-  it("ends a thread's walk on the last page, which still names a cursor", () => {
+  it("ends a thread's walk on the last page, which still names a cursor, counting what it hid", () => {
     const decoded = expectSuccess(
       decodeReviewThreadCommentsJson(
         JSON.stringify({
@@ -849,7 +968,10 @@ describe("review thread decoding", () => {
               pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjk" },
-                nodes: [{ id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" }],
+                nodes: [
+                  { id: "t8", body: "spam", createdAt: "2026-07-01T00:00:00Z", isMinimized: true },
+                  { id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" },
+                ],
               },
             },
           },
@@ -857,6 +979,7 @@ describe("review thread decoding", () => {
       ),
     );
     expect(decoded.comments.map((comment) => comment.id)).toEqual(["t9"]);
+    expect(decoded.hiddenCount).toBe(1);
     expect(decoded.nextCursor).toBeNull();
   });
 });
@@ -1435,6 +1558,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -1490,6 +1614,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         "diff --git a/src/old.ts b/src/new.ts",
+        "similarity index 0%",
         "rename from src/old.ts",
         "rename to src/new.ts",
         "--- a/src/old.ts",
@@ -1598,6 +1723,40 @@ describe("host-native stack decoding", () => {
 const decodeWatchedResult = Schema.decodeUnknownSync(PullRequestWatchFingerprint.result);
 const decodeWatched = (pullRequest: object) =>
   decodeWatchedResult({ repository: { pullRequest } }).repository!.pullRequest!;
+
+describe("repository references", () => {
+  it.each([
+    [undefined, "repo:o/r sort:updated-desc"],
+    ["12", "repo:o/r sort:updated-desc"],
+    ['say "hi"', 'repo:o/r in:title "say \\"hi\\"" sort:updated-desc'],
+  ])("searches %j as %j", (query, q) => {
+    expect(referenceSearchQuery("o/r", query)).toBe(q);
+  });
+
+  it("puts the exact number first and maps issue and pull request states", () => {
+    const result = toRepositoryReferences({
+      search: {
+        pageInfo: { hasNextPage: true },
+        nodes: [
+          { __typename: "PullRequest", number: 3, title: "Merged", pullRequestState: "MERGED" },
+          { __typename: "Issue", number: 2, title: "Closed", issueState: "CLOSED" },
+          null,
+        ],
+      },
+      repository: {
+        issueOrPullRequest: { __typename: "Issue", number: 1, title: "Exact", issueState: "OPEN" },
+      },
+    });
+    expect(result).toEqual({
+      items: [
+        { reference: "#1", kind: "issue", number: 1, title: "Exact", state: "open" },
+        { reference: "#3", kind: "change-request", number: 3, title: "Merged", state: "merged" },
+        { reference: "#2", kind: "issue", number: 2, title: "Closed", state: "closed" },
+      ],
+      truncated: true,
+    });
+  });
+});
 
 describe("pull request lookups", () => {
   it("refuses what GitHub cannot name, so one bad row cannot fail a whole batch", () => {

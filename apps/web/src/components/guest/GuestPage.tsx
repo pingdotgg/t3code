@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   GUEST_MESSAGE_MAX_LENGTH,
+  GUEST_HISTORY_ROUTE,
   GUEST_NAME_MAX_LENGTH,
   GUEST_ROUTE_PREFIX,
   GUEST_SHARE_PARAM,
@@ -8,6 +9,7 @@ import {
   type GuestRedeemRequest,
   type GuestShareView,
   type GuestThreadModel,
+  OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadProjection,
   type ThreadGuestMessage,
   type ThreadGuestMessageStatus,
@@ -24,7 +26,6 @@ import {
 import { createQuestionHistoryProjector } from "@t3tools/client-runtime/state/thread-requests";
 import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
-  createRef,
   useEffect,
   useReducer,
   useRef,
@@ -38,17 +39,15 @@ import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEnt
 import { useNowMinute } from "~/hooks/useNowMinute";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
-import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
-import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
 import { HostImageUrlContext } from "../chat/hostImageUrl";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
-import { MessagesTimeline } from "../chat/MessagesTimeline";
+import { MessagesTimeline, type MessagesTimelineHistoryControls } from "../chat/MessagesTimeline";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDisplayModelName, getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { ScrollToEndButton } from "../chat/TimelineOverlays";
@@ -133,6 +132,32 @@ function takeGuestEntry(): GuestEntry {
 }
 
 const decodeErrorBody = Schema.decodeUnknownOption(Schema.Struct({ message: Schema.String }));
+const decodeHistoryPage = Schema.decodeUnknownOption(
+  Schema.toCodecJson(OrchestrationV2ThreadHistoryPage),
+);
+
+/** Resolves to the page, or to a message the guest can read. */
+async function fetchGuestHistoryPage(
+  shareId: string,
+  cursor: string,
+): Promise<OrchestrationV2ThreadHistoryPage | string> {
+  const failed = "Could not load earlier turns. Try again.";
+  try {
+    const response = await fetch(
+      `${GUEST_HISTORY_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&cursor=${encodeURIComponent(cursor)}`,
+    );
+    const json: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      return Option.match(decodeErrorBody(json), {
+        onNone: () => failed,
+        onSome: ({ message }) => message,
+      });
+    }
+    return Option.getOrElse(decodeHistoryPage(json), () => failed);
+  } catch {
+    return "Could not reach the server.";
+  }
+}
 
 /** Resolves to null on success, or to a message the guest can read. */
 async function postGuest(
@@ -243,6 +268,32 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
   // missing, invalid, or ended session. Network drops reconnect on their own.
   const [rejected, setRejected] = useState(false);
 
+  const [historyLoad, setHistoryLoad] = useState<{
+    readonly cursor: string;
+    readonly error: string | null;
+  } | null>(null);
+  const historyCursor = stream.historyCursor;
+  // A load for an older cursor is stale: a page or a reconnect snapshot moved the cursor on.
+  const currentLoad = historyLoad?.cursor === historyCursor ? historyLoad : null;
+  const loadingHistory = currentLoad !== null && currentLoad.error === null;
+  const historyError = currentLoad?.error ?? null;
+  const loadEarlier = async () => {
+    if (historyCursor === null || loadingHistory) return;
+    setHistoryLoad({ cursor: historyCursor, error: null });
+    const result = await fetchGuestHistoryPage(shareId, historyCursor);
+    if (typeof result === "string") setHistoryLoad({ cursor: historyCursor, error: result });
+    else dispatch({ type: "history-page", cursor: historyCursor, page: result });
+  };
+  const historyControls: MessagesTimelineHistoryControls | undefined =
+    historyCursor === null
+      ? undefined
+      : {
+          hasMoreHistory: true,
+          loading: loadingHistory,
+          error: historyError,
+          onLoadEarlier: () => void loadEarlier(),
+        };
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets document.title to the shared thread's title
   useEffect(() => {
     if (stream.view) document.title = stream.view.title;
@@ -275,6 +326,7 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
         view={stream.view}
         projection={stream.projection}
         awaitingRowIds={stream.awaitingRowIds}
+        historyControls={historyControls}
       />
     );
   }
@@ -348,7 +400,6 @@ function NameForm({
 // The timeline needs an environment id to key its rows. Nothing behind it loads on this page;
 // see isGuestPage.
 const GUEST_ENVIRONMENT_ID = EnvironmentId.make("guest");
-const NO_COMPOSER = createRef<ChatComposerHandle>();
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 const ignore = () => {};
@@ -361,10 +412,12 @@ function GuestThread({
   view: { shareId, title, expiresAt, messages, model },
   projection,
   awaitingRowIds,
+  historyControls,
 }: {
   readonly view: GuestShareView;
   readonly projection: OrchestrationV2ThreadProjection;
   readonly awaitingRowIds: GuestStreamState["awaitingRowIds"];
+  readonly historyControls: MessagesTimelineHistoryControls | undefined;
 }) {
   // No ":" so the timeline finds no environment thread behind the key.
   const threadKey = `guest-${shareId}`;
@@ -399,7 +452,6 @@ function GuestThread({
   const runningRunId = runtime?.activeRunId ?? null;
   const follow = useTimelineFollow({
     legendListRef: listRef,
-    composerRef: NO_COMPOSER,
     composerTimelineInset: 0,
     routeThreadKey: threadKey,
     activeThreadKey: threadKey,
@@ -419,31 +471,6 @@ function GuestThread({
     ),
   );
   const unplaced = unplacedGuestMessages(messages, items, awaitingRowIds);
-  // The guest's waiting messages sit in the list footer, which the list does not follow on its
-  // own (the owner's view does the same in ChatView). A new one is the guest's own send, so it
-  // comes into view even if they had scrolled up, as the owner's send does. While following, the
-  // footer stays in view as it grows, such as when its images load.
-  const unplacedKey = unplaced.map((message) => message.id).join(",");
-  const previousUnplacedKey = useRef(unplacedKey);
-  const following = useRef(follow.timelineLiveFollowEnabled);
-  const scrollToEnd = useStableCallback(follow.scrollToEnd);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the timeline to the end after commit when new unplaced messages appear
-  useEffect(() => {
-    following.current = follow.timelineLiveFollowEnabled;
-    const previous = new Set(previousUnplacedKey.current.split(","));
-    previousUnplacedKey.current = unplacedKey;
-    if (unplacedKey.split(",").some((id) => id !== "" && !previous.has(id))) scrollToEnd(true);
-  }, [follow.timelineLiveFollowEnabled, unplacedKey, scrollToEnd, following, previousUnplacedKey]);
-  const footerRef = useRef<HTMLOListElement>(null);
-  const hasFooter = unplaced.length > 0;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the footer keeps it scrolled into view while following
-  useEffect(() => {
-    const footer = footerRef.current;
-    if (!hasFooter || footer === null) return;
-    return observeResize(footer, () => {
-      if (following.current) scrollToEnd();
-    });
-  }, [hasFooter, scrollToEnd, following]);
   return (
     <>
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
@@ -471,6 +498,7 @@ function GuestThread({
             onFileDownload={openFile}
             renderHtmlRender={renderHtmlRender}
             turnItemSource={turnItemSource}
+            historyControls={historyControls}
             activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
             markdownCwd={undefined}
             resolvedTheme={resolvedTheme}
@@ -484,9 +512,10 @@ function GuestThread({
             liveFollowEnabled={follow.timelineLiveFollowEnabled}
             onIsAtEndChange={follow.onIsAtEndChangeStable}
             onViewportAttach={follow.attachTimelineViewport}
+            onFooterGrow={follow.onTimelineFooterGrowStable}
             footer={
               unplaced.length === 0 ? null : (
-                <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
+                <ol className="chat-content-lane flex flex-col gap-4 pb-4">
                   {unplaced.map((message) => (
                     <li key={message.id}>
                       <UnplacedGuestMessage shareId={shareId} message={message} />
@@ -506,7 +535,7 @@ function GuestThread({
         ) : null}
       </div>
       <div className={cn(LANE, "shrink-0 pb-4")}>
-        <GuestComposer shareId={shareId} model={model} />
+        <GuestComposer shareId={shareId} model={model} onSent={() => follow.scrollToEnd(true)} />
       </div>
     </>
   );
@@ -614,9 +643,12 @@ function StagedImage({ file }: { readonly file: File }) {
 function GuestComposer({
   shareId,
   model,
+  onSent,
 }: {
   readonly shareId: GuestShareView["shareId"];
   readonly model: GuestThreadModel;
+  /** The guest's own message comes into view even if they had scrolled up, as the owner's does. */
+  readonly onSent: () => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<ReadonlyArray<StagedFile>>([]);
@@ -652,6 +684,7 @@ function GuestComposer({
     setError(failure);
     // Keep anything typed or attached while the request was in flight.
     if (failure === null) {
+      onSent();
       setText((current) => (current.trim() === trimmed ? "" : current));
       setFiles((current) => current.filter((staged) => !sentFiles.includes(staged)));
     }

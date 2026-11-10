@@ -30,6 +30,18 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
+    // An agent's link card. One answer per card at a time.
+    answerRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:answer-request",
+      tag: WS_METHODS.peerLinksAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
   };
 }
 
