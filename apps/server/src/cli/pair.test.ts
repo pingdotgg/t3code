@@ -343,6 +343,32 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // regression: #34054 on a shared $HOME the recorded pid belongs to another machine.
+  it.effect("names the other machine whose server owns a shared T3 home", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3 pair host test-"));
+      const state = yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 1,
+      });
+      NodeFS.mkdirSync(NodePath.join(baseDir, "userdata"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        JSON.stringify({ ...state, pid: 4_194_305, hostname: "host-a" }),
+      );
+
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+      );
+
+      const rendered = String(
+        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+      );
+      assert.notInclude(rendered, "No running T3 Code server found.");
+      assert.include(rendered, "host-a");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // regression: #10516 minting opens the target database with this checkout's
   // migrations, so a worktree must never fall back to the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>
