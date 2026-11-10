@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
@@ -40,6 +40,9 @@ import {
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import * as PullRequestWatchService from "./PullRequestWatchService.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 
 function project(input: {
   readonly id: string;
@@ -1979,6 +1982,119 @@ it.effect("routes a hosted reference to another repository through a project on 
     assert.strictEqual(projectReads, readsPerReference + 2);
     yield* read(11);
     assert.strictEqual(projectReads, readsPerReference * 2 + 2);
+  }),
+);
+
+it.effect("a new watch rechecks hosting availability after a cached read in another project", () =>
+  Effect.gen(function* () {
+    const caller = project({
+      id: "caller",
+      title: "caller",
+      workspaceRoot: "/caller",
+      repository: "acme/other",
+    });
+    const target = project({
+      id: "gitlab",
+      title: "gitlab",
+      workspaceRoot: "/gitlab",
+      repository: "team/project",
+      provider: "gitlab",
+    });
+    let missing = false;
+    let reads = 0;
+    let dispatched = false;
+    const service = yield* makeService({
+      projects: [caller, target],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github")),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: (input) =>
+            Effect.suspend(() => {
+              reads++;
+              assert.strictEqual(input.cwd, target.workspaceRoot);
+              assert.strictEqual(input.repository, "team/project");
+              assert.strictEqual(input.host, "gitlab.com");
+              return missing
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("gitlab"),
+                      operation: "summary",
+                      reason: "missing-tool",
+                      detail: "The hosting CLI is unavailable.",
+                    }),
+                  )
+                : Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: caller.id,
+      host: "gitlab.com",
+      repository: "team/project",
+      number: 42,
+      allowStale: false,
+    };
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    missing = true;
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 1);
+
+    const threadId = ThreadId.make("watch-thread");
+    const thread = v2PullRequestThread({
+      id: threadId,
+      projectId: caller.id,
+      title: "Watch",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      pullRequests: [],
+      latestUserMessageAt: null,
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z",
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+    });
+    const watches = yield* PullRequestWatchService.PullRequestWatchService.pipe(
+      Effect.provide(
+        PullRequestWatchService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(PullRequestService.PullRequestService, service),
+              Layer.mock(ProjectService.ProjectService)({
+                getShell: () => Effect.succeedSome(caller),
+              }),
+              Layer.mock(Orchestrator.OrchestratorV2)({
+                getThreadShell: () => Effect.succeed(thread),
+                dispatch: () =>
+                  Effect.sync(() => {
+                    dispatched = true;
+                    return { sequence: 1, storedEvents: [] };
+                  }),
+              }),
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+    );
+    const error = yield* watches
+      .setWatching({
+        threadId,
+        watching: true,
+        target: { url: "https://gitlab.com/team/project/-/merge_requests/42" },
+      })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "PullRequestUnavailableError",
+      reason: "cli-missing",
+      provider: "gitlab",
+    });
+    assert.strictEqual(reads, 2);
+    assert.isFalse(dispatched);
   }),
 );
 
