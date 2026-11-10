@@ -194,8 +194,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z",
         };
-        // A turn end commits its checkpoints and the run's end together.
+        // A turn end commits its checkpoints and the run's end together. The queued
+        // non-refresh request ahead of them must still become a refresh when they join it.
         const turnEnd = [
+          { type: "thread.metadata-updated", threadId: thread.id },
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
