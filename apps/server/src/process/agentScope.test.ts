@@ -301,7 +301,8 @@ describe("AgentScope service", () => {
             "app-t3code.slice",
             "CPUWeight=10",
             "IOWeight=10",
-            "TasksMax=25%",
+            // systemd before v260 persists a set-property percentage as a tenth of itself.
+            expect.stringMatching(/^TasksMax=\d+$/),
           ],
         ]);
       }),
