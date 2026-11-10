@@ -73,6 +73,12 @@ A plugin can give agents new tools. Agents in threads started after you turn the
 Turning the plugin off takes its tools away from every thread. Tools that only read work in any
 thread. Tools that change things work only in a thread set to **Full access** and not in Plan mode.
 
+## Thread statuses
+
+A plugin can show a named status on a thread, such as the machine running a task. These appear
+beside the thread's activity in web, desktop and mobile. They disappear when the plugin clears
+them, is turned off or reloads, or when the server restarts.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

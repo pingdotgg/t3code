@@ -237,7 +237,8 @@ import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
-import { useEnvironmentQueryRefresh } from "../state/query";
+import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query";
+import { pluginEnvironment } from "../state/plugins";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -364,7 +365,11 @@ import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
-import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
+import {
+  branchMismatchBannerItem,
+  extensionStatusBannerItem,
+  pluginStatusBannerItems,
+} from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
@@ -435,6 +440,11 @@ export default function ChatView(props: ChatViewProps) {
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const pluginStatuses = useEnvironmentQuery(
+    routeKind === "server"
+      ? pluginEnvironment.threadStatuses({ environmentId, input: { threadId } })
+      : null,
+  );
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
   const routeThreadKey = scopedThreadKey(routeThreadRef);
@@ -2620,6 +2630,10 @@ export default function ChatView(props: ChatViewProps) {
       deriveProviderExtensionStatuses(serverProjection),
     );
     const extensionStatusItems = extensionStatusBanner === null ? [] : [extensionStatusBanner];
+    const pluginStatusItems =
+      activeEnvironment?.connection.phase === "connected"
+        ? pluginStatusBannerItems(pluginStatuses.data ?? undefined)
+        : [];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
@@ -2633,6 +2647,7 @@ export default function ChatView(props: ChatViewProps) {
         ...fallbackItems,
         ...limitRecoveryItems,
         ...extensionStatusItems,
+        ...pluginStatusItems,
         ...usageLimitsItems,
         ...projectCloneItems,
         ...freshSessionItems,
@@ -2644,6 +2659,7 @@ export default function ChatView(props: ChatViewProps) {
       ...fallbackItems,
       ...limitRecoveryItems,
       ...extensionStatusItems,
+      ...pluginStatusItems,
       ...usageLimitsItems,
       ...projectCloneItems,
       ...freshSessionItems,

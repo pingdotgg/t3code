@@ -12,6 +12,7 @@ import {
   type PluginSettingsGetInput,
   type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
+  type PluginThreadStatusesInput,
   type PluginUninstallInput,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -36,6 +37,8 @@ export const makePluginRpcHandlers = (
 ) => ({
   [WS_METHODS.pluginsSubscribeStates]: (_input: PluginListInput) =>
     pluginHost.streamForClient(scopes),
+  [WS_METHODS.pluginsSubscribeThreadStatuses]: (input: PluginThreadStatusesInput) =>
+    pluginHost.subscribeThreadStatuses(input.threadId),
   [WS_METHODS.pluginsSetEnabled]: (input: PluginSetEnabledInput) =>
     pluginHost.setEnabled(input.pluginId, input.enabled).pipe(
       Effect.map((plugin) => ({ plugin })),

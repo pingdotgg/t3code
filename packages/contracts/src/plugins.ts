@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 // Lowercase because the id names the plugin's directory on case-insensitive filesystems. No
 // underscores, so the `plg_<id>_` prefix on plugin MCP tool names belongs to exactly one plugin.
@@ -277,6 +277,23 @@ export const PluginSubscriptionEvent = Schema.Struct({
   value: Schema.Json,
 });
 export type PluginSubscriptionEvent = typeof PluginSubscriptionEvent.Type;
+
+export const PluginThreadStatusesInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type PluginThreadStatusesInput = typeof PluginThreadStatusesInput.Type;
+
+/** What running plugins show on one thread, by plugin, in the order they first set them. */
+export const PluginThreadStatusesEvent = Schema.Struct({
+  plugins: Schema.Array(
+    Schema.Struct({
+      pluginId: PluginId,
+      pluginName: TrimmedNonEmptyString,
+      statuses: Schema.Array(Schema.Struct({ key: Schema.String, text: TrimmedNonEmptyString })),
+    }),
+  ),
+});
+export type PluginThreadStatusesEvent = typeof PluginThreadStatusesEvent.Type;
 
 export class PluginError extends Schema.TaggedError<PluginError>()("PluginError", {
   message: Schema.String,

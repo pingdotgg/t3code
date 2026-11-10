@@ -4,6 +4,7 @@ import type {
   OrchestrationV2ProviderGoal,
   OrchestrationV2ProviderSession,
   ThreadId,
+  PluginThreadStatusesEvent,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
@@ -43,6 +44,21 @@ export function extensionStatusBannerItem(
     icon: <span>▸</span>,
     title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
   };
+}
+
+export function pluginStatusBannerItems(
+  event: PluginThreadStatusesEvent | undefined,
+): ComposerBannerStackItem[] {
+  return (
+    event?.plugins.map((plugin) => ({
+      id: `plugin-status:${plugin.pluginId}`,
+      variant: "default",
+      icon: <span>▸</span>,
+      title: (
+        <output>{`${plugin.pluginName} · ${plugin.statuses.map((status) => status.text).join(" · ")}`}</output>
+      ),
+    })) ?? []
+  );
 }
 
 /** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
