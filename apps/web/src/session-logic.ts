@@ -98,7 +98,7 @@ export type PendingUserInput = ThreadPendingUserInput;
 
 export type TimelineAttempt = Pick<
   OrchestrationV2RunAttempt,
-  "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status" | "completedAt"
+  "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status" | "startedAt" | "completedAt"
 >;
 
 export type TimelineEntry = (
