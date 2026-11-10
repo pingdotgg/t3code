@@ -12550,7 +12550,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (command.restoreFiles !== false) {
         const refusal = yield* checkpointRestoreRefusal(projection.thread, targetScope, {
-          idAllocator,
           projects,
           path,
           fileSystem,

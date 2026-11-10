@@ -3,25 +3,19 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
-import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { legacyRootScopeId } from "./CheckpointService.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
 const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
-export const LEGACY_CHECKPOINT_RESTORE_MESSAGE =
-  "This turn was recorded before T3 Code tracked which worktree each turn ran in, so its files can't be restored. Rewind the conversation without restoring files instead.";
-
 const OTHER_WORKSPACE_RESTORE_MESSAGE =
   "This turn ran in a different worktree, so its files can't be restored into this one. Rewind the conversation without restoring files instead.";
 
-export type CheckpointRestoreRefusal = "shared-workspace" | "legacy-checkpoint" | "other-workspace";
+export type CheckpointRestoreRefusal = "shared-workspace" | "other-workspace";
 
 const REFUSAL_MESSAGES: Record<CheckpointRestoreRefusal, string> = {
   "shared-workspace": SHARED_WORKSPACE_RESTORE_MESSAGE,
-  "legacy-checkpoint": LEGACY_CHECKPOINT_RESTORE_MESSAGE,
   "other-workspace": OTHER_WORKSPACE_RESTORE_MESSAGE,
 };
 
@@ -32,20 +26,15 @@ export const checkpointRestoreRefusalMessage = (refusal: CheckpointRestoreRefusa
 export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRestoreRefusal")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
-    scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">,
+    scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
-      readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
       readonly projections: ProjectionStoreV2["Service"];
       readonly projects: ProjectStore.ProjectStoreV2["Service"];
       readonly path: Path.Path;
     },
   ) {
-    const { fileSystem, idAllocator, projections, projects, path } = dependencies;
-    // The legacy scope's projected cwd is only its latest; older checkpoints may hold another workspace.
-    if (scope.id === (yield* legacyRootScopeId(idAllocator, thread.id))) {
-      return "legacy-checkpoint" as const;
-    }
+    const { fileSystem, projections, projects, path } = dependencies;
     const contains = (parent: string, child: string) => {
       const relative = path.relative(parent, child);
       return (
@@ -87,10 +76,26 @@ export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRes
             if (turnItems.length === 0) continue;
           }
           const other = yield* projections.getCheckpointContext(otherThread.id);
+          // A thread keeps a root scope per workspace it used; only its newest is where it works now.
+          const runOrdinals = new Map(other.runs.map((run) => [run.id, run.ordinal]));
+          const scopeRunOrdinal = (candidate: (typeof other.checkpointScopes)[number]) =>
+            (candidate.runId === null ? undefined : runOrdinals.get(candidate.runId)) ?? 0;
+          const latestRootRunOrdinal = Math.max(
+            -1,
+            ...other.checkpointScopes
+              .filter((candidate) => candidate.kind === "root_run")
+              .map(scopeRunOrdinal),
+          );
           const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
           const paths = [
             otherThread.worktreePath,
-            ...other.checkpointScopes.map((candidate) => candidate.cwd),
+            ...other.checkpointScopes
+              .filter(
+                (candidate) =>
+                  candidate.kind !== "root_run" ||
+                  scopeRunOrdinal(candidate) === latestRootRunOrdinal,
+              )
+              .map((candidate) => candidate.cwd),
             // Errored sessions can still stream. Shared sessions retain another thread's opening cwd;
             // turn worktrees and project roots are already covered here.
             ...providerContext.providerSessions

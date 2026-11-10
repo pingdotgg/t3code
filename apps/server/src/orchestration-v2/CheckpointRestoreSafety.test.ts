@@ -17,12 +17,9 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
-import {
-  checkpointRestoreRefusal,
-  LEGACY_CHECKPOINT_RESTORE_MESSAGE,
-} from "./CheckpointRestoreSafety.ts";
+import { checkpointRestoreRefusal } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { CheckpointServiceV2, legacyRootScopeId } from "./CheckpointService.ts";
+import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./ProjectionStore.ts";
@@ -37,8 +34,7 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
-  "legacy",
-  "legacy-conversation",
+  "moved",
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -58,10 +54,7 @@ it.effect.each([
     const providerSessionId = ProviderSessionId.make("restore-session");
     const instanceId = ProviderInstanceId.make("restore-instance");
     const checkpointId = CheckpointId.make("restore-checkpoint");
-    // A thread that never moved still keeps one legacy root scope from before per-workspace scopes.
-    const scopeId = owner.startsWith("legacy")
-      ? yield* legacyRootScopeId(yield* IdAllocator.IdAllocatorV2, threadId)
-      : CheckpointScopeId.make("restore-scope");
+    const scopeId = CheckpointScopeId.make("restore-scope");
     const calls: string[] = [];
     const providerThread = {
       id: providerThreadId,
@@ -124,10 +117,20 @@ it.effect.each([
               }),
             getCheckpointContext: () =>
               Effect.succeed({
-                runs: [],
+                runs: [
+                  { id: "other-run-1", ordinal: 1 },
+                  { id: "other-run-2", ordinal: 2 },
+                ],
                 checkpoints: [],
-                checkpointScopes: [],
-              }),
+                // A thread that left this worktree keeps its old root scope here.
+                checkpointScopes:
+                  owner === "moved"
+                    ? [
+                        { kind: "root_run", runId: "other-run-1", cwd: nested },
+                        { kind: "root_run", runId: "other-run-2", cwd: sibling },
+                      ]
+                    : [],
+              }) as never,
             getThreadProviderContext: () =>
               Effect.succeed({
                 thread: otherThread as never,
@@ -174,23 +177,13 @@ it.effect.each([
     const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
       Effect.provide(layerTest),
     );
-    const restoreFiles = !owner.endsWith("conversation");
-    const rejected = ![
-      "sibling",
-      "shared-provider",
-      "conversation",
-      "legacy-conversation",
-    ].includes(owner);
+    const restoreFiles = owner !== "conversation";
+    const rejected = !["sibling", "shared-provider", "conversation", "moved"].includes(owner);
     if (rejected) {
       const error = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
         .pipe(Effect.flip);
-      if (owner === "legacy") {
-        assert.equal(error.reason, "legacy-checkpoint");
-        assert.equal(error.message, LEGACY_CHECKPOINT_RESTORE_MESSAGE);
-      } else {
-        assert.equal(error.reason, "shared-workspace");
-      }
+      assert.equal(error.reason, "shared-workspace");
       assert.deepEqual(calls, []);
       assert.equal(yield* fs.readFileString(otherFile), "other thread's uncommitted work");
     } else {
@@ -198,7 +191,7 @@ it.effect.each([
       assert.deepEqual(calls, restoreFiles ? ["provider", "files"] : ["provider"]);
       assert.equal(yield* fs.exists(otherFile), !restoreFiles);
     }
-  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
@@ -209,10 +202,9 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     const worktreePath = path.join(parent, "worktree");
     const refusal = yield* checkpointRestoreRefusal(
       { id: ThreadId.make("restore-removed"), worktreePath },
-      { id: CheckpointScopeId.make("restore-removed-scope"), cwd: worktreePath },
+      { cwd: worktreePath },
       {
         fileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
@@ -221,7 +213,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       },
     );
     assert.isNull(refusal);
-  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
@@ -253,10 +245,9 @@ it.effect.each([
       };
       const refusal = yield* checkpointRestoreRefusal(
         { id: parentId, worktreePath },
-        { id: CheckpointScopeId.make("restore-side-chat-scope"), cwd: worktreePath },
+        { cwd: worktreePath },
         {
           fileSystem,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
           path,
           projections: {
             getShellSnapshot: () => Effect.succeed({ threads: [sideChat], archivedThreads: [] }),
@@ -264,12 +255,12 @@ it.effect.each([
               Effect.succeed({
                 turnItems: Array.from({ length: toolItems }, () => ({ type: "command_execution" })),
               }),
-            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getCheckpointContext: () => Effect.succeed({ runs: [], checkpointScopes: [] }),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
           } as never,
           projects: {} as never,
         },
       );
       assert.equal(refusal === null, isolated);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

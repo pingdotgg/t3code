@@ -48,7 +48,6 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "provider-turn-unavailable",
       "unexpected-failure",
       "shared-workspace",
-      "legacy-checkpoint",
       "other-workspace",
     ]),
     threadId: ThreadId,
@@ -66,7 +65,6 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       case "provider-turn-unavailable":
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
       case "shared-workspace":
-      case "legacy-checkpoint":
       case "other-workspace":
         return checkpointRestoreRefusalMessage(this.reason);
       case "unexpected-failure":
@@ -243,7 +241,6 @@ export const layer: Layer.Layer<
           ? null
           : yield* checkpointRestoreRefusal(context.thread, scope, {
               fileSystem,
-              idAllocator: ids,
               projections,
               projects,
               path,

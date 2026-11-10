@@ -184,12 +184,6 @@ export const rootScopeId = (
 ) =>
   idAllocator.allocate.checkpointScope({ threadId, name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${cwd}` });
 
-/** Before root scopes were per workspace, every workspace a thread used shared this one scope. */
-export const legacyRootScopeId = (
-  idAllocator: IdAllocator.IdAllocatorV2["Service"],
-  threadId: ThreadId,
-) => idAllocator.allocate.checkpointScope({ threadId, name: ROOT_CHECKPOINT_SCOPE_NAME });
-
 const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
