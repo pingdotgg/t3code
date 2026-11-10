@@ -700,6 +700,68 @@ describe("deriveMessagesTimelineRows", () => {
     },
   );
 
+  it("does not stack a settled turn's separate compactions under its collapsed fold", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const [, , , liveUser, liveWork, liveAssistant] = fixture.visibleTurnItems;
+    if (
+      liveUser?.item.type !== "user_message" ||
+      liveAssistant?.item.type !== "assistant_message" ||
+      !liveWork
+    )
+      throw new Error("Expected live fixture items");
+    const at = (
+      projected: typeof liveWork,
+      id: string,
+      position: number,
+      item: Partial<OrchestrationV2TurnItem>,
+    ): typeof liveWork => ({
+      ...projected,
+      position,
+      sourceItemId: TurnItemId.make(id),
+      item: {
+        ...projected.item,
+        ...item,
+        id: TurnItemId.make(id),
+        ordinal: position,
+        startedAt: DateTime.makeUnsafe(fixture.time(position)),
+        completedAt: DateTime.makeUnsafe(fixture.time(position)),
+        updatedAt: DateTime.makeUnsafe(fixture.time(position)),
+      } as OrchestrationV2TurnItem,
+    });
+    const compaction = { type: "compaction", driver: null, status: "completed" } as const;
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          liveUser,
+          at(liveWork, "work-before", 6, {}),
+          at(liveAssistant, "first-compaction", 7, compaction),
+          at(liveWork, "work-between", 8, {}),
+          at(liveAssistant, "second-compaction", 9, compaction),
+          at(liveWork, "work-after", 10, {}),
+          at(liveAssistant, "final-assistant", 11, {
+            messageId: MessageId.make("final-assistant"),
+            text: "Done",
+            streaming: false,
+            status: "completed",
+          }),
+        ],
+        optimisticMessages: [],
+      }),
+      isWorking: false,
+      latestRun: {
+        runId: fixture.runId,
+        status: "completed",
+        startedAt: fixture.time(5),
+        completedAt: fixture.time(12),
+      },
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.filter((row) => row.kind === "turn-fold")).toHaveLength(1);
+    expect(rows.some((row) => row.kind === "work")).toBe(false);
+    expect(rows.filter((row) => row.kind === "context-compaction").length).toBeLessThanOrEqual(1);
+  });
+
   it("folds an answered compact-on-return question into its compaction row", () => {
     const fixture = makeStreamingTimelineFixture();
     const [history0, history1, history2, liveUser, liveWork, liveAssistant] =
