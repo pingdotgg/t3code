@@ -805,7 +805,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         return launcher;
       });
 
-      const absolute = yield* writeLauncher("absolute.cmd", `"${runtimeExecutable}"`);
+      const absolute = yield* writeLauncher("agy.cmd", `"${runtimeExecutable}"`);
       expect(yield* installation.resolve(absolute)).toMatchObject({
         executablePath: absolute,
         harnessPath: runtimeHarness,

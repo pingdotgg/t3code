@@ -290,8 +290,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   ) {
     if (!(yield* executableFile(candidate))) return null;
     const executablePath = yield* fs.realPath(candidate);
+    const launched = yield* launcherTarget(executablePath);
     // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
-    if (isAntigravityCli(candidate, executablePath)) {
+    if (launched === null && isAntigravityCli(candidate, executablePath)) {
       return {
         executablePath: candidate,
         harnessPath: null,
@@ -300,7 +301,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         managedVersionDirectory: null,
       } satisfies AntigravityExecutable;
     }
-    const directory = path.dirname((yield* launcherTarget(executablePath)) ?? executablePath);
+    const directory = path.dirname(launched ?? executablePath);
     const harnessPath = path.join(directory, names.harness);
     if (!(yield* executableFile(harnessPath))) return null;
     const realVersions = yield* fs.realPath(versionsDirectory).pipe(Effect.option);
