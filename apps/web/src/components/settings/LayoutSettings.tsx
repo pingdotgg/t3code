@@ -265,11 +265,11 @@ function YourLayoutHeader({
       </div>
       {/* Ghost buttons hang by their 8px inline inset so the last label ends on the card edge. */}
       <div className="-me-2 flex shrink-0 items-center gap-1">
-        <Button size="xs" variant="ghost-muted" disabled={!canUndo} onClick={onUndo}>
+        <Button size="standard" variant="ghost-muted" disabled={!canUndo} onClick={onUndo}>
           <Undo2Icon aria-hidden />
           Undo
         </Button>
-        <Button size="xs" variant="ghost-muted" disabled={!canReset} onClick={onReset}>
+        <Button size="standard" variant="ghost-muted" disabled={!canReset} onClick={onReset}>
           <RotateCcwIcon aria-hidden />
           Reset
         </Button>
@@ -336,7 +336,7 @@ function PlacementRow<Value extends string>({
             if (option) onChange(option.value);
           }}
         >
-          <SelectTrigger size="sm" aria-label={title}>
+          <SelectTrigger variant="well" size="compact" aria-label={title}>
             <SelectValue>
               {(current: Value) => {
                 const option = byValue.get(current);
