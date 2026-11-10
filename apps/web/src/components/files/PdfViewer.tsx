@@ -249,8 +249,8 @@ export default function PdfViewer(props: {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
   const saveView = (node: HTMLDivElement, notify = true) => {
-    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
     if (!pdf || error) return;
+    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
     const view = {
       page,
       offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
