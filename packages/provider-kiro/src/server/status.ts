@@ -26,7 +26,6 @@ import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   buildSelectOptionDescriptor,
@@ -54,6 +53,7 @@ const KIRO_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 const KIRO_API_KEY_ENV = "KIRO_API_KEY";
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * The agent picker is not a model trait, but the composer reads options per
@@ -374,7 +374,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
   }
 
   const versionResult = yield* runKiroCli(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
