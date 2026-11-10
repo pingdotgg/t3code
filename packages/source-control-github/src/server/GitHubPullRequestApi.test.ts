@@ -71,6 +71,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         changedFiles: 0,
         mergedAt: null,
         closedAt: null,
+        mergeCommit: null,
         isCrossRepository: false,
         maintainerCanModify: true,
         headRepositoryOwner: null,
@@ -2243,6 +2244,19 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect(variablesOf("ViewerPermissions")).toHaveLength(1);
         expect(variablesOf("PullRequestCore")).toHaveLength(1);
       }),
+  );
+
+  it.effect.each([
+    ["github.com", true],
+    ["acme.ghe.com", true],
+    ["ghe.example.com", false],
+  ] as const)("asks %s for merge queue removals: %s", ([host, asked]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(coreResponse()))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.getPullRequestDetail({ cwd: "/w", repository: "acme/web", host, number: 7 });
+      expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ mergeQueue: asked });
+    }),
   );
 
   it.effect("preserves the actual source fork name in provider detail", () =>

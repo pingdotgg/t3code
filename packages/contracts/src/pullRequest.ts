@@ -595,6 +595,14 @@ export const PullRequestReportStateInput = Schema.Struct({
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
+export const PullRequestMergeQueueRemoval = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  removedAt: IsoDateTime,
+  /** The host's own words, such as `merge_conflict`. */
+  reason: Schema.NullOr(Schema.String),
+});
+export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -623,6 +631,10 @@ export const PullRequestDetail = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
+  /** Absent where the host does not report the commit a merge made. */
+  mergeCommitSha: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The latest time the merge queue dropped it without merging; absent where hosts don't say. */
+  mergeQueueRemoval: Schema.optional(Schema.NullOr(PullRequestMergeQueueRemoval)),
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),

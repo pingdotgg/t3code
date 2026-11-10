@@ -270,6 +270,30 @@ export declare namespace PullRequestStackMembership {
   export type Result = typeof PullRequestStackMembership.result.Type
 }
 
+/** Represents a 'removed_from_merge_queue' event on a given pull request. */
+export const RemovedFromMergeQueueEvent = Schema.Struct({
+  __typename: Schema.Literal("RemovedFromMergeQueueEvent"),
+  /** The Node ID of the RemovedFromMergeQueueEvent object */
+  id: Shared.ID
+})
+export interface RemovedFromMergeQueueEvent extends Schema.Struct.Type<typeof RemovedFromMergeQueueEvent.fields> {}
+
+/** An item in a pull request timeline */
+export const PullRequestTimelineItemsOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["RemovedFromMergeQueueEvent"])
+})
+export interface PullRequestTimelineItemsOther extends Schema.Struct.Type<typeof PullRequestTimelineItemsOther.fields> {}
+
+/** The connection type for PullRequestTimelineItems. */
+export const PullRequestTimelineItemsConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
+    RemovedFromMergeQueueEvent,
+    PullRequestTimelineItemsOther
+  ]))))
+})
+export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
+
 /** Represents a comment on an Issue. */
 export const IssueComment = Schema.Struct({
   /** The moment the editor made the last edit */
@@ -372,6 +396,8 @@ export const PullRequestWatchFingerprintRepositoryPullRequestPullRequest = Schem
   mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
   /** Identifies the oid of the head ref associated with the pull request, even if the ref has been deleted. */
   headRefOid: Shared.GitObjectID,
+  /** A list of events, comments, commits, etc. associated with the pull request. */
+  mergeQueueRemovals: Schema.optionalKey(PullRequestTimelineItemsConnection),
   /** A list of comments associated with the pull request. */
   comments: IssueCommentConnection,
   /** A list of reviews associated with the pull request. */
@@ -396,17 +422,19 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id}}}comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
     ],
     fragments: []
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    mergeQueue: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
