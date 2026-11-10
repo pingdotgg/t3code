@@ -23,6 +23,14 @@
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
     },
+    "./composer-model-mentions": {
+      "types": "./src/composerModelMentions.ts",
+      "default": "./src/composerModelMentions.ts"
+    },
+    "./model-search": {
+      "types": "./src/modelSearch.ts",
+      "default": "./src/modelSearch.ts"
+    },
     "./image-attachment-size": {
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
@@ -235,6 +243,10 @@
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"
     },
+    "./state/connectMcpApproval": {
+      "types": "./src/state/connectMcpApproval.ts",
+      "default": "./src/state/connectMcpApproval.ts"
+    },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"
@@ -411,6 +423,10 @@
       "types": "./src/work-log/commandLabel.ts",
       "default": "./src/work-log/commandLabel.ts"
     },
+    "./work-log/embedded-scripts": {
+      "types": "./src/work-log/embeddedScripts.ts",
+      "default": "./src/work-log/embeddedScripts.ts"
+    },
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
@@ -527,6 +543,10 @@
       "types": "./src/modelTraits.ts",
       "default": "./src/modelTraits.ts"
     },
+    "./pull-request-reviewers": {
+      "types": "./src/pullRequestReviewers.ts",
+      "default": "./src/pullRequestReviewers.ts"
+    },
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
@@ -558,7 +578,8 @@
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
     "jszip": "3.10.1",
-    "three": "0.180.0"
+    "three": "0.180.0",
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
