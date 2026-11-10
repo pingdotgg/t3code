@@ -549,5 +549,50 @@
       "email": "k1.kiro.owner@example.com",
       "windows": [[10, 60]]
     }
+  },
+  "F": {
+    "x1": {
+      "provider": "xai",
+      "email": "x1.grok.owner@example.com",
+      "windows": [[35, 4320]]
+    },
+    "x2": {
+      "provider": "xai",
+      "email": "x2.grok.owner@example.com",
+      "windows": [[35, 4320]],
+      "state": "malformed"
+    },
+    "x3": {
+      "provider": "xai",
+      "email": "x3.grok.owner@example.com",
+      "windows": [[35, 4320]],
+      "state": "refused"
+    },
+    "g1": {
+      "provider": "antigravity",
+      "email": "g1.antigravity.owner@example.com",
+      "windows": [
+        [60, 200],
+        [25, 6000]
+      ]
+    },
+    "g2": {
+      "provider": "antigravity",
+      "email": "g2.antigravity.owner@example.com",
+      "windows": [
+        [60, 200],
+        [25, 6000]
+      ],
+      "state": "malformed"
+    },
+    "g3": {
+      "provider": "antigravity",
+      "email": "g3.antigravity.owner@example.com",
+      "windows": [
+        [60, 200],
+        [25, 6000]
+      ],
+      "state": "refused"
+    }
   }
 }

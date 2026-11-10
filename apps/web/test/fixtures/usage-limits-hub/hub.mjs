@@ -96,6 +96,10 @@ NodeHttp.createServer((request, response) => {
       const call = JSON.parse(raw);
       const account = accounts[call.auth_index];
       if (!account) return json(response, { status_code: 404, body: "{}" });
+      // "refused" fails every upstream call; "malformed" answers the usage call with the wrong shape.
+      if (account.state === "refused") {
+        return json(response, { status_code: 403, body: JSON.stringify({ error: "refused" }) });
+      }
       if (call.url.endsWith("/userinfo")) {
         return json(response, { status_code: 200, body: JSON.stringify({ id: call.auth_index }) });
       }
@@ -108,7 +112,11 @@ NodeHttp.createServer((request, response) => {
         }));
         return json(response, { status_code: 200, body: JSON.stringify({ credits }) });
       }
-      return json(response, { status_code: 200, body: JSON.stringify(usage(account, n0)) });
+      const body =
+        account.state === "malformed"
+          ? { config: "malformed", buckets: "malformed" }
+          : usage(account, n0);
+      return json(response, { status_code: 200, body: JSON.stringify(body) });
     }
     response.writeHead(404).end();
   });

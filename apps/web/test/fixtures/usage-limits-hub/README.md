@@ -2,16 +2,18 @@
 
 A fake CLIProxyAPI hub that serves the Limits evidence scenarios in `scenarios.json`:
 
-| Scenario | Accounts                                                       |
-| -------- | -------------------------------------------------------------- |
-| A        | mixed Codex and Claude accounts                                |
-| B        | one account per provider                                       |
-| C        | six long-email Codex accounts                                  |
-| L        | named accounts (no email, so segments show the auth-file name) |
-| P        | one account per read hub provider, plus an unread Kiro account |
-| T        | forty accounts, so pooled segments are 4px wide at 390px       |
+| Scenario | Accounts                                                                 |
+| -------- | ------------------------------------------------------------------------ |
+| A        | mixed Codex and Claude accounts                                          |
+| B        | one account per provider                                                 |
+| C        | six long-email Codex accounts                                            |
+| F        | xAI and Antigravity accounts that read, answer malformed, or are refused |
+| L        | named accounts (no email, so segments show the auth-file name)           |
+| P        | one account per read hub provider, plus an unread Kiro account           |
+| T        | forty accounts, so pooled segments are 4px wide at 390px                 |
 
-Reset times are minute offsets from `n0`.
+Reset times are minute offsets from `n0`. An account's `state` of `malformed` or `refused` makes
+its usage unreadable, so Limits leaves it out.
 
 ## Rebuild a capture
 
