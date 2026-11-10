@@ -40,6 +40,7 @@ const workspaceFiles = [
   "packages/provider-kiro/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/provider-zcode/package.json",
   "packages/secret-provider-core/package.json",
   "packages/secret-provider-definitions/package.json",
   "packages/secret-provider-onepassword/package.json",
