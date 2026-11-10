@@ -1,6 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import {
   executeAtomQuery,
   settlePromise,
@@ -9,7 +8,7 @@ import {
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { use, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -22,7 +21,8 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -32,8 +32,8 @@ export function usePullRequestListActions(
   ) => void,
 ) {
   const registry = use(RegistryContext);
-  const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -79,12 +79,10 @@ export function usePullRequestListActions(
           !pr.viewerPermissions.requestReviewers
         )
           throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
-        if (Platform.OS === "android") {
-          selectDetail(
-            { name: "PullRequest", params: params(entry) },
-            { name: "PullRequestReviewers", params: params(entry) },
-          );
-        } else navigation.navigate("PullRequestReviewers", params(entry));
+        openDetail(
+          { name: "PullRequest", params: params(entry) },
+          { name: "PullRequestReviewers", params: params(entry) },
+        );
         return;
       }
       if (
@@ -94,6 +92,7 @@ export function usePullRequestListActions(
         throw new Error(`This action isn't available for this ${terminology.singular}.`);
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value !== undefined) return;
       onChanged(
         entry,
         action === "close"
@@ -157,24 +156,24 @@ export function usePullRequestListActions(
       {
         id: "open",
         title: `Open ${terminology.singular}`,
-        image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
+        image: "arrow.up.right",
       },
       ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
               id: "request-review",
               title: "Request review",
-              image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
+              image: "person.badge.plus",
             },
             {
               id: entry.isDraft ? "ready" : "draft",
               title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-              image: Platform.OS === "ios" ? "pencil" : "edit",
+              image: "pencil",
             },
             {
               id: "close",
               title: pullRequestActionLabel("close", terminology),
-              image: Platform.OS === "ios" ? "xmark" : "close",
+              image: "xmark",
               attributes: { destructive: true },
             },
           ]
@@ -183,20 +182,20 @@ export function usePullRequestListActions(
               {
                 id: "reopen",
                 title: pullRequestActionLabel("reopen", terminology),
-                image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+                image: "arrow.clockwise",
               },
             ]
           : []),
       {
         id: "share",
         title: "Share…",
-        image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
+        image: "square.and.arrow.up",
       },
-      { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
+      { id: "copy", title: "Copy link", image: "link" },
       {
         id: "provider",
         title: openOnProviderLabel(entry.provider),
-        image: Platform.OS === "ios" ? "safari" : "open_in_browser",
+        image: "safari",
       },
     ];
   };
