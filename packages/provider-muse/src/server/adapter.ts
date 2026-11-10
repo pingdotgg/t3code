@@ -63,7 +63,11 @@ import {
   museApprovalOptions,
   type MuseItem,
 } from "./protocol.ts";
-import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
+import {
+  isMuseUsageLimitFailure,
+  museUsageLimitResetAt,
+  museUsageToLimits,
+} from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
   MuseSdkError,
@@ -75,6 +79,7 @@ import {
   type MuseSdkHost,
 } from "./sdk.ts";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
   providerMessageTextWithAttachmentPaths,
   isProviderNativeImageAttachment,
@@ -202,6 +207,8 @@ export interface MuseAdapterV2Options {
   readonly createHost?: typeof createMuseSdkHost;
   readonly requestTimeoutMs?: number;
   readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
+  /** Receives every account-wide usage report, whichever session's host sent it. */
+  readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -1378,6 +1385,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // usage/changed is account-wide and carries no session ID.
         if (method === "usage/changed") {
           latestSubscriptionUsage = yield* decode(MuseSubscriptionUsage, params);
+          if (options.onUsageLimits) {
+            yield* options.onUsageLimits(museUsageToLimits(latestSubscriptionUsage));
+          }
           return;
         }
         if (params.sessionId !== nativeSessionId) return;
