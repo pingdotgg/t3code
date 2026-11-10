@@ -40,6 +40,19 @@ const HubDeviceList = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+// expo-device-hub lists only iOS runtimes, but its serve-sim grid also lists
+// watchOS simulators, which it boots and streams the same way.
+const ServeSimGrid = Schema.Struct({
+  devices: Schema.Array(
+    Schema.Struct({
+      device: Schema.String,
+      name: Schema.String,
+      runtime: Schema.String,
+      state: Schema.String,
+    }),
+  ),
+});
+const WATCH_OS_RUNTIME = /^watchOS-(\d+(?:-\d+)*)$/;
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -121,15 +134,47 @@ export const makeDeviceHubOperations = (options: {
       Effect.flatMap((request) => hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT)),
     );
 
+  const listWatchSimulators = fetchJson(
+    HttpClientRequest.get(`${origin}${vendorPrefix("ios")}/grid/api`),
+    ServeSimGrid,
+  ).pipe(
+    Effect.timeout(Duration.seconds(LIST_TIMEOUT_SECONDS)),
+    Effect.map(({ devices }) =>
+      devices.flatMap((device): Array<HostDevice> => {
+        const version = WATCH_OS_RUNTIME.exec(device.runtime)?.[1];
+        return version === undefined
+          ? []
+          : [
+              {
+                id: device.device,
+                name: device.name || "Apple Watch",
+                version: `watchOS ${version.replaceAll("-", ".")}`,
+                platform: "ios",
+                booted: device.state.toLowerCase() === "booted",
+                physical: false,
+              },
+            ];
+      }),
+    ),
+    // The hub's own simctl listing reports Apple simulator failures.
+    Effect.catchCause((cause) =>
+      Effect.logDebug("Could not list watchOS simulators", { cause }).pipe(Effect.as([])),
+    ),
+  );
+
   const list: DeviceOperations["list"] = Effect.gen(function* () {
-    const listed = yield* fetchJson(
-      HttpClientRequest.get(`${origin}/api/devices`),
-      HubDeviceList,
-    ).pipe(
-      Effect.mapError(
-        (cause) => new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
-      ),
-      Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
+    const [listed, watchSimulators] = yield* Effect.all(
+      [
+        fetchJson(HttpClientRequest.get(`${origin}/api/devices`), HubDeviceList).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
+          ),
+          Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
+        ),
+        listWatchSimulators,
+      ],
+      { concurrency: 2 },
     );
     if (Option.isNone(listed)) {
       return {
@@ -141,7 +186,13 @@ export const makeDeviceHubOperations = (options: {
       };
     }
     const hubList = listed.value;
-    const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
+    const devices: Array<HostDevice> = [
+      ...hubList.simulators,
+      ...watchSimulators.filter(
+        (watch) => !hubList.simulators.some((simulator) => simulator.id === watch.id),
+      ),
+      ...hubList.emulators,
+    ];
     const androidAvailable = yield* options.platformAvailable("android");
     const warnings = hubList.errors?.filter(
       (error) =>
