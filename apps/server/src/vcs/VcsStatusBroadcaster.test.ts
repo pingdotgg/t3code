@@ -375,17 +375,19 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(subscribed);
 
       state.currentLocalStatus = { ...baseLocalStatus, refName: "main" };
+      state.currentRemoteStatus = baseRemoteStatus;
       const refreshed = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
       assert.equal(refreshed.refName, "main");
       assert.isNull(refreshed.pr);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 1);
       assert.deepStrictEqual((yield* Fiber.join(events)).slice(1), [
         { _tag: "remoteUpdated", remote: null },
         { _tag: "localUpdated", local: state.currentLocalStatus },
       ]);
       assert.isNull((yield* broadcaster.getStatus({ cwd: "/repo" })).pr);
+      assert.equal(state.remoteStatusCalls, 2);
       state.currentLocalStatus = { ...state.currentLocalStatus, hasWorkingTreeChanges: true };
       yield* broadcaster.refreshLocalStatus("/repo");
       state.currentLocalStatus = { ...baseLocalStatus, refName: "union" };
@@ -433,6 +435,98 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect("a local-only refresh that overlaps the first remote poll keeps its PR", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const pollStarted = yield* Deferred.make<void>();
+      const releasePoll = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(pollStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releasePoll)),
+      );
+      const localSeen = yield* Deferred.make<void>();
+      yield* broadcaster.streamStatus({ cwd: "/repo" }).pipe(
+        Stream.runForEach((event) =>
+          event._tag === "localUpdated" ? Deferred.succeed(localSeen, undefined) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(pollStarted);
+      state.beforeRemoteStatus = Effect.void;
+
+      state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
+      const refresh = yield* broadcaster
+        .refreshStatus("/repo", { localOnly: true })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(localSeen);
+      yield* Deferred.succeed(releasePoll, undefined);
+      yield* Fiber.join(refresh);
+
+      const status = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.deepStrictEqual(status.pr, remoteStatusWithPr.pr);
+      assert.equal(state.remoteStatusCalls, 1);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect(
+    "a local-only refresh before any remote read leaves the PR refresh able to read",
+    () => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: remoteStatusWithPr,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+
+        const remote = yield* broadcaster.refreshPullRequestStatus("/repo");
+        assert.deepStrictEqual(remote?.pr, remoteStatusWithPr.pr);
+        assert.equal(state.remoteStatusCalls, 1);
+      }).pipe(Effect.provide(layerTestFor(state)));
+    },
+  );
+
+  it.effect("a local-only refresh after a branch switch leaves the PR refresh able to read", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/next" };
+      const nextBranchRemote: VcsStatusRemoteResult = {
+        ...baseRemoteStatus,
+        pr: { ...remoteStatusWithPr.pr!, number: 3001, headRef: "feature/next" },
+      };
+      state.currentRemoteStatus = nextBranchRemote;
+      yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+
+      const remote = yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.deepStrictEqual(remote?.pr, nextBranchRemote.pr);
+      assert.equal(state.remoteStatusCalls, 2);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
   it.effect("clears the previous branch's remote status after an in-flight PR refresh", () => {
     const remoteReadStarted = Deferred.makeUnsafe<void>();
     const releaseRemoteRead = Deferred.makeUnsafe<void>();
@@ -463,13 +557,14 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.succeed(releaseRemoteRead, undefined);
       yield* Fiber.join(remoteRefresh);
       yield* Fiber.join(localRefresh);
+      state.currentRemoteStatus = baseRemoteStatus;
 
       const status = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.equal(status.refName, "main");
       assert.isNull(status.pr);
       assert.equal(status.aheadCount, 0);
       assert.equal(status.behindCount, 0);
-      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
