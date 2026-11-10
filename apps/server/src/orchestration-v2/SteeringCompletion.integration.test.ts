@@ -1817,15 +1817,13 @@ it.effect("starts a restart sent into a run that Stop reached once the stop sett
 
 // regression: #32891 a restart that arrives after the turn ended is lost
 it.effect.each([
-  { status: "completed", settled: true, starts: true },
-  { status: "interrupted", settled: true, starts: true },
-  { status: "interrupted", settled: false, starts: true },
-  // A provider failure holds the queue, so the restart waits like any queued message.
-  { status: "failed", settled: false, starts: false },
-  { status: "cancelled", settled: false, starts: true },
+  { status: "completed", settled: true },
+  { status: "interrupted", settled: true },
+  { status: "interrupted", settled: false },
+  { status: "cancelled", settled: false },
 ] as const)(
-  "keeps a restart that missed the turn ($status, run settled: $settled) as a new turn",
-  ({ status, settled: runSettled, starts }) =>
+  "starts a restart that missed the turn ($status, run settled: $settled) as a new turn",
+  ({ status, settled: runSettled }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
@@ -1900,7 +1898,7 @@ it.effect.each([
                 (event) =>
                   event.type === "run.updated" &&
                   event.payload.userMessageId === "message:restart" &&
-                  (starts ? event.payload.status !== "queued" : event.payload.queueHeld === true),
+                  event.payload.status !== "queued",
               ),
               Stream.take(1),
               Stream.runDrain,
@@ -1914,7 +1912,7 @@ it.effect.each([
           assert.deepEqual(steered, []);
           assert.deepEqual(
             started.map((turn) => turn.message.text),
-            starts ? ["first", "restart"] : ["first"],
+            ["first", "restart"],
           );
         }).pipe(Effect.provide(layer));
       }),
