@@ -3,6 +3,8 @@ title: Setup
 description: Connect alchemy to Stripe — secret key, profiles, CI, and how Worker bindings get their credentials.
 ---
 
+import PackageManagers from "../../../components/PackageManagers.astro";
+
 ## Get a key
 
 Sign up at [stripe.com](https://stripe.com). Every account has a
@@ -13,11 +15,17 @@ until you're ready to charge real cards. Copy the test secret key
 
 ## Register the provider
 
+Install `@alchemy.run/stripe`:
+
+<PackageManagers add="@alchemy.run/stripe" />
+
+Then add its providers to the stack:
+
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 

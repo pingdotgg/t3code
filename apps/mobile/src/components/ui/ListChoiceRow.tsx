@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -10,7 +11,9 @@ import { SettingResetButton } from "./SettingResetButton";
 
 export function ListChoiceRow(props: {
   readonly label: string;
+  readonly leading?: ReactNode;
   readonly description?: string;
+  readonly meta?: ReactNode;
   readonly selected: boolean;
   readonly separated?: boolean;
   readonly disabled?: boolean;
@@ -41,7 +44,9 @@ export function ListChoiceRow(props: {
     >
       <ListRowLayout
         label={props.label}
+        leading={props.leading}
         description={props.description}
+        meta={props.meta}
         disabled={props.disabled}
         accessory={
           <View
