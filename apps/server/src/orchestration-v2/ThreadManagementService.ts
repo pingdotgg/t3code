@@ -487,6 +487,8 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly reason?: string | undefined;
+    /** Only the tasks this run delegated, with their whole subtrees. */
+    readonly runId?: RunId | undefined;
   }) => Effect.Effect<
     void,
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
@@ -1477,6 +1479,7 @@ const make = Effect.gen(function* () {
     const stoppedChildThreadIds = new Set<ThreadId>();
     for (const task of subagents) {
       if (task.origin !== "app_owned") continue;
+      if (input.runId !== undefined && task.runId !== input.runId) continue;
       if (task.childThreadId === null) {
         // A task in a linked environment ends here; its follower then stops it there.
         // One with its result keeps it, but its thread there may run follow-up work.
@@ -1523,7 +1526,7 @@ const make = Effect.gen(function* () {
         stopDelegatedTasks: false,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       }).pipe(
-        Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
+        Effect.andThen(stopDelegatedTasks({ ...input, threadId, runId: undefined })),
         Effect.catch((error) =>
           Effect.logWarning("Unable to stop a delegated task", {
             parentThreadId: input.threadId,

@@ -874,6 +874,7 @@ describe("OrchestratorMcpService", () => {
         runtimeRequests: [],
       }) as unknown as OrchestrationV2ThreadProjection;
     const child = yield* Ref.make(childProjection(["running", "queued", "queued"]));
+    const descendantStops = yield* Ref.make<ReadonlyArray<RunId | undefined>>([]);
     const layerDependencies = Layer.mergeAll(
       NodeServices.layer,
       NodeCrypto.layer,
@@ -882,7 +883,7 @@ describe("OrchestratorMcpService", () => {
           threadId === parentThreadId ? Effect.succeed(parentProjection) : Ref.get(child),
         getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
         listAppOwnedChildThreadIds: () => Effect.succeed([]),
-        stopDelegatedTasks: () => Effect.void,
+        stopDelegatedTasks: (stop) => Ref.update(descendantStops, (runs) => [...runs, stop.runId]),
         dispatch: (command) =>
           Effect.gen(function* () {
             yield* Ref.update(dispatched, (commands) => [...commands, command]);
@@ -926,6 +927,7 @@ describe("OrchestratorMcpService", () => {
     return {
       status: result.status,
       runId,
+      descendantStops: yield* Ref.get(descendantStops),
       commands: (yield* Ref.get(dispatched)).map((command) => ({
         type: command.type,
         runId: "runId" in command ? command.runId : undefined,
@@ -945,6 +947,8 @@ describe("OrchestratorMcpService", () => {
         { type: "run.interrupt", runId: cancelled.runId },
         { type: "delegated_task.completion-delivery.dispose", runId: undefined },
       ]);
+      // Only the tasks the promoted turn delegated, not the other task's.
+      assert.deepEqual(cancelled.descendantStops, [cancelled.runId]);
     }),
   );
 
@@ -960,6 +964,8 @@ describe("OrchestratorMcpService", () => {
         { type: "run.interrupt", runId: cancelled.runId },
         { type: "delegated_task.completion-delivery.dispose", runId: undefined },
       ]);
+      // Only the tasks the promoted turn delegated, not the other task's.
+      assert.deepEqual(cancelled.descendantStops, [cancelled.runId]);
     }),
   );
 
