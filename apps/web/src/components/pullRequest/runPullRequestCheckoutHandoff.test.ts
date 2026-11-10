@@ -4,6 +4,7 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { expect, it, vi } from "vite-plus/test";
 
 import type { PullRequestCheckoutPrepared } from "./usePullRequestActions";
+import { usePullRequestCheckoutState } from "./pullRequestCheckoutState";
 
 const state = vi.hoisted(() => ({
   toastId: "checkout-toast",
@@ -80,6 +81,7 @@ it("puts the task in the composer before checkout finishes", async () => {
   await vi.waitFor(() => expect(state.setPrompt).toHaveBeenCalled());
   expect(state.setPrompt).toHaveBeenCalledWith("draft-1", "Fix the failing check");
   expect(pointThread).not.toHaveBeenCalled();
+  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(true);
   expect(state.add.mock.calls[0]?.[0]).toMatchObject({
     type: "loading",
     actionProps: { children: "Cancel" },
@@ -93,6 +95,7 @@ it("puts the task in the composer before checkout finishes", async () => {
     }),
   );
   await pending;
+  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
   expect(pointThread).toHaveBeenCalledWith(
     {
       branch: "pr-1",
