@@ -28,6 +28,7 @@ async function renderBody(
     lineBreaks: sourceControlClients.get(host).hardLineBreaks ?? false,
     threadRef: null,
     repository,
+    host: null,
   };
   return render(
     <PullRequestMarkdownContext value={context}>

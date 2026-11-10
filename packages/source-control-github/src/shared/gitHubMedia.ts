@@ -46,9 +46,30 @@ function rawFile(fetchUrl: string): SourceControlMediaUrl {
   return media(fetchUrl, COMMIT_SHA_PATTERN.test(ref) ? { immutable: true } : {});
 }
 
-export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
+/**
+ * GitHub Enterprise Server serves file bytes to a token only on its `raw.` subdomain, the
+ * equivalent of `raw.githubusercontent.com`. Its hostname can be anything, so it is matched only
+ * as the host of the change request the media is in.
+ */
+function enterpriseMediaUrl(url: URL, knownHost: string): SourceControlMediaUrl | null {
+  const host = url.host.toLowerCase();
+  const rawHost = `raw.${knownHost}`;
+  if (host === rawHost) return rawFile(`https://${host}${url.pathname}`);
+  if (host !== knownHost) return null;
+  const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
+  return repositoryFile
+    ? rawFile(`https://${rawHost}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
+    : null;
+}
+
+export function gitHubMediaUrl(url: URL, knownHost?: string): SourceControlMediaUrl | null {
   if (url.protocol !== "https:") return null;
   const host = url.hostname.toLowerCase();
+  const enterpriseHost = knownHost?.trim().toLowerCase();
+  if (enterpriseHost && !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost)) {
+    const enterpriseMedia = enterpriseMediaUrl(url, enterpriseHost);
+    if (enterpriseMedia !== null) return enterpriseMedia;
+  }
   if (host === RAW_HOST) return rawFile(`https://${host}${url.pathname}${url.search}`);
   if (host === LFS_HOST) return media(`https://${host}${url.pathname}${url.search}`);
   if (!WEB_HOSTS.has(host)) return null;

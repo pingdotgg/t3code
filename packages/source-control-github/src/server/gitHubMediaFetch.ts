@@ -19,14 +19,28 @@ import * as GitHubRest from "./GitHubRest.ts";
  * authorizes with its own signature, and some of them reject a request that also carries a
  * bearer token.
  */
-const isCredentialedHost = (url: string) => {
+const isCredentialedHost = (url: string, hosts: ReadonlySet<string>) => {
   const target = URL.parse(url);
   return (
     target !== null &&
     target.protocol === "https:" &&
-    target.port === "" &&
-    GITHUB_CREDENTIALED_MEDIA_HOSTS.has(target.hostname.toLowerCase())
+    target.username === "" &&
+    target.password === "" &&
+    hosts.has(target.host.toLowerCase())
   );
+};
+
+/**
+ * The account a request authenticates as, and the hosts its token may be sent to. An Enterprise
+ * Server host's token goes only to that host and its `raw.` subdomain, never to github.com.
+ */
+const credentialScope = (request: SourceControlMediaRequest) => {
+  const enterpriseHost = request.host?.trim().toLowerCase();
+  if (enterpriseHost && !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost)) {
+    const hosts: ReadonlySet<string> = new Set([enterpriseHost, `raw.${enterpriseHost}`]);
+    if (isCredentialedHost(request.url, hosts)) return { account: enterpriseHost, hosts };
+  }
+  return { account: "github.com", hosts: GITHUB_CREDENTIALED_MEDIA_HOSTS };
 };
 
 const MAX_REDIRECTS = 3;
@@ -70,21 +84,23 @@ export const make = Effect.gen(function* () {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const signedUrls = new Map<string, { readonly at: number; readonly url: string }>();
 
-  // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  // Read on every fetch, so media loads as soon as the user signs in.
-  const credential = Effect.suspend(() => credentials.get("github.com")).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  // github.com's media hosts are served by github.com's account, which is the host `gh` stores it
+  // under. Read on every fetch, so media loads as soon as the user signs in.
+  const credential = (account: string) =>
+    Effect.suspend(() => credentials.get(account)).pipe(Effect.orElseSucceed(() => null));
 
   const fetchFollowingRedirects = Effect.fnUntraced(function* (
     url: string,
     headers: Readonly<Record<string, string>>,
     token: Redacted.Redacted<string> | null,
+    credentialedHosts: ReadonlySet<string> = GITHUB_CREDENTIALED_MEDIA_HOSTS,
   ) {
     let target = url;
     for (let hop = 0; ; hop += 1) {
       const authorization =
-        token !== null && isCredentialedHost(target) ? `Bearer ${Redacted.value(token)}` : null;
+        token !== null && isCredentialedHost(target, credentialedHosts)
+          ? `Bearer ${Redacted.value(token)}`
+          : null;
       const response: HttpClientResponse.HttpClientResponse = yield* httpClient
         .execute(
           HttpClientRequest.get(target).pipe(
@@ -143,7 +159,8 @@ export const make = Effect.gen(function* () {
   });
 
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
-    const signedIn = yield* credential;
+    const scope = credentialScope(request);
+    const signedIn = yield* credential(scope.account);
     const repository = signedIn === null ? undefined : uploadRepository(request);
     const cacheKey =
       signedIn === null || repository === undefined
@@ -163,6 +180,7 @@ export const make = Effect.gen(function* () {
         request.url,
         request.headers,
         signedIn?.token ?? null,
+        scope.hosts,
       );
       if (response === null || contentTypeOf(response) !== "text/html") return response;
     }
@@ -175,7 +193,7 @@ export const make = Effect.gen(function* () {
       MEDIA_CONTENT_TYPE_PATTERN.test(contentTypeOf(media))
     ) {
       // The render can run under another account if the user switched mid-request.
-      const current = yield* credential;
+      const current = yield* credential(scope.account);
       if (current?.fingerprint === signedIn.fingerprint) {
         if (signedUrls.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
           const oldest = signedUrls.keys().next().value;

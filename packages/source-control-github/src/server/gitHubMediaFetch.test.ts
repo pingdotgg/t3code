@@ -76,6 +76,78 @@ const makeSsoFixture = (uploadUrl: string) => {
 };
 
 describe("GitHubMediaFetch", () => {
+  it.effect("sends an Enterprise Server token only to that host's raw subdomain", () => {
+    const requests: Array<{ url: string; authorization?: string }> = [];
+    const hosts: Array<string> = [];
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      const enterprise = yield* fetchMedia({
+        url: "https://raw.ghe.example.com/owner/repo/0123456789abcdef0123456789abcdef01234567/a.png",
+        headers: {},
+        host: "ghe.example.com",
+      });
+      expect(enterprise?.status).toBe(200);
+      // A github.com image in an Enterprise pull request keeps github.com's account.
+      yield* fetchMedia({
+        url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
+        headers: {},
+        host: "ghe.example.com",
+      });
+      // A request naming another host cannot borrow the Enterprise token.
+      yield* fetchMedia({
+        url: "https://raw.elsewhere.example/owner/repo/main/c.png",
+        headers: {},
+        host: "ghe.example.com",
+      });
+      expect(hosts).toEqual(["ghe.example.com", "github.com", "github.com"]);
+      expect(requests).toEqual([
+        {
+          url: "https://raw.ghe.example.com/owner/repo/0123456789abcdef0123456789abcdef01234567/a.png",
+          authorization: "Bearer token-ghe.example.com",
+        },
+        {
+          url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
+          authorization: "Bearer token-github.com",
+        },
+        { url: "https://raw.elsewhere.example/owner/repo/main/c.png" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(GitHubRest.GitHubRest)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) => {
+              hosts.push(host);
+              return Effect.succeed({
+                host,
+                token: Redacted.make(`token-${host}`),
+                source: "gh" as const,
+                fingerprint: host,
+              });
+            },
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push({
+            url: request.url,
+            ...(request.headers.authorization
+              ? { authorization: request.headers.authorization }
+              : {}),
+          });
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(null, { status: 200, headers: { "content-type": "image/png" } }),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect("loads private media immediately after login with the GitHub credential", () => {
     let lookups = 0;
     const authorizations: Array<string | undefined> = [];
