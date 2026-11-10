@@ -360,6 +360,10 @@ export function useSelectedThreadRequests() {
         ] ?? {},
       ),
     };
+    const serverConfig = questionServerConfigs.get(selectedThreadShell.environmentId) ?? null;
+    const uploadStates = appAtomRegistry.get(composerAttachmentUploadsAtom);
+    const attachmentDrafts = appAtomRegistry.get(composerDraftsAtom);
+    const preparationCounts = appAtomRegistry.get(questionAttachmentPreparationAtom);
     const attachmentsByQuestionId = new Map<
       string,
       import("@t3tools/contracts").UserInputAttachments[string]
@@ -371,24 +375,19 @@ export function useSelectedThreadRequests() {
         activePendingUserInput.requestId,
         question.id,
       );
-      if ((appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0) return;
-      const attachments = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments ?? [];
-      const serverConfig = questionServerConfigs.get(selectedThreadShell.environmentId);
-      const uploadInput = {
-        environmentId: selectedThreadShell.environmentId,
-        attachments,
-        serverConfig: serverConfig ?? null,
-        states: appAtomRegistry.get(composerAttachmentUploadsAtom),
-      };
+      if ((preparationCounts[key] ?? 0) > 0) return;
+      const attachments = attachmentDrafts[key]?.attachments ?? [];
       latestDrafts[question.id] = {
         ...latestDrafts[question.id],
         attachmentCount: attachments.length,
-        attachmentsBlocked:
-          (attachments.length > 0 && serverConfig === undefined) ||
-          composerAttachmentsStillUploading(uploadInput) ||
-          composerAttachmentUploadBlockReason({ ...uploadInput, connected: true }) !== null,
       };
       if (attachments.length === 0) continue;
+      const uploadInput = {
+        environmentId: selectedThreadShell.environmentId,
+        attachments,
+        serverConfig,
+        states: uploadStates,
+      };
       if (
         attachments.some(
           (attachment) =>
@@ -402,6 +401,12 @@ export function useSelectedThreadRequests() {
         );
         return;
       }
+      if (
+        !serverConfig ||
+        composerAttachmentsStillUploading(uploadInput) ||
+        composerAttachmentUploadBlockReason({ ...uploadInput, connected: true }) !== null
+      )
+        return;
       attachmentsByQuestionId.set(
         question.id,
         attachments.map((attachment) => ({

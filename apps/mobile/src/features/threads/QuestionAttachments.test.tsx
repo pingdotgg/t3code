@@ -1,6 +1,6 @@
 import type { UserInputQuestion } from "@t3tools/contracts";
 import type { ReactNode, Ref } from "react";
-import { act, useImperativeHandle, useState } from "react";
+import { act, useImperativeHandle, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,24 +10,24 @@ type InputProps = {
   ref: Ref<{ clear: () => void }>;
 };
 
-// Models the uncontrolled native input: it keeps its own text and only `clear()` writes it.
-const field = vi.hoisted(() => ({ props: null as InputProps | null, text: "" }));
-
 vi.mock("react-native", () => ({
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppTextInput: (props: InputProps) => {
-    field.props = props;
-    useState(() => {
-      field.text = props.defaultValue;
-    });
+    const input = useRef<HTMLInputElement>(null);
     useImperativeHandle(props.ref, () => ({
       clear: () => {
-        field.text = "";
+        if (input.current) input.current.value = "";
       },
     }));
-    return null;
+    return (
+      <input
+        ref={input}
+        defaultValue={props.defaultValue}
+        onInput={(event) => props.onChangeText(event.currentTarget.value)}
+      />
+    );
   },
 }));
 vi.mock("expo-paste-input", () => ({
@@ -80,6 +80,7 @@ const question: UserInputQuestion = {
 };
 
 let root: Root;
+let container: HTMLDivElement;
 
 // `draft` is what the thread screen passes back; it can lag the input by a render.
 function render(draft: string, outsideChange = 0) {
@@ -99,20 +100,21 @@ function render(draft: string, outsideChange = 0) {
 }
 
 function input() {
-  if (!field.props) throw new Error("answer field not rendered");
-  return field.props;
+  const field = container.querySelector("input");
+  if (!field) throw new Error("answer field not rendered");
+  return field;
 }
 
 function type(text: string) {
-  field.text = text;
-  act(() => input().onChangeText(text));
+  const field = input();
+  field.value = text;
+  act(() => field.dispatchEvent(new Event("input", { bubbles: true })));
 }
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  root = createRoot(document.createElement("div"));
-  field.props = null;
-  field.text = "";
+  container = document.createElement("div");
+  root = createRoot(container);
 });
 
 afterEach(() => {
@@ -125,12 +127,12 @@ describe("QuestionAttachments answer field", () => {
     type("new answer");
 
     render("", 1);
-    expect(field.text).toBe("");
+    expect(input().value).toBe("");
 
     type("a");
     type("");
     type("ab");
     render("", 2);
-    expect(field.text).toBe("");
+    expect(input().value).toBe("");
   });
 });
