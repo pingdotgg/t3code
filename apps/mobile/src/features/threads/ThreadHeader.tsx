@@ -1,7 +1,9 @@
 import { AppBar } from "../../components/ui/AppBar";
-import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
@@ -17,18 +19,15 @@ export function ThreadHeader(props: {
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
   readonly hasThreadCwd: boolean;
-  readonly fileInspectorSupported: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
-  readonly onToggleInspector: () => void;
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
-    useAdaptiveWorkspaceLayout();
+  const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
-  const inspectorVisible = props.inspectorMode !== null && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
         {
@@ -60,18 +59,7 @@ export function ThreadHeader(props: {
       }
       actions={actions}
       menus={menus}
-      trailing={
-        props.fileInspectorSupported && props.hasThreadCwd ? (
-          <ScreenHeaderButton
-            accessibilityLabel={inspectorVisible ? "Hide inspector" : "Show inspector"}
-            icon="sidebar.right"
-            selected={inspectorVisible}
-            onPress={props.onToggleInspector}
-          />
-        ) : null
-      }
       hideBottomBorder
-      compact={composerKeyboardActive}
     />
   );
 }
