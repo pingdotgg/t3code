@@ -24,8 +24,8 @@ Set it back to **Off** at any time; a recording in progress is discarded.
 If the chosen environment goes offline, voice input waits for it. T3 Code never
 substitutes another environment.
 
-For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
-you want to use. If it needs a key, enter one and choose **Save and enable**.
+For cloud dictation, choose **OpenAI**, **Grok Voice Transcribe**, or **Groq Whisper**
+via the environment you want to use. If it needs a key, enter one and choose **Save and enable**.
 You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
 reference. Unlock the vault on that environment before dictating. Anyone with
 dictation access to the environment can use the key, but only this device opts in.
@@ -46,6 +46,12 @@ dictation fails instead of switching models.
 Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
 after transcription. If OpenRouter stops listing your model, dictation stops
 until you choose another.
+
+**Groq Whisper** sets up like OpenAI, with an API key from your Groq account,
+and always uses Groq's `whisper-large-v3-turbo` model. Vocabulary hints are not
+sent to Groq, so dictionary terms alone don't change its spelling. Add an alias
+under a term for each misspelling you see. The environment replaces the alias
+with the term after transcription.
 
 ## Set up a model
 

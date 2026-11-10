@@ -10,6 +10,7 @@ import {
   type CloudSpeechKeys,
   type CloudSpeechProvider,
   EnvironmentSpeechTranscriptionResult,
+  type FixedCloudSpeechProvider,
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -30,6 +31,10 @@ import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
+  groq: {
+    url: "https://api.groq.com/openai/v1/audio/transcriptions",
+    model: "whisper-large-v3-turbo",
+  },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
 };
 const OPENROUTER_CATALOG_URL =
@@ -67,7 +72,7 @@ function wave(samples: Float32Array) {
 }
 
 function audioBody(
-  provider: "openai" | "xai",
+  provider: FixedCloudSpeechProvider,
   audio: ArrayBuffer,
   language: string,
   options: SpeechTranscriptionOptions,
@@ -75,10 +80,12 @@ function audioBody(
   const form = new FormData();
   form.set("model", endpoints[provider].model);
   if (language !== "auto") form.set(provider === "openai" ? "languages[]" : "language", language);
-  for (const { term } of options.speechCustomWords) {
-    if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
-    form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
-  }
+  // Groq has only a token-capped Whisper prompt, so vocabulary reaches it through alias fixes alone.
+  if (provider !== "groq")
+    for (const { term } of options.speechCustomWords) {
+      if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
+      form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
+    }
   if (provider === "xai") {
     if (language !== "auto") form.set("format", "true");
     form.set(
@@ -130,9 +137,10 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, groq, openrouter }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
+        groq: Boolean(groq),
         openrouter: Boolean(openrouter),
       })),
     );

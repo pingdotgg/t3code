@@ -32,6 +32,7 @@ import { cloudSpeechLanguages } from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
   CheckIcon,
+  CloudIcon,
   DownloadIcon,
   LanguagesIcon,
   KeyRoundIcon,
@@ -125,9 +126,10 @@ const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
+  if (provider === "groq") return <CloudIcon aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
+      driverKind={ProviderDriverKind.make({ openai: "codex", xai: "grok" }[provider])}
       displayName={CLOUD_SPEECH_LABELS[provider]}
       iconClassName="size-4"
     />
