@@ -8805,6 +8805,147 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
     }),
   );
+
+  it.effect.each(["no-reset", "expired-reset"] as const)(
+    "retries a usage-limit continuation the provider refuses with %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make(`refused-resume:${scenario}`);
+        const projectId = ProjectId.make(`refused-resume:project:${scenario}`);
+        yield* seedProject({
+          projectId,
+          title: "Refused resume project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`refused-resume:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`refused-resume:message:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`refused-resume:message:${scenario}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const failRun = (run: OrchestrationV2Run, resetAt: string | null) =>
+          Effect.gen(function* () {
+            const now = yield* DateTime.now;
+            yield* events.write({
+              events: [
+                {
+                  id: EventId.make(`refused-resume:run:${run.id}`),
+                  type: "run.updated",
+                  threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: { ...run, status: "failed", startedAt: now, completedAt: now },
+                },
+                {
+                  id: EventId.make(`refused-resume:error:${run.id}`),
+                  type: "turn-item.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: {
+                    id: TurnItemId.make(`refused-resume:error:${run.id}`),
+                    type: "error",
+                    threadId,
+                    runId: run.id,
+                    nodeId: run.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 2,
+                    status: "failed",
+                    title: "Usage limit reached",
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                    failure: {
+                      class: "usage_limit",
+                      message: "Plan limit reached.",
+                      code: "usageLimitExceeded",
+                      retryable: null,
+                      resetAt,
+                    },
+                  },
+                },
+              ],
+            });
+          });
+        // One recovery worker sweep with auto-resume on, at the current test time.
+        const sweep = Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const candidate = (yield* projections.getLimitRecoveryCandidates({
+            now,
+            autoResume: true,
+            snooze: false,
+          })).find((row) => row.id === threadId);
+          const command =
+            candidate === undefined
+              ? null
+              : limitRecoveryCommand(candidate, true, DateTime.toEpochMillis(now));
+          if (command?.type === "thread.metadata.update" && command.limitRecovery != null) {
+            yield* orchestrator.autoArmLimitRecovery({
+              commandId: command.commandId,
+              threadId,
+              limitRecovery: command.limitRecovery,
+            });
+          } else if (command !== null) {
+            yield* orchestrator.dispatch(command);
+          }
+        });
+        const continuationOf = (runId: RunId) =>
+          orchestrator
+            .getThreadProjection(threadId)
+            .pipe(
+              Effect.map((projection) =>
+                projection.runs.find((run) => run.usageLimitContinuationOfRunId === runId),
+              ),
+            );
+
+        const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+        yield* failRun(source, resetAt);
+        yield* sweep;
+        yield* TestClock.adjust("1 minute");
+        yield* sweep;
+        const continuation = yield* continuationOf(source.id);
+        assert.isDefined(continuation, "the first reset should resume the limited run");
+
+        yield* TestClock.adjust("6 seconds");
+        // Codex reports no reset; a probe can report the window that just expired.
+        yield* failRun(continuation!, scenario === "no-reset" ? null : resetAt);
+        for (let minute = 0; minute < 20; minute++) {
+          yield* TestClock.adjust("1 minute");
+          yield* sweep;
+        }
+        assert.isDefined(
+          yield* continuationOf(continuation!.id),
+          "a refused continuation with no later reset should be retried after a backoff",
+        );
+      }),
+  );
 });
 
 const queueResumeDisabledInstanceProjectId = ProjectId.make(
