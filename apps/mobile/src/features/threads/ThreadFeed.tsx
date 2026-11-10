@@ -1913,7 +1913,10 @@ function renderFeedEntry(
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
         ? null
-        : resolveUserMessageIntentBadge(message.inputIntent);
+        : resolveUserMessageIntentBadge(
+            message.inputIntent,
+            message.projectedItem?.item.status === "pending",
+          );
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
