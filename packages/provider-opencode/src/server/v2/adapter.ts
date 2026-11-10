@@ -1313,7 +1313,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         [...session.shells].map(([taskId, shell]) => ({
           taskId,
           kind: "command" as const,
-          ...(shell.command === undefined ? {} : { description: shell.command }),
+          ...(shell.command === undefined
+            ? {}
+            : { command: shell.command, description: shell.command }),
           ...(session.subagent !== undefined && background.includes(session.subagent.call)
             ? { parentTaskId: session.subagent.call.nativeId }
             : {}),

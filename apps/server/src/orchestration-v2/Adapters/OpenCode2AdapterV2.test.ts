@@ -1005,7 +1005,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         )
         .at(-1);
       assert.deepEqual(roster ?? [], [
-        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
@@ -1028,7 +1028,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(turnInput(thread));
       yield* watch.until(() => watch.state.variant === "drained");
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       assert.isTrue(watch.state.pending);
     }).pipe(Effect.scoped),
@@ -1046,7 +1046,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.terminals.length > 0);
       assert.deepEqual(watch.terminals, ["completed"]);
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       yield* TestClock.adjust("1 minute");
       yield* watch.until(() => watch.state.roster?.length === 0);
@@ -1216,6 +1216,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(shell, {
         taskId: "sh_child",
         kind: "command",
+        command: SHELL_COMMAND,
         description: SHELL_COMMAND,
         parentTaskId: "call-background",
       });
@@ -1311,6 +1312,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(shell, {
         taskId: "sh_grandchild",
         kind: "command",
+        command: SHELL_COMMAND,
         description: SHELL_COMMAND,
         parentTaskId: `${CHILD}:call-nested`,
       });
@@ -1339,7 +1341,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The held wake keeps work pending until the reconnect discards it and lists what it kept.
       yield* watch.until(() => watch.state.pending === false || watch.state.roster?.length === 1);
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       yield* watch.until(() => watch.state.variant === "drained");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
@@ -1446,7 +1448,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       yield* watch.until(() => watch.state.roster?.length === 1);
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       yield* stop;
       assert.isTrue(gate.hasReached("second"));
@@ -1820,8 +1822,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         (watch.state.roster ?? []).every((task) => (task as { description?: string }).description),
       );
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_a", kind: "command", description: SHELL_COMMAND },
-        { taskId: "sh_b", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_a", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+        { taskId: "sh_b", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       gate.release("ended");
       yield* Deferred.await(continued);
@@ -1850,7 +1852,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(watch.terminals, ["completed"]);
       yield* watch.until(() => watch.calls.get("Sleep")?.status === "completed");
       assert.deepEqual(watch.state.roster, [
-        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
       ]);
       const childTurns = watch.childTurns.size;
       yield* runtime.interruptTurn({
@@ -1894,6 +1896,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(shell, {
         taskId: "sh_child",
         kind: "command",
+        command: SHELL_COMMAND,
         description: SHELL_COMMAND,
         parentTaskId: subagent?.taskId,
       });
