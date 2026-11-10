@@ -35,7 +35,7 @@ export interface EnvironmentRpcRequestObservation {
   readonly method: string;
 }
 
-export class EnvironmentRpcRequestObserver extends Context.Reference<{
+class EnvironmentRpcRequestObserver extends Context.Reference<{
   readonly observe: (
     request: EnvironmentRpcRequestObservation,
   ) => Effect.Effect<Effect.Effect<void>>;
