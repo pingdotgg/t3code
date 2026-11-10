@@ -192,7 +192,7 @@ function paintCanvasRail(rail: CanvasRail, start: number, end: number) {
 }
 
 export interface TimelineMinimapHandle {
-  updateVisibleRange: (start: number | null, end: number | null) => void;
+  updateVisibleRange: (start: number | null, end: number | null, atEnd?: boolean) => void;
 }
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
@@ -232,6 +232,7 @@ export function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [atEnd, setAtEnd] = useState(false);
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -259,15 +260,18 @@ export function TimelineMinimap({
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
-  const updateVisibleRange = useStableCallback((start: number | null, end: number | null) => {
-    visibleRowsRef.current = { start, end };
-    const markers = resolveTimelineMinimapMarkers(rowIndices, start, end);
-    const rail = canvasRailRef.current;
-    if (rail) {
-      paintCanvasRail(rail, markers.start, markers.end);
-    }
-    setCurrentIndex(markers.currentIndex);
-  });
+  const updateVisibleRange = useStableCallback(
+    (start: number | null, end: number | null, atEnd?: boolean) => {
+      if (atEnd !== undefined) setAtEnd(atEnd);
+      visibleRowsRef.current = { start, end };
+      const markers = resolveTimelineMinimapMarkers(rowIndices, start, end);
+      const rail = canvasRailRef.current;
+      if (rail) {
+        paintCanvasRail(rail, markers.start, markers.end);
+      }
+      setCurrentIndex(markers.currentIndex);
+    },
+  );
   useImperativeHandle(ref, () => ({ updateVisibleRange }), [updateVisibleRange]);
   const refreshCanvasRail = useStableCallback((animate = false) => {
     const rail = canvasRailRef.current;
@@ -475,7 +479,8 @@ export function TimelineMinimap({
     currentIndex !== null && currentIndex >= 0 && currentIndex < items.length ? currentIndex : null;
   const previousItem =
     resolvedCurrentIndex === null ? null : (items[resolvedCurrentIndex - 1] ?? null);
-  const nextItem = resolvedCurrentIndex === null ? null : (items[resolvedCurrentIndex + 1] ?? null);
+  const nextItem =
+    resolvedCurrentIndex === null || atEnd ? null : (items[resolvedCurrentIndex + 1] ?? null);
 
   const resolveActiveIndexFromPointer = (event: MouseEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -506,10 +511,10 @@ export function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 w-18",
         hasPersistentGutter
           ? "opacity-100"
-          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
+          : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
       )}
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}

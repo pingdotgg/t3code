@@ -819,6 +819,6 @@ describe("TimelineMinimap", () => {
       rail(screen).dispatchEvent(event);
     });
     expect(event.defaultPrevented).toBe(true);
-    expect(viewport.current!.scrollTop).toBe(80);
+    await vi.waitFor(() => expect(viewport.current!.scrollTop).toBe(80));
   });
 });
