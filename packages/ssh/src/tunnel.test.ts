@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - Runs the generated runner in a real shell.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -108,6 +114,46 @@ describe("ssh tunnel scripts", () => {
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
   });
+
+  it.each([
+    { host: "Darwin x86_64", system: "Darwin", machine: "x86_64", downloads: false },
+    { host: "Darwin arm64", system: "Darwin", machine: "arm64", downloads: true },
+  ])(
+    "only downloads a release archive the host can run: $host",
+    ({ system, machine, downloads }) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+      try {
+        const bin = NodePath.join(root, "bin");
+        NodeFS.mkdirSync(bin);
+        NodeFS.mkdirSync(NodePath.join(root, "home"));
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "uname"),
+          `#!/bin/sh\ncase "$1" in -s) echo ${system} ;; -m) echo ${machine} ;; esac\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "curl"),
+          "#!/bin/sh\necho 'download attempt' >&2\nexit 22\n",
+          { mode: 0o755 },
+        );
+        const runner = NodePath.join(root, "run-t3.sh");
+        NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+        const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+          encoding: "utf8",
+          env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+        });
+        assert.notEqual(result.status, 0);
+        if (downloads) {
+          assert.include(result.stderr, "download attempt");
+        } else {
+          assert.notInclude(result.stderr, "download attempt");
+          assert.include(result.stderr, "has no t3 release archive.");
+        }
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
