@@ -5954,6 +5954,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect.each([
     ["a known reset", { hours: 1 }, "starting"],
     ["an unknown reset", null, "queued"],
+    ["an unparseable reset", "soon", "queued"],
   ] as const)(
     "holds a limited provider's queue through another provider's turn until %s passes",
     ([name, resetIn, afterAnHour]) =>
@@ -6030,7 +6031,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   message: "Usage limit reached",
                   code: "usage_limit",
                   retryable: null,
-                  resetAt: resetIn === null ? null : DateTime.formatIso(DateTime.add(now, resetIn)),
+                  resetAt:
+                    resetIn === null || typeof resetIn === "string"
+                      ? resetIn
+                      : DateTime.formatIso(DateTime.add(now, resetIn)),
                 },
               },
             },

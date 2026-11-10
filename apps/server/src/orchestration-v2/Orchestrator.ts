@@ -898,7 +898,9 @@ function usageLimitHoldsQueue(
   if (limited === null) return false;
   if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
   const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
-  return resetAt == null || Date.parse(resetAt) > DateTime.toEpochMillis(now);
+  if (resetAt == null) return true;
+  const resetMs = Date.parse(resetAt);
+  return !Number.isFinite(resetMs) || resetMs > DateTime.toEpochMillis(now);
 }
 
 function latestStableRun(
