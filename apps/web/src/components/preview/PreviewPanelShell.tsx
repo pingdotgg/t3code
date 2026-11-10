@@ -217,7 +217,7 @@ function PreviewPanelShellFrame(
           "h-full min-h-0 w-full",
           collapsible && "overflow-clip",
           collapsible && !maximized && "flex justify-end",
-          pane && "overflow-hidden bg-background surface-grain md:rounded-pane",
+          pane && "overflow-hidden bg-background md:rounded-pane",
         )}
       >
         <div
