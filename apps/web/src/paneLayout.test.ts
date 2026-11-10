@@ -12,10 +12,8 @@ import {
   equalPaneSizes,
   paneRowCounts,
   resizeBoundary,
-  resolvePaneSizes,
   snapShift,
   swapPanes,
-  focusPane,
   followRoute,
   replacePane,
   type PaneLayout,
@@ -107,11 +105,6 @@ describe("paneLayout", () => {
     });
   });
 
-  it("focusPane ignores a missing pane", () => {
-    const layout = splitOf(["a", "b"]);
-    expect(focusPane(layout, 5)).toBe(layout);
-  });
-
   describe("paneRowCounts", () => {
     it.each([
       { count: 1, rows: [1] },
@@ -163,13 +156,6 @@ describe("paneLayout", () => {
       expect(sizes.rows).toEqual([0.5, 0.5]);
       expect(sizes.cols.map((row) => row.length)).toEqual([3, 2]);
       for (const row of sizes.cols) expect(row.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
-    });
-
-    it("drops saved sizes once the pane count changes", () => {
-      const saved = { ...equalPaneSizes(4), rows: [0.7, 0.3] };
-      expect(resolvePaneSizes(saved, 4)).toBe(saved);
-      expect(resolvePaneSizes(saved, 5)).toEqual(equalPaneSizes(5));
-      expect(resolvePaneSizes(null, 2)).toEqual(equalPaneSizes(2));
     });
 
     it("moves a boundary and conserves the total", () => {

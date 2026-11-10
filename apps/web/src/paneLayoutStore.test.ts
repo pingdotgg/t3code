@@ -50,6 +50,8 @@ describe("sanitizePersistedSizes", () => {
       ],
     };
     expect(sanitizePersistedSizes(sizes, 5)).toEqual(sizes);
+    const singleRow = { ...equalPaneSizes(2), cols: [[0.7, 0.3]] };
+    expect(sanitizePersistedSizes(singleRow, 2)).toEqual(singleRow);
   });
 
   it.each([

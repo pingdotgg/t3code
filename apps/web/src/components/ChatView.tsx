@@ -2129,14 +2129,16 @@ export default function ChatView(props: ChatViewProps) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
-    if (globalQuiet || !activeThread?.id || terminalUiState.terminalOpen) return;
+    // Pane focus is read, not a dependency, so activating a pane never steals the clicked target.
+    if (embedded || !paneFocusedRef.current || !activeThread?.id || terminalUiState.terminalOpen)
+      return;
     const frame = window.requestAnimationFrame(() => {
       focusComposerStable();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, globalQuiet, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
@@ -2674,8 +2676,10 @@ export default function ChatView(props: ChatViewProps) {
   // composer effect above.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the open drawer terminal when entering a thread
   useEffect(() => {
-    if (activeThreadRef && !globalQuiet) return focusTerminalOnThreadEnter(activeThreadRef);
-  }, [activeThreadRef, globalQuiet]);
+    if (activeThreadRef && !embedded && paneFocusedRef.current) {
+      return focusTerminalOnThreadEnter(activeThreadRef);
+    }
+  }, [activeThreadRef, embedded]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,

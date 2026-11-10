@@ -114,7 +114,22 @@ function PaneCellView({
       params: buildThreadRouteParams(pane.ref),
     });
   };
-  const onMissing = useStableCallback(() => usePaneLayoutStore.getState().removeThread(pane.ref));
+  // A focused cell renders the route, which can still name a removed thread; drop that thread,
+  // never this cell's own, then move the route to the pane that took focus.
+  const onMissing = useStableCallback(() => {
+    if (target.kind !== "server") return;
+    usePaneLayoutStore.getState().removeThread(target.threadRef);
+    if (!focused) return;
+    const { panes, focusedIndex } = usePaneLayoutStore.getState();
+    const next = panes[focusedIndex]?.ref;
+    if (next) {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(next),
+        replace: true,
+      });
+    }
+  });
   const handleDrop = useEffectEvent((refs: ReadonlyArray<ScopedThreadRef>) => {
     const ref = refs[0];
     if (ref === undefined) return;
