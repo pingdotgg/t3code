@@ -399,10 +399,11 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
         </WorkFoldToggle>
-        {backgroundWorktreeSetup ? (
-          <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
-        ) : null}
-        <div className="ms-auto flex min-w-0 items-center justify-end">
+        {/* One trailing group: two auto margins would split the free space and center the chip. */}
+        <div className="ms-auto flex min-w-0 items-center justify-end gap-2">
+          {backgroundWorktreeSetup ? (
+            <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
+          ) : null}
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
       </div>
@@ -426,7 +427,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
           <Button
             variant="ghost-muted"
             size="micro"
-            className="ml-auto min-w-0 shrink-0"
+            className="min-w-0 shrink-0"
             aria-label={`Background setup is still running: ${scriptName}. Show setup progress.`}
           />
         }
