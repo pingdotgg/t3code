@@ -3070,6 +3070,43 @@ it.effect.each([
   }),
 );
 
+it.effect.each([false, true])(
+  "recovers an update failure with new native thread %s",
+  (newNativeThread) =>
+    Effect.gen(function* () {
+      const nativeThreadRef = {
+        driver,
+        nativeId: "native:update-launch",
+        strength: "strong" as const,
+      };
+      const { observed, finalEvents } = yield* captureRootRunTermination({
+        key: `update-launch:${newNativeThread}`,
+        providerThread: { firstRunOrdinal: 1, nativeThreadRef },
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.make({
+            type: "turn.terminal",
+            status: "failed",
+            driver,
+            providerThreadId: ids.providerThreadId,
+            providerTurnId: ids.rootProviderTurnId,
+            runOrdinal: 1,
+            failureItemOrdinal: 101,
+            threadDisposition: "reusable",
+            failure: {
+              class: "provider_error",
+              message: "Codex was updating on this machine. Try again.",
+              code: newNativeThread ? "provider_updating_new_thread" : "provider_updating",
+              retryable: null,
+            },
+          }),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      const thread = finalEvents.find((event) => event.type === "provider-thread.updated")?.payload;
+      assert.deepEqual(thread?.nativeThreadRef, newNativeThread ? null : nativeThreadRef);
+    }),
+);
+
 it.effect("fails the run when its event stream ends without a root terminal", () =>
   Effect.gen(function* () {
     const { observed, finalEvents } = yield* captureRootRunTermination({
@@ -3136,6 +3173,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
 
 function captureRootRunTermination(input: {
   readonly key: string;
+  readonly providerThread?: Partial<OrchestrationV2ProviderThread>;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -3313,6 +3351,7 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          ...input.providerThread,
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,

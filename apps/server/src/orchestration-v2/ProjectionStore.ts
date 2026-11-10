@@ -170,6 +170,9 @@ export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
   | "restart-continuations"
+  // Runs a restart or CLI replacement would cut off: preparing, starting,
+  // running or waiting (a pending approval or question).
+  | "active-work"
   | "subagent-results"
   | "delegated-completions";
 
@@ -4216,6 +4219,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.restartContinuationOfRunId') IS NOT NULL
                     ELSE 0 END
+              `;
+            case "active-work":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
               `;
             case "runtime":
               return sql`

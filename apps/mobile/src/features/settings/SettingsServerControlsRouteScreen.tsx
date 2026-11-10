@@ -272,6 +272,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     RUNTIME_MODE_CHOICES,
     targets.map((target) => target.environment.serverConfig.managedPolicy),
   );
+  const supportsAutomaticUpdates = targets.every(
+    (target) => target.environment.serverConfig.environment.capabilities.automaticUpdates === true,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     managed(key) !== undefined ||
@@ -542,6 +545,28 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     disabled={disabledFor("enableProviderUpdateChecks")}
                     onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
                   />
+                  <View className="border-t border-border-subtle">
+                    <SettingsSwitchRow
+                      icon="arrow.down.circle"
+                      label="Update automatically"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : !supportsAutomaticUpdates
+                            ? "Update older servers to control automatic updates."
+                            : uniform("enableProviderUpdateChecks") === false
+                              ? "Turn on Provider update checks to update automatically."
+                              : "Install updates for provider CLIs that support one-click updates on the selected environments while nothing is running."
+                      }
+                      value={uniform("automaticUpdates")}
+                      disabled={
+                        disabledFor("automaticUpdates") ||
+                        !supportsAutomaticUpdates ||
+                        uniform("enableProviderUpdateChecks") === false
+                      }
+                      onValueChange={(value) => write({ automaticUpdates: value })}
+                    />
+                  </View>
                   <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
                       icon="arrow.uturn.forward"
