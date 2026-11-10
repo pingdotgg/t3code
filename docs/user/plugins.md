@@ -45,7 +45,8 @@ your plugins but runs none, and turn the plugin off.
 ## Plugin settings
 
 If a plugin has settings, open them with the settings button on its row. Each setting saves as soon
-as you change it or leave its field, and an empty field shows the default the plugin uses. Secret
+as you change it or leave its field, and an empty field shows the default the plugin uses. Settings
+shown as JSON save together only when you select **Save**. Secret
 fields are stored in the environment's secret store and are never shown again after you save them;
 the clear button next to one removes it.
 
