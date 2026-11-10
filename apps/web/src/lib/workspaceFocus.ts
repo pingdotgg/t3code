@@ -74,6 +74,16 @@ function isInScrollView(target: HTMLElement) {
 }
 
 /**
+ * Whether focus can go back to an element without surprising the user: it is still in a
+ * visible workspace area (a closing drawer drops its area) and in view, so no list scrolls.
+ */
+export function canReturnFocusTo(element: HTMLElement) {
+  return (
+    workspaceArea(element) !== null && isWorkspaceElementVisible(element) && isInScrollView(element)
+  );
+}
+
+/**
  * Brings a restored control into view, innermost scrolling list first.
  * scrollIntoView would also scroll overflow-hidden layout containers out of place.
  */
