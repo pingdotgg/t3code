@@ -510,40 +510,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
-  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [workingHistoryCollapsing, setWorkingHistoryCollapsing] = useState(false);
-  const disclosureAnchorKeyRef = useRef<string | null>(null);
-  const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
-  const scheduleDisclosureSettle = () => {
-    if (disclosureSettleFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleFrameRef.current);
-    }
-    if (disclosureSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-    }
-    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        disclosureAnchorKeyRef.current = null;
-        setDisclosureToggleSettling(false);
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-      });
-    });
-  };
-
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
-    disclosureAnchorKeyRef.current = anchorKey;
-    setDisclosureToggleSettling(true);
-    scheduleDisclosureSettle();
-  };
-
-  const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    const disclosureAnchorKey = disclosureAnchorKeyRef.current;
-    return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
+  const preserveDisclosurePosition = (anchorKey: string) => {
+    const list = listRef.current;
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (!list || (isWorking && list.getState().isFollowingEnd)) return;
+    list.cancelScroll();
+    list.anchorVisibleContent({ key: anchorKey });
   };
 
   const revealFoldRows = (opening: boolean) =>
@@ -551,7 +527,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
     );
   const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    preserveDisclosurePosition(`turn-fold:${runId}`);
     revealFoldRows(
       rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
     );
@@ -566,7 +542,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey);
+    preserveDisclosurePosition(anchorKey);
     const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
     if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
     setExpandedWorkGroupIds((existing) => {
@@ -581,13 +557,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkingHistory = (key: string) => {
     // Either way the bar holds still: the history grows and shrinks below it.
-    suspendEndScrollMaintenanceForDisclosure("working-indicator-row");
     const list = listRef.current;
-    if (list) void list.scrollToOffset({ offset: list.getState().scroll, animated: false });
+    if (list) {
+      list.cancelScroll();
+      list.anchorVisibleContent({ key: "working-indicator-row" });
+    }
     setWorkingHistoryKey((current) => (current === key ? null : key));
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
-    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
+    preserveDisclosurePosition(`attempt-fold:${attemptId}`);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
@@ -968,7 +946,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const maintainVisibleContentPosition = {
     data: true,
     size: true,
-    shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
 
   const refreshMinimap = useStableCallback(() => {
@@ -983,7 +960,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       firstBufferedIndex == null ? undefined : state.elementAtIndex(firstBufferedIndex);
     const firstBufferedTop =
       firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
-    const viewport: HTMLElement | undefined = listRef.current?.getScrollableNode();
+    const viewport = listRef.current?.getScrollableNode() ?? undefined;
     // Cached row positions exclude the header and pending scroll adjustments.
     const scroll =
       firstBufferedRow && viewport && firstBufferedTop !== undefined
@@ -1074,13 +1051,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const isAtEnd = rememberPosition(liveFollowEnabled && !anchoredEndSpace);
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
-    }
-    scheduleMinimapRefresh();
-  };
-
-  const handleItemSizeChanged = () => {
-    if (disclosureAnchorKeyRef.current !== null) {
-      scheduleDisclosureSettle();
     }
     scheduleMinimapRefresh();
   };
@@ -1178,7 +1148,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
-    onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onToggleWorkEntry: preserveDisclosurePosition,
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
@@ -1302,8 +1272,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       detachViewport?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
-      // Refresh frames only read the list; disclosure frames still run so the
-      // settle flag clears.
       if (minimapRefreshFrameRef.current !== null) {
         cancelAnimationFrame(minimapRefreshFrameRef.current);
         minimapRefreshFrameRef.current = null;
@@ -1486,7 +1454,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
-                disclosureToggleSettling ||
                 workingHistoryOpen ||
                 workingHistoryCollapsing
                   ? false
@@ -1503,7 +1470,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               }
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
-              onItemSizeChanged={handleItemSizeChanged}
+              onItemSizeChanged={scheduleMinimapRefresh}
               className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
@@ -1571,11 +1538,14 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
+// LegendList estimates unmeasured rows from their type's average. Long messages of equal length
+// can differ in height by orders of magnitude, so each gets its own type to avoid nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
-  return `message:${item.message.role}:${lengthBucket}`;
+  return lengthBucket < 2
+    ? `message:${item.message.role}:${lengthBucket}`
+    : `message:${item.message.id}`;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {

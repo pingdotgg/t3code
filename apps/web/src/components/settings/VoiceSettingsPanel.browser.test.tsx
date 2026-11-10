@@ -1,4 +1,5 @@
-import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { PrimaryConnectionTarget, RelayConnectionTarget } from "@t3tools/client-runtime/connection";
+import type * as Effect from "effect/Effect";
 import {
   EnvironmentId,
   type EnvironmentSpeechModel,
@@ -13,14 +14,64 @@ import {
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
+import { useEnvironmentScope } from "../../state/session";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+vi.mock(import("../../state/session"), { spy: true });
 
-it("preserves the model test transcript when its model is filtered out", async () => {
+// The real connection runtime authorizes relay requests with a signed-in cloud session.
+vi.mock("../../connection/runtime", async () => {
+  const [{ ManagedRelay }, rpc, { Atom }, Context, Effect, Layer] = await Promise.all([
+    import("@t3tools/client-runtime/relay"),
+    import("@t3tools/client-runtime/rpc"),
+    import("effect/reactivity"),
+    import("effect/Context"),
+    import("effect/Effect"),
+    import("effect/Layer"),
+  ]);
+  type AuthorizedHttp =
+    import("@t3tools/client-runtime/authorization").AuthorizedRemoteHttpEnvironment;
+  // Services resolve by key, and client-runtime does not export this one.
+  class RemoteEnvironmentAuthorization extends Context.Service<
+    RemoteEnvironmentAuthorization,
+    {
+      readonly authorizeDpopHttp: (input: {
+        readonly expectedEnvironmentId: AuthorizedHttp["environmentId"];
+      }) => Effect.Effect<AuthorizedHttp>;
+    }
+    // @effect-diagnostics-next-line deterministicKeys:off
+  >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
+  return {
+    connectionAtomRuntime: Atom.runtime(
+      Layer.mergeAll(
+        rpc.layerRemoteHttpClient((input, init) => globalThis.fetch(input, init)),
+        Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, {
+          thumbprint: Effect.succeed("thumbprint"),
+          createProof: () => Effect.succeed("proof"),
+        }),
+        Layer.succeed(RemoteEnvironmentAuthorization, {
+          authorizeDpopHttp: ({ expectedEnvironmentId }) =>
+            Effect.succeed({
+              environmentId: expectedEnvironmentId,
+              label: "MacBook Pro",
+              httpBaseUrl: window.location.origin,
+              httpAuthorization: {
+                _tag: "Dpop",
+                accessToken: "relay-access-token",
+                expiresAtEpochMs: 4_102_444_800_000,
+              },
+            }),
+        }),
+      ),
+    ),
+  };
+});
+
+it("tests the selected model after download and preserves its transcript across filters", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -55,15 +106,23 @@ it("preserves the model test transcript when its model is filtered out", async (
     modelUnloadTimeout: "never",
     gpuDevices: [],
   } satisfies EnvironmentSpeechStatus;
+  let installed = false;
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
-    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/status")
+      return Promise.resolve(
+        Response.json(installed ? status : { ...status, state: "missing-model" }),
+      );
+    if (url.pathname === "/api/voice/models/download") {
+      installed = true;
+      return Promise.resolve(Response.json({ models: [model] }));
+    }
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
         Response.json({
           models: [
-            model,
+            installed ? model : { ...model, state: "downloadable", active: false },
             {
               ...model,
               id: "both",
@@ -88,6 +147,7 @@ it("preserves the model test transcript when its model is filtered out", async (
     return fetch(input, init);
   });
   const transcript = "Keep this transcript.";
+  using _scope = vi.mocked(useEnvironmentScope).mockReturnValue(true);
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
     () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
     async () => {
@@ -101,7 +161,10 @@ it("preserves the model test transcript when its model is filtered out", async (
             open: false,
             step: 0,
             model: null,
+            language: null,
             downloading: false,
+            catalogFailed: false,
+            retryCatalog: null,
             error: null,
             setOpen: () => {},
             download: async () => {},
@@ -129,7 +192,13 @@ it("preserves the model test transcript when its model is filtered out", async (
             </SettingsScopeProvider>,
           );
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
+          const download = screen.getByRole("button", { name: "Download", exact: true });
+          await expect.element(download).toBeVisible();
+          expect(testModel.query()).toBeNull();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
+          await userEvent.click(download);
           await expect.element(testModel).toBeVisible();
+          expect(screen.getByRole("button", { name: "Set up voice input" }).query()).toBeNull();
           await userEvent.click(testModel);
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
@@ -155,6 +224,81 @@ it("preserves the model test transcript when its model is filtered out", async (
       );
     },
   );
+});
+
+it("loads the models of a relay-connected destination", async () => {
+  const target = new RelayConnectionTarget({
+    environmentId: EnvironmentId.make("voice-relay"),
+    label: "MacBook Pro",
+  });
+  const prepared = {
+    environmentId: target.environmentId,
+    label: target.label,
+    httpBaseUrl: window.location.origin,
+    socketUrl: "ws://localhost",
+    httpAuthorization: {
+      _tag: "Dpop" as const,
+      accessToken: "stale-access-token",
+      expiresAtEpochMs: 4_102_444_800_000,
+    },
+    target,
+  };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: false,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: false,
+    state: "downloadable",
+  };
+  const status = {
+    supported: true,
+    state: "missing-model",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  } satisfies EnvironmentSpeechStatus;
+  const authorizations: Array<string | null> = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") {
+      authorizations.push(new Headers(init?.headers).get("authorization"));
+      return Promise.resolve(Response.json(status));
+    }
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(Response.json({ models: [model] }));
+    return fetch(input, init);
+  });
+  using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
+  // Restored even when an assertion fails, unlike `withImplementation`.
+  using _destination = vi.mocked(useVoiceTranscriptionDestination).mockImplementation(() => ({
+    environmentId: target.environmentId,
+    label: target.label,
+    grantId: "test",
+    prepared,
+  }));
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  await vi.waitFor(() => expect(authorizations.length + notify.mock.calls.length).not.toBe(0));
+  expect(notify).not.toHaveBeenCalled();
+  expect(authorizations).toEqual(["DPoP relay-access-token"]);
+  await expect.element(screen.getByText("Tiny", { exact: true })).toBeVisible();
 });
 
 it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
@@ -252,10 +396,10 @@ it.each([
     );
     await vi.waitFor(() => expect(document.activeElement?.id).toBe(prerequisite));
     await expect
-      .element(screen.getByRole("combobox", { name: "Send microphone audio to" }))
+      .element(screen.getByRole("combobox", { name: "Transcribe with" }))
       .toHaveTextContent("Off");
     await expect
-      .element(screen.getByRole("switch", { name: "Clean up transcripts with a provider" }))
+      .element(screen.getByRole("switch", { name: "Clean up transcripts" }))
       .not.toBeChecked();
   },
 );
@@ -271,7 +415,7 @@ it("keeps a missing destination selected without claiming it cannot transcribe",
     </SettingsScopeProvider>,
   );
   await expect
-    .element(screen.getByRole("combobox", { name: "Send microphone audio to" }))
+    .element(screen.getByRole("combobox", { name: "Transcribe with" }))
     .toHaveTextContent("Chosen environment (unavailable)");
   await expect.element(screen.getByText(/can’t transcribe audio/)).not.toBeInTheDocument();
 });

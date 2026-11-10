@@ -3,6 +3,7 @@ import { SearchIcon } from "lucide-react";
 import { useRef } from "react";
 import type * as React from "react";
 import { cn } from "~/lib/utils";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import {
   Autocomplete,
   AutocompleteCollection,
@@ -41,15 +42,23 @@ function CommandDialogViewport({
   size = "default",
   ...props
 }: CommandDialogPrimitive.Viewport.Props & { size?: "default" | "content" }) {
+  // Short desktop windows would put the search field under the native window controls.
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const titlebarStyle = {
+    "--command-titlebar-height": `${nativeTitlebarHeight}px`,
+  } as React.CSSProperties;
   return (
     <CommandDialogPrimitive.Viewport
       className={cn(
         // Keep palette actions above the toast stack (z-70).
-        "pointer-events-none fixed inset-0 z-[80] flex flex-col items-center px-4 py-[max(--spacing(4),4vh)]",
-        size === "content" ? "sm:py-22" : "sm:py-24",
+        "pointer-events-none fixed inset-0 z-[80] flex flex-col items-center px-4 pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)]",
+        size === "content"
+          ? "sm:pt-[max(--spacing(22),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-22"
+          : "sm:pt-[max(--spacing(24),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-24",
         className,
       )}
       data-slot="command-dialog-viewport"
+      style={titlebarStyle}
       {...props}
     />
   );

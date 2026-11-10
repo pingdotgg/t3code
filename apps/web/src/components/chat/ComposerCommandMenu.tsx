@@ -7,6 +7,7 @@ import {
   type EnvironmentMachineKind,
   type ProjectEntry,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type PullRequestContextMetadata,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -18,10 +19,8 @@ import {
   BoxIcon,
   CornerDownLeftIcon,
   EraserIcon,
-  HammerIcon,
   MessageCircleQuestionIcon,
   MessagesSquareIcon,
-  PencilRulerIcon,
   SearchXIcon,
   TerminalIcon,
   type LucideIcon,
@@ -43,6 +42,7 @@ import { Kbd } from "../ui/kbd";
 import { Spinner } from "../ui/spinner";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem = {
@@ -103,6 +103,18 @@ export type ComposerCommandItem = {
       label: string;
       description: string;
     }
+  | {
+      id: string;
+      type: "model";
+      instanceId: ProviderInstanceId;
+      model: string;
+      driverKind: ProviderDriverKind;
+      providerDisplayName: string;
+      acpRegistryAgentId: string | undefined;
+      acpRegistryIconUrl: string | undefined;
+      label: string;
+      description: string;
+    }
 );
 
 export interface ComposerCommandGroup {
@@ -143,6 +155,8 @@ function composerCommandItemGroup(
       return { key: "threads", label: "Threads" };
     case "environment":
       return { key: "environments", label: "Machines" };
+    case "model":
+      return { key: "models", label: "Models" };
   }
 }
 
@@ -171,8 +185,6 @@ export function groupComposerCommandItems(
 const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
   model: BoxIcon,
   clear: EraserIcon,
-  plan: PencilRulerIcon,
-  default: HammerIcon,
   side: MessageCircleQuestionIcon,
   btw: MessageCircleQuestionIcon,
 };
@@ -403,6 +415,17 @@ function ComposerCommandItemIcon(props: {
       return <TerminalIcon aria-hidden="true" className={iconClassName} />;
     case "skill":
       return <BoxIcon aria-hidden="true" className={iconClassName} />;
+    case "model":
+      return (
+        <ProviderInstanceIcon
+          driverKind={item.driverKind}
+          displayName={item.providerDisplayName}
+          acpRegistryAgentId={item.acpRegistryAgentId}
+          acpRegistryIconUrl={item.acpRegistryIconUrl}
+          className="size-[15px] shrink-0"
+          iconClassName="size-[15px]"
+        />
+      );
   }
 }
 

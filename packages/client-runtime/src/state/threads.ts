@@ -501,9 +501,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     OrchestrationV2ThreadStreamItem,
     { kind: "event" | "unknown-event" }
   >;
-  const applyEventsLocked = Effect.fn("EnvironmentThreadState.applyEventsLocked")(function* (
-    items: ReadonlyArray<SequencedItem>,
-  ) {
+  // Per-batch streaming spans add trace volume without a useful timing boundary.
+  const applyEventsLocked = Effect.fnUntraced(function* (items: ReadonlyArray<SequencedItem>) {
     const appliedSequence = yield* SubscriptionRef.get(lastSequence);
     let sequence = appliedSequence;
     const fresh: EventItem[] = [];
@@ -662,7 +661,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* applyEventsLocked([item]);
   });
 
-  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
+  // Keep this per-batch streaming path untraced for the same reason as applyEventsLocked.
+  const applyItems = Effect.fnUntraced(function* (
     items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
   ) {
     yield* applyLock.withPermits(1)(

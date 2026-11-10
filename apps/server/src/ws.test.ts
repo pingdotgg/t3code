@@ -6,8 +6,11 @@ import {
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
+  EventId,
+  MessageId,
   ProjectId,
   ThreadId,
+  TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
   SourceControlRepositoryError,
@@ -37,6 +40,7 @@ import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -47,6 +51,7 @@ import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
@@ -116,6 +121,7 @@ import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
+import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
@@ -556,6 +562,104 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("shares each live event item across subscribers and dedupes bodies per subscriber", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:shared-live");
+    const messageId = MessageId.make("message:shared-live");
+    const at = DateTime.makeUnsafe("2026-10-31T00:00:00.000Z");
+    const owner = { threadId, runId: null, nodeId: null, createdAt: at, updatedAt: at };
+    // DateTime memoizes its formatted parts, so only the plain records are frozen.
+    const freeze = <A>(value: A): A => {
+      if (typeof value === "object" && value !== null && !DateTime.isDateTime(value)) {
+        for (const child of Object.values(value)) freeze(child);
+        Object.freeze(value);
+      }
+      return value;
+    };
+    const live: ReadonlyArray<OrchestrationV2StoredEvent> = freeze([
+      {
+        sequence: 1,
+        commandId: null,
+        event: {
+          id: EventId.make("event:shared-live:message"),
+          type: "message.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            ...owner,
+            id: messageId,
+            role: "assistant",
+            text: "Done",
+            attachments: [],
+            streaming: false,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        },
+      },
+      {
+        sequence: 2,
+        commandId: null,
+        event: {
+          id: EventId.make("event:shared-live:reply"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            ...owner,
+            id: TurnItemId.make("item:shared-live:reply"),
+            type: "assistant_message",
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            title: null,
+            status: "completed",
+            messageId,
+            text: "Done",
+            streaming: false,
+            startedAt: at,
+            completedAt: at,
+          },
+        },
+      },
+    ] as ReadonlyArray<OrchestrationV2StoredEvent>);
+    const stringify = yield* Effect.acquireRelease(
+      Effect.sync(() => vi.spyOn(JSON, "stringify")),
+      (spy) => Effect.sync(() => spy.mockRestore()),
+    );
+    // The EventSink hands every subscriber the same projected objects.
+    const subscribe = (acceptDedupedBodies: boolean) =>
+      subscribeOrchestrationV2Thread({ threadId, afterSequence: 0, acceptDedupedBodies }).pipe(
+        Effect.flatMap(Stream.runCollect),
+        Effect.map((items) => Array.from(items)),
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          ensureLegacyTranscript: () => Effect.void,
+          streamStoredEventsFrom: () => Stream.fromIterable(live),
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      );
+    const [deduped, first, second] = yield* Effect.forEach([true, false, false], subscribe);
+
+    assert.lengthOf(first!, live.length);
+    first!.forEach((item, index) => {
+      assert.strictEqual(item, second![index]);
+      assert.strictEqual(item.kind === "event" && item.event, live[index]!.event);
+    });
+    assert.strictEqual(deduped![0], first![0]);
+    const reply = deduped![1];
+    assert.deepInclude(reply?.kind === "event" ? reply.event.payload : undefined, {
+      text: "",
+      textOmitted: true,
+    });
+    // The live buffer sizes each shared item once, not once per subscriber.
+    assert.lengthOf(
+      stringify.mock.calls.filter(([value]) => value?.kind === "event"),
+      live.length,
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 it.effect("shell snapshots omit idle children and older settled threads only on request", () =>
   Effect.gen(function* () {
     const shell = (
@@ -666,6 +770,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
   Layer.mock(TriageService.TriageService)({}),
+  Layer.mock(TextGenerators.TextGenerators)({}),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
   Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
   Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({}),
@@ -700,6 +805,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProviderAuthService.ProviderAuthService)({}),
+  Layer.mock(ProviderInstallation.ProviderInstallation)({}),
   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(ProviderLatestVersions.ProviderLatestVersions)({}),
   Layer.mock(ProviderMaintenanceRunner.ProviderMaintenanceRunner)({}),
@@ -1332,10 +1438,15 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
   ),
 );
 
-// Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot.
-it.effect.each(["thread", "shell"] as const)(
-  "%s resume from a cursor below the pruned boundary loads a snapshot",
-  (scope) =>
+// Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot,
+// or, for a shell client that loads it over HTTP, be told to without the server building one.
+it.effect.each([
+  { scope: "thread", httpSnapshotFallback: false },
+  { scope: "shell", httpSnapshotFallback: false },
+  { scope: "shell", httpSnapshotFallback: true },
+] as const)(
+  "$scope resume from a cursor below the pruned boundary (HTTP fallback: $httpSnapshotFallback)",
+  ({ scope, httpSnapshotFallback }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-10-13T00:00:00.000Z";
@@ -1359,11 +1470,18 @@ it.effect.each(["thread", "shell"] as const)(
         ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${second!.sequence}, ${now})
       `;
       const subscription = Effect.gen(function* () {
-        const stream =
+        const items: ReadonlyArray<unknown> =
           scope === "thread"
-            ? yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence })
-            : yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence });
-        return stream;
+            ? yield* Stream.runCollect(
+                yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence }),
+              )
+            : yield* Stream.runCollect(
+                yield* subscribeOrchestrationV2Shell({
+                  afterSequence: first!.sequence,
+                  ...(httpSnapshotFallback ? { httpSnapshotFallback: true as const } : {}),
+                }),
+              );
+        return items;
       });
       const exit = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
@@ -1385,7 +1503,10 @@ it.effect.each(["thread", "shell"] as const)(
         } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
         Effect.exit,
       );
-      assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, "snapshot");
+      assert.deepEqual(
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : Array.from(exit.value),
+        httpSnapshotFallback ? [{ kind: "snapshot-required" }] : "snapshot",
+      );
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
