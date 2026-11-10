@@ -2282,6 +2282,24 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const ensurePrHeadIsNotBase = Effect.fn("ensurePrHeadIsNotBase")(function* (
+    cwd: string,
+    branch: string,
+    upstreamRef: string | null,
+    changeRequestLabel: string,
+  ) {
+    const headContext = yield* resolveBranchHeadContext(cwd, { branch, upstreamRef });
+    if (headContext.isCrossRepository) return;
+    const { baseBranch } = yield* resolvePrBase(cwd, branch, upstreamRef, headContext);
+    if (baseBranch !== headContext.headBranch) return;
+    if (yield* findOpenPr(cwd, headContext)) return;
+    return yield* new GitManagerError({
+      operation: "runStackedAction",
+      cwd,
+      detail: `${baseBranch} is the base branch. Check out a feature branch to create a ${changeRequestLabel}.`,
+    });
+  });
+
   const runPrStep = Effect.fn("runPrStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -3251,6 +3269,16 @@ export const make = Effect.gen(function* () {
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
+        // A stale or missing origin/HEAD hides the default branch from status, so check here
+        // before anything is committed or pushed to it.
+        if (changeRequestTerms && !input.featureBranch && initialStatus.branch) {
+          yield* ensurePrHeadIsNotBase(
+            input.cwd,
+            initialStatus.branch,
+            initialStatus.upstreamRef,
+            changeRequestTerms.shortLabel,
+          );
+        }
 
         const commit = commitAction
           ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(

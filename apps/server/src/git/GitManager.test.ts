@@ -3526,14 +3526,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           providerScenario: { defaultBranch: "develop", prListSequence: [[], []] },
         });
 
-        const result = yield* runStackedAction(manager, {
+        const error = yield* runStackedAction(manager, {
           cwd: repoDir,
           action: "commit_push_pr",
-        }).pipe(Effect.result);
+        }).pipe(Effect.flip);
 
         expect(yield* readRemoteDevelop).toBe(remoteBefore);
         expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(localBefore);
-        expect(Result.isFailure(result)).toBe(true);
+        expect(error.message).toContain("develop is the base branch");
       }),
   );
 
