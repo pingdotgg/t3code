@@ -876,7 +876,11 @@ export const make = Effect.gen(function* () {
   ) {
     type GitIdentity =
       | { readonly _tag: "Repository"; readonly git: AgentSessionProjectGit | null }
-      | { readonly _tag: "Worktree" }
+      | {
+          readonly _tag: "Worktree";
+          readonly mainCheckout: string | null;
+          readonly git: AgentSessionProjectGit | null;
+        }
       | { readonly _tag: "NotGit" };
     const identities = new Map<string, GitIdentity>();
     const repositories: Array<{ directory: string; gitDir: string; linkedWorktree: boolean }> = [];
@@ -909,8 +913,9 @@ export const make = Effect.gen(function* () {
     );
     for (const { directory, gitDir } of linkedWorktrees) {
       const commonDir = (commonDirTexts.get(path.join(gitDir, "commondir")) ?? "").trim();
-      if (commonDir.length === 0) identities.set(directory, { _tag: "Worktree" });
-      else
+      if (commonDir.length === 0) {
+        identities.set(directory, { _tag: "Worktree", mainCheckout: null, git: null });
+      } else
         repositories.push({
           directory,
           gitDir: path.resolve(gitDir, commonDir),
@@ -923,20 +928,25 @@ export const make = Effect.gen(function* () {
     );
     for (const { directory, gitDir, linkedWorktree } of repositories) {
       const configText = configTexts.get(path.join(gitDir, "config")) ?? "";
+      const originUrl = parseOriginUrlFromGitConfig(configText);
+      const git: AgentSessionProjectGit = {
+        remoteKey:
+          originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
+        repository: repositoryPathFromRemoteUrl(originUrl),
+      };
       // Bare repositories have no main checkout, so offer their linked worktrees independently.
       if (linkedWorktree && !isBareGitConfig(configText)) {
-        identities.set(directory, { _tag: "Worktree" });
+        identities.set(directory, {
+          _tag: "Worktree",
+          // Only a common dir named .git sits inside its main checkout, and an
+          // unreadable config can't rule out a bare repository.
+          mainCheckout:
+            configText.length > 0 && path.basename(gitDir) === ".git" ? path.dirname(gitDir) : null,
+          git,
+        });
         continue;
       }
-      const originUrl = parseOriginUrlFromGitConfig(configText);
-      identities.set(directory, {
-        _tag: "Repository",
-        git: {
-          remoteKey:
-            originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
-          repository: repositoryPathFromRemoteUrl(originUrl),
-        },
-      });
+      identities.set(directory, { _tag: "Repository", git });
     }
     return identities;
   });
@@ -1563,8 +1573,14 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const directoryKeys = new Map<string, string>();
-    const gitIdentities = new Map<string, AgentSessionProjectGit | null>();
+    const directoryProjects = new Map<
+      string,
+      {
+        readonly key: string;
+        readonly path: string;
+        readonly git: AgentSessionProjectGit | null;
+      } | null
+    >();
 
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
@@ -1572,27 +1588,54 @@ export const make = Effect.gen(function* () {
       const resolved = path.resolve(expanded);
       const stats = directories.get(resolved);
       if (stats === undefined || Option.isNone(stats)) continue;
-      let key = directoryKeys.get(resolved);
-      if (key === undefined) {
+      let project = directoryProjects.get(resolved);
+      if (project === undefined) {
         const gitIdentity = directoryGitIdentities.get(resolved);
-        if (gitIdentity === undefined || gitIdentity._tag === "Worktree") {
-          key = "";
+        if (gitIdentity === undefined) {
+          project = null;
+        } else if (gitIdentity._tag === "Worktree") {
+          // A linked worktree's sessions count toward its main checkout's project.
+          const { mainCheckout } = gitIdentity;
+          // Symlinks can disguise excluded paths here too; re-check the target.
+          const mainStats =
+            mainCheckout === null ||
+            isExcludedProjectPath(mainCheckout) ||
+            isExcludedProjectPath(
+              yield* fileSystem
+                .realPath(mainCheckout)
+                .pipe(Effect.orElseSucceed(() => mainCheckout)),
+            )
+              ? Option.none()
+              : yield* statOption(mainCheckout);
+          project =
+            mainCheckout !== null &&
+            Option.isSome(mainStats) &&
+            mainStats.value.type === "Directory"
+              ? {
+                  key: yield* directoryIdentity(mainCheckout, mainStats.value),
+                  path: mainCheckout,
+                  git: gitIdentity.git,
+                }
+              : null;
         } else {
-          key = yield* directoryIdentity(resolved, stats.value);
-          gitIdentities.set(key, gitIdentity._tag === "Repository" ? gitIdentity.git : null);
+          project = {
+            key: yield* directoryIdentity(resolved, stats.value),
+            path: resolved,
+            git: gitIdentity._tag === "Repository" ? gitIdentity.git : null,
+          };
         }
-        directoryKeys.set(resolved, key);
+        directoryProjects.set(resolved, project);
       }
-      if (key === "") continue;
+      if (project === null) continue;
 
-      const existing = merged.get(key);
+      const existing = merged.get(project.key);
       if (!existing) {
-        merged.set(key, {
-          path: resolved,
+        merged.set(project.key, {
+          path: project.path,
           sources: [candidate.source],
           threadCount: candidate.threadCount,
           lastActiveAtMs: candidate.lastActiveAtMs,
-          git: gitIdentities.get(key) ?? null,
+          git: project.git,
         });
         continue;
       }
