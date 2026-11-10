@@ -42,19 +42,24 @@ function NativeView({ ref, ...props }: NativeProps) {
     Object.assign(native, { text: "", eventCount: 0, resetGeneration: 0, pasteEventCount: 0 });
     native.mounts += 1;
   }, []);
-  useImperativeHandle(ref, () => ({
-    readState: async () => {
-      const state = {
-        value: native.text,
-        selection: { start: native.text.length, end: native.text.length },
-        eventCount: native.eventCount,
-        resetGeneration: native.resetGeneration,
-        pasteEventCount: native.pasteEventCount,
-      };
-      await native.readGate;
-      return state;
-    },
-  }));
+  useImperativeHandle(
+    ref,
+    () => ({
+      readState: async () => {
+        const state = {
+          value: native.text,
+          selection: { start: native.text.length, end: native.text.length },
+          eventCount: native.eventCount,
+          resetGeneration: native.resetGeneration,
+          pasteEventCount: native.pasteEventCount,
+        };
+        await native.readGate;
+        return state;
+      },
+    }),
+    // Expo keeps one native view instance for the component's lifetime.
+    [],
+  );
   useLayoutEffect(() => {
     propsRef.current = props;
     native.props = props;
@@ -350,6 +355,18 @@ async function flushAcross(
     await flushed;
   });
 }
+
+it("does not restore dropped text into a composer locked again while a flush waits", async () => {
+  const draftKey = "flush-relock:draft";
+  await using screen = await renderFlushableComposer(draftKey);
+  await act(async () => emit("Draft"));
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, () => screen.setLocked(true, draftKey));
+  expect(getComposerDraftSnapshot(draftKey).text).toBe("Draft");
+});
 
 it("does not restore dropped text into a draft cleared while a flush waits", async () => {
   const draftKey = "flush-clear:draft";

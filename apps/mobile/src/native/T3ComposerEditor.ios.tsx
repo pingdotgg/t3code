@@ -7,6 +7,7 @@ import { requireNativeView } from "expo";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -156,7 +157,6 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
-  const renderedDraftRef = useRef({ value: props.value, resetGeneration: 0 });
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [, forceNativeEventRender] = useState(0);
@@ -324,41 +324,50 @@ export function ComposerEditor({
     setMostRecentEventCount(acknowledgedEventCount);
     forceNativeEventRender((sequence) => sequence + 1);
   };
-  useImperativeHandle(ref, () => {
-    renderedDraftRef.current = { value: props.value, resetGeneration };
-    return {
-      focus: () => settleViewCommand(nativeRef.current?.focus()),
-      blur: () => settleViewCommand(nativeRef.current?.blur()),
-      setSelection: (nextSelection) =>
-        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
-      // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
-      // event can reach JS after the tap's handler has already read the draft.
-      flushPendingInput: async () => {
-        const view = nativeRef.current;
-        const state = await Promise.resolve()
-          .then(() => view?.readState())
-          .catch(() => undefined);
-        // Acknowledging past a paste JS has not received yet would get the paste rejected.
-        if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
-        // A parent that dropped an acknowledged edit is stamped behind it, so native keeps showing that text.
-        if (
-          state.eventCount === mostRecentEventCountRef.current &&
-          controlledEventCount < mostRecentEventCount &&
-          state.value !== props.value &&
-          // The parent may have edited, reset or switched the draft, or recreated the editor, while native was read.
-          nativeRef.current === view &&
-          renderedDraftRef.current.value === props.value &&
-          renderedDraftRef.current.resetGeneration === resetGeneration &&
-          readResetGeneration() === resetGeneration
-        ) {
-          onChangeText(state.value);
-          onSelectionChange?.(state.selection);
-          return;
-        }
-        applyNativeChange(state);
-      },
-    };
-  });
+  // Runs against the latest committed render, so a parent that locked the draft during the read drops the restore.
+  const restoreDroppedNativeEdit = useEffectEvent(
+    (
+      state: Awaited<ReturnType<NativeComposerEditorRef["readState"]>>,
+      view: NativeComposerEditorRef | null,
+      flushedDraft: { readonly value: string; readonly resetGeneration: number },
+    ) => {
+      // A parent that dropped an acknowledged edit is stamped behind it, so native keeps showing that text.
+      if (
+        state.eventCount !== mostRecentEventCountRef.current ||
+        controlledEventCount >= mostRecentEventCount ||
+        state.value === props.value ||
+        // The parent may have edited, reset or switched the draft, or recreated the editor, while native was read.
+        nativeRef.current !== view ||
+        flushedDraft.value !== props.value ||
+        flushedDraft.resetGeneration !== resetGeneration ||
+        readResetGeneration() !== resetGeneration
+      ) {
+        return false;
+      }
+      onChangeText(state.value);
+      onSelectionChange?.(state.selection);
+      return true;
+    },
+  );
+  useImperativeHandle(ref, () => ({
+    focus: () => settleViewCommand(nativeRef.current?.focus()),
+    blur: () => settleViewCommand(nativeRef.current?.blur()),
+    setSelection: (nextSelection) =>
+      settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
+    // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
+    // event can reach JS after the tap's handler has already read the draft.
+    flushPendingInput: async () => {
+      const view = nativeRef.current;
+      const flushedDraft = { value: props.value, resetGeneration };
+      const state = await Promise.resolve()
+        .then(() => view?.readState())
+        .catch(() => undefined);
+      // Acknowledging past a paste JS has not received yet would get the paste rejected.
+      if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
+      if (restoreDroppedNativeEdit(state, view, flushedDraft)) return;
+      applyNativeChange(state);
+    },
+  }));
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   return (
