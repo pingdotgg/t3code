@@ -48,7 +48,6 @@ export function CommandPaletteSubmitButton(props: {
           <Button
             variant="outline"
             size="xs"
-            tabIndex={-1}
             className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
             aria-label={props.ariaLabel}
             disabled={props.disabled}
