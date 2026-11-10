@@ -1599,6 +1599,10 @@ function PullRequestCodeTab({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"
+          onWheelCapture={codeViewReveal.cancel}
+          onTouchStartCapture={codeViewReveal.cancel}
+          onPointerDownCapture={codeViewReveal.cancel}
+          onKeyDownCapture={codeViewReveal.cancel}
           // Headers live in shadow DOM; composedPath crosses that boundary.
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];

@@ -101,6 +101,10 @@ export function createCodeViewFileReveal() {
       pending = { id: fileKey, ...(range ? { range } : {}) };
       flush();
     },
+    /** The user scrolled; a reveal still being positioned must not pull them back. */
+    cancel() {
+      pending = null;
+    },
     flush,
   };
 }

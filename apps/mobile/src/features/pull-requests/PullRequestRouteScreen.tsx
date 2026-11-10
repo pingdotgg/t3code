@@ -474,11 +474,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       });
     }
   });
+  const targetThreadId = activityContent.targetThread?.id;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the requested activity once its asynchronous rows arrive
   useEffect(() => {
     revealActivity();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- repositions when asynchronous activity resolves the URL target
-  }, [params.navigationUrl, params.navigationId, activityTargetIndex]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- reruns when activity resolves the URL target, even a thread the filter hides
+  }, [params.navigationUrl, params.navigationId, activityTargetIndex, targetThreadId]);
   const tabContent = activityContent;
   const filesY = useRef(0);
   const descriptionY = useRef(0);

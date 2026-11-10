@@ -114,5 +114,14 @@ describe("createCodeViewFileReveal", () => {
     reveal.attach(remounted);
     reveal.flush();
     expect(remounted.scrolls).toEqual([{ type: "range", id: "a", range, align: "center" }]);
+
+    // Scrolling away before that second pass keeps the user where they went.
+    const scrolledAway = viewer(["a"]);
+    reveal.request("a", range);
+    reveal.cancel();
+    reveal.attach(null);
+    reveal.attach(scrolledAway);
+    reveal.flush();
+    expect(scrolledAway.scrolls).toEqual([]);
   });
 });
