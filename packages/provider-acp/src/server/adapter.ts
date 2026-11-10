@@ -7587,7 +7587,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
-            yield* emitTool(context, tool, status);
+            // Store the status too, so the deferred finalize stops counting the tool as open.
+            yield* emitTool(context, { ...tool, status }, status);
           }
         });
 
