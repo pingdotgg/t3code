@@ -22,8 +22,8 @@ import {
   resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import { AppText as Text } from "../../components/ui/AppText";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
