@@ -589,6 +589,9 @@ describe("review thread conversations", () => {
     expect(pullRequestCommentLinkMayLoad(issueItems, `${pull}#issuecomment-999`)).toBe(true);
     expect(pullRequestCommentLinkMayLoad(githubItems, `${pull}/files#r999`)).toBe(true);
     expect(pullRequestCommentLinkMayLoad([], `${pull}#issuecomment-1`)).toBe(true);
+    for (const fragment of ["#discussion_r42", "/files#r42", "#pullrequestreview-42"]) {
+      expect(pullRequestCommentLinkMayLoad(issueItems, `${pull}${fragment}`), fragment).toBe(true);
+    }
     for (const fragment of ["#diff-abc", "#issue-1", "#event-1", "#partial-pull-merging", ""]) {
       expect(pullRequestCommentLinkMayLoad(issueItems, `${pull}/files${fragment}`), fragment).toBe(
         false,

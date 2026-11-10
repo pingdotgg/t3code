@@ -658,9 +658,18 @@ function anchorKind(anchor: string) {
   return anchor.slice(0, end);
 }
 
+// GitHub, GitLab, Forgejo and Bitbucket comment fragments; a newer comment may be the first of its kind.
+const COMMENT_ANCHOR_KINDS = [
+  "#issuecomment-",
+  "#discussion_r",
+  "#pullrequestreview-",
+  "#note_",
+  "#comment-",
+];
+
 /**
  * Whether a link no loaded comment matches could name a newer one: its fragment is shaped like a
- * loaded comment's, so `#diff-…` or `#event-…` never asks the host again.
+ * comment's, so `#diff-…` or `#event-…` never asks the host again.
  */
 export function pullRequestCommentLinkMayLoad(
   items: ReadonlyArray<PullRequestConversationItem>,
@@ -668,16 +677,16 @@ export function pullRequestCommentLinkMayLoad(
 ): boolean {
   const anchor = commentAnchor(url);
   if (!anchor) return false;
-  const kinds = new Set(
-    items.flatMap((item) =>
+  const kinds = new Set([
+    ...COMMENT_ANCHOR_KINDS,
+    ...items.flatMap((item) =>
       pullRequestConversationItemComments(item).flatMap((comment) => {
         const loaded = comment.url === null ? null : commentAnchor(comment.url);
         return loaded ? [anchorKind(loaded)] : [];
       }),
     ),
-  );
-  // With no loaded anchor to compare, the link may name the first comment.
-  return kinds.size === 0 || kinds.has(anchorKind(anchor));
+  ]);
+  return kinds.has(anchorKind(anchor));
 }
 
 export function filterPullRequestConversationItems(
