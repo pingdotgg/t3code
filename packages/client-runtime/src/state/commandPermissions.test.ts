@@ -133,27 +133,6 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination filesystem write grant to write a file", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const write = createCommandPermissions(runtime, WS_METHODS.projectsWriteFile);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(write.permissionAtom(env))).toBe(false);
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthFilesystemWriteScope],
-            permissions: [AuthFilesystemWriteScope],
-          }),
-        );
-        expect(registry.get(write.permissionAtom(env))).toBe(true);
-        yield* write.authorize(registry, env);
-      }),
-    ),
-  );
-
   it.effect("requires the destination provider grant to remove an incomplete connection", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -183,6 +162,7 @@ describe("command permissions", () => {
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    { method: WS_METHODS.projectsWriteFile, scope: AuthFilesystemWriteScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.scoped(
       Effect.gen(function* () {
