@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AssistantCitation, ResponseContextRecord } from "@t3tools/contracts";
 import {
   assistantCitationLabel,
@@ -18,10 +19,11 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
-  assistantCitationHash,
   assistantCitationNavigation,
+  assistantCitationRoute,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
+import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
@@ -30,22 +32,20 @@ import { observeAssistantCitationCommentSource } from "./AssistantCitationSource
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
 
-function citationSourceLinkProps(
-  citation: AssistantCitation,
-  navigate: ReturnType<typeof useNavigate>,
-) {
+function useCitationSourceLinkProps(citation: AssistantCitation) {
+  const navigate = useNavigate();
+  const sourceThread = useQuietThreadShell(
+    scopeThreadRef(citation.environmentId, citation.threadId),
+  );
   return {
-    to: "/$environmentId/$threadId" as const,
-    params: { environmentId: citation.environmentId, threadId: citation.threadId },
-    hash: assistantCitationHash(citation),
+    ...assistantCitationRoute(citation, sourceThread),
     "data-markdown-copy": serializeAssistantCitation(citation),
-    resetScroll: false,
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      void navigate(assistantCitationNavigation(citation));
+      void navigate(assistantCitationNavigation(citation, sourceThread));
     },
   };
 }
@@ -75,11 +75,7 @@ function ResponseCard({
   leading: boolean;
   trailing: boolean;
 }) {
-  const navigate = useNavigate();
-  const { "data-markdown-copy": _linkCopy, ...linkProps } = citationSourceLinkProps(
-    citation,
-    navigate,
-  );
+  const { "data-markdown-copy": _linkCopy, ...linkProps } = useCitationSourceLinkProps(citation);
   return (
     // One copy boundary for the card and its comment, so a copied card carries the comment once.
     <span
@@ -191,7 +187,7 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
-  const navigate = useNavigate();
+  const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -251,7 +247,6 @@ export function AssistantCitationChip({
       }
     : undefined;
   const label = assistantCitationLabel(citation);
-  const sourceLinkProps = citationSourceLinkProps(citation, navigate);
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
