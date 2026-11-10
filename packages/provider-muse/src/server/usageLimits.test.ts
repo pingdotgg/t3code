@@ -5,6 +5,7 @@ import {
   isMuseUsageLimitFailure,
   museStatusUsageLimits,
   museUsageAccount,
+  museUsageAuth,
   museUsageLimitResetAt,
   museUsageLimits,
   museUsageWindows,
@@ -180,6 +181,9 @@ describe("Muse usage limits", () => {
       identity: "a@example.com",
     });
     expect(museUsageAccount(apiKey)).toBeUndefined();
+    expect(museUsageAuth(login, "tier-1")).toEqual({ ...login, label: "tier-1" });
+    const labelOnly = { status: "authenticated", type: "accountLogin", label: "Team A" } as const;
+    expect(museUsageAuth(labelOnly, "tier-1")).toBe(labelOnly);
     const other = nextMuseUsageAccount(named, { ...login, email: "b@example.com" });
     expect(other).toEqual({ generation: 1, identity: "b@example.com" });
     const signedOut = nextMuseUsageAccount(other, { status: "unauthenticated" });

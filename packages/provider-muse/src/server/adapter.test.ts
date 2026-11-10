@@ -613,7 +613,16 @@ describe("MuseAdapterV2", () => {
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const reports: Array<MuseSubscriptionUsage> = [];
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { onSubscriptionUsage: (report) => Effect.sync(() => void reports.push(report)) },
+      );
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -630,6 +639,10 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
+      assert.deepStrictEqual(
+        reports.map((report) => [report.tier, report.window.usedPercent]),
+        [["tier-1", 103]],
+      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -691,7 +704,16 @@ describe("MuseAdapterV2", () => {
   it.effect("skips an unreadable usage report without ending the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const reports: Array<MuseSubscriptionUsage> = [];
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { onSubscriptionUsage: (report) => Effect.sync(() => void reports.push(report)) },
+      );
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
@@ -706,6 +728,7 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.isUndefined(terminal.failure?.resetAt);
+      assert.deepStrictEqual(reports, []);
       assert.strictEqual(fake.closeCount(), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

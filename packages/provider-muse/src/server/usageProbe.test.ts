@@ -101,6 +101,7 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
       `);
         const refreshed = yield* refreshMuseUsage(input);
         expect(refreshed.latestUsage).toEqual(report);
+        expect(refreshed.provider.auth.label).toBe(allowance.tier);
         expect(refreshed.provider.usageLimits).toEqual({
           checkedAt: "2026-10-27T04:04:11.130Z",
           windows: [
@@ -248,7 +249,9 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
               provider: candidate,
               latestUsage: report,
             });
-            expect(refreshed.provider.auth).toEqual(candidate.auth);
+            expect(refreshed.provider.auth).toEqual(
+              refreshed.latestUsage ? { ...candidate.auth, label: allowance.tier } : candidate.auth,
+            );
             if (candidate.auth.status === "unauthenticated" || candidate.auth.type === "apiKey") {
               expect(refreshed.latestUsage).toBeUndefined();
             }

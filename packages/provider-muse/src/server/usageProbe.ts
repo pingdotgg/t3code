@@ -13,6 +13,7 @@ import { MuseSubscriptionUsage } from "./protocol.ts";
 import { compareMuseVersions } from "./maintenance.ts";
 import {
   museStatusUsageLimits,
+  museUsageAuth,
   nextMuseUsageAccount,
   type MuseUsageAccount,
 } from "./usageLimits.ts";
@@ -163,6 +164,7 @@ export const refreshMuseUsage = Effect.fn("MuseUsageProbe.refresh")(function* (i
         latestUsage,
         provider: {
           ...provider,
+          auth: museUsageAuth(provider.auth, latestUsage?.usage.tier),
           usageLimits,
           ...(message
             ? {

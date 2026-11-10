@@ -26,7 +26,12 @@ import { makeManagedServerProvider } from "@t3tools/provider-core/server/managed
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
 import type { MuseSubscriptionUsage } from "./protocol.ts";
-import { museUsageAccount, museUsageWindows, type MuseUsageAccount } from "./usageLimits.ts";
+import {
+  museUsageAccount,
+  museUsageAuth,
+  museUsageWindows,
+  type MuseUsageAccount,
+} from "./usageLimits.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { museUsageReader } from "./usage.ts";
 import { refreshMuseUsage } from "./usageProbe.ts";
@@ -242,6 +247,7 @@ export const MuseDriver: ProviderDriver<
           // A report is the account's whole state, so a window that has reset
           // since loses its old reset time instead of keeping it.
           replace: true,
+          authLabel: museUsageAuth(auth, usage.tier).label,
         });
       }, usagePermit.withPermits(1)),
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -258,7 +264,7 @@ export const MuseDriver: ProviderDriver<
       displayName,
       accentColor,
       enabled,
-      snapshot: { ...snapshot, resolveMaintenance },
+      snapshot: { ...snapshot, resolveMaintenance, refreshUsage: Effect.void },
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;

@@ -53,7 +53,7 @@ export function museUsageLimitResetAt(
     (ms): ms is number =>
       ms !== undefined && Number.isFinite(ms) && ms > nowMs && ms <= LATEST_DATE_MS,
   );
-  return resets.length > 0 ? DateTime.formatIso(DateTime.makeUnsafe(Math.max(...resets))) : null;
+  return resets.length > 0 ? isoFromMillis(Math.max(...resets)) : null;
 }
 
 const WEEK_MINS = 7 * 24 * 60;
@@ -168,4 +168,14 @@ export function museStatusUsageLimits(input: {
     reason: "probeFailed",
     message: "Muse reports usage limits with its next reply.",
   });
+}
+
+// Account labels are identity when Muse supplies no email; a tier must not replace them.
+export function museUsageAuth(
+  auth: ServerProviderAuth,
+  tier: string | undefined,
+): ServerProviderAuth {
+  if (auth.type === "accountLogin" && !auth.email) return auth;
+  const label = tier?.trim();
+  return label ? { ...auth, label } : auth;
 }
