@@ -321,9 +321,11 @@ function RemoteSubagentRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              !canOpen
-                ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
-                : `Open on ${remoteChild.label}`
+              canOpen
+                ? `Open on ${remoteChild.label}`
+                : environment === null
+                  ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
+                  : `Runs on ${remoteChild.label}. Turn it on in Settings to open the thread there.`
             }
           />
         </TooltipPopup>
@@ -386,9 +388,11 @@ function DelegatedFromRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              !canOpen
-                ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : `Open parent agent on ${label}`
+              canOpen
+                ? `Open parent agent on ${label}`
+                : environment === null
+                  ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
+                  : `Delegated from ${label}. Turn it on in Settings to open the parent thread.`
             }
           />
         </TooltipPopup>

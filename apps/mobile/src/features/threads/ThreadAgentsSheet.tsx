@@ -162,7 +162,9 @@ function AgentRow(props: {
         accessibilityHint={
           subagent.remoteChild === undefined
             ? "Provider-managed agent. Its work appears in the transcript."
-            : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
+            : presentationById.has(subagent.remoteChild.environmentId)
+              ? `Runs on ${subagent.remoteChild.label}. Turn it on in Settings to open its thread.`
+              : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
         }
       >
         {row}
