@@ -741,7 +741,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     </Text>
                   </View>
                 )
-              ) : selectedSection.isLoading && selectedSection.diff === null ? (
+              ) : error && selectedSection.diff === null ? null : selectedSection.isLoading &&
+                selectedSection.diff === null ? (
                 <View
                   className={cn(
                     "items-center gap-3 px-4 py-6",

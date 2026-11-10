@@ -19,6 +19,7 @@ import {
   getReviewSectionIdForCheckpoint,
   resolveReviewSelectedSectionId,
   reviewTurnDiffsBySectionId,
+  type ReviewGitSectionKind,
   type ReviewSectionItem,
 } from "./reviewModel";
 import { setReviewSelectedSectionId, type ReviewCacheForThread } from "./reviewState";
@@ -53,18 +54,31 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const diffPreview = useEnvironmentQuery(
+  const diffPreviewQuery = (sourceKind: ReviewGitSectionKind) =>
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, sourceKind },
         })
-      : null,
-  );
+      : null;
+  const workingTreePreview = useEnvironmentQuery(diffPreviewQuery("working-tree"));
+  const branchPreview = useEnvironmentQuery(diffPreviewQuery("branch-range"));
   const lastGitSections = useAtomValue(
     environmentId !== undefined && selectedThreadCwd !== null
       ? lastReviewGitSectionsAtom(environmentId, selectedThreadCwd)
       : NO_GIT_SECTIONS_ATOM,
+  );
+
+  const gitSections = (
+    [
+      ["working-tree", workingTreePreview],
+      ["branch-range", branchPreview],
+    ] as const
+  ).flatMap(([kind, preview]) =>
+    (preview.data?.incomplete
+      ? lastGitSections
+      : (preview.data?.sources ?? lastGitSections)
+    ).filter((source) => source.kind === kind),
   );
 
   const lastTurnDiffs = useAtomValue(
@@ -83,10 +97,12 @@ export function useReviewSections(input: {
   // Section ids and the selection do not depend on the live query, so they are resolved first.
   const cachedSections = buildReviewSectionItems({
     checkpoints: readyCheckpoints,
-    gitSections:
-      canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
+    gitSections: canReadFiles || fileAccess.isPending ? gitSections : [],
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
-    loadingGitSections: fileAccess.isPending || diffPreview.isPending,
+    gitSectionStates: {
+      "working-tree": gitSectionState(fileAccess.isPending, workingTreePreview),
+      "branch-range": gitSectionState(fileAccess.isPending, branchPreview),
+    },
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
     cachedSections,
@@ -124,6 +140,13 @@ export function useReviewSections(input: {
   const selectedSection =
     reviewSections.find((section) => section.id === selectedSectionId) ?? null;
 
+  const selectedGitPreview =
+    selectedSection?.kind === "working-tree"
+      ? workingTreePreview
+      : selectedSection?.kind === "branch-range"
+        ? branchPreview
+        : null;
+
   const refreshSelectedSection = async () => {
     if (!enabled) {
       return;
@@ -132,7 +155,12 @@ export function useReviewSections(input: {
       activeTurnDiff.refresh();
       return;
     }
-    diffPreview.refresh();
+    if (selectedGitPreview) {
+      selectedGitPreview.refresh();
+    } else {
+      workingTreePreview.refresh();
+      branchPreview.refresh();
+    }
   };
 
   const selectSection = (sectionId: string) => {
@@ -143,16 +171,27 @@ export function useReviewSections(input: {
 
   return {
     error:
-      diffPreview.error ??
-      activeTurnDiff.error ??
+      (selectedSection?.kind === "turn"
+        ? activeTurnDiff.error
+        : (selectedGitPreview?.error ?? null)) ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles
         ? (fileAccess.error ?? "This connection cannot read local diffs.")
         : null),
     isSelectedSectionPending:
-      selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
+      selectedSection?.kind === "turn"
+        ? activeTurnDiff.isPending
+        : (selectedGitPreview?.isPending ?? false),
     reviewSections,
     selectedSection,
     refreshSelectedSection,
     selectSection,
   };
+}
+
+function gitSectionState(
+  isFileAccessPending: boolean,
+  preview: { readonly isPending: boolean; readonly error: string | null },
+) {
+  if (isFileAccessPending || preview.isPending) return "loading";
+  return preview.error === null ? null : "failed";
 }
