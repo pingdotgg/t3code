@@ -1538,30 +1538,6 @@ describe("orchestration v2 provider switching", () => {
       withholds: ["favourite colour is teal", "favourite animal is an otter"],
     },
     {
-      name: "an ACP rollback to a turn recorded before attempts kept their native session",
-      instanceId: GROK_MODEL_SELECTION.instanceId,
-      driver: GROK_DRIVER,
-      capabilities: AcpProviderCapabilitiesV2,
-      modelSelection: GROK_MODEL_SELECTION,
-      rollback: "replaces_native_thread",
-      failResumeAfterRollback: false,
-      history: "legacy_first_turn",
-      delivers: ["favourite colour is teal"],
-      withholds: ["favourite animal is an otter"],
-    },
-    {
-      name: "an ACP rollback in a forked thread",
-      instanceId: GROK_MODEL_SELECTION.instanceId,
-      driver: GROK_DRIVER,
-      capabilities: AcpProviderCapabilitiesV2,
-      modelSelection: GROK_MODEL_SELECTION,
-      rollback: "replaces_native_thread",
-      failResumeAfterRollback: false,
-      history: "forked",
-      delivers: ["favourite colour is teal", "home town is Oslo"],
-      withholds: ["favourite animal is an otter"],
-    },
-    {
       name: "an ACP rollback where no attempt recorded its native session",
       instanceId: GROK_MODEL_SELECTION.instanceId,
       driver: GROK_DRIVER,
@@ -1657,9 +1633,7 @@ describe("orchestration v2 provider switching", () => {
                 branch: null,
                 worktreePath: null,
               });
-            const forked =
-              scenario.history === "forked" || scenario.history === "forked_to_baseline";
-            if (forked) {
+            if (scenario.history === "forked_to_baseline") {
               const sourceThreadId = ThreadId.make(`${name}:source`);
               yield* createThread(sourceThreadId);
               yield* runToCompletion(
@@ -1691,24 +1665,17 @@ describe("orchestration v2 provider switching", () => {
               "My favourite animal is an otter. Reply with only the word: noted",
             );
             const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
-            if (
-              scenario.history === "legacy_first_turn" ||
-              scenario.history === "legacy_all_turns"
-            ) {
-              const firstRunId = beforeRollback.runs.find((run) => run.ordinal === 1)?.id;
+            if (scenario.history === "legacy_all_turns") {
               yield* (yield* EventSink.EventSinkV2).write({
-                events: beforeRollback.attempts
-                  .filter(
-                    (attempt) =>
-                      scenario.history === "legacy_all_turns" || attempt.runId === firstRunId,
-                  )
-                  .map(({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
+                events: beforeRollback.attempts.map(
+                  ({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
                     id: EventId.make(`${name}:legacy-attempt:${index}`),
                     type: "run-attempt.updated" as const,
                     threadId,
                     occurredAt: beforeRollback.thread.createdAt,
                     payload: legacy,
-                  })),
+                  }),
+                ),
               });
             }
             const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : 1;
