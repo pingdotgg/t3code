@@ -15,6 +15,7 @@ import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -208,6 +209,8 @@ const bootstrap = Effect.gen(function* () {
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
+    // The backend config refreshes the launcher when the local environment runs; an update may move the app.
+    yield* DesktopCliShim.install;
     if (!(yield* Ref.get(state.quitting))) {
       yield* desktopWindow.createMainIfBackendReady;
     }
