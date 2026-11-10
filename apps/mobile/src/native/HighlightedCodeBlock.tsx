@@ -5,40 +5,10 @@ import type { MarkdownStyle } from "react-native-enriched-markdown";
 import { Menu } from "../components/ui/Menu";
 import { useMarkdownCodeHighlight } from "../features/threads/markdownCodeHighlightState";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
-import { resolveHighlightLanguage } from "../lib/highlightLanguage";
 import type { HighlightScheme } from "../lib/highlights";
 import { CodeBlockFrame, CodeBlockHeaderButton } from "./CodeBlockFrame";
 import { fencedCodeMarkdown } from "./codeBlockMarkdown";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
-
-// Fences enriched-markdown colours itself: cpp/highlight/CodeBlockLanguages.cpp entries with a default grammar.
-const NATIVE_HIGHLIGHT_FENCES = new Set([
-  "bash",
-  "c",
-  "css",
-  "go",
-  "golang",
-  "html",
-  "java",
-  "javascript",
-  "js",
-  "json",
-  "jsx",
-  "markdown",
-  "md",
-  "py",
-  "python",
-  "rs",
-  "rust",
-  "sh",
-  "shell",
-  "ts",
-  "tsx",
-  "typescript",
-  "yaml",
-  "yml",
-  "zsh",
-]);
 
 // The same file's header names that are not the fence capitalized.
 const FENCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -64,20 +34,12 @@ const CODE_MENU_ACTIONS = [
   { id: "copy-markdown", title: "Copy as Markdown", image: "doc.text" },
 ];
 
-/** The highlights language for a fence enriched-markdown leaves plain, or null to keep its block. */
-export function fallbackHighlightLanguage(fence: string): string | null {
-  const name = fence.toLowerCase();
-  if (NATIVE_HIGHLIGHT_FENCES.has(name)) return null;
-  const language = resolveHighlightLanguage({ language: name });
-  return language === "text" ? null : language;
-}
-
 /** A fence in a language enriched-markdown cannot colour, drawn like its native block. */
 export function HighlightedCodeBlock(props: {
   readonly code: string;
   readonly fence: string;
   readonly language: string;
-  /** False only while the library withholds an unclosed fence (`streamingAnimation`); highlighting waits for it. */
+  /** False only while the library withholds an unclosed fence (`streamingAnimation`, which T3 never enables, so always true today); highlighting waits for it. */
   readonly complete: boolean;
   readonly scheme: HighlightScheme;
   readonly textStyle: NativeMarkdownTextStyle;

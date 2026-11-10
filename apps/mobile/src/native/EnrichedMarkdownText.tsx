@@ -20,7 +20,8 @@ import {
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
 } from "react-native-enriched-markdown";
-import { fallbackHighlightLanguage, HighlightedCodeBlock } from "./HighlightedCodeBlock";
+import { codeFenceRenderer } from "./codeBlockMarkdown";
+import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
 import { MermaidCodeBlock } from "./MermaidCodeBlock";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
@@ -179,12 +180,13 @@ function codeBlockElement(
   mathRenderingEnabled: boolean,
   scheme: HighlightScheme,
 ): ReactElement | undefined {
-  if (block.language === "mermaid") {
+  const renderer = codeFenceRenderer(block.language, mathRenderingEnabled);
+  if (renderer.kind === "mermaid") {
     return block.isComplete ? (
       <MermaidCodeBlock code={block.code} textStyle={textStyle} />
     ) : undefined;
   }
-  if (block.language === "math" && mathRenderingEnabled) {
+  if (renderer.kind === "math") {
     return block.isComplete ? (
       <EnrichedMarkdownText
         // A blank line would end the paragraph, and so the math, early.
@@ -199,13 +201,12 @@ function codeBlockElement(
       />
     ) : undefined;
   }
-  const language = fallbackHighlightLanguage(block.language);
-  if (language && markdownStyle.codeBlock) {
+  if (renderer.kind === "highlight" && markdownStyle.codeBlock) {
     return (
       <HighlightedCodeBlock
         code={block.code}
         fence={block.language}
-        language={language}
+        language={renderer.language}
         complete={block.isComplete}
         scheme={scheme}
         textStyle={textStyle}
