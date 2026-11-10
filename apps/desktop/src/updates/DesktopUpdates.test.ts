@@ -485,6 +485,20 @@ describe("DesktopUpdates", () => {
       pending: () => "/win/AppData/Local/t3code-updater/pending",
     },
     {
+      name: "Linux",
+      platform: "linux",
+      env: { XDG_CACHE_HOME: "/xdg/cache " },
+      updaterCacheDirName: "t3code-updater",
+      pending: () => "/xdg/cache /t3code-updater/pending",
+    },
+    {
+      name: "Linux without XDG_CACHE_HOME",
+      platform: "linux",
+      env: {},
+      updaterCacheDirName: "t3code-updater",
+      pending: (home: string) => `${home}/.cache/t3code-updater/pending`,
+    },
+    {
       name: "a blank updaterCacheDirName",
       platform: "darwin",
       env: {},

@@ -11,6 +11,9 @@ const trimNonEmptyOption = (value: string): Option.Option<string> => {
 export const trimmedString = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.flatMap(trimNonEmptyOption)));
 
+const nonEmptyString = (name: string) =>
+  Config.String(name).pipe(Config.option, Config.map(Option.filter((value) => value.length > 0)));
+
 const optionalBoolean = (name: string) =>
   Config.Boolean(name).pipe(Config.option, Config.map(Option.getOrElse(() => false)));
 
@@ -35,8 +38,8 @@ const compactEnv = (env: Readonly<Record<string, string | undefined>>): Record<s
 
 export const DesktopConfig = Config.all({
   appDataDirectory: trimmedString("APPDATA"),
-  localAppDataDirectory: trimmedString("LOCALAPPDATA"),
-  xdgCacheHome: trimmedString("XDG_CACHE_HOME"),
+  localAppDataDirectory: nonEmptyString("LOCALAPPDATA"),
+  xdgCacheHome: nonEmptyString("XDG_CACHE_HOME"),
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
   t3Home: trimmedString("T3CODE_HOME"),
