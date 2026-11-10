@@ -2267,6 +2267,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // `gh pr merge` and GitHub's own button enqueue a ready PR without an auto-merge request.
+  it.effect("reads a pull request that is in the merge queue as queued", () =>
+    Effect.gen(function* () {
+      const answer = coreResponse({
+        mergeStateStatus: "CLEAN",
+        autoMergeRequest: null,
+        isInMergeQueue: true,
+        mergeQueueEntry: { state: "AWAITING_CHECKS", position: 1 },
+      });
+      mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
+      const provider = yield* GitHubPullRequestProvider.make;
+      yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(queryAt(0)).toMatch(/isInMergeQueue|mergeQueueEntry/);
+    }),
+  );
+
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       repository: {
