@@ -25,6 +25,7 @@ function twoPagePdf(padding = 0) {
     },
     { box: "0 0 612 792", rotate: 90, text: "BT /F1 24 Tf 30 700 Td (Budget and risks) Tj ET" },
   ];
+  const filler = `<< /Length ${padding} >>\nstream\n${"x".repeat(padding)}\nendstream`;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Count 2 /Kids [3 0 R 5 0 R] >>",
@@ -34,21 +35,15 @@ function twoPagePdf(padding = 0) {
     ]),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    // Unreferenced filler pushes the cross-reference table past the first range.
-    ...(padding
-      ? [
-          `<< /Length ${padding} >>
-stream
-${"x".repeat(padding)}
-endstream`,
-        ]
-      : []),
+    ...(padding ? [filler, filler] : []),
   ];
+  // Unreferenced filler keeps page 2's content out of the first range and the cross-reference table's.
+  const order = padding ? [0, 1, 2, 3, 4, 6, 7, 8, 5, 9] : objects.map((_, index) => index);
   let source = "%PDF-1.4\n";
   const offsets: number[] = [];
-  for (const [index, object] of objects.entries()) {
-    offsets.push(source.length);
-    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  for (const index of order) {
+    offsets[index] = source.length;
+    source += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
   }
   const xref = source.length;
   source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
@@ -153,6 +148,57 @@ it.each([
   expect(requests[0]).toBe("bytes=0-65535");
   expect(requests.includes(null)).toBe(full);
   if (!full) expect(requests.length).toBeGreaterThan(1);
+});
+
+it("keeps the reading position when a later range forces a full read", async () => {
+  const bytes = new Uint8Array(await twoPagePdf(200_000).arrayBuffer());
+  const pageTwo = new TextDecoder().decode(bytes).indexOf("\n6 0 obj");
+  const url = "https://assets.example/report.pdf";
+  const requests: (string | null)[] = [];
+  let revise!: () => void;
+  const revised = new Promise<void>((resolve) => (revise = resolve));
+  const realFetch = globalThis.fetch;
+  using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) !== url) return realFetch(input, init);
+    const range = new Headers(init?.headers).get("range");
+    requests.push(range);
+    const match = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
+    if (!match) return new Response(bytes);
+    const start = Number(match[1]);
+    const end = Math.min(Number(match[2]), bytes.length - 1);
+    const changed = start <= pageTwo && end > pageTwo;
+    if (changed) await revised;
+    return new Response(bytes.slice(start, end + 1), {
+      status: 206,
+      headers: {
+        "content-range": `bytes ${start}-${end}/${bytes.length}`,
+        etag: changed ? '"b"' : '"a"',
+      },
+    });
+  });
+  await using screen = await render(
+    <div className="flex h-[120px] w-[320px]">
+      <PdfViewer src={url} title="Ranged PDF" />
+    </div>,
+  );
+  await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
+  const region = () => screen.getByRole("region", { name: "Ranged PDF" }).element();
+  const top = 40;
+  const scrolled = new Promise((resolve) =>
+    region().addEventListener("scroll", resolve, { once: true }),
+  );
+  region().scrollTop = top;
+  await scrolled;
+
+  revise();
+  await vi.waitFor(() => {
+    expect(requests).toContain(null);
+    // Page 2 laid out at its own size means the full read replaced the ranged document.
+    const height = (page: number) =>
+      region().querySelector(`canvas[aria-label="Page ${page}"]`)?.getBoundingClientRect().height;
+    expect(height(2)).toBeGreaterThan(height(1)! * 2);
+  });
+  expect(region().scrollTop).toBeCloseTo(top, 0);
 });
 
 it("restores page, within-page offset and zoom after a remount", async () => {
