@@ -4554,7 +4554,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 order: current.order.includes(key) ? current.order : [...current.order, key],
                 messages,
                 reasoningIds:
-                  role === "thought"
+                  role === "thought" && !current.reasoningIds.has(messageId)
                     ? new Set(current.reasoningIds).add(messageId)
                     : current.reasoningIds,
                 loadingRole: role,

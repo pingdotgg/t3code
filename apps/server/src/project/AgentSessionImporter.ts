@@ -140,7 +140,7 @@ function messageEvents(input: {
     updatedAt: at,
   };
   const turnItemEvent = (payload: OrchestrationV2TurnItem): OrchestrationV2DomainEvent => ({
-    id: EventId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`),
+    id: EventId.make(turnItemId),
     type: "turn-item.updated",
     threadId: input.threadId,
     occurredAt: at,
