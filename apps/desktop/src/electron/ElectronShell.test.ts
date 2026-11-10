@@ -40,6 +40,25 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens remote SSH editor URLs with a port", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const urls = [
+        "vscode://vscode-remote/ssh-remote+user%40example.com%3A2222/home/user/project",
+        "zed://ssh/user@example.com:2222/home/user/project",
+      ];
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.forEach(urls, (url) => electronShell.openExternal(url));
+
+      assert.deepEqual(results, [true, true]);
+      assert.deepEqual(
+        openExternalMock.mock.calls,
+        urls.map((url) => [url]),
+      );
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens the JetBrains Toolbox ssh deep link", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

@@ -113,6 +113,26 @@ describe("resolveRemoteOpenState", () => {
     );
   });
 
+  it.each([
+    { port: 10171, vscode: "dockware%40localhost%3A10171", zed: "dockware@localhost:10171" },
+    { port: 22, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+    { port: null, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+  ])("keeps a non-default SSH port in editor links (port: $port)", ({ port, vscode, zed }) => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "dockware", connectionId: "ssh-1" }),
+      sshTarget: { alias: "localhost", username: "dockware", port },
+      isDesktopRenderer: true,
+      remoteOpenTargets: TAILSCALE_TARGETS,
+    });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`vscode://vscode-remote/ssh-remote+${vscode}/var/www/html`);
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`zed://ssh/${zed}/var/www/html`);
+  });
+
   it("uses the advertised login username in editor links over a relay", () => {
     const state = resolveRemoteOpenState({
       target: new RelayConnectionTarget({ environmentId, label: "server" }),

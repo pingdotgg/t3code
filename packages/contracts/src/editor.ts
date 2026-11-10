@@ -191,6 +191,7 @@ export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly username?: string;
+  readonly port?: number;
   readonly absolutePath: string;
   readonly isFile?: boolean;
 }): string | undefined => {
@@ -214,7 +215,9 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
-  const encodedHost = encodeURIComponent(input.host);
+  const hostWithPort = input.port === undefined ? input.host : `${input.host}:${input.port}`;
+  const encodedHost =
+    encodeURIComponent(input.host) + (input.port === undefined ? "" : `:${input.port}`);
   if (input.editor === "zed") {
     // Zed roots paths on the system drive, so omit the Windows drive prefix.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
@@ -227,7 +230,8 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  const destination =
+    input.username === undefined ? hostWithPort : `${input.username}@${hostWithPort}`;
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
