@@ -3164,10 +3164,9 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 }
 
 /* Classic keeps main's status colors and border weight on the redesign's extra surfaces.
-   Main paints the sidebar and the content the same color; here the pane is an
-   inset shape, so the chrome steps a little toward the text color to keep it visible. */
+   The chrome is main's sidebar color exactly. Main draws a border between its black sidebar
+   and black content; the inset pane cannot carry one, so in dark the pane lifts a step. */
 html:root[data-theme-id="t3-code-classic"] {
-  --app-chrome-background: color-mix(in srgb, var(--app-theme-sidebar) 94%, var(--foreground));
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
   --success: var(--color-emerald-500);
@@ -3212,6 +3211,7 @@ html:root[data-theme-id="t3-code-classic"] {
   --sidebar-row-selected-rim: var(--sidebar-border);
 
   @variant dark {
+    --background: color-mix(in srgb, var(--app-theme-canvas) 94.5%, white);
     --info-foreground: var(--color-blue-400);
     --success-foreground: var(--color-emerald-400);
     --tool-error-icon: #fca5a5;
@@ -4188,8 +4188,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --selected-soft-fill: var(--ghost-hover-fill) !important;
   --sidebar-row-selected-fill: var(--selected-fill) !important;
   --sidebar-row-selected-rim: transparent !important;
-  --settings-active-rim: transparent !important;
-  --settings-effective-fill: var(--flat-banner) !important;
+  /* The chosen card is the one with the strong edge; a missing edge read as broken. */
+  --settings-active-rim: color-mix(in srgb, var(--foreground) 70%, transparent) !important;
+  --settings-effective-fill: var(--flat-high) !important;
   --well-fill: var(--raised-fill) !important;
   --well-rim: var(--ss-none) !important;
   --well-shadow: 0 0 #0000 !important;
@@ -5312,15 +5313,21 @@ body {
   border-inline-end: 1px solid var(--hairline);
 }
 
-/* Flat tables follow main: one outlined block, a header fill and row rules, no column rules. */
+/* Flat tables follow main: one outlined block, a bold header on its own fill, and row rules.
+   Column rules are removed by width: a transparent one would notch every row rule. */
 :root[data-surface-style="flat"] .chat-markdown-table-container {
   --well-fill: linear-gradient(var(--flat-middle), var(--flat-middle));
   --well-rim: var(--flat-edge);
-  --table-header-fill: var(--flat-banner);
+  --table-header-fill: var(--flat-high);
   --hairline: var(--flat-hairline);
 
   & :is(th, td):not(:last-child) {
-    border-inline-end-color: transparent;
+    border-inline-end-width: 0;
+  }
+
+  & thead th {
+    border-bottom-color: var(--flat-hairline);
+    font-weight: 600;
   }
 }
 
