@@ -923,6 +923,17 @@ export function useComposerSend(input: ComposerSendInput) {
         images: composerAttachmentsSnapshot,
         draftTarget: composerDraftTarget,
       });
+      if (draftChangedDuringPreparation()) {
+        sendInFlightRef.current = false;
+        setThreadError(
+          threadIdForSend,
+          "Draft changed while preparing this message. Review it and send again.",
+        );
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        return;
+      }
       const uploadBlockReason =
         readLiveAttachmentCapabilities().fileBlockReason ??
         (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null

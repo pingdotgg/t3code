@@ -126,69 +126,105 @@ function deferred() {
   return { promise, resolve };
 }
 
-it("preserves an answer edited after remount while attachment preparation is in flight", async () => {
-  const environmentId = EnvironmentId.make("editing-during-refresh");
-  const projection = questionProjection(ThreadId.make("editing-during-refresh"), ["first"]);
-  const requestId = RuntimeRequestId.make("first");
-  const target = questionAttachmentDraftId(
-    environmentId,
-    projection.thread.id,
-    requestId,
-    "question-0",
-  );
-  const file = new File(["image"], "image.png", { type: "image/png" });
-  useComposerDraftStore.getState().addImages(target, [
-    {
-      type: "image",
-      id: "editing-upload",
-      name: file.name,
-      mimeType: file.type,
-      sizeBytes: file.size,
-      file,
-      previewUrl: "blob:editing-upload",
-    },
-  ]);
-  const started = deferred();
-  useAttachmentUploadStore.setState({
-    uploadsByImageId: {
-      "editing-upload": { status: "ready", environmentId, attachmentId: "pending-editing-upload" },
-    },
-  });
-  const release = deferred();
-  const rejected = deferred();
-  submission.respond.mockClear();
-  submission.error.mockClear();
-  submission.error.mockImplementationOnce(() => rejected.resolve());
-  submission.refresh.mockImplementationOnce(() => {
-    started.resolve();
-    return release.promise;
-  });
-  const probe = <PendingRequestsProbe environmentId={environmentId} projection={projection} />;
-  await using screen = await render(probe);
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Original"));
-  await act(() => requests.onAdvanceActivePendingUserInput());
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-1", "Second"));
-  await act(() => requests.onAdvanceActivePendingUserInput());
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-2", "Third"));
-  await act(() => requests.onAdvanceActivePendingUserInput());
-  expect(submission.refresh).toHaveBeenCalledOnce();
-  await started.promise;
-  await screen.rerender(null);
-  await screen.rerender(probe);
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Edited"));
-  await act(async () => {
-    release.resolve();
-    await rejected.promise;
-  });
-  expect(submission.respond).not.toHaveBeenCalled();
-  expect(submission.error).toHaveBeenCalledWith(
-    projection.thread.id,
-    "Answer changed while preparing attachments. Review it and send again.",
-  );
-  expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
-    customAnswer: "Edited",
-  });
-});
+it.each(["answer", "attachment"])(
+  "preserves an edited %s after remount while attachment preparation is in flight",
+  async (edit) => {
+    const environmentId = EnvironmentId.make(`editing-during-refresh-${edit}`);
+    const projection = questionProjection(ThreadId.make("editing-during-refresh"), ["first"]);
+    const requestId = RuntimeRequestId.make("first");
+    const target = questionAttachmentDraftId(
+      environmentId,
+      projection.thread.id,
+      requestId,
+      edit === "answer" ? "question-0" : "question-1",
+    );
+    const file = new File(["image"], "image.png", { type: "image/png" });
+    useComposerDraftStore.getState().addImages(target, [
+      {
+        type: "image",
+        id: "editing-upload",
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        file,
+        previewUrl: "blob:editing-upload",
+      },
+    ]);
+    const started = deferred();
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        "editing-upload": {
+          status: "ready",
+          environmentId,
+          attachmentId: "pending-editing-upload",
+        },
+      },
+    });
+    const release = deferred();
+    const rejected = deferred();
+    submission.respond.mockClear();
+    submission.respond.mockImplementationOnce(() => {
+      rejected.resolve();
+      return { _tag: "Success" };
+    });
+    submission.error.mockClear();
+    submission.error.mockImplementationOnce(() => rejected.resolve());
+    submission.refresh.mockImplementationOnce(() => {
+      started.resolve();
+      return release.promise;
+    });
+    const probe = <PendingRequestsProbe environmentId={environmentId} projection={projection} />;
+    await using screen = await render(probe);
+    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Original"));
+    await act(() => requests.onAdvanceActivePendingUserInput());
+    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-1", "Second"));
+    await act(() => requests.onAdvanceActivePendingUserInput());
+    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-2", "Third"));
+    await act(() => requests.onAdvanceActivePendingUserInput());
+    expect(submission.refresh).toHaveBeenCalledOnce();
+    await started.promise;
+    await screen.rerender(null);
+    await screen.rerender(probe);
+    const earlierTarget = questionAttachmentDraftId(
+      environmentId,
+      projection.thread.id,
+      requestId,
+      "question-0",
+    );
+    await act(() => {
+      if (edit === "answer")
+        requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Edited");
+      else
+        useComposerDraftStore.getState().addImages(earlierTarget, [
+          {
+            type: "image",
+            id: "new-earlier-image",
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            file,
+            previewUrl: "blob:new-earlier-image",
+          },
+        ]);
+    });
+    await act(async () => {
+      release.resolve();
+      await rejected.promise;
+    });
+    expect(submission.respond).not.toHaveBeenCalled();
+    expect(submission.error).toHaveBeenCalledWith(
+      projection.thread.id,
+      "Answer changed while preparing attachments. Review it and send again.",
+    );
+    expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
+      customAnswer: edit === "answer" ? "Edited" : "Original",
+    });
+    if (edit === "attachment")
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(earlierTarget)?.images,
+      ).toMatchObject([{ id: "new-earlier-image" }]);
+  },
+);
 
 function PendingRequestsProbe(props: ProbeProps) {
   const state = useProbeRequests(props);

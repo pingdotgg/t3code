@@ -320,15 +320,18 @@ export function usePendingThreadRequests(input: {
     const prepareAndRespond = async () => {
       const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
       const providerAnswers = { ...answers };
-      for (const question of pendingInput.questions) {
+      const questionDrafts = pendingInput.questions.map((question) => {
         const target = questionAttachmentDraftId(
           environmentId,
           activeThreadId,
           requestId,
           question.id,
         );
-        if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
         const draft = useComposerDraftStore.getState().getComposerDraft(target);
+        return { question, target, draft };
+      });
+      for (const { question, target, draft } of questionDrafts) {
+        if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
         providerAnswers[question.id] = projectPendingUserInputAnswer(
           answers[question.id],
           draft?.threadContexts ?? [],
@@ -362,7 +365,17 @@ export function usePendingThreadRequests(input: {
         }
         attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
       }
-      if (usePendingUserInputAnswers.getState()[answerDraftKey] !== answerDraftBeforePreparation) {
+      if (
+        usePendingUserInputAnswers.getState()[answerDraftKey] !== answerDraftBeforePreparation ||
+        questionDrafts.some(
+          ({ target, draft }) =>
+            (useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0 ||
+            composerDraftContentChanged(
+              draft,
+              useComposerDraftStore.getState().getComposerDraft(target),
+            ),
+        )
+      ) {
         setThreadError(
           activeThreadId,
           "Answer changed while preparing attachments. Review it and send again.",
