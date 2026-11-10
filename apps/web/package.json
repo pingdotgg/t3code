@@ -111,7 +111,7 @@
     "compression": "^1.8.2",
     "micromark-util-types": "catalog:",
     "oxc-transform-react": "~0.152.0",
-    "playwright": "1.60.0",
+    "playwright": "1.64.1",
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
     "vite-plus": "catalog:"
