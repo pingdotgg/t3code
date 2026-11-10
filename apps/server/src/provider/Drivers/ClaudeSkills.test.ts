@@ -464,6 +464,53 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("discovers plugin skills enabled only by the instance's --settings launch arg", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const plugin = path.join(
+        configDir,
+        "plugins",
+        "cache",
+        "demo-market",
+        "work-plugin",
+        "1.0.0",
+      );
+      yield* writeSkill(path.join(plugin, "skills"), "deploy-check", "# Deploy check");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: { "work-plugin@demo-market": [{ scope: "user", installPath: plugin }] },
+        }),
+      );
+      yield* fs.writeFileString(path.join(configDir, "settings.json"), '{"enabledPlugins":{}}');
+      // --settings outranks the project's local settings file.
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
+        '{"enabledPlugins":{"work-plugin@demo-market":false}}',
+      );
+      const enabled = '{"enabledPlugins":{"work-plugin@demo-market":true}}';
+      const settingsFile = path.join(tempDir, "work-settings.json");
+      yield* fs.writeFileString(settingsFile, enabled);
+
+      for (const launchArgs of [`--settings "${settingsFile}"`, `--settings '${enabled}'`]) {
+        const skills = yield* discoverClaudeSkills({ homePath: configDir, launchArgs }, workspace);
+        assert.deepEqual(skills, [
+          {
+            name: "work-plugin:deploy-check",
+            path: path.join(plugin, "skills", "deploy-check", "SKILL.md"),
+            enabled: true,
+            scope: "user",
+          },
+        ]);
+      }
+    }),
+  );
+
   it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

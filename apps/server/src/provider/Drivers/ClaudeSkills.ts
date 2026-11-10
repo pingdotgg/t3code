@@ -1,3 +1,4 @@
+import type { Settings as ClaudeSdkSettings } from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -5,7 +6,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
@@ -202,6 +203,54 @@ const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
     : commonDirectory;
 });
 
+export class ClaudeSettingsLaunchArgError extends Schema.TaggedError<ClaudeSettingsLaunchArgError>()(
+  "ClaudeSettingsLaunchArgError",
+  {
+    path: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Claude could not read the --settings launch argument${this.path === undefined ? "" : ` at ${this.path}`} as a JSON object. Fix it in the Claude launch arguments, then send the message again.`;
+  }
+}
+
+const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+/**
+ * Reads the --settings launch argument: a value starting with a brace is inline
+ * JSON, anything else is a file path relative to the cwd. makeClaudeQueryOptions
+ * merges the result beneath T3's own settings.
+ */
+export const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
+  function* (input: {
+    readonly settings: Pick<ClaudeSettings, "launchArgs"> | undefined;
+    readonly cwd: string | null;
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+  }) {
+    if (input.settings === undefined) return undefined;
+    const value = parseCliArgs(input.settings.launchArgs).flags.settings;
+    if (value === undefined) return undefined;
+    const trimmed = value?.trim() ?? "";
+    if (trimmed.length === 0) return yield* new ClaudeSettingsLaunchArgError({});
+    // The CLI also wants a closing brace, but then malformed JSON, secrets included, would
+    // become the file path in the error message.
+    if (trimmed.startsWith("{")) {
+      return (yield* decodeClaudeLaunchArgSettings(trimmed).pipe(
+        Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ cause })),
+      )) as ClaudeSdkSettings;
+    }
+    const filePath = input.path.resolve(input.cwd ?? ".", trimmed);
+    return (yield* input.fileSystem.readFileString(filePath).pipe(
+      Effect.flatMap(decodeClaudeLaunchArgSettings),
+      Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ path: filePath, cause })),
+    )) as ClaudeSdkSettings;
+  },
+);
+
 /**
  * The CLI validates the whole map, not each entry: verified against it, one
  * entry with an unknown value (or a boolean) makes it drop every override in
@@ -210,15 +259,14 @@ const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
  */
 const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-only", "off"]);
 
+const SkillSettingsFields = Schema.Struct({
+  skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
+  enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
 // Lenient because these settings files are hand-edited and Claude Code itself
 // tolerates comments and trailing commas in them.
-const SkillSettings = fromLenientJson(
-  Schema.Struct({
-    skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
-    enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  }),
-);
-const decodeSkillSettings = Schema.decodeUnknownEffect(SkillSettings);
+const decodeSkillSettings = Schema.decodeUnknownEffect(fromLenientJson(SkillSettingsFields));
+const decodeLaunchArgSkillSettings = Schema.decodeUnknownEffect(SkillSettingsFields);
 
 type SkillOverride = {
   readonly enabled: boolean;
@@ -241,6 +289,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   configDirPath: string,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
+  launchArgs: string | undefined,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -248,31 +297,47 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const overridesByName = new Map<string, SkillOverride>();
   const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
+  const managedPath = claudeManagedSettingsPath(path, platform, environment);
 
-  for (const settingsPath of claudeSettingsPaths(
-    path,
-    configDirPath,
-    cwd,
-    platform,
-    environment,
-    repositoryRoot,
-  )) {
-    const contents = yield* fileSystem
-      .readFileString(settingsPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (contents === undefined) {
-      continue;
-    }
-
-    const parsed = yield* decodeSkillSettings(contents).pipe(
-      Effect.tapError((cause) =>
-        Effect.logDebug("claude settings file is unreadable; ignoring skill settings", {
-          path: settingsPath,
-          cause,
-        }),
+  const readSettingsFile = (settingsPath: string) =>
+    fileSystem.readFileString(settingsPath).pipe(
+      Effect.flatMap((contents) =>
+        decodeSkillSettings(contents).pipe(
+          Effect.tapError((cause) =>
+            Effect.logDebug("claude settings file is unreadable; ignoring skill settings", {
+              path: settingsPath,
+              cause,
+            }),
+          ),
+        ),
       ),
       Effect.orElseSucceed(() => undefined),
     );
+  const launchArgLayer = readClaudeLaunchArgSettings({
+    settings: { launchArgs: launchArgs ?? "" },
+    cwd: cwd ?? null,
+    fileSystem,
+    path,
+  }).pipe(
+    Effect.flatMap((settings) => decodeLaunchArgSkillSettings(settings ?? {})),
+    Effect.tapError((cause) =>
+      Effect.logDebug("claude --settings launch arg is unreadable; ignoring skill settings", {
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+  const layers = [
+    ...claudeSettingsPaths(path, configDirPath, cwd, platform, environment, repositoryRoot)
+      .filter((settingsPath) => settingsPath !== managedPath)
+      .map(readSettingsFile),
+    // Claude Code ranks --settings above the local files and below managed policy.
+    launchArgLayer,
+    ...(managedPath ? [readSettingsFile(managedPath)] : []),
+  ];
+
+  for (const layer of layers) {
+    const parsed = yield* layer;
     for (const [name, value] of Object.entries(parsed?.skillOverrides ?? {})) {
       overridesByName.set(name, parseSkillOverride(value));
     }
@@ -505,6 +570,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     configDirPath,
     cwd,
     environment ?? process.env,
+    config.launchArgs,
   );
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [

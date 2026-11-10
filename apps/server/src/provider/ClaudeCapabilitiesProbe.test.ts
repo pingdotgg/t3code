@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -87,4 +88,57 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     yield* TestClock.adjust("3 seconds");
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Claude Code drops the whole inline layer, hook switch included, when any key in it is invalid.
+const nonPluginSettings = {
+  disableAutoMode: false,
+  permissions: { disableBypassPermissionsMode: false, disableAutoMode: "bogus" },
+  env: { ANTHROPIC_BASE_URL: "http://example.invalid" },
+  disableAllHooks: false,
+};
+
+it.effect.each([
+  {
+    forwarded: "only the well-formed plugin switches",
+    plugins: { "work-plugin@demo-market": true, "pinned@demo-market": ["^1.0.0"] },
+    expected: {
+      enabledPlugins: { "work-plugin@demo-market": true, "pinned@demo-market": ["^1.0.0"] },
+      disableAllHooks: true,
+    },
+  },
+  {
+    forwarded: "nothing when a plugin switch is an object",
+    plugins: { "work-plugin@demo-market": true, "object@demo-market": { arbitrary: "value" } },
+    expected: { disableAllHooks: true },
+  },
+])(
+  "probes slash commands with $forwarded from --settings, hooks still off",
+  ({ plugins, expected }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
+      const settingsFile = path.join(tempDir, "work-settings.json");
+      yield* fs.writeFileString(
+        settingsFile,
+        JSON.stringify({ ...nonPluginSettings, enabledPlugins: plugins }),
+      );
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => Promise.resolve({ commands: [], account: {} }),
+          }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      yield* probeClaudeCapabilities(
+        yield* decodeClaudeSettings({ launchArgs: `--settings "${settingsFile}"` }),
+        { HOME: tempDir },
+        tempDir,
+        false,
+      );
+
+      assert.deepEqual(query.mock.calls[0]?.[0].options?.settings, expected);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

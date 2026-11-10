@@ -26,6 +26,7 @@ import {
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
+  type Settings as ClaudeSdkSettings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -45,7 +46,11 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
+  readClaudeSettingsEnv,
+} from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -224,6 +229,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly enabledPlugins?: ClaudeSdkSettings["enabledPlugins"];
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -231,7 +237,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    settings: {
+      ...(input.enabledPlugins ? { enabledPlugins: input.enabledPlugins } : {}),
+      disableAllHooks: true,
+    },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -342,6 +351,17 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
+// Claude Code drops the whole inline settings layer, disableAllHooks included, when any key
+// in it is invalid, so the probe takes only well-formed plugin switches from --settings.
+const decodeLaunchArgEnabledPlugins = Schema.decodeUnknownOption(
+  Schema.Struct({
+    enabledPlugins: Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.Boolean, Schema.mutable(Schema.Array(Schema.String))]),
+    ),
+  }),
+);
+
 /**
  * With gateway model discovery on, Claude Code refreshes its model cache in the background after
  * initialization, so the probe subprocess outlives init by Claude Code's discovery timeout.
@@ -383,6 +403,19 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    // An unreadable --settings value fails the turn, not the provider status.
+    const enabledPlugins = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      cwd: cwd ?? null,
+      fileSystem: yield* FileSystem.FileSystem,
+      path: yield* Path.Path,
+    }).pipe(
+      Effect.map(
+        (settings) =>
+          Option.getOrUndefined(decodeLaunchArgEnabledPlugins(settings ?? {}))?.enabledPlugins,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
     // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
     const graceMs = includeUsage
       ? claudeGatewayDiscoveryGraceMs({
@@ -403,6 +436,7 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
+            enabledPlugins,
           }),
         });
         const init = await q.initializationResult();
