@@ -606,6 +606,30 @@ it("replays an earlier preview error as T3's error result, with its contracts me
   assert.deepInclude(replayed, { content: error.message, is_error: true });
 });
 
+it("grades busy-tab recovery by the tab the agent acts on, not just the tool", () => {
+  const cases = NodeFS.readFileSync(
+    new URL("./cases/visual-preview.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line));
+  const passes = (id: string, calls: Array<[string, Record<string, unknown>]>) =>
+    gradeSample(cases.find((c) => c.id === id)!.expect, {
+      calls: calls.map(([tool, input], step) => ({ step, tool, input })),
+      text: "",
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  const busy = "preview-busy-tab-opens-new-tab";
+  const fresh: [string, Record<string, unknown>] = ["preview_open", { reuseExistingTab: false }];
+  assert.isTrue(passes(busy, [["preview_status", {}], fresh, ["preview_act", { tabId: "tab_2" }]]));
+  assert.isFalse(passes(busy, [fresh, ["preview_act", { tabId: "tab_1" }]]));
+  const control = "preview-wait-timeout-keeps-tab";
+  assert.isTrue(passes(control, [["preview_snapshot", { tabId: "tab_1" }]]));
+  assert.isTrue(passes(control, [["preview_snapshot", {}]]));
+  assert.isFalse(passes(control, [["preview_snapshot", { tabId: "tab_2" }]]));
+});
+
 it("replays earlier capability results with the model under test as the caller", () => {
   const base = buildBase(template, { model: "claude-opus-5-5", keepUserInstructions: false });
   const capabilities = {
