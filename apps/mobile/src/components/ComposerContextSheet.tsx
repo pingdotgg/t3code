@@ -23,8 +23,8 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
-import { FilePreviewModal } from "./FilePreviewModal";
-import { VideoPreviewModal } from "./VideoPreviewModal";
+import { FilePreviewModal } from "./ui/FilePreviewModal";
+import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
