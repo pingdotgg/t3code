@@ -3201,15 +3201,27 @@ export function wakeUpsRailRows(foldRowIds: string): ReadonlyMap<string, "body" 
   return rail;
 }
 
-/** The key `wakeUpsRailRows` reads: every open wake-ups fold's revealed row ids. */
+/**
+ * The key `wakeUpsRailRows` reads: for every open wake-ups fold, the ids of the rows from its
+ * header down to the last row it reveals. Reading the span from the rendered rows, not the
+ * fold's own list, also takes rows that join later, such as a turn's tool calls once its own
+ * fold is opened.
+ */
 export function wakeUpsRailKey(rows: readonly MessagesTimelineRow[]): string {
-  return rows
-    .flatMap((row) =>
-      row.kind === "background-activity" && row.revealedRowIds.length > 0
-        ? [row.revealedRowIds.join("\n")]
-        : [],
-    )
-    .join("\0");
+  const folds: string[] = [];
+  rows.forEach((row, index) => {
+    if (row.kind !== "background-activity" || row.revealedRowIds.length === 0) return;
+    const revealed = new Set(row.revealedRowIds);
+    const span: string[] = [];
+    let end = 0;
+    for (const next of rows.slice(index + 1)) {
+      if (next.kind === "background-activity") break;
+      span.push(next.id);
+      if (revealed.has(next.id)) end = span.length;
+    }
+    folds.push(span.slice(0, end).join("\n"));
+  });
+  return folds.join("\0");
 }
 
 interface MessagesTimelineRowsProjection {
