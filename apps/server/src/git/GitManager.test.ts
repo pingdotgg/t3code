@@ -3537,6 +3537,34 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect("commit_push_pr on the default branch returns its open PR into another base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const releasePr = {
+        number: 43,
+        title: "Release",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/43",
+        baseRefName: "release",
+        headRefName: "main",
+      };
+
+      const { manager } = yield* makeManager({
+        providerScenario: { defaultBranch: "main", prListSequence: [[releasePr], [releasePr]] },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(43);
+    }),
+  );
+
   it.effect(
     "commit_push_pr publishes a branch that tracks the default branch under its own name",
     () =>
