@@ -15,6 +15,7 @@ const TOOL_CALL_VISIBILITY_OPTIONS: ReadonlyArray<{
   { value: "showAll", label: "Show all" },
   { value: "hideSuccessful", label: "Hide successful" },
   { value: "hideAll", label: "Hide all" },
+  { value: "messagesOnly", label: "Messages only" },
   { value: "zen", label: "Zen" },
 ];
 
@@ -40,8 +41,9 @@ export function ToolCallsAppearanceSection() {
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows
-        only final answers. Approvals, questions, and errors always show.
+        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Messages
+        only also hides thinking and subagents. Zen shows only final answers. Approvals, questions,
+        and errors always show.
       </Text>
     </View>
   );

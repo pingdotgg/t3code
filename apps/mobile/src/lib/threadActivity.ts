@@ -1359,7 +1359,7 @@ const visibleActivityGroups = new WeakMap<
   { readonly visibility: ToolCallVisibility; readonly group: ThreadFeedActivityGroup | null }
 >();
 
-function zenKeepsActivity(activity: ThreadFeedActivity): boolean {
+function shownWithoutWorkLog(activity: ThreadFeedActivity): boolean {
   const item = activity.projectedItem.item;
   return (
     activity.prominent ||
@@ -1378,8 +1378,8 @@ function activityGroupForVisibility(
   const cached = visibleActivityGroups.get(entry);
   if (cached?.visibility === visibility) return cached.group;
   const activities = entry.activities.filter((activity) =>
-    visibility === "zen"
-      ? zenKeepsActivity(activity)
+    visibility === "zen" || visibility === "messagesOnly"
+      ? shownWithoutWorkLog(activity)
       : !workEntryHiddenByToolCallVisibility(activity.workEntry, visibility),
   );
   const group =

@@ -1217,6 +1217,7 @@ const TOOL_CALL_VISIBILITY_LABELS: Record<ToolCallVisibility, string> = {
   showAll: "Show all",
   hideSuccessful: "Hide successful",
   hideAll: "Hide all",
+  messagesOnly: "Messages only",
   zen: "Zen",
 };
 
@@ -1228,7 +1229,7 @@ function ToolCallVisibilityRow() {
   return (
     <SettingsRow
       {...searchableSetting("tool-call-visibility")}
-      description="Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+      description="Hide commands, edits, and searches. Hide successful keeps failures. Messages only also hides thinking, tasks, and subagents. Zen shows only final answers. Approvals, questions, and errors always show."
       resetAction={
         settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility ? (
           <SettingResetButton

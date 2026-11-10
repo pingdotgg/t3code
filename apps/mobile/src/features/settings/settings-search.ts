@@ -32,6 +32,8 @@ const SETTINGS_SEARCH_TERMS = {
     "work log",
     "zen",
     "final answers only",
+    "messages only",
+    "hide thinking",
   ],
   SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
   SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],

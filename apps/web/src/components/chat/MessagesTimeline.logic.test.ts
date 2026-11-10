@@ -2813,14 +2813,16 @@ describe("v2 run and attempt history", () => {
     const ended = { ...running, turnEnded: true };
     const rows = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
-      toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
+      toolCallVisibility: "hideSuccessful" | "hideAll" | "messagesOnly" | "zen",
       latestRun?: typeof ended | typeof running,
+      pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
         expandedRunIds: new Set([runId]),
         isWorking: latestRun !== undefined,
         ...(latestRun ? { latestRun } : {}),
+        ...(pendingApprovalRequestIds ? { pendingApprovalRequestIds } : {}),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
@@ -2883,6 +2885,89 @@ describe("v2 run and attempt history", () => {
       "working-indicator-row",
       "live-activity-row",
     ]);
+
+    const work = (
+      id: string,
+      itemType: "reasoning" | "todo_list" | "error" | "approval_request" | "user_input_request",
+      second: number,
+      extra: Partial<Extract<TimelineEntry, { kind: "work" }>["entry"]> = {},
+    ): Extract<TimelineEntry, { kind: "work" }> => ({
+      id,
+      kind: "work",
+      createdAt: at(second),
+      entry: {
+        id,
+        createdAt: at(second),
+        runId,
+        label: id,
+        tone: "info",
+        itemType,
+        toolLifecycleStatus: "completed",
+        ...extra,
+      },
+    });
+    const thought = work("thought", "reasoning", 6, { detail: "Checking the captures" });
+    const tasks = work("tasks", "todo_list", 6);
+    const child: TimelineEntry = {
+      id: "child",
+      kind: "event",
+      createdAt: at(7),
+      projectedItem: {
+        item: { id: "child", type: "subagent", runId },
+      } as OrchestrationV2ProjectedTurnItem,
+    };
+    const steps = [thought, tasks, child, passed, failed];
+    expect(rows([user, step, ...steps, final], "messagesOnly")).toEqual([
+      "user",
+      "turn-fold:turn-1",
+      "step",
+      "final",
+    ]);
+    expect(rows([user, ...steps, final], "messagesOnly")).toEqual(["user", "final"]);
+    expect(
+      rows(
+        [
+          user,
+          step,
+          { ...thought, entry: { ...thought.entry, toolLifecycleStatus: "inProgress" } },
+        ],
+        "messagesOnly",
+        running,
+      ),
+    ).toEqual(["user", "working-indicator-row", "step", "live-activity-row"]);
+    const requestId = RuntimeRequestId.make("approval-request");
+    const approval = work("approval", "approval_request", 10, {
+      toolLifecycleStatus: "inProgress",
+      projectedItem: {
+        item: { id: "approval", type: "approval_request", requestId, runId },
+      } as OrchestrationV2ProjectedTurnItem,
+    });
+    const answered = work("answered", "user_input_request", 11, {
+      questionAnswer: {
+        requestId: RuntimeRequestId.make("input-request"),
+        questionTextById: { scope: "Which scope?" },
+        answers: { scope: "Web" },
+        attachmentsByQuestionId: {},
+      },
+    });
+    const errored = work("errored", "error", 12, { tone: "error", toolLifecycleStatus: "failed" });
+    expect(
+      rows(
+        [user, step, thought, approval, answered, errored],
+        "messagesOnly",
+        running,
+        new Set([requestId]),
+      ),
+    ).toEqual(["user", "working-indicator-row", "step", "approval", "answered", "errored"]);
+    // Find and citations open the fold that holds an in-between message.
+    const foldRunIds = (toolCallVisibility: "messagesOnly" | "zen") =>
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries: [user, step, ...steps, final],
+        isWorking: false,
+        toolCallVisibility,
+      });
+    expect(foldRunIds("messagesOnly").get("step")).toBe(runId);
+    expect(foldRunIds("zen").get("step")).toBeUndefined();
   });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;
