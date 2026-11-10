@@ -329,6 +329,9 @@ const desktopRenders = (tabId: string) => {
   }
   return desktopTabs.has(tabId);
 };
+/** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
+let desktopAttachesLate = false;
+let desktopAttachWaiting = Promise.withResolvers<void>();
 const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -363,7 +366,30 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
     available: true,
-    awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    awaitAttached: (key, timeout) =>
+      !desktopAttachesLate || desktopRenders(key.tabId)
+        ? Effect.sync(() => desktopRenders(key.tabId))
+        : Effect.raceFirst(
+            Stream.callback<string>((queue) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  const onAttach = (attached: { tabId: string }) =>
+                    Queue.offerUnsafe(queue, attached.tabId);
+                  desktopDetaches.on("attach", onAttach);
+                  return onAttach;
+                }),
+                (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+              ),
+            ).pipe(
+              Stream.filter((tabId) => tabId === key.tabId),
+              Stream.runHead,
+              Effect.as(true),
+            ),
+            Effect.sync(() => desktopAttachWaiting.resolve()).pipe(
+              Effect.andThen(Effect.sleep(timeout)),
+              Effect.as(false),
+            ),
+          ),
     detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -475,6 +501,8 @@ beforeEach(() => {
   desktopTabs.clear();
   shownDesktopTabs.clear();
   desktopRendersNext = false;
+  desktopAttachesLate = false;
+  desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
@@ -638,6 +666,63 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const threadId = scope.thread.threadId;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { url: "https://example.com/?t=1", reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      // The renderer reloads on another thread: its webview goes, and it only mounts this
+      // thread's tabs again once a preview event for the thread reaches it.
+      yield* Effect.promise(() => desktopDetachReady.promise);
+      desktopAttachesLate = true;
+      desktopTabs.delete(tabId);
+      desktopDetaches.emit("detach", { threadId, tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      // It is still reloading when the agent's call arrives, so it misses the first event.
+      yield* Effect.gen(function* () {
+        yield* Effect.promise(() => desktopAttachWaiting.promise);
+        const events = yield* manager.subscribeEvents;
+        const nextForThread = Effect.gen(function* () {
+          let event = yield* PubSub.take(events);
+          while (event.threadId !== threadId) event = yield* PubSub.take(events);
+        });
+        yield* nextForThread;
+        yield* nextForThread;
+        desktopTabs.add(tabId);
+        desktopDetaches.emit("attach", { threadId, tabId });
+      }).pipe(Effect.forkScoped);
+
+      const evaluating = yield* broker
+        .invoke({
+          scope,
+          tabId,
+          operation: "evaluate",
+          input: { expression: "navigator.userAgent" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.raceFirst(
+        Fiber.join(evaluating),
+        Effect.promise(() => desktopAttachWaiting.promise).pipe(
+          Effect.andThen(TestClock.adjust("10 seconds")),
+          Effect.andThen(Fiber.join(evaluating)),
+        ),
+      );
+      const { sessions } = yield* manager.list({ threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBeUndefined();
+      expect(desktopConnections).toHaveLength(2);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2042,6 +2127,47 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
       yield* resize(1000, 600);
       expect(yield* Queue.takeAll(viewer.output)).toEqual([{ _tag: "reconnect" }]);
       yield* acked;
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("the tab the desktop shows is visible and picked for agents without a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const openDesktopTab = Effect.fn("openDesktopTab")(function* (url: string) {
+        desktopRendersNext = true;
+        const opened = yield* manager.open({
+          threadId: scope.thread.threadId,
+          url,
+          runtime: "server",
+        });
+        const tabId = PreviewTabId.make(opened.tabId);
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        return tabId;
+      });
+      const recentTab = yield* openDesktopTab("http://localhost:5173/recent");
+      const shownTab = yield* openDesktopTab("http://localhost:5173/shown");
+      // Opened first and used last, so recency or insertion order alone picks it.
+      yield* broker.invoke({ scope, tabId: recentTab, operation: "status", input: {} });
+
+      shownDesktopTabs.add(shownTab);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-b"),
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        tabId: shownTab,
+        visible: true,
+        tabs: [
+          expect.objectContaining({ tabId: recentTab, visible: false }),
+          expect.objectContaining({ tabId: shownTab, visible: true }),
+        ],
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );
