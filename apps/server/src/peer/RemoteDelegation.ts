@@ -744,13 +744,20 @@ const make = Effect.gen(function* () {
       .pipe(Effect.raceFirst(changed));
     // Stopped or taken over here meanwhile: the next look sees it.
     if ("endedHere" in waited || waited.timedOut) return false;
-    // An older peer ignores `afterRunId` and reports the run already followed at once,
-    // so it is retried on the back-off schedule instead of asked again straight away.
+    // An older peer ignores `afterRunId` and reports the run already followed at once. Asked
+    // again it would answer for whatever runs there next, say a scheduled task's, so following ends.
     if (waited.runId === null || waited.runId === afterRunId) {
-      return yield* new OrchestratorMcpFailure({
-        code: "orchestration_error",
-        message: `${remote.label} cannot report a later run on a thread yet.`,
+      yield* Effect.logWarning("A linked environment cannot report later runs on a thread", {
+        taskId: task.id,
       });
+      yield* complete(
+        parentThreadId,
+        task.id,
+        terminalStatus(task.status),
+        task.result ?? noReply,
+        "ran-out",
+      );
+      return yield* settled(parentThreadId, task.id);
     }
     const laterRunId = waited.runId;
     const stillFollows = readTask(parentThreadId, task.id).pipe(

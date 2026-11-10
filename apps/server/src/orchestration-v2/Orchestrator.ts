@@ -8900,8 +8900,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.status === "cancelled" ||
         task.status === "interrupted" ||
         task.remoteChild?.stoppedThere === false;
-      // A stop there also ends following the thread for later runs.
-      const unfollows = followsAfterRunId !== undefined && command.stoppedThere === "stopped";
+      // A stop there ends following the thread for later runs, as does a run-out report naming
+      // no last run: a peer that cannot report later runs.
+      const unfollows =
+        followsAfterRunId !== undefined &&
+        (command.stoppedThere === "stopped" || command.lastRunId === undefined);
       if (
         !unfollows &&
         (task.remoteChild?.stoppedThere === true ||

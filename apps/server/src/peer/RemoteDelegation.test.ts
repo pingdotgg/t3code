@@ -118,6 +118,8 @@ interface BoxThread {
   readonly nestedSettled: Deferred.Deferred<void>;
   /** Waiting there fails with this, as a thread deleted there does. */
   readonly gone: Ref.Ref<boolean>;
+  /** The box runs an older version, whose wait ignores `afterRunId`. */
+  readonly ignoresAfterRunId: Ref.Ref<boolean>;
   readonly interrupted: Ref.Ref<number>;
   /** What each interrupt or stop there did, once per command id. */
   readonly stops: Ref.Ref<ReadonlyArray<"interrupt" | "thread.stop" | "delegated-tasks">>;
@@ -164,6 +166,7 @@ const makeBoxThread = Effect.gen(function* () {
     nestedWaiting: yield* Deferred.make<void>(),
     nestedSettled: yield* Deferred.make<void>(),
     gone: yield* Ref.make(false),
+    ignoresAfterRunId: yield* Ref.make(false),
     interrupted: yield* Ref.make(0),
     stops: yield* Ref.make<ReadonlyArray<"interrupt" | "thread.stop" | "delegated-tasks">>([]),
     runless: yield* Ref.make(false),
@@ -293,7 +296,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     waitForThread: (input) =>
       Effect.gen(function* () {
         // The later run starts after the task's own; none starts after it.
-        if (input.afterRunId !== undefined) {
+        if (input.afterRunId !== undefined && !(yield* Ref.get(thread.ignoresAfterRunId))) {
           const started = yield* Deferred.await(
             input.afterRunId === boxRunId ? thread.laterStarted : Deferred.makeUnsafe<void>(),
           ).pipe(Effect.timeoutOption(input.timeoutMs));
@@ -1393,6 +1396,37 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const waits = yield* Ref.get(thread.waitedFor);
       expect(waits.length).toBeGreaterThan(0);
       expect(waits.every((runId) => runId === boxRunId)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a finished task stops following its thread on a box that cannot report later runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      yield* Ref.set(thread.ignoresAfterRunId, true);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+
+      // Its wait answers at once with the task's own run, so following ends instead of retrying.
+      const unfollowed = yield* taskUpdate(
+        a,
+        (task) =>
+          task.id === delegated.taskId &&
+          task.result !== null &&
+          task.remoteChild?.followsAfterRunId === undefined,
+      );
+      expect(unfollowed?.remoteChild).toMatchObject({ stoppedThere: true });
+      expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

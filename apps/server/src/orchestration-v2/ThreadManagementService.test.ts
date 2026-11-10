@@ -424,6 +424,7 @@ const settledRunsService = (
   threadId: ThreadId,
   runs: () => ReadonlyArray<OrchestrationV2Run>,
   messages: ReadonlyArray<object> = [],
+  providerThreads: ReadonlyArray<object> = [],
 ) =>
   ThreadManagementService.ThreadManagementService.pipe(
     Effect.provide(
@@ -443,7 +444,7 @@ const settledRunsService = (
                     runs: runs(),
                     messages,
                     subagents: [],
-                    providerThreads: [],
+                    providerThreads,
                   }) as unknown as OrchestrationV2ThreadProjection,
               ),
           }),
@@ -693,6 +694,20 @@ it.effect("waitForThread on a run answers with its own work, not a later message
     expect(yield* resultOf("run:r1")).toMatchObject({ resultRun: { id: "run:r1" } });
     expect(yield* resultOf("run:r2")).toMatchObject({ resultRun: { id: "run:r2-wake" } });
     expect(yield* resultOf("run:r3")).toMatchObject({ resultRun: { id: "run:r3" } });
+
+    // Background work names no run, so a later message's run does not settle it for run 1.
+    const pending = yield* settledRunsService(projectId, threadId, () => runs, messages, [
+      { pendingBackgroundTasks: [{ taskId: "subagent", kind: "subagent" }] },
+    ]);
+    expect(
+      yield* pending.waitForThread({
+        projectId,
+        threadId,
+        runId: RunId.make("run:r1"),
+        timeoutMs: 1,
+        untilDelegatedWorkSettled: true,
+      }),
+    ).toMatchObject({ timedOut: true });
   }),
 );
 

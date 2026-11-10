@@ -141,7 +141,8 @@ it starts and takes over following. Following belongs to the parent, environment
 together: a Stop or cancel here of any task on that thread ends it for all of
 them under the parent's lock, before the stop is sent there, and a handoff that
 loses that race is refused. That is one forwarded wait per followed thread
-until then, or until the thread, parent or link is gone.
+until then, or until the thread, parent or link is gone. An older peer that ignores
+`afterRunId` answers at once with that run, which ends following there.
 
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user. **A full-access link is therefore not fenced**:

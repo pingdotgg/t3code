@@ -1121,16 +1121,16 @@ const make = Effect.gen(function* () {
       const runs = yield* ownWork(records.runs, selected);
       const bounded = runs.length < records.runs.length;
       const own = new Set(runs.map((run) => run.id));
-      // Past new work, only the tasks its own runs started count; background work names no run.
+      // Past new work, a later run's tasks no longer count. Background work names no run, so it
+      // may be this run's own and still holds the wait.
       const progress = delegatedTaskProgress(
         bounded
           ? {
               ...records,
               runs,
               subagents: records.subagents.filter(
-                (task) => task.runId !== null && own.has(task.runId),
+                (task) => task.runId === null || own.has(task.runId),
               ),
-              providerThreads: [],
             }
           : records,
       );
