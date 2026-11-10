@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
@@ -21,6 +22,8 @@ vi.mock("../state/entities", async (original) => ({
 
 function setup(state: { projects?: ReadonlyArray<Project>; threads?: ReadonlyArray<Thread> } = {}) {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
+  // Full-app browser tests share this origin's storage and leave their last-used project behind.
+  localStorage.removeItem(LAST_USED_PROJECT_STORAGE_KEY);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
 }
