@@ -202,6 +202,7 @@ it("queues a steer for a provider that cannot steer either way", () => {
   );
 });
 
+// regression: #32606 a slash command steered into a running turn replaced the task
 it.each([
   ["/context", { type: "queue_after_active" }],
   [" /context all\n", { type: "queue_after_active" }],

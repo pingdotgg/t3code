@@ -2124,15 +2124,12 @@ it.effect.each([undefined, false, true])(
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           const threadId = yield* startFirstTurn;
           yield* send("queued", "queued", "queue");
-          const sending = send("goal", "/goal all tests pass", "auto");
-          if (nativeGoals === false) {
-            yield* Effect.flip(sending);
-          } else yield* sending;
+          yield* send("goal", "/goal all tests pass", "auto");
           yield* worker.drain();
 
           assert.deepEqual(steered, []);
           assert.deepEqual(yield* read(threadId), {
-            queue: ["queued"],
+            queue: nativeGoals === false ? ["queued", "/goal all tests pass"] : ["queued"],
             started: nativeGoals === false ? ["first"] : ["first", "/goal all tests pass"],
             stopRequested: nativeGoals !== false,
           });
@@ -2195,29 +2192,6 @@ it.effect("queues a goal clear without stopping work when no goal drives it", ()
         assert.deepEqual(steered, []);
         assert.deepEqual(yield* read(threadId), {
           queue: ["queued", "/goal clear"],
-          started: ["first"],
-          stopRequested: false,
-        });
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
-);
-
-// regression: #32606 a slash command steered into a running turn replaced the task
-it.effect("queues a slash command sent into a running turn instead of steering it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { steered, layer, startFirstTurn, send, read } = yield* goalHarness("slash-steer");
-      yield* Effect.gen(function* () {
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = yield* startFirstTurn;
-        yield* send("context", "/context", "auto");
-        yield* send("context-all", "/context all", "auto");
-        yield* worker.drain();
-
-        assert.deepEqual(steered, []);
-        assert.deepEqual(yield* read(threadId), {
-          queue: ["/context", "/context all"],
           started: ["first"],
           stopRequested: false,
         });
