@@ -3,7 +3,7 @@ import type { ThreadContextRecord } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 
-import { useProject, useThreadShell } from "~/state/entities";
+import { useProject, useLinkedThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -14,7 +14,7 @@ export function ThreadContextChip(props: {
   unreadable?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
-  const shell = useThreadShell({ environmentId, threadId });
+  const shell = useLinkedThreadShell({ environmentId, threadId });
   const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
   const title = shell?.title?.trim() || props.record.title;
   const settled = shell?.settledOverride === "settled";

@@ -26,7 +26,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
@@ -34,8 +34,9 @@ import { environmentServerConfigsAtom } from "./server";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
+  environmentShell,
 } from "./shell";
-import { environmentThreadDetails, environmentThreadShells } from "./threads";
+import { environmentThreadDetails, environmentThreadShells, threadFamilies } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -150,6 +151,33 @@ export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | n
 export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.threadShellAtom(ref),
+  );
+}
+
+const removedThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.map(environmentShell.stateValueAtom(environmentId), (state) => state.removedAt),
+);
+
+const linkedThreadShellAtom = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get) => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    if (shell !== null) return shell;
+    const family = AsyncResult.getOrElse(
+      get(threadFamilies.familyAtom(ref.environmentId, ref.threadId)),
+      () => null,
+    );
+    if (family === null) return null;
+    const removedAt = get(removedThreadsAtom(ref.environmentId));
+    if ((removedAt.get(ref.threadId) ?? -1) > family.snapshotSequence) return null;
+    const thread = family.threads.find((row) => row.id === ref.threadId);
+    return thread ? { ...thread, environmentId: ref.environmentId } : null;
+  });
+});
+
+export function useLinkedThreadShell(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_SHELL_ATOM : linkedThreadShellAtom(threadKey(ref)),
   );
 }
 

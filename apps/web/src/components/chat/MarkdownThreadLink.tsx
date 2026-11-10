@@ -9,7 +9,7 @@ import {
 } from "@t3tools/shared/threadLinks";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
-import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useThreadRefs, useLinkedThreadShell } from "../../state/entities";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
 
@@ -21,14 +21,14 @@ export function MarkdownThreadLink(props: {
 }) {
   const environmentId = props.link.environmentId ?? props.environmentId;
   const decodedId = percentDecodedThreadLinkId(props.link.threadId);
-  const written = useThreadShell(scopeThreadRef(environmentId, props.link.threadId));
-  const decoded = useThreadShell(
+  const written = useLinkedThreadShell(scopeThreadRef(environmentId, props.link.threadId));
+  const decoded = useLinkedThreadShell(
     written === null && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null,
   );
   const local = written ?? decoded;
   const guess = local === null && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
-  const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
+  const remote = useLinkedThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
   const thread = local ?? remote;
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
