@@ -2046,7 +2046,7 @@ code {
   white-space: nowrap;
 }
 
-.chat-markdown-file-link > svg {
+.chat-markdown-file-link > :is(svg, img) {
   display: inline;
   margin-inline-end: 0.2em;
   vertical-align: -0.125em;
