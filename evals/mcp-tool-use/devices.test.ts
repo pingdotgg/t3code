@@ -224,6 +224,9 @@ it("prints agent-device's own help for a lone help command on a returned launche
   assert.equal(asked(`${launcher} help open ${target}`), help("open"));
   assert.equal(asked(`${launcher} --help 2>&1`), help(""));
   assert.equal(asked(`${launcher} help settings --session=t3-1`), help("settings"));
+  // A password reaches fill from stdin, so request_secret's file never enters argv.
+  assert.equal(asked(`${launcher} fill --help ${target}`), help("fill"));
+  assert.include(help("fill"), "fill <x y|@ref|selector> --text-stdin");
   // Anything else stays with the simulator: other topics, pipes, aliases, other commands.
   assert.isUndefined(asked(`${launcher} metro --help ${target}`));
   assert.isUndefined(asked(`${launcher} help record 2>&1 | head -40`));

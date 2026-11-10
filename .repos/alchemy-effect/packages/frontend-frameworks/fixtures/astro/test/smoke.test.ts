@@ -1,7 +1,7 @@
-import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
-import { expect, test } from "@playwright/test";
 import { readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
+import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
+import { expect, test } from "@playwright/test";
 
 const FIXTURE_VALUE = "hello-from-astro-binding";
 
@@ -51,6 +51,21 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(html).toContain(FIXTURE_VALUE);
     });
 
+    it("serves an astro:assets image from a prerendered page", async ({ server }) => {
+      const response = await server.fetch("/prerendered-image/");
+      expect(response.status).toBe(200);
+      const img = (await response.text()).match(/<img[^>]*id="swatch"[^>]*>/)?.[0];
+      const src = img?.match(/src="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+      // The passthrough image service never emits static variants, so even a
+      // prerendered page points at the image endpoint.
+      expect(src).toMatch(/^\/_image\?href=/);
+
+      const image = await server.fetch(src!);
+      expect(image.status).toBe(200);
+      const bytes = new Uint8Array(await image.arrayBuffer());
+      expect([...bytes.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    });
+
     it("reads the binding from the API route", async ({ server }) => {
       const json = await server.fetchJson<{
         value: string | null;
@@ -62,9 +77,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       });
     });
 
-    it("honors astro.config.mjs: user integration route + user vite define", async ({
-      server,
-    }) => {
+    it("honors astro.config.mjs: user integration route + user vite define", async ({ server }) => {
       // The /user-integration route only exists because the user's own
       // astro.config.mjs was loaded natively: a user integration injects it,
       // and the page renders a value produced by the file's `vite.define`.
@@ -75,9 +88,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(html).toContain("hello-from-user-vite-define");
     });
 
-    it("runs middleware: locals + response-header mutation", async ({
-      server,
-    }) => {
+    it("runs middleware: locals + response-header mutation", async ({ server }) => {
       const response = await server.fetch("/locals");
       expect(response.status).toBe(200);
       expect(response.headers.get("x-middleware")).toBe("hit");
@@ -107,21 +118,15 @@ for (const mode of Playwright.SERVER_METHODS) {
     it("returns binary data from an endpoint", async ({ server }) => {
       const response = await server.fetch("/api/binary");
       expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toBe(
-        "application/octet-stream",
-      );
+      expect(response.headers.get("content-type")).toBe("application/octet-stream");
       const bytes = new Uint8Array(await response.arrayBuffer());
       expect([...bytes]).toEqual([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03,
       ]);
-      expect(response.headers.get("x-binary-length")).toBe(
-        String(bytes.length),
-      );
+      expect(response.headers.get("x-binary-length")).toBe(String(bytes.length));
     });
 
-    it("serves the content-collection-driven prerendered page", async ({
-      server,
-    }) => {
+    it("serves the content-collection-driven prerendered page", async ({ server }) => {
       const response = await server.fetch("/posts/hello-world/");
       expect(response.status).toBe(200);
       const html = await response.text();
@@ -130,9 +135,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(html).toContain("content-collection body");
     });
 
-    it("round-trips Astro.session across requests (zero-config sessions)", async ({
-      server,
-    }) => {
+    it("round-trips Astro.session across requests (zero-config sessions)", async ({ server }) => {
       // Plain HTTP against the listening URL in both modes — the live
       // server's dispatchFetch helper does not forward request init.
       const first = await fetch(new URL("/session", server.url));
@@ -149,13 +152,8 @@ for (const mode of Playwright.SERVER_METHODS) {
     });
 
     if (mode === "live") {
-      it("emits _redirects and serves the redirect from the asset layer", async ({
-        server,
-      }) => {
-        const content = await readFile(
-          path.join(process.cwd(), "dist/client/_redirects"),
-          "utf-8",
-        );
+      it("emits _redirects and serves the redirect from the asset layer", async ({ server }) => {
+        const content = await readFile(path.join(process.cwd(), "dist/client/_redirects"), "utf-8");
         expect(content).toMatch(/\/old-about\s+\/about\/\s+301/);
         const response = await fetch(new URL("/old-about", server.url), {
           redirect: "manual",
@@ -167,25 +165,14 @@ for (const mode of Playwright.SERVER_METHODS) {
       it("emits _headers and serves hashed assets with immutable Cache-Control", async ({
         server,
       }) => {
-        const content = await readFile(
-          path.join(process.cwd(), "dist/client/_headers"),
-          "utf-8",
-        );
+        const content = await readFile(path.join(process.cwd(), "dist/client/_headers"), "utf-8");
         expect(content).toContain("/_astro/*");
-        expect(content).toContain(
-          "Cache-Control: public, max-age=31536000, immutable",
-        );
-        const assets = await readdir(
-          path.join(process.cwd(), "dist/client/_astro"),
-        );
+        expect(content).toContain("Cache-Control: public, max-age=31536000, immutable");
+        const assets = await readdir(path.join(process.cwd(), "dist/client/_astro"));
         expect(assets.length).toBeGreaterThan(0);
-        const response = await fetch(
-          new URL(`/_astro/${assets[0]}`, server.url),
-        );
+        const response = await fetch(new URL(`/_astro/${assets[0]}`, server.url));
         expect(response.status).toBe(200);
-        expect(response.headers.get("cache-control")).toBe(
-          "public, max-age=31536000, immutable",
-        );
+        expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
         await response.arrayBuffer();
       });
     }

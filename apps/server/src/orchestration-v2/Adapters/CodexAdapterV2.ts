@@ -38,6 +38,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -50,6 +51,7 @@ import {
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -230,6 +232,10 @@ const decodeCodexBackgroundTerminalTerminateResponse = Schema.decodeUnknownEffec
 const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
+const CodexThreadSampleResponse = Schema.Struct({ text: Schema.NullOr(Schema.String) });
+const decodeCodexThreadSampleResponse = Schema.decodeUnknownEffect(CodexThreadSampleResponse);
+export const CODEX_PROMPT_SUGGESTION_PROMPT =
+  "Predict the next message the user will send in this conversation. Reply with only that message, written as the user would type it, in under 20 words. Do not use tools. If there is no clear next step, reply with nothing.";
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
@@ -339,6 +345,21 @@ function toProtocolError(
     detail,
     ...(payload === undefined ? {} : { payload }),
   });
+}
+
+const CODEX_THREAD_IN_USE_MESSAGE =
+  "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.";
+
+const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+// Codex holds a per-thread writer lock for as long as a thread stays loaded in
+// any app-server sharing the same CODEX_HOME, and reports a conflict this way.
+function isCodexActiveWriterError(error: unknown): boolean {
+  return (
+    isCodexAppServerRequestError(error) &&
+    error.code === -32600 &&
+    error.errorMessage.includes("already has an active writer")
+  );
 }
 
 function codexTimestamp(seconds: number | null | undefined): DateTime.Utc {
@@ -475,9 +496,7 @@ function codexMcpToolOutput(
   const resultOutput =
     item.result === null || item.result === undefined
       ? undefined
-      : item.result.structuredContent !== null && item.result.structuredContent !== undefined
-        ? item.result.structuredContent
-        : item.result.content;
+      : mcpToolResultOutput(item.result);
 
   if (item.error === null || item.error === undefined) {
     return resultOutput;
@@ -1134,7 +1153,8 @@ function codexUsageLimitError(
 
 /**
  * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
- * the code it names replaces Codex's, and clients pick a recovery from it.
+ * the code it names replaces Codex's, and clients pick a recovery from it. Its
+ * allowance limits get the usage-limit recovery; other sharing failures keep their class.
  */
 function withCodexManagedFailure(
   failure: OrchestrationV2ProviderFailure,
@@ -1143,7 +1163,22 @@ function withCodexManagedFailure(
   const managed = classifyCodexManagedError(nativeError);
   return managed === undefined
     ? failure
-    : { ...failure, message: managed.message, code: managed.code };
+    : {
+        ...failure,
+        message: managed.message,
+        code: managed.code,
+        ...(managed.usageLimit ? { class: "usage_limit" } : {}),
+      };
+}
+
+function failureResetAt(
+  failure: OrchestrationV2ProviderFailure,
+  snapshot: CodexRateLimitSnapshot | undefined,
+) {
+  // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
+  return classifyCodexManagedError(failure.code)?.usageLimit
+    ? null
+    : codexUsageLimitResetAt(snapshot);
 }
 
 interface ActiveCodexTurnContext {
@@ -1356,6 +1391,9 @@ export class CodexAppServerClientFactory extends Context.Service<
 export const CODEX_THREAD_CONFIG = {
   "tools.update_plan.enabled": true,
   mcp_optional_startup_grace_ms: 10_000,
+  // Tool calls stop waiting on the detailed reasoning summary. Codex applies it only to its
+  // built-in OpenAI provider and sends each summary section whole, not as token deltas.
+  "features.concurrent_reasoning_summaries": true,
 } as const;
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
@@ -1542,13 +1580,16 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | PortScanner.PortDiscovery
+  | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
@@ -1575,6 +1616,10 @@ export const layerAppServerClientFactory: Layer.Layer<
                 cause,
               }),
           ),
+        );
+        // Its shells carry each thread's T3CODE_THREAD_ID, so port discovery reads listeners' threads.
+        yield* Effect.acquireRelease(Effect.sync(portDiscovery.trackAgent), (release) =>
+          Effect.sync(release),
         );
         const protocolLogger = makeCodexAppServerProtocolLogger({
           nativeEventLogger,
@@ -1684,8 +1729,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const readMcpSession = (threadId: ThreadId | null) =>
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-    threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
+    threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
@@ -1942,7 +1986,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const imageTurns = new Map<
           string,
           {
-            readonly running: Set<string>;
+            readonly running: Map<
+              string,
+              {
+                readonly revisedPrompt: string | null;
+                readonly transparentBackground: boolean | null;
+              }
+            >;
             readonly saved: Map<string, string>;
             pending: boolean;
             answer?: { readonly id: string; readonly text: string };
@@ -1951,7 +2001,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const imageTurn = (nativeTurnId: string) => {
           let state = imageTurns.get(nativeTurnId);
           if (state === undefined) {
-            state = { running: new Set(), saved: new Map(), pending: false };
+            state = { running: new Map(), saved: new Map(), pending: false };
             imageTurns.set(nativeTurnId, state);
           }
           return state;
@@ -1982,6 +2032,43 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
+        // Delegated threads share this session but have no one typing, so they never sample.
+        const samplePromptSuggestion = Effect.fn("CodexAdapterV2.samplePromptSuggestion")(
+          function* (
+            context: ActiveCodexTurnContext,
+            nativeThreadId: string,
+            nativeTurnId: string,
+          ) {
+            if (
+              isDelegatedAppThread(context.input.appThread) ||
+              !(yield* promptSuggestionsEnabled)
+            ) {
+              return;
+            }
+            const response = yield* client.raw.request("thread/sample", {
+              threadId: nativeThreadId,
+              expectedTurnId: nativeTurnId,
+              prompt: CODEX_PROMPT_SUGGESTION_PROMPT,
+              effort: "low",
+            });
+            const suggestion =
+              (yield* decodeCodexThreadSampleResponse(response)).text?.trim() ?? "";
+            if (suggestion.length === 0) return;
+            yield* emitProviderEvent({
+              type: "prompt_suggestion.updated",
+              driver: CODEX_PROVIDER,
+              threadId: context.projectionThreadId,
+              runId: context.input.runId,
+              text: suggestion,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.codex-prompt-suggestion-failed", { cause }),
+          ),
+        );
+
         const emitImageWorkState =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveCodexTurnContext, pending: boolean) {
@@ -1999,6 +2086,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const clearImageWork = Effect.fn("CodexAdapterV2.clearImageWork")(function* (
           context: ActiveCodexTurnContext,
         ) {
+          for (const [id, input] of imageTurns.get(context.nativeTurnId)?.running ?? []) {
+            yield* emitImageGenerationItem(
+              context,
+              {
+                type: "imageGeneration",
+                id,
+                ...input,
+                status: "cancelled",
+                result: "",
+              },
+              true,
+            );
+          }
           yield* emitImageWorkState(context, false);
           imageTurns.delete(context.nativeTurnId);
         });
@@ -3850,6 +3950,56 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        const emitImageGenerationItem = Effect.fn("CodexAdapterV2.emitImageGenerationItem")(
+          function* (
+            context: ActiveCodexTurnContext,
+            item: Extract<
+              CodexSchema.V2ItemCompletedNotification__ThreadItem,
+              { type: "imageGeneration" }
+            >,
+            completed: boolean,
+          ) {
+            const cancelled = completed && item.status === "cancelled";
+            const failed = item.status === "failed" || item.failure != null;
+            const artifacts = yield* buildDynamicToolArtifacts(context, {
+              type: "dynamicToolCall",
+              id: item.id,
+              namespace: "image_gen",
+              tool: "imagegen",
+              status: completed ? (failed ? "failed" : "completed") : "inProgress",
+              arguments: {
+                ...(item.revisedPrompt == null ? {} : { prompt: item.revisedPrompt }),
+                ...(item.transparentBackground == null
+                  ? {}
+                  : { transparent_background: item.transparentBackground }),
+              },
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: { ...artifacts.node, ...(cancelled ? { status: "cancelled" } : {}) },
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: {
+                ...artifacts.turnItem,
+                title: "Generate image",
+                ...(cancelled ? { status: "cancelled" } : {}),
+                ...(completed
+                  ? {
+                      output: {
+                        status: item.status,
+                        ...(item.savedPath == null ? {} : { savedPath: item.savedPath }),
+                        ...(item.failure == null ? {} : { failure: item.failure }),
+                      },
+                    }
+                  : {}),
+              },
+            });
+          },
+        );
+
         /**
          * The item stays running until then, which keeps the run's event
          * ingestion open past turn/completed; it runs off the notification
@@ -4465,8 +4615,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+            const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
+              const resetAt = failureResetAt(item.failure, snapshot);
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
                 ...item,
@@ -4488,6 +4639,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
             }
           }).pipe(Effect.orDie),
+        );
+
+        // A run's first request can 429 before Codex pushes a codex snapshot.
+        const readUsageLimitReset = Effect.gen(function* () {
+          const sent = yield* Ref.get(rateLimitSnapshot);
+          const response = yield* client
+            .request("account/rateLimits/read", null)
+            .pipe(Effect.timeout("10 seconds"));
+          const read = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
+          // A notification that landed during the read is newer than it.
+          yield* Ref.update(rateLimitSnapshot, (current) =>
+            current === sent ? mergeCodexRateLimits(current, read) : current,
+          );
+        }).pipe(
+          // The terminal waits on this read, so no failure may skip it; interruption ends both.
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterrupts(cause),
+            (cause) =>
+              Effect.logWarning("orchestration-v2.codex-usage-limit-reset-read-failed", { cause }),
+          ),
         );
 
         yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
@@ -4883,7 +5054,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.type === "imageGeneration") {
               if (!(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)) {
-                imageTurn(payload.turnId).running.add(payload.item.id);
+                imageTurn(payload.turnId).running.set(payload.item.id, {
+                  revisedPrompt: payload.item.revisedPrompt ?? null,
+                  transparentBackground: payload.item.transparentBackground ?? null,
+                });
+                yield* emitImageGenerationItem(context, payload.item, false);
                 yield* emitImageWorkState(context, true);
               }
               return;
@@ -5169,6 +5344,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.type === "imageGeneration") {
               if ((yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)) return;
+              yield* emitImageGenerationItem(context, payload.item, true);
               const { id, savedPath, status, failure } = payload.item;
               const state = imageTurn(payload.turnId);
               if (savedPath?.trim() && status === "completed" && failure == null) {
@@ -5811,7 +5987,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot)),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5839,7 +6015,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
-        const emitRootTerminal = Effect.fnUntraced(function* (
+        const publishRootTerminal = Effect.fnUntraced(function* (
           context: ActiveCodexTurnContext,
           event: CodexRootTerminalEvent,
         ) {
@@ -5851,13 +6027,43 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
                   },
                 }
               : event;
           yield* emitProviderEvent(current);
+          if (current.status === "failed" && current.failure.class === "usage_limit") {
+            const item = makeProviderFailureTurnItem({
+              driver: CODEX_PROVIDER,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: current.providerThreadId,
+              providerTurnId: current.providerTurnId,
+              itemOrdinal: current.failureItemOrdinal,
+              failure: current.failure,
+              occurredAt: yield* DateTime.now,
+            });
+            yield* Ref.update(limitedTurnItems, (items) =>
+              new Map(items).set(context.providerThread.id, item),
+            );
+          }
+        });
+
+        const emitRootTerminal = Effect.fnUntraced(function* (
+          context: ActiveCodexTurnContext,
+          event: CodexRootTerminalEvent,
+        ) {
+          const awaitsReset =
+            event.status === "failed" &&
+            event.failure.class === "usage_limit" &&
+            event.failure.resetAt == null &&
+            // The account read only reports the ordinary allowance, never a sharing cap's reset.
+            !classifyCodexManagedError(event.failure.code)?.usageLimit &&
+            codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)) === null;
+          if (!awaitsReset) yield* publishRootTerminal(context, event);
           const continued = continuedRuns.get(context.providerTurnId) ?? [context];
-          if (current.status !== "completed") {
+          if (event.status !== "completed") {
             yield* Ref.update(
               terminalizedNonCompletedNativeTurns,
               (nativeTurns) =>
@@ -5873,20 +6079,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (nativeThreadId != null && rootProviderThread !== undefined) {
             rootProviderThreads.set(nativeThreadId, { ...rootProviderThread, status: "idle" });
           }
-          if (current.status === "failed" && current.failure.class === "usage_limit") {
-            const item = makeProviderFailureTurnItem({
-              driver: CODEX_PROVIDER,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              nodeId: context.input.rootNodeId,
-              providerThreadId: current.providerThreadId,
-              providerTurnId: current.providerTurnId,
-              itemOrdinal: current.failureItemOrdinal,
-              failure: current.failure,
-              occurredAt: yield* DateTime.now,
-            });
-            yield* Ref.update(limitedTurnItems, (items) =>
-              new Map(items).set(context.providerThread.id, item),
+          // Notification handlers block response routing, so the read and terminal get a fiber.
+          if (awaitsReset) {
+            yield* readUsageLimitReset.pipe(
+              Effect.andThen(
+                turnTerminalizationPermit.withPermits(1)(publishRootTerminal(context, event)),
+              ),
+              Effect.forkIn(scope, { startImmediately: true }),
             );
           }
         });
@@ -6003,6 +6202,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
           yield* emitRootTerminal(hold.context, { ...hold.event, status });
           yield* Deferred.succeed(hold.next, undefined);
+          const nativeThreadId = hold.context.providerThread.nativeThreadRef?.nativeId;
+          if (status === "completed" && nativeThreadId != null) {
+            yield* samplePromptSuggestion(
+              hold.context,
+              nativeThreadId,
+              hold.context.nativeTurnId,
+            ).pipe(Effect.forkIn(scope));
+          }
         });
 
         const releaseGoalHold = Effect.fnUntraced(function* (
@@ -6054,7 +6261,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               state.saved.clear();
               return;
             }
-            const message = { id: finalAnswer?.id ?? firstImageItemId, text };
+            const message = {
+              id: finalAnswer?.id ?? `generated-image-message:${firstImageItemId}`,
+              text,
+            };
             state.answer = message;
             const artifacts = yield* buildAgentMessageArtifacts(context, message, true);
             yield* emitProviderEvent({
@@ -6334,6 +6544,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
+              // A held goal predicts when settleGoalHold completes it.
+              if (
+                input.status === "completed" &&
+                input.context.subagent === null &&
+                !input.continueRun &&
+                !holdsForGoal &&
+                nativeThreadId != null
+              ) {
+                yield* samplePromptSuggestion(
+                  input.context,
+                  nativeThreadId,
+                  input.nativeTurnId,
+                ).pipe(Effect.forkIn(scope));
+              }
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {
                   const updated = new Map(current);
@@ -6896,7 +7120,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const activation = { stopped: false };
             goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
-              // A bare objective reads like a statement, so the model echoes it back.
+              // A bare objective gets echoed back, and "start this goal" gets a
+              // create_goal call that Codex rejects because the goal already exists.
               yield* startNativeTurn(
                 turnInput,
                 command.type === "set"
@@ -6904,7 +7129,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ...turnInput,
                       message: {
                         ...turnInput.message,
-                        text: `Start working toward this goal: ${command.objective}`,
+                        text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
                       },
                     })
                   : [],
@@ -7058,9 +7283,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          hasPendingBackgroundWorkForThread: Effect.fn(
-            "CodexAdapterV2.hasPendingBackgroundWorkForThread",
-          )(function* (providerThread) {
+          // Untraced: the run's event stream calls this once per provider event.
+          hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread) {
             const contexts = [
               ...(yield* Ref.get(activeTurns)).values(),
               ...(yield* Ref.get(settledTurns)).values(),
@@ -7151,14 +7375,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             },
             (effect, threadInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterResumeThreadError({
-                      driver: CODEX_PROVIDER,
-                      providerSessionId: input.providerSessionId,
-                      providerThreadId: threadInput.providerThread.id,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  isCodexActiveWriterError(cause)
+                    ? new ProviderAdapter.ProviderAdapterThreadInUseError({
+                        driver: CODEX_PROVIDER,
+                        providerThreadId: threadInput.providerThread.id,
+                        detail: CODEX_THREAD_IN_USE_MESSAGE,
+                        cause,
+                      })
+                    : new ProviderAdapter.ProviderAdapterResumeThreadError({
+                        driver: CODEX_PROVIDER,
+                        providerSessionId: input.providerSessionId,
+                        providerThreadId: threadInput.providerThread.id,
+                        cause,
+                      }),
                 ),
               ),
           ),
@@ -7969,24 +8199,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
+              const fork = client.request("thread/fork", {
+                threadId,
+                ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
+                ...codexThreadRuntimeParams({
+                  threadId: threadInput.targetThreadId,
+                  mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                  ...(threadInput.modelSelection === undefined
+                    ? {}
+                    : { modelSelection: threadInput.modelSelection }),
+                  ...(threadInput.runtimePolicy === undefined
+                    ? {}
+                    : { runtimePolicy: threadInput.runtimePolicy }),
+                }),
+              });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  client.request("thread/fork", {
-                    threadId,
-                    ...(boundary.lastTurnId === undefined
-                      ? {}
-                      : { lastTurnId: boundary.lastTurnId }),
-                    ...codexThreadRuntimeParams({
-                      threadId: threadInput.targetThreadId,
-                      mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
-                      ...(threadInput.modelSelection === undefined
-                        ? {}
-                        : { modelSelection: threadInput.modelSelection }),
-                      ...(threadInput.runtimePolicy === undefined
-                        ? {}
-                        : { runtimePolicy: threadInput.runtimePolicy }),
+                  fork.pipe(
+                    Effect.catchTags({
+                      CodexAppServerRequestError: (cause) =>
+                        /\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)
+                          ? client.raw
+                              .request("thread/unarchive", { threadId })
+                              .pipe(Effect.andThen(fork))
+                          : Effect.fail(cause),
                     }),
-                  }),
+                  ),
                 ),
                 Effect.mapError(
                   (cause) =>
