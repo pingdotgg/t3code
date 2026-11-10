@@ -4315,6 +4315,15 @@ describe("PiAdapterV2", () => {
         title: multiSelectTitle,
         placeholder: "1,3; custom answer",
       });
+      // Another extension's blank-placeholder input that only shares the question is asked.
+      const unrelatedTitle = "How many replicas?\n\nEnter the release note:";
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-unrelated",
+        method: "input",
+        title: unrelatedTitle,
+        placeholder: "",
+      });
       yield* fake.emit({
         type: "extension_ui_request",
         id: "ui-other",
@@ -4322,6 +4331,7 @@ describe("PiAdapterV2", () => {
         title: "Anything else?",
       });
       assert.equal((yield* takeWaitingRequest()).title, multiSelectTitle);
+      assert.equal((yield* takeWaitingRequest()).title, unrelatedTitle);
       assert.equal((yield* takeWaitingRequest()).title, "Anything else?");
       for (const [id, value] of [
         ["ui-custom", "2"],

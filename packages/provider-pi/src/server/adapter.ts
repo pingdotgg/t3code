@@ -3792,7 +3792,12 @@ function piAskUserSingleSelectQuestion(
             };
           }),
         },
-        customAnswerRoute: { lines, sentinel, followUpTitlePrefix: `${prefix}${text}\n\n` },
+        // The follow-up repeats the option lines; only its trailing instruction is localized.
+        customAnswerRoute: {
+          lines,
+          sentinel,
+          followUpTitlePrefix: `${prefix}${text}\n\n${lines.slice(0, -1).join("\n")}\n\n`,
+        },
       };
     }
   }
