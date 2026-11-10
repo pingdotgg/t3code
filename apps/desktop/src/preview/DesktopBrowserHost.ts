@@ -73,11 +73,8 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /**
-   * The sessions sharing the guest's one Chromium screencast, by their latest start; it stops
-   * with the last of them.
-   */
-  readonly screencasts: Map<string | undefined, object>;
+  /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
+  readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -328,10 +325,14 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
-          const start = {};
           // A child session's screencast is not the page's, such as a late one on a detached session.
-          if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.set(owner, start);
+          const stream =
+            sessionId === undefined && method === "Page.startScreencast"
+              ? (tab.screencasts.get(owner) ?? { started: false, pending: 0 })
+              : undefined;
+          if (stream) {
+            stream.pending += 1;
+            tab.screencasts.set(owner, stream);
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
@@ -362,19 +363,31 @@ export const make = Effect.gen(function* () {
                   held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; a later start may still stream for it.
-                  if (
-                    sessionId === undefined &&
-                    tab.relay === relay &&
-                    tab.screencasts.get(owner) === start
-                  ) {
-                    leaveScreencast(tab, owner);
-                  }
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
+              ? holdFocus(tab, method, owner, forward).then(
+                  (result) => {
+                    if (stream) {
+                      stream.pending -= 1;
+                      stream.started = true;
+                    }
+                    return result;
+                  },
+                  (cause: unknown) => {
+                    if (stream) stream.pending -= 1;
+                    // A viewer can outlive a refused start; its running or pending stream still holds it.
+                    if (
+                      stream &&
+                      !stream.started &&
+                      stream.pending === 0 &&
+                      tab.relay === relay &&
+                      tab.screencasts.get(owner) === stream
+                    ) {
+                      leaveScreencast(tab, owner);
+                    }
+                    releaseFocusWhenIdle(tab);
+                    syncPainting(tab);
+                    throw cause;
+                  },
+                )
               : holdFocus(tab, method, owner, forward);
         },
         sessionDetached: (owner) => {

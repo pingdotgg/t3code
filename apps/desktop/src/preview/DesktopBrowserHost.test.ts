@@ -1089,7 +1089,7 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps a session's screencast when its earlier start is refused", () =>
+  it.effect("keeps a session's screencast when another of its starts is refused", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -1124,6 +1124,31 @@ describe("DesktopBrowserHost", () => {
       debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
       yield* settle;
       expect(frames).toContain("t3-preview-page-1");
+
+      // A refused replacement leaves the session's running stream, shared with another session.
+      yield* raw({ id: 4, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(4);
+      yield* raw({
+        id: 5,
+        method: "Page.startScreencast",
+        params: { id: 5 },
+        sessionId: "t3-preview-page-2",
+      });
+      yield* raw({
+        id: 6,
+        method: "Page.startScreencast",
+        params: { id: 6 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* settle;
+      debuggee.refuse(6);
+      debuggee.release();
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)].toSorted()).toEqual([5, 6]);
+      yield* settle;
+      frames.length = 0;
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 2 });
+      yield* settle;
+      expect(frames).toEqual(["t3-preview-page", "t3-preview-page-1", "t3-preview-page-2"]);
     }).pipe(Effect.scoped),
   );
 
