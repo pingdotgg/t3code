@@ -1,0 +1,71 @@
+---
+title: Setup
+description: Give Alchemy a Turso API token.
+---
+
+import PackageManagers from "../../../components/PackageManagers.astro";
+
+Sign up at [turso.tech](https://turso.tech), then create an API token with the [Turso CLI](https://docs.turso.tech/cli/introduction):
+
+```sh
+turso auth api-tokens mint alchemy
+```
+
+Turso only supports API tokens. There is no browser sign-in.
+
+## Add the provider
+
+Install `@alchemy.run/turso`:
+
+<PackageManagers add="@alchemy.run/turso" />
+
+Then add `Turso.providers()` next to your cloud's providers:
+
+```typescript
+// alchemy.run.ts
+import * as Turso from "@alchemy.run/turso";
+
+providers: Layer.mergeAll(Cloudflare.providers(), Turso.providers()),
+```
+
+## Store the token in a profile
+
+```sh
+alchemy profile edit --add Turso
+```
+
+Paste the token when asked. You can leave the organization blank.
+
+If you belong to more than one organization, enter its name. `turso org list` shows them.
+
+See [Profiles](/environments/profiles) to learn how profiles work.
+
+## Use environment variables in CI
+
+Set `TURSO_API_TOKEN` and Alchemy uses it instead of your profile:
+
+```sh
+TURSO_API_TOKEN=... alchemy deploy
+```
+
+`TURSO_API_KEY` works too. Set `TURSO_ORGANIZATION` if you belong to more than one organization.
+
+## Pass a token in code
+
+Use a token you already have, for example in tests:
+
+```typescript
+Effect.provide(
+  Turso.fromToken({
+    apiToken: "...",
+    organization: "my-org",
+  }),
+)
+```
+
+`apiToken` can be a string or a `Redacted` value.
+
+## Next steps
+
+- [Build the tutorial](/turso/tutorial/part-1)
+- [Turso overview](/turso)

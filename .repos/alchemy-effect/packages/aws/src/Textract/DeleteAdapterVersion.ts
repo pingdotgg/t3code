@@ -1,0 +1,36 @@
+import type * as textract from "@distilled.cloud/aws/textract";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Adapter } from "./Adapter.ts";
+
+/**
+ * Runtime binding for `textract:DeleteAdapterVersion` — delete a version
+ * of the bound adapter (e.g. retire superseded versions from a retraining
+ * pipeline).
+ *
+ * ### Managing Adapters
+ * **Example:** Delete an Adapter Version
+ * ```typescript
+ * // init
+ * const deleteAdapterVersion = yield* AWS.Textract.DeleteAdapterVersion(adapter);
+ *
+ * // runtime
+ * yield* deleteAdapterVersion({ AdapterVersion: "1" });
+ * ```
+ *
+ * @binding
+ */
+export interface DeleteAdapterVersion extends Binding.Service<
+  DeleteAdapterVersion,
+  "AWS.Textract.DeleteAdapterVersion",
+  <A extends Adapter>(
+    adapter: A,
+  ) => Effect.Effect<
+    (
+      request: Omit<textract.DeleteAdapterVersionRequest, "AdapterId">,
+    ) => Effect.Effect<textract.DeleteAdapterVersionResponse, textract.DeleteAdapterVersionError>
+  >
+> {}
+export const DeleteAdapterVersion = Binding.Service<DeleteAdapterVersion>(
+  "AWS.Textract.DeleteAdapterVersion",
+);
