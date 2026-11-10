@@ -203,12 +203,13 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
+const githubToken = process.env.GITHUB_TOKEN;
+
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
-    token && url.startsWith("https://api.github.com/")
-      ? HttpClientRequest.bearerToken(token)
+    githubToken && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(githubToken)
       : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),

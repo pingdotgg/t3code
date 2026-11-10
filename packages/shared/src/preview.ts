@@ -185,6 +185,14 @@ export function normalizePreviewUrl(rawUrl: string): string {
   if (trimmed.length === 0) {
     throw new PreviewUrlNormalizationError({ inputLength: rawUrl.length, reason: "empty" });
   }
+  const explicitProtocol = previewUrlProtocol(trimmed);
+  if (explicitProtocol !== undefined && KNOWN_NON_WEB_SCHEMES.has(explicitProtocol)) {
+    throw new PreviewUrlNormalizationError({
+      inputLength: rawUrl.length,
+      reason: "unsupported-protocol",
+      protocol: explicitProtocol,
+    });
+  }
   const useHttp = LOOPBACK_PREFIX_PATTERN.test(trimmed);
   const candidate = URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed)
     ? trimmed
