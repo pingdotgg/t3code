@@ -234,7 +234,7 @@ jobs:
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           targets: ${{ inputs.rust_target }}
