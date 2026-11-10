@@ -143,8 +143,9 @@ describe("gitLabViewerPermissions", () => {
       ],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
       labels: true,
       updateMethods: ["rebase"],
     });
@@ -155,8 +156,9 @@ describe("gitLabViewerPermissions", () => {
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
       labels: false,
     });
   });
@@ -187,16 +189,21 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
-    "%s preserves merge request fields without fetching project settings",
+    "%s preserves merge request fields without fetching project settings or fork permissions",
     (operation) =>
       Effect.gen(function* () {
+        const detailInputs: Array<{ readonly maintainerEdits?: boolean }> = [];
         const provider = yield* make.pipe(
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-              getMergeRequestDetail: () => Effect.succeed(detail),
+              getMergeRequestDetail: (input) => {
+                detailInputs.push(input);
+                return Effect.succeed(detail);
+              },
               getListStates: () => Effect.succeed(new Map()),
 
               listMergeRequestStats: () => Effect.succeed([]),
@@ -208,6 +215,7 @@ describe("getChangeRequest base freshness", () => {
         expect(
           yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 }),
         ).toEqual(detail);
+        expect(detailInputs.map((input) => input.maintainerEdits)).toEqual([false]);
       }),
   );
 
@@ -337,6 +345,7 @@ describe("merge request reads", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   const countingProvider = Effect.gen(function* () {
@@ -503,6 +512,7 @@ describe("optional activity reads", () => {
     committedDate: "2026-07-01T00:00:00Z",
   };
   const webUrl = "https://git.acme.dev/acme/web/-/merge_requests/7";
+  const currentRefs = { baseSha: "base2", startSha: "start2", headSha: "head2" };
   const reads = {
     getMergeRequestDetail: () =>
       Effect.succeed({
@@ -529,11 +539,18 @@ describe("optional activity reads", () => {
         checks: [],
         viewerCanMerge: true,
         reviewerIds: [],
+        reviewerUsers: [],
+        diffRefs: currentRefs,
       }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
     listDiscussions: () =>
-      Effect.succeed({ threads: [], overviewFindingIds: [], truncated: false }),
+      Effect.succeed({
+        threads: [],
+        diffRefsByThreadId: new Map(),
+        overviewFindingIds: [],
+        truncated: false,
+      }),
     listReactions: () =>
       Effect.succeed({
         reactions: [],
@@ -598,7 +615,12 @@ describe("optional activity reads", () => {
             listNotes: () =>
               Effect.succeed({ comments: [comment, finding, reply], truncated: false }),
             listDiscussions: () =>
-              Effect.succeed({ threads: [], overviewFindingIds: ["10"], truncated: false }),
+              Effect.succeed({
+                threads: [],
+                diffRefsByThreadId: new Map(),
+                overviewFindingIds: ["10"],
+                truncated: false,
+              }),
           }),
         ),
       );
@@ -633,6 +655,7 @@ describe("optional activity reads", () => {
                     comments: [comment],
                   },
                 ],
+                diffRefsByThreadId: new Map(),
                 overviewFindingIds: [],
                 truncated: false,
               }),
@@ -673,6 +696,7 @@ describe("optional activity reads", () => {
                     comments: [comment],
                   },
                 ],
+                diffRefsByThreadId: new Map(),
                 overviewFindingIds: [],
                 truncated: false,
               }),
@@ -684,6 +708,53 @@ describe("optional activity reads", () => {
 
       expect(activity.comments[0]?.url).toBe(`${webUrl}#note_42`);
       expect(activity.reviewThreads[0]?.comments[0]?.url).toBe(`${webUrl}#note_42`);
+    }),
+  );
+
+  it.effect("marks a thread outdated once the merge request's diff moves past it", () =>
+    Effect.gen(function* () {
+      let detailReads = 0;
+      const thread = (id: string) => ({
+        id,
+        path: "src/a.ts",
+        line: 3,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      });
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            getMergeRequestDetail: () =>
+              Effect.map(reads.getMergeRequestDetail(), (detail) => ({
+                ...detail,
+                diffRefs: ++detailReads === 1 ? { ...currentRefs, headSha: "head1" } : currentRefs,
+              })),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [thread("current"), thread("moved"), thread("unplaced")],
+                diffRefsByThreadId: new Map([
+                  ["current", currentRefs],
+                  ["moved", { ...currentRefs, headSha: "head1" }],
+                ]),
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const checks = provider.getChangeRequestChecks;
+      if (!checks) throw new Error("missing getChangeRequestChecks");
+      yield* checks(reference);
+      const { reviewThreads } = yield* provider.getChangeRequestActivity(reference);
+      expect(reviewThreads.map(({ id, isOutdated }) => [id, isOutdated])).toEqual([
+        ["current", false],
+        ["moved", true],
+        ["unplaced", false],
+      ]);
     }),
   );
 
@@ -750,6 +821,7 @@ describe("optional activity reads", () => {
                     ],
                   },
                 ],
+                diffRefsByThreadId: new Map(),
                 overviewFindingIds: [],
                 truncated: false,
               }),
@@ -800,6 +872,7 @@ describe("review decisions", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
   const providerWith = (
     getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],

@@ -14,7 +14,10 @@ vi.mock("~/speech/useTextFieldSpeech", () => ({
   useTextFieldSpeech: () => ({ blocksSubmission: true, submitAfterDictation: mocks.queue }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.submit }));
-vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: { submitReview: {} } }));
+vi.mock(import("~/state/pullRequests"), async (original) => ({
+  ...(await original()),
+  pullRequestEnvironment: { submitReview: {} } as never,
+}));
 
 it("submits only the line comments still in the draft when dictation finishes", async () => {
   mocks.submit.mockClear();
@@ -34,6 +37,7 @@ it("submits only the line comments still in the draft when dictation finishes", 
       active
       environmentId={EnvironmentId.make("test")}
       reference={reference}
+      completionScope={null}
       term="pull request"
       verdicts={["comment"]}
       requestChangesSummaryRequired={false}

@@ -16,6 +16,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestReferenceCandidate,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestReviewerCandidate,
@@ -45,6 +46,18 @@ const RawTriggerJobSchema = Schema.Struct({
   name: Schema.String,
   allow_failure: Schema.optional(Schema.NullOr(Schema.Boolean)),
   downstream_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
+});
+
+const RawDiffRefs = Schema.Struct({
+  base_sha: Schema.String,
+  head_sha: Schema.String,
+  start_sha: Schema.String,
+});
+
+const RawMergeRequestDiffRefs = Schema.Struct({
+  base_sha: Schema.NullOr(Schema.String),
+  head_sha: Schema.NullOr(Schema.String),
+  start_sha: Schema.NullOr(Schema.String),
 });
 
 const RawMergeRequestSchema = Schema.Struct({
@@ -79,6 +92,11 @@ const RawMergeRequestSchema = Schema.Struct({
   squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /** Only detail reads with include_diverged_commits_count return this expensive count. */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
+  source_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  target_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  /** Null on merge requests from the same project, where it means nothing. */
+  allow_collaboration: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  diff_refs: Schema.optional(Schema.NullOr(RawMergeRequestDiffRefs)),
 });
 
 const RawNoteSchema = Schema.Struct({
@@ -114,6 +132,9 @@ const RawDiscussionNoteSchema = Schema.Struct({
         old_path: Schema.optional(Schema.NullOr(Schema.String)),
         new_line: Schema.optional(Schema.NullOr(Schema.Int)),
         old_line: Schema.optional(Schema.NullOr(Schema.Int)),
+        base_sha: Schema.optional(Schema.NullOr(Schema.String)),
+        start_sha: Schema.optional(Schema.NullOr(Schema.String)),
+        head_sha: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
   ),
@@ -125,15 +146,7 @@ const RawDiscussionSchema = Schema.Struct({
 });
 
 const RawDiffRefsSchema = Schema.Struct({
-  diff_refs: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        base_sha: Schema.String,
-        head_sha: Schema.String,
-        start_sha: Schema.String,
-      }),
-    ),
-  ),
+  diff_refs: Schema.optional(Schema.NullOr(RawDiffRefs)),
 });
 
 const RawCommitSchema = Schema.Struct({
@@ -206,14 +219,21 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly viewerCanDeleteBranch?: boolean;
   /** Set by the detail read, which asks GraphQL; REST carries no label permission. */
   readonly viewerCanEditLabels?: boolean;
+  /** Every reviewer id, even one without a username to show, since writes replace the set. */
   readonly reviewerIds: ReadonlyArray<number>;
+  /** The candidate list leads with these, since one page of project users need not reach them. */
+  readonly reviewerUsers: ReadonlyArray<PullRequestActor & { readonly id: number }>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   /** Absent means not counted, not up to date. */
   readonly divergedCommits?: number;
   readonly headSha?: string;
+  readonly diffRefs?: GitLabDiffRefs;
   /** On a fork the pipeline often belongs to the source project, not the target. */
   readonly headPipeline?: { readonly id: number; readonly projectId: number };
+  /** Whether target maintainers may push to the source branch. Only set on merge requests from forks. */
+  readonly maintainerCanModify?: boolean;
+  readonly viewerCanEditMaintainerEdits?: boolean;
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -296,6 +316,162 @@ function toChecks(
   ];
 }
 
+export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      headPipeline {
+        path
+        stages(first: 100) {
+          nodes {
+            name
+            status
+            detailedStatus { label detailsPath }
+            jobs(first: 100) {
+              nodes {
+                name status allowFailure retried webPath detailedStatus { label }
+                downstreamPipeline { status path }
+              }
+              pageInfo { hasNextPage }
+            }
+          }
+          pageInfo { hasNextPage }
+        }
+      }
+    }
+  }
+}`;
+
+const OptionalString = Schema.optional(Schema.NullOr(Schema.String));
+
+const RawStageJobSchema = Schema.Struct({
+  name: OptionalString,
+  status: OptionalString,
+  allowFailure: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  retried: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  webPath: OptionalString,
+  detailedStatus: Schema.optional(Schema.NullOr(Schema.Struct({ label: OptionalString }))),
+  downstreamPipeline: Schema.optional(
+    Schema.NullOr(Schema.Struct({ status: OptionalString, path: OptionalString })),
+  ),
+});
+
+const RawStageSchema = Schema.Struct({
+  name: OptionalString,
+  status: OptionalString,
+  detailedStatus: Schema.optional(
+    Schema.NullOr(Schema.Struct({ label: OptionalString, detailsPath: OptionalString })),
+  ),
+  jobs: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.Array(Schema.NullOr(RawStageJobSchema)),
+        pageInfo: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({ hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)) }),
+          ),
+        ),
+      }),
+    ),
+  ),
+});
+
+const RawPipelineStagesSchema = Schema.Struct({
+  errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  data: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        project: Schema.NullOr(
+          Schema.Struct({
+            mergeRequest: Schema.NullOr(
+              Schema.Struct({
+                headPipeline: Schema.NullOr(
+                  Schema.Struct({
+                    path: OptionalString,
+                    stages: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Struct({
+                          nodes: Schema.Array(Schema.NullOr(RawStageSchema)),
+                          pageInfo: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Struct({
+                                hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                              }),
+                            ),
+                          ),
+                        }),
+                      ),
+                    ),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+
+const decodePipelineStages = decodeJsonResult(RawPipelineStagesSchema);
+
+/**
+ * The head pipeline as one check per job, named after its stage. A stage whose jobs GitLab did
+ * not list whole stays one check with GitLab's stage status. Null where there are no stages to
+ * show, or GitLab returned only some of them, so the caller keeps the single pipeline check.
+ */
+export function decodePipelineStageChecksJson(
+  raw: string,
+  origin: string,
+): Result.Result<ReadonlyArray<PullRequestCheck> | null, DecodeFailure> {
+  const decoded = decodePipelineStages(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const pipeline = decoded.success.data?.project?.mergeRequest?.headPipeline;
+  // Any stage left out could be the failed one, so a partial list is no list.
+  if (
+    (decoded.success.errors?.length ?? 0) > 0 ||
+    pipeline?.stages?.pageInfo?.hasNextPage === true ||
+    pipeline?.stages?.nodes.some((stage) => stage === null || trimmed(stage.name) === null) === true
+  ) {
+    return Result.succeed(null);
+  }
+  const link = (path: string | null) => (path?.startsWith("/") ? `${origin}${path}` : null);
+  const checks: Array<PullRequestCheck> = [];
+  for (const stage of pipeline?.stages?.nodes ?? []) {
+    const name = trimmed(stage?.name);
+    if (stage === null || name === null) continue;
+    const jobs = stage.jobs?.nodes ?? [];
+    const listedWhole =
+      jobs.length > 0 &&
+      stage.jobs?.pageInfo?.hasNextPage !== true &&
+      jobs.every((job) => job !== null && trimmed(job.name) !== null);
+    if (!listedWhole) {
+      checks.push({
+        name,
+        status: toPipelineStatus(stage.status),
+        description: trimmed(stage.detailedStatus?.label),
+        url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
+      });
+      continue;
+    }
+    for (const job of jobs) {
+      if (job === null || job.retried === true) continue;
+      // A trigger job reads as its downstream pipeline, as `decodeTriggerJobChecksJson` explains.
+      const downstream = job.downstreamPipeline;
+      const status = toPipelineStatus(downstream ? downstream.status : job.status);
+      checks.push({
+        name: `${name} / ${trimmed(job.name)}`,
+        // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
+        status: status === "failure" && job.allowFailure === true ? "neutral" : status,
+        description: downstream ? "Downstream pipeline" : trimmed(job.detailedStatus?.label),
+        url: link(trimmed(downstream ? downstream.path : job.webPath)),
+      });
+    }
+  }
+  return Result.succeed(checks.length === 0 ? null : checks);
+}
+
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
@@ -324,6 +500,11 @@ function toListItem(
 function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLabMergeRequestDetail {
   const listItem = toListItem(raw);
   const headSha = trimmed(raw.sha);
+  const refs = raw.diff_refs;
+  const diffRefs =
+    refs && refs.base_sha !== null && refs.head_sha !== null && refs.start_sha !== null
+      ? toDiffRefs({ base_sha: refs.base_sha, head_sha: refs.head_sha, start_sha: refs.start_sha })
+      : null;
   const autoMerge =
     raw.merge_when_pipeline_succeeds == null && raw.auto_merge_enabled == null
       ? undefined
@@ -343,15 +524,25 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
+    reviewerUsers: (raw.reviewers ?? []).flatMap((reviewer) => {
+      const actor = toActor(reviewer);
+      return actor === null || reviewer.id === undefined ? [] : [{ ...actor, id: reviewer.id }];
+    }),
     ...(autoMerge === undefined ? {} : { autoMergeEnabled: autoMerge }),
     ...(autoMerge === true && raw.squash_on_merge === true
       ? { autoMergeMethod: "squash" as const }
       : {}),
     ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
     ...(headSha === null ? {} : { headSha }),
+    ...(diffRefs === null ? {} : { diffRefs }),
     ...(raw.head_pipeline?.id == null || raw.head_pipeline.project_id == null
       ? {}
       : { headPipeline: { id: raw.head_pipeline.id, projectId: raw.head_pipeline.project_id } }),
+    ...(raw.source_project_id != null &&
+    raw.target_project_id != null &&
+    raw.source_project_id !== raw.target_project_id
+      ? { maintainerCanModify: raw.allow_collaboration === true }
+      : {}),
   };
 }
 
@@ -484,6 +675,40 @@ export function decodeProjectUsersJson(
   return Result.succeed({ candidates, rawCount: decoded.success.length });
 }
 
+const RawReferenceSchema = Schema.Struct({
+  iid: Schema.Number,
+  title: Schema.String,
+  state: Schema.String,
+});
+const decodeReferenceEntry = Schema.decodeUnknownExit(RawReferenceSchema);
+
+/** A list of issues (`#`) or merge requests (`!`), as composers reference them. */
+export function decodeReferenceCandidatesJson(
+  raw: string,
+  kind: PullRequestReferenceCandidate["kind"],
+): Result.Result<
+  { readonly items: ReadonlyArray<PullRequestReferenceCandidate>; readonly rawCount: number },
+  DecodeFailure
+> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const items: PullRequestReferenceCandidate[] = [];
+  for (const entry of decoded.success) {
+    const reference = decodeReferenceEntry(entry);
+    if (Exit.isFailure(reference) || !Number.isInteger(reference.value.iid)) continue;
+    if (reference.value.iid < 1) continue;
+    const { iid, title, state } = reference.value;
+    items.push({
+      reference: `${kind === "issue" ? "#" : "!"}${iid}`,
+      kind,
+      number: iid,
+      title,
+      state: state === "merged" ? "merged" : state === "opened" ? "open" : "closed",
+    });
+  }
+  return Result.succeed({ items, rawCount: decoded.success.length });
+}
+
 const RawLabelSchema = Schema.Struct({
   name: Schema.String,
   color: Schema.optional(Schema.NullOr(Schema.String)),
@@ -556,9 +781,15 @@ export interface GitLabDiffRefs {
 
 export interface GitLabDiscussions {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  /** GitLab moves a thread onto each new diff that still has its line; this is the last one. */
+  readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   /** First notes of unresolved discussions on the MR itself rather than a diff line. */
   readonly overviewFindingIds: ReadonlyArray<string>;
   readonly rawCount: number;
+}
+
+function toDiffRefs(raw: Schema.Schema.Type<typeof RawDiffRefs>): GitLabDiffRefs {
+  return { baseSha: raw.base_sha, headSha: raw.head_sha, startSha: raw.start_sha };
 }
 
 export function decodeDiscussionsJson(
@@ -569,6 +800,7 @@ export function decodeDiscussionsJson(
     return Result.fail(decoded.failure);
   }
   const threads: PullRequestReviewThread[] = [];
+  const diffRefsByThreadId = new Map<string, GitLabDiffRefs>();
   const overviewFindingIds: string[] = [];
   for (const entry of decoded.success) {
     const discussion = decodeDiscussionEntry(entry);
@@ -595,6 +827,13 @@ export function decodeDiscussionsJson(
       continue;
     }
     if (path === null) continue;
+    if (position.base_sha && position.start_sha && position.head_sha) {
+      diffRefsByThreadId.set(discussion.value.id, {
+        baseSha: position.base_sha,
+        startSha: position.start_sha,
+        headSha: position.head_sha,
+      });
+    }
     threads.push({
       id: discussion.value.id,
       path,
@@ -611,7 +850,12 @@ export function decodeDiscussionsJson(
       })),
     });
   }
-  return Result.succeed({ threads, overviewFindingIds, rawCount: decoded.success.length });
+  return Result.succeed({
+    threads,
+    diffRefsByThreadId,
+    overviewFindingIds,
+    rawCount: decoded.success.length,
+  });
 }
 
 export function decodeDiffRefsJson(
@@ -620,9 +864,7 @@ export function decodeDiffRefsJson(
   const decoded = decodeDiffRefs(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const refs = decoded.success.diff_refs;
-  return Result.succeed(
-    refs ? { baseSha: refs.base_sha, headSha: refs.head_sha, startSha: refs.start_sha } : null,
-  );
+  return Result.succeed(refs ? toDiffRefs(refs) : null);
 }
 
 export function decodeNotesJson(
@@ -1524,6 +1766,28 @@ export function decodeGraphqlListSupportJson(raw: string): Result.Result<boolean
   return Result.succeed(major > 17 || (major === 17 && minor >= 9));
 }
 
+const decodeMutationPayloads = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Record(
+      Schema.String,
+      Schema.NullOr(
+        Schema.Struct({ errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))) }),
+      ),
+    ),
+  }),
+);
+
+/** GitLab answers a refused mutation with HTTP 200 and the reasons in each payload's `errors`. */
+export function decodeMutationErrorsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string>, DecodeFailure> {
+  const decoded = decodeMutationPayloads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    Object.values(decoded.success.data).flatMap((payload) => payload?.errors ?? []),
+  );
+}
+
 /**
  * Line counts for merge requests of one project. The REST listing carries no line counts, and
  * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request
@@ -1617,6 +1881,67 @@ export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, D
         decoded.success.data.project?.mergeRequest?.userPermissions.adminMergeRequest === true,
       )
     : Result.fail(decoded.failure);
+}
+
+/**
+ * GitLab lets whoever can push to a fork's branch allow maintainer pushes, but once allowed the
+ * target's maintainers can push too, so only the author may change it, as on GitHub. GitLab
+ * drops the setting unless the source branch is unprotected and neither project is private
+ * (`MergeRequest#collaborative_push_possible?`).
+ */
+export const MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  currentUser { username }
+  project(fullPath: $fullPath) {
+    visibility
+    mergeRequest(iid: $iid) {
+      author { username }
+      userPermissions { pushToSourceBranch }
+      sourceBranchProtected
+      sourceProject { visibility }
+    }
+  }
+}`;
+
+const decodeMaintainerEditsPermission = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      currentUser: Schema.NullOr(Schema.Struct({ username: Schema.String })),
+      project: Schema.NullOr(
+        Schema.Struct({
+          visibility: Schema.NullOr(Schema.String),
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              author: Schema.NullOr(Schema.Struct({ username: Schema.String })),
+              userPermissions: Schema.Struct({ pushToSourceBranch: Schema.Boolean }),
+              sourceBranchProtected: Schema.Boolean,
+              sourceProject: Schema.NullOr(
+                Schema.Struct({ visibility: Schema.NullOr(Schema.String) }),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+export function decodeMaintainerEditsPermissionJson(
+  raw: string,
+): Result.Result<boolean, DecodeFailure> {
+  const decoded = decodeMaintainerEditsPermission(raw);
+  if (Result.isFailure(decoded)) return Result.fail(decoded.failure);
+  const { currentUser, project } = decoded.success.data;
+  const mergeRequest = project?.mergeRequest;
+  const isPublicOrInternal = (visibility: string | null | undefined) =>
+    visibility === "public" || visibility === "internal";
+  return Result.succeed(
+    currentUser !== null &&
+      mergeRequest?.author?.username === currentUser.username &&
+      mergeRequest.userPermissions.pushToSourceBranch &&
+      !mergeRequest.sourceBranchProtected &&
+      isPublicOrInternal(project?.visibility) &&
+      isPublicOrInternal(mergeRequest.sourceProject?.visibility),
+  );
 }
 
 /** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
