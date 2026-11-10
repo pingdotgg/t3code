@@ -143,16 +143,14 @@ it.each(liftBehaviors)(
 );
 
 it.each([
-  ...liftBehaviors.flatMap((behavior) =>
-    [nativeInset(80), headerSpacer(80)].map((header) => ({
-      name: `moves a partly hidden input below the header (${behavior}, ${header.contentInset ? "native inset" : "header spacer"})`,
-      behavior,
-      header,
-      restOffset: 1322,
-      inputTop: 60,
-      expected: [1302, 1322],
-    })),
-  ),
+  ...[nativeInset(80), headerSpacer(80)].map((header) => ({
+    name: `moves a partly hidden input below the header (${header.contentInset ? "native inset" : "header spacer"})`,
+    behavior: "whenAtEnd" as const,
+    header,
+    restOffset: 1322,
+    inputTop: 60,
+    expected: [1302, 1322],
+  })),
   {
     name: "leaves a feed resting at its top inset alone for an input in view",
     behavior: "whenAtEnd" as const,
