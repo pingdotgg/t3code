@@ -173,7 +173,7 @@ esac
       }
     } finally {
       managed?.kill();
-      NodeFS.rmSync(home, { recursive: true, force: true });
+      NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
     }
   });
 
