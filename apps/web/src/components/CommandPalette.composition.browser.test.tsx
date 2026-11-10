@@ -225,6 +225,24 @@ it.each(["", "Design system"])(
   },
 );
 
+it.each([
+  { name: "", expected: "second" },
+  { name: "My project", expected: "My project" },
+])("updates inferred names when changing folders: $name", async ({ name, expected }) => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("textbox", { name: "Project name" }).fill(name);
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/first");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.keyboard("{Tab}{Enter}");
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/second");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("textbox", { name: "Project name" })).toHaveValue(expected);
+});
+
 it.each([true, false])("creates a named project only with permission: %j", async (canOperate) => {
   setup();
   state.canOperate = canOperate;
