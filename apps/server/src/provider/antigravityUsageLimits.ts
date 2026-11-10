@@ -20,6 +20,10 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
+export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
+  return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
+}
+
 const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 // The ACP runtime meters consumer tiers on the daily host and GCP-terms tiers on prod.
@@ -124,6 +128,22 @@ function summaryResetTime(
       60_000;
   return untouched ? undefined : bucket.resetTime;
 }
+
+const sha256 = Effect.fnUntraced(function* (text: string) {
+  const digest = yield* (yield* Digest.Digest).digest(
+    Digest.sha256,
+    new TextEncoder().encode(text),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+});
+
+/** Keys an account by its Google ID, which matches across machines and hubs; refresh tokens do not. */
+export const antigravityAccountFingerprint = (userInfo: unknown) =>
+  decodeUserInfo(userInfo).pipe(Effect.flatMap((info) => sha256(`google-account\0${info.id}`)));
+
+/** Windows from a `retrieveUserQuotaSummary` answer requested at `requestedAt`. */
+export const antigravitySummaryWindows = (response: unknown, requestedAt: number) =>
+  decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt)));
 
 function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
@@ -321,7 +341,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
                   Authorization: `Bearer ${accessToken}`,
-                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                  "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
                 HttpClientRequest.bodyJsonUnsafe(
                   token.project_id ? { project: token.project_id } : {},
@@ -346,9 +366,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       }
       return [...windows.values()];
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response, requestedAt) =>
-      decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt))),
-    );
+    const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
     const windows = summary.length
       ? summary
       : yield* fetchWindows("fetchAvailableModels", (response) =>
