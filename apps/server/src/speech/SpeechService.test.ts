@@ -60,7 +60,7 @@ const modelDefinitions = vi.hoisted(() => [
     accuracy: 1,
     benchmark: {
       accuracy: { en: { grade: "A-", errorPercent: 4 } },
-      secondsPer30s: { accelerated: 1.2, cpu: 3 },
+      secondsPer30s: { cpu: 3, accelerated: 1.2 },
     },
     speed: 1,
     recommended: true,
@@ -149,31 +149,40 @@ it("rejects empty, misaligned, non-finite, and oversized PCM as invalid audio", 
   }
 });
 
-it.effect("prepares a batch model before audio arrives and reuses it for transcription", () =>
-  Effect.gen(function* () {
-    const speech = yield* SpeechService.SpeechService;
-    yield* speech.selectModel("fallback-model");
-    yield* speech.prepareModel;
-    expect(loadNative).toHaveBeenCalledTimes(1);
-    expect(native.transcribe).not.toHaveBeenCalled();
-    native.supportsStreaming = false;
-    yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream({
-        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        speechLanguage: "fr",
-        speechTranslateToEnglish: true,
-        speechSilenceFiltering: false,
+it.effect.each(["CPU", "Vulkan0"])(
+  "prepares a batch model on %s before audio arrives and reuses it for transcription",
+  (backend) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.selectModel("fallback-model");
+      loadNative.mockImplementationOnce(async () => {
+        native.backend = backend;
+        return native;
       });
-      expect(native.begin).toHaveBeenLastCalledWith(
-        { timestamps: "none", language: "fr", task: "translate", targetLanguage: "en" },
-        false,
-        "test.gguf",
-      );
-      expect(yield* stream.finish).toBe("hello");
-    }).pipe(Effect.scoped);
-    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
-    expect(loadNative).toHaveBeenCalledTimes(1);
-  }).pipe(Effect.provide(layer)),
+      yield* speech.prepareModel;
+      expect(yield* speech.status).toMatchObject({
+        benchmarkTier: backend === "CPU" ? "cpu" : "accelerated",
+      });
+      expect(loadNative).toHaveBeenCalledTimes(1);
+      expect(native.transcribe).not.toHaveBeenCalled();
+      native.supportsStreaming = false;
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream({
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: "fr",
+          speechTranslateToEnglish: true,
+          speechSilenceFiltering: false,
+        });
+        expect(native.begin).toHaveBeenLastCalledWith(
+          { timestamps: "none", language: "fr", task: "translate", targetLanguage: "en" },
+          false,
+          "test.gguf",
+        );
+        expect(yield* stream.finish).toBe("hello");
+      }).pipe(Effect.scoped);
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+      expect(loadNative).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect("sends the chosen language in the spelling the loaded model advertises", () =>
@@ -291,9 +300,9 @@ it.effect("rejects model mutations outside the offered registry", () =>
     const current = (yield* speech.models(false)).models.find((model) => model.active);
     expect(current?.id).toBe("test-model");
     expect(current).not.toHaveProperty("benchmark");
-    expect((yield* speech.models(true)).models.find((model) => model.active)?.benchmark).toEqual(
-      modelDefinitions[0]!.benchmark,
-    );
+    expect(
+      (yield* speech.models(true)).models.find((model) => model.active)?.benchmark?.secondsPer30s,
+    ).toEqual({ cpu: 3, accelerated: 1.2 });
   }).pipe(Effect.provide(layer)),
 );
 
@@ -676,17 +685,14 @@ it.effect.each([{ devices: [] }, { devices: [{ id: "gpu", name: "Test GPU" }] }]
         gpuDevices: devices,
         benchmarkTier: devices.length ? "accelerated" : "cpu",
       });
+      expect(yield* speech.updateAcceleration("cpu")).toMatchObject({ benchmarkTier: "cpu" });
+      expect(yield* speech.updateAcceleration('gpu:["vulkan","gpu-1"]')).toMatchObject({
+        benchmarkTier: "accelerated",
+      });
+      yield* speech.updateAcceleration("auto");
       yield* TestClock.adjust("1 minute");
       expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
       expect(discover).toHaveBeenCalledTimes(2);
-      yield* speech.updateAcceleration("cpu");
-      expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
-      yield* speech.updateAcceleration("gpu:test");
-      expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
-      yield* speech.updateAcceleration("auto");
-      loadNative.mockImplementationOnce(async () => ({ ...native, backend: "CPU" }));
-      yield* speech.prepareModel;
-      expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
     }).pipe(Effect.provide(layer)),
 );
 
@@ -718,10 +724,7 @@ it.effect(
           expect(yield* speech.transcribe(pcm(), options)).toBe(
             cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
           );
-          expect(yield* speech.status).toMatchObject({
-            acceleration: "auto",
-            benchmarkTier: "cpu",
-          });
+          expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
           expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
             "hello",
           );

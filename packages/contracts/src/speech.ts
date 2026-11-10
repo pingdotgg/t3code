@@ -124,14 +124,23 @@ export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.S
 export const SpeechBenchmarkTier = Schema.Literals(["cpu", "accelerated"]);
 export type SpeechBenchmarkTier = typeof SpeechBenchmarkTier.Type;
 
-const SpeechBenchmarkAccuracy = Schema.Record(
-  Schema.String,
-  Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
-);
+export const EnvironmentSpeechModelState = Schema.Literals([
+  "downloadable",
+  "downloading",
+  "verifying",
+  "installed",
+]);
+export type EnvironmentSpeechModelState = typeof EnvironmentSpeechModelState.Type;
+
+// A missing CPU field identifies a legacy server; null means a current catalog has no measurement.
 const SpeechBenchmarkTimes = Schema.Struct({
   cpu: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
   accelerated: Schema.NullOr(Schema.Finite),
 });
+const SpeechBenchmarkAccuracy = Schema.Record(
+  Schema.String,
+  Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
+);
 const SpeechBenchmark = Schema.Struct({
   accuracy: SpeechBenchmarkAccuracy,
   secondsPer30s: SpeechBenchmarkTimes,
@@ -141,14 +150,6 @@ const SpeechBenchmarkWire = Schema.Struct({
   secondsPer30s: Schema.Union([SpeechBenchmarkTimes, Schema.NullOr(Schema.Finite)]),
   cpuSecondsPer30s: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
 });
-
-export const EnvironmentSpeechModelState = Schema.Literals([
-  "downloadable",
-  "downloading",
-  "verifying",
-  "installed",
-]);
-export type EnvironmentSpeechModelState = typeof EnvironmentSpeechModelState.Type;
 
 export const EnvironmentSpeechModel = Schema.Struct({
   id: SpeechModelId,
