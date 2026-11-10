@@ -246,7 +246,7 @@ jobs:
               | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
           fi
           echo "link=$link" >> "$GITHUB_OUTPUT"
-          if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
+          echo "build=true" >> "$GITHUB_OUTPUT" # TEMP-TEST: always build once more
           echo "android fingerprint \`$hash\`: ${link:-no client yet, building on Blacksmith}" >> "$GITHUB_STEP_SUMMARY"
 
       - id: update
@@ -285,7 +285,7 @@ jobs:
       MOBILE_VERSION_POLICY: fingerprint
       EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
       FINGERPRINT: ${{ needs.android.outputs.fingerprint }}
-      BUILD_TAG: mobile-android-preview-build/${{ needs.android.outputs.fingerprint }}
+      BUILD_TAG: mobile-android-preview-build-test/${{ needs.android.outputs.fingerprint }} # TEMP-TEST
       # Phones only: emulators use the development client from the native-client cache.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
     steps:
