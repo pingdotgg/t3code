@@ -13,7 +13,9 @@ import {
   type ThreadSortInput,
 } from "./threadSort.ts";
 
-type TestThread = { readonly id: string } & ThreadSortInput;
+type TestThread = { readonly id: string } & ThreadSortInput & {
+    readonly latestUserAuthoredMessageAt?: string | null;
+  };
 
 function makeThread(overrides: Partial<TestThread> = {}): TestThread {
   return {
@@ -171,6 +173,26 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+
+  it("orders last user message by what the user wrote, not agent messages in the user role", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "agent-posted",
+          latestUserAuthoredMessageAt: "2026-03-09T10:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:30:00.000Z",
+        }),
+        makeThread({
+          id: "user-wrote",
+          latestUserAuthoredMessageAt: "2026-03-09T10:10:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["user-wrote", "agent-posted"]);
   });
 });
 
