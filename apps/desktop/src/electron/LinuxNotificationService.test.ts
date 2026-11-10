@@ -98,26 +98,18 @@ it("keeps notifications off after activation fails and probes again on the next 
   service.stop();
 });
 
-it("withdraws notifications when the notification service exits or the bus fails", async () => {
+it("keeps notifications after an idle-exit daemon quits and withdraws them when the bus fails", async () => {
   const bus = new FakeBus();
   const service = watch(bus);
-  expect(bus.calls[0]).toMatchObject({
-    member: "AddMatch",
-    body: [expect.stringContaining("arg0='org.freedesktop.Notifications'")],
-  });
 
   await bus.answer(0, 1);
   expect(service.available()).toBe(true);
 
-  bus.nameOwnerChanged(":1.42", ":1.43");
+  // Idle-exit daemons such as mate-notification-daemon drop their name after 30 idle seconds
+  // and are reactivated quickly by the next notification.
+  bus.nameOwnerChanged(":1.42", "");
   expect(service.available()).toBe(true);
-
-  bus.nameOwnerChanged(":1.43", "");
-  expect(service.available()).toBe(false);
-  expect(bus.probes).toHaveLength(2);
-
-  await bus.answer(1, 1);
-  expect(service.available()).toBe(true);
+  expect(bus.probes).toHaveLength(1);
 
   bus.emit("error", new Error("connection reset"));
   expect(service.available()).toBe(false);
