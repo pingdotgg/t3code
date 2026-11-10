@@ -929,11 +929,19 @@ export const make = Effect.gen(function* () {
       ),
       (thread) => readAwarenessThread(thread.id),
     );
+    const candidates = [
+      ...activitySnapshot.threads,
+      ...liveChildren.filter((thread) => thread !== null),
+    ];
+    // Waiting children go first so a backfilled parent publishes their wait, not its completion.
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       now: nowMs,
       projects: projectSnapshot.projects,
-      threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
+      threads: [
+        ...candidates.filter(subagentAwaitsApproval),
+        ...candidates.filter((thread) => !subagentAwaitsApproval(thread)),
+      ],
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
