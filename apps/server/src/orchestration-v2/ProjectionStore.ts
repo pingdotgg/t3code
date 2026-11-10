@@ -2002,11 +2002,20 @@ function shellFromState(input: {
 }
 
 // Dynamic tool output the client renders inline (HTML, MCP apps, viewed images, delegated
-// tasks), so its work group never defers. Mirrors the LIKE backfill in migration 081.
-const INLINE_WORK_OUTPUT = new RegExp(
-  `htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"|"toolName":".*delegate.task"`,
-  "is",
-);
+// tasks), so its work group never defers. Mirrors the LIKE backfill in migration 081, where
+// delegate_task" counts anywhere after the first toolName. Searching from that first one
+// once avoids rescanning the payload for every nested toolName.
+const INLINE_WORK_OUTPUT = new RegExp(`htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"`, "i");
+const TOOL_NAME_PREFIX = /"toolName":"/i;
+const DELEGATE_TASK = /delegate.task"/is;
+
+const isInlineWorkOutput = (payloadJson: string) => {
+  if (INLINE_WORK_OUTPUT.test(payloadJson)) return true;
+  const toolName = TOOL_NAME_PREFIX.exec(payloadJson);
+  return (
+    toolName !== null && DELEGATE_TASK.test(payloadJson.slice(toolName.index + toolName[0].length))
+  );
+};
 
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
@@ -2686,7 +2695,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${updatedAt},
                 ${payloadJson},
-                ${event.payload.type === "dynamic_tool" && INLINE_WORK_OUTPUT.test(payloadJson) ? 1 : 0}
+                ${event.payload.type === "dynamic_tool" && isInlineWorkOutput(payloadJson) ? 1 : 0}
               )
               ON CONFLICT(turn_item_id)
               DO UPDATE SET

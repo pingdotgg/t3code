@@ -3420,6 +3420,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       for (const inline of [
         { toolName: "t3-code.delegate_task" },
         { toolName: "mcp__t3_code__delegate_task" },
+        { toolName: "mcp__docs__search", output: { next: "Delegate-Task" } },
         { toolName: "view_image", viewedImagePath: "/repo/screenshot.png" },
         { toolName: "mcp__docs__chart", output: { [MCP_APP_OUTPUT_KEY]: { uri: "ui://chart" } } },
       ]) {
