@@ -33,7 +33,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
-import { SUPPLEMENTAL_ACP_AGENT_RECORDS, appendMissingAgents } from "./supplementalAgents.ts";
+import {
+  SUPPLEMENTAL_ACP_AGENT_RECORDS,
+  appendMissingAgents,
+  supplementalPathCommand,
+} from "./supplementalAgents.ts";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1693,7 +1697,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
-      if (distribution.kind === "binary") {
+      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommand =
+        localCommandName === undefined
+          ? undefined
+          : resolveExecutable(localCommandName, platform, hostEnvironment);
+      if (localCommand !== undefined) {
+        yield* validateLocalExecutable(localCommand);
+      } else if (distribution.kind === "binary") {
         // Only explicit command overrides may use PATH copies with different ACP capabilities.
         yield* withInstallPermit(agent.id)(
           installBinary(agent, distribution.binaryTarget!).pipe(
@@ -1798,6 +1809,22 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               distribution: distribution.kind,
               runner: commandOverride,
             } as const);
+      }
+
+      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommand =
+        localCommandName === undefined
+          ? undefined
+          : resolveExecutable(localCommandName, platform, environment ?? hostEnvironment);
+      if (localCommand !== undefined) {
+        yield* validateLocalExecutable(localCommand);
+        return {
+          status: "ready",
+          agentId,
+          version: null,
+          distribution: "local",
+          ...(documentationUrl ? { documentationUrl } : {}),
+        } as const;
       }
 
       if (distribution.kind === "binary") {
@@ -1910,6 +1937,31 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       let commandBinDirectory: string | undefined;
       const effectiveEnvironment = environment ?? hostEnvironment;
       const commandOverride = settings.commandPath.trim();
+      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommand =
+        commandOverride.length === 0 && localCommandName !== undefined
+          ? resolveExecutable(localCommandName, platform, effectiveEnvironment)
+          : undefined;
+      if (localCommand !== undefined) {
+        yield* validateLocalExecutable(localCommand);
+        const launched = launchLocalExecutable(
+          localCommand,
+          distribution.args,
+          effectiveEnvironment,
+        );
+        if (isAcpRegistryError(launched)) return yield* launched;
+        return {
+          agent,
+          distribution: "local",
+          spawn: {
+            command: launched.command,
+            args: launched.args,
+            cwd,
+            env: effectiveEnvironment,
+            shell: false,
+          },
+        } satisfies ResolvedAcpRegistryAgent;
+      }
       if (commandOverride.length > 0) {
         const resolvedOverride = resolveExecutable(commandOverride, platform, effectiveEnvironment);
         if (resolvedOverride === undefined) {

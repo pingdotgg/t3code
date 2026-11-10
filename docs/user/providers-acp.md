@@ -35,8 +35,10 @@ Search also lists DeepSeek Harness and ZCode. T3 Code installs those itself:
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh --profile acp` from `@deepseek-ai/dsh`             |
 | [ZCode bridge](https://github.com/supermomonga/zcode-acp)           | the `zcode-acp` binary from the bridge's GitHub release |
 
-DeepSeek Harness is the `dsh` CLI. Its ACP mode is a profile, not a separate program. Credentials
-stay in the `dsh` profile, and the sign-in step can be skipped when the CLI advertises no login.
+DeepSeek Harness is the `dsh` CLI. When `dsh` is already installed, T3 Code runs that copy with
+`--profile acp` and keeps the credentials already stored in its profile. Otherwise T3 Code installs
+`@deepseek-ai/dsh`. ACP mode is a profile, not a separate program, and the sign-in step can be
+skipped when the CLI advertises no login.
 ZCode still needs a compatible ZCode desktop installation. The bridge is unofficial. Select **Add**
 for either agent, then complete the sign-in step.
 

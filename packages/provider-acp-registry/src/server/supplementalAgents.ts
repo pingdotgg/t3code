@@ -6,7 +6,7 @@ export const SUPPLEMENTAL_ACP_AGENT_RECORDS = [
     name: "DeepSeek Harness",
     version: "0.2.2-rc.1",
     description:
-      "DeepSeek Harness CLI. T3 installs dsh and starts it with --profile acp. Credentials stay in the dsh profile.",
+      "DeepSeek Harness CLI. T3 runs an installed dsh with --profile acp, and installs @deepseek-ai/dsh only when dsh is not already on PATH. Credentials stay in the dsh profile.",
     authors: ["DeepSeek"],
     license: "MIT",
     website: "https://github.com/deepseek-ai/deepseek-harness",
@@ -63,6 +63,11 @@ export const SUPPLEMENTAL_ACP_AGENT_RECORDS = [
     },
   },
 ] as const;
+
+/** Prefer this PATH command over a fresh install. Absent for agents that must be downloaded. */
+export function supplementalPathCommand(agentId: string): string | undefined {
+  return agentId === "deepseek-harness" ? "dsh" : undefined;
+}
 
 export function appendMissingAgents<Agent extends { readonly id: string }>(
   agents: ReadonlyArray<Agent>,

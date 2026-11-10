@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { supplementalAcpAgents } from "./AcpRegistrySupport.ts";
-import { appendMissingAgents } from "./supplementalAgents.ts";
+import { appendMissingAgents, supplementalPathCommand } from "./supplementalAgents.ts";
 
 describe("supplemental ACP agents", () => {
   it("registers DeepSeek Harness and the ZCode bridge", () => {
@@ -16,6 +16,11 @@ describe("supplemental ACP agents", () => {
     expect(supplementalAcpAgents[1]?.distribution.binary?.["windows-x86_64"]?.cmd).toBe(
       "zcode-acp.exe",
     );
+  });
+
+  it("uses an installed dsh before downloading DeepSeek Harness", () => {
+    expect(supplementalPathCommand("deepseek-harness")).toBe("dsh");
+    expect(supplementalPathCommand("zcode-acp")).toBeUndefined();
   });
 
   it("keeps an official entry when the same id is already published", () => {
