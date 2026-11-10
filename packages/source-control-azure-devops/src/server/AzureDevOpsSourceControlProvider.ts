@@ -94,7 +94,7 @@ export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
   const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-  /** Branch lookups date a pull request the same way the pull request panel does. */
+  /** A pull request read by reference is dated the same way the pull request panel does. */
   const dated = (cwd: string) => (record: NormalizedAzureDevOpsPullRequestRecord) =>
     pullRequests
       .activityAt({
@@ -125,39 +125,32 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const listed = azure.listPullRequests({
-          cwd: input.cwd,
-          headSelector: input.headSelector,
-          ...(source !== undefined ? { source } : {}),
-          state: input.state,
-          ...(input.limit !== undefined ? { limit: input.limit } : {}),
-        });
-        // Branch status dates every state; an open-only lookup just asks whether one exists.
-        return (
-          input.state === "open"
-            ? listed
-            : listed.pipe(
-                Effect.flatMap((items) =>
-                  Effect.forEach(items, dated(input.cwd), { concurrency: "unbounded" }),
-                ),
-              )
-        ).pipe(
-          Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "listChangeRequests",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        );
+        // Rows are candidates that include forks' same-named branches, so they stay undated.
+        return azure
+          .listPullRequests({
+            cwd: input.cwd,
+            headSelector: input.headSelector,
+            ...(source !== undefined ? { source } : {}),
+            state: input.state,
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          })
+          .pipe(
+            Effect.map((items) => items.map(toChangeRequest)),
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "listChangeRequests",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.headSelector,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
       },
     ),
     getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(

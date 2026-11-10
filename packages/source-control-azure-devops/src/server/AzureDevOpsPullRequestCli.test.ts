@@ -154,6 +154,7 @@ it.effect(
         isDraft: false,
         lastMergeSourceCommit: { commitId: "a".repeat(40) },
       };
+      let forks: ReadonlyArray<Record<string, unknown>> = [];
       let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
       let threadsAsked = yield* Deferred.make<void>();
       let threadsAnswer = yield* Deferred.make<void>();
@@ -171,7 +172,9 @@ it.effect(
         if (args.includes("pullRequestIterationChanges")) {
           return Effect.succeed(output(json({ changeEntries: [] })));
         }
-        return Effect.succeed(output(JSON.stringify(args.includes("list") ? [shown] : shown)));
+        return Effect.succeed(
+          output(JSON.stringify(args.includes("list") ? [shown, ...forks] : shown)),
+        );
       });
       const threadReads = () =>
         mockedRun.mock.calls.filter(([call]) => call.args.includes("pullRequestThreads")).length;
@@ -219,16 +222,22 @@ it.effect(
       });
       const branchLookup = (state: "open" | "all") =>
         sourceControl
-          .listChangeRequests({ cwd: "/w", headSelector: "feat/page", state, limit: 1 })
-          .pipe(
-            Effect.map((rows) => rows.map((row) => Option.map(row.updatedAt, DateTime.formatIso))),
-          );
-      // Asking whether the branch has an open pull request needs no date.
-      yield* branchLookup("open");
+          .listChangeRequests({ cwd: "/w", headSelector: "feat/page", state, limit: 100 })
+          .pipe(Effect.map((rows) => rows.map((row) => [row.number, row.isCrossRepository])));
+      // Branch lookups list candidates, including forks' same-named branches, without dating them.
+      forks = pullRequestRows(3, 100).map((row) => ({ ...row, forkSource: {} }));
+      const candidates = [
+        [42, false],
+        [100, true],
+        [101, true],
+        [102, true],
+      ];
+      expect(yield* branchLookup("open")).toEqual(candidates);
+      expect(yield* branchLookup("all")).toEqual(candidates);
       expect(threadReads()).toBe(3);
+      forks = [];
       expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
       expect(threadReads()).toBe(4);
-      expect(yield* branchLookup("all")).toEqual([Option.some("2026-07-10T11:05:00.000Z")]);
 
       threads = "not json";
       yield* TestClock.adjust("61 seconds");
