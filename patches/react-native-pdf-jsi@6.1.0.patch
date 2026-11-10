@@ -1,0 +1,71 @@
+diff --git a/android/src/main/java/org/wonday/pdf/viewer/PdfViewerView.kt b/android/src/main/java/org/wonday/pdf/viewer/PdfViewerView.kt
+index c51515507544fb7a56f029fff8ea2b1ee35cbe9d..2de8b3ecfa0b75d55f0868c700a0a56b83c17053 100644
+--- a/android/src/main/java/org/wonday/pdf/viewer/PdfViewerView.kt
++++ b/android/src/main/java/org/wonday/pdf/viewer/PdfViewerView.kt
+@@ -21,6 +21,7 @@ import org.json.JSONArray
+ import org.json.JSONObject
+ import kotlin.math.abs
+ import kotlin.math.ceil
++import kotlin.math.hypot
+ import kotlin.math.max
+ import kotlin.math.min
+ import kotlin.math.roundToInt
+@@ -40,6 +41,10 @@ data class PdfHighlightRect(val page: Int, val x: Float, val y: Float, val width
+  * Page and scale events are sent only once scrolling and zooming have settled.
+  */
+ class PdfViewerView(context: Context) : View(context) {
++    private companion object {
++        const val LINK_TAP_SLOP_DP = 10f
++    }
++
+     var onEvent: ((JSONObject) -> Unit)? = null
+ 
+     private val main = Handler(Looper.getMainLooper())
+@@ -109,10 +114,9 @@ class PdfViewerView(context: Context) : View(context) {
+     private val scratch = RectF()
+ 
+     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+-        override fun onDown(e: MotionEvent): Boolean {
+-            stopMotion()
+-            return true
+-        }
++        // Motion stops in onTouchEvent: GestureDetector calls onDown after onDoubleTap for the
++        // same event, so stopping here would cancel the zoom the double tap just started.
++        override fun onDown(e: MotionEvent): Boolean = true
+ 
+         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+             if (!scrollEnabled || scaling) return false
+@@ -694,6 +698,7 @@ class PdfViewerView(context: Context) : View(context) {
+         when (event.actionMasked) {
+             MotionEvent.ACTION_DOWN -> {
+                 touching = true
++                stopMotion()
+                 if (scrollEnabled) parent?.requestDisallowInterceptTouchEvent(true)
+             }
+             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touching = false
+@@ -804,7 +809,11 @@ class PdfViewerView(context: Context) : View(context) {
+             val pointX = (x - rect.left) / scale
+             val pointY = (y - rect.top) / scale
+             val docPage = pageBase + index
+-            val hit = linksFor(docPage).firstOrNull { it.contains(pointX, pointY) }
++            // Links such as citations are only a few glyphs wide, so a tap near one still counts.
++            val slop = LINK_TAP_SLOP_DP * density / scale
++            val hit = linksFor(docPage)
++                .filter { it.distanceTo(pointX, pointY) <= slop }
++                .minByOrNull { it.distanceTo(pointX, pointY) }
+             when {
+                 hit?.uri != null -> emit(JSONObject().put("type", "link").put("url", hit.uri))
+                 hit != null && hit.page >= 0 -> goToPage(hit.page, true)
+@@ -818,7 +827,11 @@ class PdfViewerView(context: Context) : View(context) {
+     }
+ 
+     private class PageLinkHit(val x: Float, val y: Float, val width: Float, val height: Float, val page: Int, val uri: String?) {
+-        fun contains(px: Float, py: Float) = px >= x && px <= x + width && py >= y && py <= y + height
++        fun distanceTo(px: Float, py: Float): Float {
++            val dx = max(0f, max(x - px, px - (x + width)))
++            val dy = max(0f, max(y - py, py - (y + height)))
++            return hypot(dx, dy)
++        }
+     }
+ 
+     private fun linksFor(docPage: Int): List<PageLinkHit> = links.getOrPut(docPage) {

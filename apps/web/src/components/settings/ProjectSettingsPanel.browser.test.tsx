@@ -138,6 +138,7 @@ import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
 import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
@@ -533,6 +534,48 @@ describe("project identity reset", () => {
   });
 });
 
+it("opens the fallback search target across all environments from a checkout", async () => {
+  setup();
+  const root = createRootRoute();
+  const settings = createRoute({
+    getParentRoute: () => root,
+    path: "settings",
+    validateSearch: validateSettingsRouteSearch,
+    search: { middlewares: [retainSettingsScope] },
+  });
+  const threads = createRoute({
+    getParentRoute: () => settings,
+    path: "threads",
+    component: () => (
+      <SettingsScopeProvider search={settings.useSearch()} onChange={() => {}}>
+        <SettingsScopeNotice target="all" targetId="fallback-model">
+          Choose all environments to edit the fallback model.
+        </SettingsScopeNotice>
+      </SettingsScopeProvider>
+    ),
+  });
+  const query = new URLSearchParams({
+    project: projectKey(),
+    machine: primaryId,
+    checkout: "primary:/work/primary",
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([settings.addChildren([threads])]),
+    history: createMemoryHistory({ initialEntries: [`/settings/threads?${query}#fallback-model`] }),
+  });
+  await router.load();
+  // This route needs the real scope-retention middleware used by settings search.
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <RouterProvider router={router} />
+    </RegistryContext.Provider>,
+    { router: false },
+  );
+  await userEvent.click(page.getByRole("button", { name: "Open all environments" }));
+  await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  expect(router.state.location.hash).toBe("fallback-model");
+});
+
 describe("project settings scope", () => {
   const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
   const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
@@ -626,5 +669,38 @@ it("returns to the project overview after removal, clearing the selection but ke
   await vi.waitFor(() => {
     expect(screen.router.state.location.pathname).toBe("/settings/projects");
     expect(screen.router.state.location.search).toEqual({ machine: remoteId });
+  });
+});
+
+describe("project name composition", () => {
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 },
+  ])("does not save a partial name for $isComposing/$keyCode", async (composition) => {
+    setup();
+    await using screen = await mountPanel();
+    const input = nameInput(screen);
+    await userEvent.fill(input, "日本");
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...composition }),
+      );
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    await expect.element(input).toHaveFocus();
+
+    await userEvent.type(input, "語");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(state.projects.map((project) => project.title)).toEqual(["日本語", "日本語"]);
+    await expect.element(nameInput(screen)).toHaveValue("日本語");
+
+    await userEvent.fill(nameInput(screen), "日本語の名前");
+    await userEvent.keyboard("{Tab}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(4));
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "日本語の名前",
+      "日本語の名前",
+    ]);
   });
 });
