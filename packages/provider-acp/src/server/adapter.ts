@@ -6108,9 +6108,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const context = yield* Ref.get(activeTurn);
           if (context === null || context.finalized) return;
           if (context.subagentsBySessionId.has(notice.childSessionId)) return;
-          // A spawn tool's subagent learns its child session only from the tool result.
+          // The spawn tool call precedes its notice; bind its row now instead of at the tool result.
           for (const subagent of context.subagents.values()) {
-            if (subagent.childSessionId === null && subagent.task.title === notice.title) return;
+            if (subagent.childSessionId !== null || subagent.task.title !== notice.title) continue;
+            if (acpSubagentStatusIsTerminal(subagent.task.status)) continue;
+            yield* emitSubagent(context, {
+              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
+              prompt: subagent.task.prompt,
+              title: subagent.task.title,
+              model: subagent.task.model ?? notice.model,
+              status: "running",
+              childSessionId: notice.childSessionId,
+              result: null,
+              suppressNormalTool: true,
+            });
+            return;
           }
           yield* emitSubagent(context, {
             nativeTaskId: notice.childSessionId,

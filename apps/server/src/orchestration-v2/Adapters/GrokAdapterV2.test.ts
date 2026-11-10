@@ -728,13 +728,17 @@ describe("Grok goal subagents", () => {
         runtimePolicy: policy,
       });
       const childThreadTitles: Array<string> = [];
-      const subagentStates: Array<{ title: string | null; status: string }> = [];
+      const subagentStates: Array<{ title: string | null; status: string; bound: boolean }> = [];
       const terminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) => {
           if (event.type === "app_thread.created") childThreadTitles.push(event.appThread.title);
           if (event.type === "subagent.updated")
-            subagentStates.push({ title: event.subagent.title, status: event.subagent.status });
+            subagentStates.push({
+              title: event.subagent.title,
+              status: event.subagent.status,
+              bound: event.subagent.providerThreadId !== null,
+            });
           if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
           return Effect.void;
         }),
@@ -816,13 +820,13 @@ describe("Grok goal subagents", () => {
       ]);
       assert.deepEqual(childThreadTitles, ["goal plan writer"]);
       assert.deepEqual(subagentStates, [
-        { title: "goal plan writer", status: "running" },
-        { title: "goal plan writer", status: "completed" },
+        { title: "goal plan writer", status: "running", bound: true },
+        { title: "goal plan writer", status: "completed", bound: true },
       ]);
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 
-  it.live("keeps one subagent when a spawn tool call precedes subagent_spawned", () =>
+  it.live("binds one running subagent when a spawn tool call precedes subagent_spawned", () =>
     Effect.gen(function* () {
       const childSessionId = "01a1a0a6-c174-7d71-9b21-e32e6e069feb";
       const toolCallId = "call-4149c7b9-9bc9-458e-96f0-70878f609cb7-0";
@@ -880,7 +884,12 @@ describe("Grok goal subagents", () => {
         }),
       ]);
       assert.deepEqual(childThreadTitles, [description]);
-      assert.deepEqual(subagentStates.at(-1), { title: description, status: "completed" });
+      assert.isTrue(subagentStates.some((state) => state.status === "running" && state.bound));
+      assert.deepEqual(subagentStates.at(-1), {
+        title: description,
+        status: "completed",
+        bound: true,
+      });
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 });
