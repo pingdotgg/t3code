@@ -802,6 +802,62 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
+  it.effect("rejects old-account preference updates without changing the new account", () => {
+    const landed: Array<{ readonly preferences: unknown }> = [];
+    const arrived = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<void>();
+    let requests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      const body = await request.json();
+      if (++requests === 2) {
+        arrived.resolve();
+        await response.promise;
+      }
+      landed.push(body);
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      const inFlight = yield* Effect.forkChild(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+      yield* Effect.promise(() => arrived.promise);
+      const waiting = yield* Effect.forkChild(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+        { startImmediately: true },
+      );
+      setAgentAwarenessRelayTokenProvider(null);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-b"), "user-b");
+      yield* runBackgroundOperations();
+      expect(landed.at(-1)?.preferences).toMatchObject({ liveActivitiesEnabled: false });
+      response.resolve();
+      for (const fiber of [inFlight, waiting]) {
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true);
+      }
+      vi.mocked(loadAgentAwarenessRegistrationRecord).mockResolvedValueOnce(null);
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrationRecordStore.current?.identity).toBe("user-b");
+      expect(landed.at(-1)?.preferences).toMatchObject({ liveActivitiesEnabled: false });
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect.each(["ios", "android"] as const)(
     "does not enable %s notifications when a token rotates after permission is revoked",
     (os) => {

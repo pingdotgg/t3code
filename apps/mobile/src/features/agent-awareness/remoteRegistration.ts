@@ -913,20 +913,29 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
   );
 }
 
-export function updateAgentAwarenessRegistrationPreferences(
-  preferencesOverride: Partial<Preferences>,
-): Effect.Effect<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
-  return registerDevice({ preferencesOverride }).pipe(
-    Effect.tapError((error) =>
-      Effect.sync(() => {
-        if (registrationStatus !== "registered") {
-          setRegistrationStatus("failed");
-        }
-        logRegistrationError("device preference registration refresh failed", error);
-      }),
-    ),
-  );
+export function getAgentAwarenessRegistrationGeneration(): number {
+  return deviceRegistrationGeneration;
 }
+
+export const updateAgentAwarenessRegistrationPreferences = Effect.fn(
+  "remoteRegistration.updateAgentAwarenessRegistrationPreferences",
+)(
+  function* (
+    preferencesOverride: Partial<Preferences>,
+  ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
+    const generation = deviceRegistrationGeneration;
+    yield* registerDevice({ preferencesOverride });
+    if (generation !== deviceRegistrationGeneration) yield* Effect.interrupt;
+  },
+  Effect.tapError((error) =>
+    Effect.sync(() => {
+      if (registrationStatus !== "registered") {
+        setRegistrationStatus("failed");
+      }
+      logRegistrationError("device preference registration refresh failed", error);
+    }),
+  ),
+);
 
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pushTokenSubscription?.remove();
