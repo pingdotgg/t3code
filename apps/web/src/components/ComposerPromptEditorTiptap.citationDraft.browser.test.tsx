@@ -31,9 +31,11 @@ const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 function Composer({
   question,
   editorRef,
+  sendBlocked = false,
 }: {
   question: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+  sendBlocked?: boolean;
 }) {
   const [prompt, setPrompt] = useState(promptBefore);
   const [answer, setAnswer] = useState("");
@@ -61,7 +63,11 @@ function Composer({
         onCitationDraftSave={(replacedValue, savedValue) => {
           if (replacedValue === prompt) setPrompt(savedValue);
         }}
-        onCitationSubmitAndSend={() => setPrompt("")}
+        onCitationSubmitAndSend={() => {
+          if (sendBlocked) return false;
+          setPrompt("");
+          return true;
+        }}
         onPaste={() => {}}
       />
     </>
@@ -122,4 +128,31 @@ it("clears the sent prompt when an empty citation comment sends it", async () =>
   await expect.element(comment).not.toBeInTheDocument();
   expect(drafts()?.prompt).toBe("");
   await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
+});
+
+it("keeps the caret after the citation when save-and-send is blocked", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(
+    <Composer question={false} editorRef={editorRef} sendBlocked />,
+  );
+  const drafts = () => screen.container.querySelector("output")?.dataset;
+
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      sourceAnchor,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toHaveFocus();
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await expect.element(comment).not.toBeInTheDocument();
+  await userEvent.keyboard("x");
+
+  await expect.poll(() => drafts()?.prompt).toBe(`See ${serializeAssistantCitation(citation)}x `);
 });
