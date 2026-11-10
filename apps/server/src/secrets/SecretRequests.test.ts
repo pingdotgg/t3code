@@ -6,10 +6,15 @@ import {
   OrchestratorMcpRequestSecretInput,
   ProjectId,
   type OrchestrationV2ServerCommand,
+  SecretProviderId,
+  SecretProviderKind,
   SecretRef,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { defineSecretProvider } from "@t3tools/secret-provider-core/shared/definition";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -32,6 +37,35 @@ const projectId = ProjectId.make("project-1");
 const decodeSecretInput = Schema.decodeUnknownEffect(OrchestratorMcpRequestSecretInput);
 const decodeSecretInputExit = Schema.decodeUnknownExit(OrchestratorMcpRequestSecretInput);
 
+const FAKE_KIND = SecretProviderKind.make("fake");
+const vault = SecretProviderId.make("vault");
+/** Reads `fake://` references from `values` while unlocked, as a password manager would. */
+const fakeVault = () => {
+  const state = { unlocked: true, values: new Map([["fake://github/token", "ghp_from_vault"]]) };
+  const driver = defineSecretProviderDriver({
+    kind: FAKE_KIND,
+    definition: defineSecretProvider({
+      kind: FAKE_KIND,
+      label: "Fake",
+      configSchema: Schema.Struct({}),
+      isReference: (reference) => reference.startsWith("fake://"),
+      referencePlaceholder: "fake://item",
+      invalidReferenceMessage: "Use fake://item.",
+    }),
+    read: (_config, references) =>
+      Effect.sync(() =>
+        references.map((reference) => (state.unlocked ? state.values.get(reference) : undefined)),
+      ),
+  });
+  return {
+    state,
+    layer: SecretResolver.layer({
+      drivers: [driver],
+      secretProviders: Effect.succeed({ [vault]: { kind: FAKE_KIND, label: "Vault", config: {} } }),
+    }).pipe(Layer.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
+  };
+};
+
 const withService = <A, E>(
   body: (input: {
     readonly service: SecretRequests.SecretRequests["Service"];
@@ -46,6 +80,7 @@ const withService = <A, E>(
     readonly removeFails?: boolean;
     readonly closedFirst?: boolean;
     readonly failedRecords?: number;
+    readonly resolver?: Layer.Layer<SecretResolver.SecretResolver>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -57,6 +92,7 @@ const withService = <A, E>(
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       NodeServices.layer,
+      options.resolver ?? fakeVault().layer,
       Layer.succeed(
         ServerSecretStore.ServerSecretStore,
         ServerSecretStore.ServerSecretStore.of({
@@ -111,6 +147,7 @@ const withService = <A, E>(
                 type: "secret_request",
                 label: "GitHub token",
                 reason: "Used as GH_TOKEN.",
+                url: "https://github.com/settings/tokens",
                 ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
                 secretStatus,
               },
@@ -156,6 +193,7 @@ it.effect("a saved answer becomes a one-use ref, and the thread only learns it w
       assert.include(dispatched[0] as object, {
         type: "secret_request.record",
         secretStatus: "saved",
+        url: "https://github.com/settings/tokens",
       });
       assert.notInclude(Object.values(dispatched[0] as object).map(String), "ghp_secret");
 
@@ -164,6 +202,76 @@ it.effect("a saved answer becomes a one-use ref, and the thread only learns it w
       assert.isFalse(valuesOf(stored).some((value) => value.includes("ghp_secret")));
       const again = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
       assert.include(again.message, "already used");
+    }),
+  ),
+);
+
+it.effect("a secret provider reference is read once and saved like a typed value", () =>
+  withService(({ service, dispatched }) =>
+    Effect.gen(function* () {
+      yield* service.answer({
+        threadId,
+        turnItemId,
+        answer: {
+          type: "reference",
+          reference: { provider: vault, reference: "fake://github/token" },
+        },
+      });
+      assert.include(dispatched[0] as object, { secretStatus: "saved" });
+      assert.notInclude(JSON.stringify(dispatched), "fake://");
+      const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+      assert.equal(yield* service.consume({ ref, projectId }), "ghp_from_vault");
+    }),
+  ),
+);
+
+it.effect(
+  "an unreadable reference leaves the request pending, and a retry after unlocking works",
+  () => {
+    const { state, layer } = fakeVault();
+    state.unlocked = false;
+    return withService(
+      ({ service, stored, dispatched }) =>
+        Effect.gen(function* () {
+          const reference = { provider: vault, reference: "fake://github/token" };
+          const locked = yield* service
+            .answer({ threadId, turnItemId, answer: { type: "reference", reference } })
+            .pipe(Effect.flip);
+          assert.equal(locked.reason, "reference_unreadable");
+          assert.include(locked.message, '"Vault"');
+          assert.deepEqual(dispatched, []);
+          assert.deepEqual(valuesOf(stored), []);
+
+          state.unlocked = true;
+          yield* service.answer({ threadId, turnItemId, answer: { type: "reference", reference } });
+          const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+          assert.equal(yield* service.consume({ ref, projectId }), "ghp_from_vault");
+        }),
+      { resolver: layer },
+    );
+  },
+);
+
+it.effect("a reference to a secret provider that is not configured fails", () =>
+  withService(({ service, dispatched }) =>
+    Effect.gen(function* () {
+      const error = yield* service
+        .answer({
+          threadId,
+          turnItemId,
+          answer: {
+            type: "reference",
+            reference: {
+              // Also an Object.prototype key, which must not pass for a configured provider.
+              provider: SecretProviderId.make("constructor"),
+              reference: "fake://github/token",
+            },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error.reason, "reference_unreadable");
+      assert.include(error.message, '"constructor"');
+      assert.deepEqual(dispatched, []);
     }),
   ),
 );
@@ -564,6 +672,12 @@ it.effect("a pasted secret keeps its exact bytes from the tool input to the file
       value: "",
     });
     assert.isTrue(Exit.isFailure(empty));
+    for (const url of ["https://?state=x", "javascript:alert(1)"]) {
+      assert.isTrue(
+        Exit.isFailure(decodeSecretInputExit({ label: "Code", reason: "Sign in.", url })),
+        url,
+      );
+    }
     const file = yield* withService(
       ({ service }) =>
         service.savePasted({
