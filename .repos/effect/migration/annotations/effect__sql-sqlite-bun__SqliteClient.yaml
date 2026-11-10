@@ -1,0 +1,15 @@
+"@effect/sql-sqlite-bun/SqliteClient#SqliteClient":
+  replacement: "@effect/sql-sqlite-bun/SqliteClient#SqliteClient"
+  note: "Retained; the service value is now a Context.Service."
+"@effect/sql-sqlite-bun/SqliteClient#make":
+  include: true
+  replacement: "SqliteClient.make"
+  note: "Database opening and initialization now fail with SqlError instead of defects. Handle the typed setup error, or use Effect.orDie when setup failures should remain fatal."
+"@effect/sql-sqlite-bun/SqliteClient#layer":
+  include: true
+  replacement: "SqliteClient.layer"
+  note: "The layer now has a SqlError error channel for database opening and initialization failures. Handle setup failures, or use Layer.orDie when they should remain fatal."
+"@effect/sql-sqlite-bun/SqliteClient#layerConfig":
+  include: true
+  replacement: "SqliteClient.layerConfig"
+  note: "The layer now fails with ConfigError | SqlError: configuration errors remain typed, and database opening and initialization failures are also typed. Handle SqlError as well, or use Layer.orDie if all setup failures should be fatal."

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { EventsTable, Inbox, type EventRow } from "./resources.ts";
@@ -46,30 +46,17 @@ export default class Drain extends GCP.Run.Job<Drain>()(
           return 0;
         }
 
-        const rows = messages.map(
-          (message) => JSON.parse(message.text) as EventRow,
-        );
+        const rows = messages.map((message) => JSON.parse(message.text) as EventRow);
 
         // insertIds make the streaming insert idempotent inside
         // BigQuery's dedup window, so a redelivered batch collapses.
         yield* warehouse.insert(rows, { insertIds: rows.map((row) => row.id) });
 
-        yield* subscription.acknowledge(
-          messages.map((message) => message.ackId),
-        );
+        yield* subscription.acknowledge(messages.map((message) => message.ackId));
 
         yield* Effect.log(`drain: wrote ${rows.length} row(s)`);
         return messages.length;
-      }).pipe(
-        Effect.repeat({ until: (count) => count === 0 }),
-        Effect.asVoid,
-        Effect.orDie,
-      ),
+      }).pipe(Effect.repeat({ until: (count) => count === 0 }), Effect.asVoid, Effect.orDie),
     };
-  }).pipe(
-    Effect.provide([
-      GCP.PubSub.ReadSubscriptionHttp,
-      GCP.BigQuery.WriteTableHttp,
-    ]),
-  ),
+  }).pipe(Effect.provide([GCP.PubSub.ReadSubscriptionHttp, GCP.BigQuery.WriteTableHttp])),
 ) {}
