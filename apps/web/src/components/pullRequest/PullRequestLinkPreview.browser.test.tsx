@@ -42,7 +42,6 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       detail: ((target: unknown) => ({ detail: target })) as never,
-      activity: ((target: unknown) => ({ activity: target })) as never,
     },
   };
 });
@@ -106,7 +105,7 @@ it.each([
   ["a pull request URL", "https://github.com/owner/repo/pull/1"],
   // GitHub autolinks a bare #1 to its issues URL, which the panel opens as the pull request.
   ["a bare reference", "https://github.com/owner/repo/issues/1"],
-])("reads the panel's detail and activity once the preview of %s opens", async (_case, url) => {
+])("reads the panel's detail once the preview of %s opens", async (_case, url) => {
   state.restoredPreview = null;
   state.reads = [];
   await using screen = await render(
@@ -120,10 +119,7 @@ it.each([
     />,
   );
   expect(
-    state.reads.filter(
-      (read) =>
-        read !== null && typeof read === "object" && ("detail" in read || "activity" in read),
-    ),
+    state.reads.filter((read) => read !== null && typeof read === "object" && "detail" in read),
   ).toEqual([]);
 
   await userEvent.hover(screen.getByRole("link"));
@@ -140,5 +136,4 @@ it.each([
   expect(state.reads).toContainEqual({
     detail: { environmentId, input: { ...reference, allowStale: false } },
   });
-  expect(state.reads).toContainEqual({ activity: { environmentId, input: reference } });
 });
