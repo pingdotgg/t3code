@@ -114,7 +114,7 @@ const toastDismissPositionClass = "absolute z-20 -top-1.5 -right-1.5 flex";
 const toastDismissButtonClass = cn(
   "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border surface-dismiss text-muted-foreground outline-none",
   "transition-colors hover:text-foreground",
-  "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 // Notices close from inside their head row instead of the corner badge.
 // The 12px X's ink sits 7px inside its 20px button: right-1.25 ends the ink on the
@@ -123,7 +123,7 @@ const noticeDismissPositionClass = "absolute z-20 top-3 right-1.25 flex";
 const noticeDismissButtonClass = cn(
   "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
   "transition-colors hover:bg-accent hover:text-foreground",
-  "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 
 function handleToastDismissClick(
@@ -601,7 +601,9 @@ function Toasts({ position }: { position: ToastPosition }) {
         data-slot="toast-viewport"
         style={
           {
-            "--toast-frontmost-height": `${visibleToastLayout.frontmostHeight}px`,
+            "--toast-frontmost-height": visibleToastLayout.frontmostHeight
+              ? `${visibleToastLayout.frontmostHeight}px`
+              : undefined,
           } as CSSProperties
         }
       >
@@ -628,7 +630,7 @@ function Toasts({ position }: { position: ToastPosition }) {
                 "data-[position*=top]:after:top-full",
                 "data-[position*=bottom]:after:bottom-full",
                 visibleIndex > 0
-                  ? "not-data-expanded:[--toast-calc-height:var(--toast-frontmost-height)] data-expanded:[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))]"
+                  ? "not-data-expanded:[--toast-calc-height:var(--toast-frontmost-height,var(--toast-height))] not-data-expanded:overflow-clip data-expanded:[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))]"
                   : "[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))]",
                 "[--toast-gap:--spacing(3)] [--toast-peek:--spacing(3)] [--toast-scale:calc(max(0,1-(var(--toast-index)*.1)))] [--toast-shrink:calc(1-var(--toast-scale))]",
                 // Base UI measures with height:auto; --toast-height as min-height would prevent shrinking.
@@ -705,7 +707,7 @@ function Toasts({ position }: { position: ToastPosition }) {
                   toastContentClassName(toast.data?.variant),
                   "transition-opacity duration-250 data-expanded:opacity-100",
                   hideCollapsedContent &&
-                    "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
+                    "not-data-expanded:pointer-events-none not-data-expanded:opacity-0 not-data-expanded:transition-none",
                 )}
               >
                 <ToastBodyContent
