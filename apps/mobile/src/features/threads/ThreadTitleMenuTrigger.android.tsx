@@ -1,6 +1,6 @@
 import type { ThreadTitleMenuTrigger as IosTrigger } from "./ThreadTitleMenuTrigger";
 import { Pressable } from "react-native";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu.android";
 
 export function ThreadTitleMenuTrigger(props: Parameters<typeof IosTrigger>[0]) {
   return (
