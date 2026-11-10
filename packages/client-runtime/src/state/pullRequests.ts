@@ -302,10 +302,12 @@ function settleEdit(
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
     const shown = loadedValue<never>(registry, atom as Atom.Atom<unknown>);
-    if (Option.isNone(shown) || reader.edit(shown.value, [edit]) === shown.value) continue;
     const writable = atom as Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
+    const unchanged = Option.isSome(shown) && reader.edit(shown.value, [edit]) === shown.value;
+    if (unchanged) continue;
     // A read still waiting may predate the write, unless the caller started it after the commit.
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
+    if (Option.isNone(shown)) continue;
     registry.update(
       writable,
       AsyncResult.map((value) => reader.edit(value, [edit]) as never),

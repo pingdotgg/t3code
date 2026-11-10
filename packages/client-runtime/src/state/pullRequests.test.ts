@@ -2748,52 +2748,56 @@ it.effect("shows a label change at once and takes it back when the host refuses 
   ),
 );
 
-it.effect("keeps an accepted label change when a candidates read sent before it answers late", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let applied = false;
-      let reads = 0;
-      const readStarted = yield* Deferred.make<void>();
-      const releaseRead = yield* Deferred.make<void>();
-      const client = actionReplyClient({
-        [WS_METHODS.pullRequestsLabelCandidates]: () =>
-          Effect.gen(function* () {
-            reads++;
-            const answer = {
-              candidates: [{ name: "new", color: null, description: null, isApplied: applied }],
-              truncated: false,
-            };
-            if (reads === 2) {
-              yield* Deferred.succeed(readStarted, undefined);
-              yield* Deferred.await(releaseRead);
-            }
-            return answer;
-          }),
-        [WS_METHODS.pullRequestsSetLabels]: () =>
-          Effect.sync(() => {
-            applied = true;
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const candidates = atoms.labelCandidates(target);
-      registry.mount(candidates);
-      yield* Effect.promise(() => executeAtomQuery(registry, candidates));
-      registry.refresh(candidates);
-      yield* Deferred.await(readStarted);
+it.effect.each(["loaded", "loading"] as const)(
+  "keeps an accepted label change when a candidates read sent before it answers late (%s)",
+  (shown) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let applied = false;
+        let reads = 0;
+        const readStarted = yield* Deferred.make<void>();
+        const releaseRead = yield* Deferred.make<void>();
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsLabelCandidates]: () =>
+            Effect.gen(function* () {
+              reads++;
+              const answer = {
+                candidates: [{ name: "new", color: null, description: null, isApplied: applied }],
+                truncated: false,
+              };
+              if (reads === (shown === "loaded" ? 2 : 1)) {
+                yield* Deferred.succeed(readStarted, undefined);
+                yield* Deferred.await(releaseRead);
+              }
+              return answer;
+            }),
+          [WS_METHODS.pullRequestsSetLabels]: () =>
+            Effect.sync(() => {
+              applied = true;
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const candidates = atoms.labelCandidates(target);
+        registry.mount(candidates);
+        if (shown === "loaded") {
+          yield* Effect.promise(() => executeAtomQuery(registry, candidates));
+          registry.refresh(candidates);
+        }
+        yield* Deferred.await(readStarted);
 
-      yield* Effect.promise(() =>
-        atoms.setLabels.run(registry, {
-          ...target,
-          input: { ...actionReference, labels: ["new"], applied: true },
-        }),
-      );
-      yield* Deferred.succeed(releaseRead, undefined);
+        yield* Effect.promise(() =>
+          atoms.setLabels.run(registry, {
+            ...target,
+            input: { ...actionReference, labels: ["new"], applied: true },
+          }),
+        );
+        yield* Deferred.succeed(releaseRead, undefined);
 
-      expect(
-        (yield* AtomRegistry.getResult(registry, candidates, { suspendOnWaiting: true }))
-          .candidates[0]?.isApplied,
-      ).toBe(true);
-    }),
-  ),
+        expect(
+          (yield* AtomRegistry.getResult(registry, candidates, { suspendOnWaiting: true }))
+            .candidates[0]?.isApplied,
+        ).toBe(true);
+      }),
+    ),
 );
