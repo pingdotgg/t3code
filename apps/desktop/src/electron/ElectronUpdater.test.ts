@@ -64,16 +64,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         );
         yield* fileSystem.chmod(stagedPath, 0o755);
 
-        const previousAppImage = process.env.APPIMAGE;
         yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            process.env.APPIMAGE = appImagePath;
-          }),
-          () =>
-            Effect.sync(() => {
-              if (previousAppImage === undefined) delete process.env.APPIMAGE;
-              else process.env.APPIMAGE = previousAppImage;
-            }),
+          Effect.sync(() => vi.stubEnv("APPIMAGE", appImagePath)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
         );
 
         autoUpdater.logger = null;
