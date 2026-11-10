@@ -374,6 +374,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         }),
       ),
     renewDpopBeforeExpiry: () => Effect.die("unused"),
+    rememberCheckedDescriptor: () => Effect.void,
   });
   const profileStore = ConnectionProfileStore.ConnectionProfileStore.of({
     get: (connectionId) =>
