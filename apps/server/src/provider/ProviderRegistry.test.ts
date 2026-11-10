@@ -67,7 +67,10 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  COMPACT_SLASH_COMMAND,
+  type ServerProviderDraft,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import type {
   ProviderInstance,
   ProviderWorkspaceSnapshot,
@@ -3574,22 +3577,34 @@ it.layer(
             undefined,
             configLoginCredits,
           );
-        const instances = [
-          ["claude-max", yield* check("max", 10)],
-          ["claude-pro", yield* check("pro", 70, separateStorage)],
-          ["claude-pro-2", yield* check("pro", 70, separateStorage)],
-        ] as const;
-        const providers = instances.map(([instanceId, draft]) => ({
+        const provider = (instanceId: string, draft: ServerProviderDraft) => ({
           ...draft,
           instanceId: ProviderInstanceId.make(instanceId),
           driver: ProviderDriverKind.make("claudeAgent"),
-        }));
-
+        });
+        // Another machine can use the same storage path for a different login.
         const accounts = collectLimitAccounts(
           new Map([
             [
               EnvironmentId.make("environment-local"),
-              { entry: { target: { label: "Local" } }, serverConfig: { providers } },
+              {
+                entry: { target: { label: "Local" } },
+                serverConfig: {
+                  providers: [
+                    provider("claude-max", yield* check("max", 10)),
+                    provider("claude-pro", yield* check("pro", 70, separateStorage)),
+                  ],
+                },
+              },
+            ],
+            [
+              EnvironmentId.make("environment-remote"),
+              {
+                entry: { target: { label: "Remote" } },
+                serverConfig: {
+                  providers: [provider("claude-pro", yield* check("pro", 80, separateStorage))],
+                },
+              },
             ],
           ]),
         );
@@ -3604,6 +3619,7 @@ it.layer(
           [
             [10, 1],
             [70, undefined],
+            [80, undefined],
           ],
         );
       }).pipe(

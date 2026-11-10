@@ -7,10 +7,8 @@ import {
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -531,7 +529,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Digest.Digest
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -724,19 +722,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
         }).limits;
-  // Claude Code keeps this login here but reports the shared config's account, which is not this login's.
-  const secureStorageDir = resolvedEnvironment.CLAUDE_SECURESTORAGE_CONFIG_DIR?.trim();
-  const credentialFingerprint = secureStorageDir
-    ? Hex.encode(
-        yield* (yield* Digest.Digest).digest(
-          Digest.sha256,
-          new TextEncoder().encode(`claude-secure-storage\0${secureStorageDir}`),
-        ),
-      )
-    : undefined;
+  // Claude Code reports the shared config's account, not this login's, so Limits keys it by instance.
+  const separateLogin = Boolean(resolvedEnvironment.CLAUDE_SECURESTORAGE_CONFIG_DIR?.trim());
   // Reset credits read the shared config's token, which belongs to a different login.
   const resetCredits =
-    !credentialFingerprint &&
+    !separateLogin &&
     resolveResetCredits &&
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&
@@ -757,18 +747,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email && !credentialFingerprint ? { email: capabilities.email } : {}),
-        ...(capabilities.workspaceId && !credentialFingerprint
+        ...(capabilities.email && !separateLogin ? { email: capabilities.email } : {}),
+        ...(capabilities.workspaceId && !separateLogin
           ? { workspaceId: capabilities.workspaceId }
           : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: {
-        ...usageLimits,
-        ...(credentialFingerprint ? { credentialFingerprint } : {}),
-        ...(resetCredits ? { resetCredits } : {}),
-      },
+      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
     },
   });
 });
