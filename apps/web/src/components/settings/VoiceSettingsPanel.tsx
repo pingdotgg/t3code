@@ -695,7 +695,7 @@ function ModelFolderSettings({
   const valid = /^(\/|\\\\|[A-Za-z]:[/\\])/.test(draft.trim());
   const save = (next: string[], onSuccess?: () => void) =>
     run("Could not update model folders", async () => {
-      await runtime.runPromise(updateEnvironmentSpeechModelDirectories(prepared, next));
+      await runEnvironmentSpeech(updateEnvironmentSpeechModelDirectories(prepared, next));
       onSuccess?.();
     });
   const add = () => {
