@@ -108,29 +108,51 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
-  it("prepends older rows and dedupes by source identity", () => {
-    const recent = [row(2), row(3)];
-    const projection = {
-      ...v2Projection,
-      turnItems: recent.map((entry) => entry.item),
-      visibleTurnItems: recent.map((entry, position) => ({ ...entry, position })),
-    };
-    const older = [row(0), row(1), row(2)];
-    const merged = mergeOlderHistoryIntoProjection(projection, older);
-    expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
-      "item-0",
-      "item-1",
-      "item-2",
-      "item-3",
-    ]);
-    expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3]);
-    expect(merged.turnItems.map((item) => item.id)).toEqual([
-      "item-2",
-      "item-3",
-      "item-0",
-      "item-1",
-    ]);
-  });
+  it.each([false, true])(
+    "prepends older rows and dedupes by source identity with pinned consent %s",
+    (pinned) => {
+      const consent = {
+        ...row(0),
+        item: {
+          ...row(0).item,
+          type: "delegation_approval" as const,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "waiting" as const,
+          completedAt: null,
+          task: "Review the change",
+          current: v2Projection.thread.modelSelection,
+          proposed: { ...v2Projection.thread.modelSelection, model: "gpt-5.5" },
+          approvalStatus: "pending" as const,
+        },
+      };
+      const recent = [...(pinned ? [consent] : []), row(2), row(3)];
+      const projection = {
+        ...v2Projection,
+        turnItems: recent.map((entry) => entry.item),
+        visibleTurnItems: recent.map((entry, position) => ({ ...entry, position })),
+      };
+      const older = [...(pinned ? [] : [row(0)]), row(1), row(2)];
+      const merged = mergeOlderHistoryIntoProjection(projection, older);
+      expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+        "item-0",
+        "item-1",
+        "item-2",
+        "item-3",
+      ]);
+      expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3]);
+      expect(merged.turnItems.map((item) => item.id)).toEqual(
+        pinned
+          ? ["item-0", "item-2", "item-3", "item-1"]
+          : ["item-2", "item-3", "item-0", "item-1"],
+      );
+      expect(mergeOlderHistoryIntoProjection(merged, [pinned ? consent : row(0)])).toBe(merged);
+    },
+  );
 
   it("fills inherited activity without confusing identical item IDs from different source threads", () => {
     const inherited = (index: number) => ({

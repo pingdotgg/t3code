@@ -521,6 +521,7 @@ function isRetainedDependency(
 ): boolean {
   return (
     item.type === "run_interrupt_request" ||
+    (item.type === "delegation_approval" && item.approvalStatus === "pending") ||
     ((item.type === "user_input_request" || item.type === "approval_request") &&
       pendingRequestIds.has(String(item.requestId)))
   );
@@ -659,6 +660,12 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
+  const pendingApprovalRows = controlProjection.visibleTurnItems.filter(
+    (row) =>
+      isLocalProjectedRow(controlProjection, row) &&
+      row.item.type === "delegation_approval" &&
+      row.item.approvalStatus === "pending",
+  );
   const dependencyReserve = (() => {
     let reserve = 0;
     const pendingRequestIds = pendingRequestIdsOf(controlProjection);
@@ -667,6 +674,7 @@ export function buildBoundedThreadProjection(input: {
         reserve += bytesOfJson(item);
       }
     }
+    for (const row of pendingApprovalRows) reserve += projectedRowEncodedBytes(row);
     return reserve;
   })();
   const controlBytes = bytesOfJson({
@@ -688,7 +696,17 @@ export function buildBoundedThreadProjection(input: {
     policy: windowPolicy,
     rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
   });
-  const visibleTurnItems = renumberPositions(window.items);
+  const selectedRows = new Set(
+    window.items.map((row) => JSON.stringify([row.sourceThreadId, row.sourceItemId])),
+  );
+  const pendingRows = new Set(pendingApprovalRows);
+  const visibleTurnItems = renumberPositions(
+    controlProjection.visibleTurnItems.filter(
+      (row) =>
+        pendingRows.has(row) ||
+        selectedRows.has(JSON.stringify([row.sourceThreadId, row.sourceItemId])),
+    ),
+  );
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,

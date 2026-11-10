@@ -1,5 +1,11 @@
 import {
   EnvironmentId,
+  AuthOrchestrationOperateScope,
+  type AuthSessionState,
+  ThreadId,
+  TurnItemId,
+  DelegationApprovalError,
+  type DelegationApprovalAnswerInput,
   ProviderDriverKind,
   ServerSelfUpdateError,
   ProviderInstanceId,
@@ -67,6 +73,7 @@ import {
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { createEnvironmentSessionAtoms } from "./session.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
 const CONFIG = {
@@ -1312,6 +1319,101 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("delegation approval commands", () => {
+  it.effect("shares identical pending answers without hiding a conflicting decision", () =>
+    Effect.gen(function* () {
+      const requested = yield* Queue.unbounded<string>();
+      const release = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.delegationApprovalsAnswer]: (input: DelegationApprovalAnswerInput) =>
+          Queue.offer(requested, input.decision).pipe(
+            Effect.andThen(
+              input.decision === "approve"
+                ? Deferred.await(release)
+                : Effect.fail(new DelegationApprovalError({ reason: "already_answered" })),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(RpcPermissionGuard, { authorize: () => Effect.void }),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          AtomRegistry.make({
+            initialValues: [
+              [
+                createEnvironmentSessionAtoms(runtime).sessionStateAtom(TARGET.environmentId),
+                AsyncResult.success({
+                  authenticated: true,
+                  auth: {
+                    policy: "remote-reachable",
+                    bootstrapMethods: [],
+                    sessionMethods: [],
+                    sessionCookieName: "test",
+                  },
+                  scopes: [AuthOrchestrationOperateScope],
+                  permissions: [AuthOrchestrationOperateScope],
+                } satisfies AuthSessionState),
+                { skipInitialRun: true },
+              ],
+            ],
+          }),
+        ),
+        (registry) => Effect.sync(() => registry.dispose()),
+      );
+      const answer = (decision: DelegationApprovalAnswerInput["decision"]) =>
+        atoms.answerDelegationApproval.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: {
+            threadId: ThreadId.make("thread:consent"),
+            turnItemId: TurnItemId.make("item:consent"),
+            decision,
+          },
+        });
+      const approval = answer("approve");
+      expect(yield* Queue.take(requested)).toBe("approve");
+      const duplicate = answer("approve");
+      const decline = answer("decline");
+      yield* Deferred.succeed(release, undefined);
+      const approved = yield* Effect.promise(() => approval);
+      expect(approved._tag).toBe("Success");
+      expect(yield* Effect.promise(() => duplicate)).toEqual(approved);
+      const declined = yield* Effect.promise(() => decline);
+      expect(declined._tag).toBe("Failure");
+      if (declined._tag === "Failure") {
+        expect(Cause.squash(declined.cause)).toMatchObject({ reason: "already_answered" });
+      }
+      expect(yield* Queue.takeAll(requested)).toEqual(["decline"]);
+    }).pipe(Effect.scoped),
   );
 });
 

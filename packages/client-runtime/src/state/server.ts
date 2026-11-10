@@ -1609,7 +1609,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+          JSON.stringify([environmentId, input.threadId, input.turnItemId, input.decision]),
       },
     }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {

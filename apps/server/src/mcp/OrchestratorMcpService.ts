@@ -2579,7 +2579,9 @@ const make = Effect.gen(function* () {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         const parent = yield* threadManagement
-          .getThreadRecords(scope.thread.threadId, ["runs"])
+          .getThreadRecords(scope.thread.threadId, ["runs"], {
+            runStatuses: ThreadManagementService.ACTIVE_RUN_STATUSES,
+          })
           .pipe(Effect.mapError(threadManagementFailure));
         const parentRun = activeParentRun(parent, scope);
         if (parentRun === undefined) {

@@ -3152,6 +3152,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ), retained AS MATERIALIZED (
                   SELECT item_rowid, ordinal, turn_item_id FROM selected
                   UNION
+                  SELECT item.rowid AS item_rowid, item.ordinal, item.turn_item_id
+                  FROM orchestration_v2_projection_runs AS run
+                  CROSS JOIN orchestration_v2_projection_turn_items AS item
+                    INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+                  WHERE run.thread_id = ${threadId}
+                    AND run.status IN ('preparing', 'starting', 'running', 'waiting')
+                    AND item.thread_id = ${threadId} AND item.run_id = run.run_id
+                    AND item.type = 'delegation_approval' AND item.status = 'waiting'
+                    AND ${window.requiredRunId ?? null} IS NULL
+                  UNION
                   SELECT request.rowid AS item_rowid, request.ordinal, request.turn_item_id
                   FROM orchestration_v2_projection_turn_items AS request
                   WHERE request.run_id IN (
