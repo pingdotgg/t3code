@@ -705,13 +705,14 @@ describe("AgentAwarenessRelay", () => {
 
         yield* Ref.set(byId, new Map([[THREAD_ID, parentClear]]));
         const now = yield* DateTime.now;
+        // Domain events carry AppThread payloads; the shell fixture is enough for lineage.
         yield* Queue.offer(events, {
           id: EventId.make("event:side-chat-deleted"),
           type: "thread.deleted",
           threadId: sideChatId,
           occurredAt: now,
           payload: { ...sideChat, deletedAt: now },
-        });
+        } as OrchestrationV2DomainEvent);
         yield* Queue.take(pulls);
         yield* relay.drain;
         assert.equal(publications.length, 2);
