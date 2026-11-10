@@ -185,6 +185,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const thread = { ...threadShell("turn-end-thread"), branch: "t3/turn-end" };
+        const otherThread = {
+          ...threadShell("other-turn-end-thread"),
+          branch: "t3/other-turn-end",
+        };
         const project: OrchestrationProjectShell = {
           id: thread.projectId,
           title: "Project",
@@ -201,11 +205,20 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
+          { type: "checkpoint.captured", threadId: otherThread.id },
+          { type: "run.updated", threadId: otherThread.id, payload: { status: "completed" } },
+        ] as Array<OrchestrationV2DomainEvent>;
+        // Arrives during the thread's own lookup, which may already have read the old host state.
+        const duringLookup = [
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "thread.metadata-updated", threadId: thread.id },
         ] as Array<OrchestrationV2DomainEvent>;
         const activation = yield* Deferred.make<void>();
         const sweepStarted = yield* Deferred.make<void>();
         const turnEndQueued = yield* Deferred.make<void>();
-        const lookups: Array<{ readonly refresh: boolean }> = [];
+        const lookupStarted = yield* Deferred.make<void>();
+        const followUpQueued = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly branch: string; readonly refresh: boolean }> = [];
         const dependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             // The batch arrives while the worker is busy with the startup sweep.
@@ -215,13 +228,20 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               Stream.concat(
                 Stream.fromEffect(Deferred.succeed(turnEndQueued, undefined)).pipe(Stream.drain),
               ),
+              Stream.concat(Stream.fromEffect(Deferred.await(lookupStarted)).pipe(Stream.drain)),
+              Stream.concat(Stream.fromIterable(duringLookup)),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(followUpQueued, undefined)).pipe(Stream.drain),
+              ),
               Stream.concat(Stream.never),
             ),
-            getPullRequestSnapshot: () =>
+            getPullRequestSnapshot: ({ threadId }) =>
               Effect.succeed({
                 schemaVersion: 2,
                 snapshotSequence: 1,
-                threads: [thread],
+                threads: [thread, otherThread].filter(
+                  (candidate) => threadId === undefined || candidate.id === threadId,
+                ),
                 archivedThreads: [],
               }),
           }),
@@ -230,13 +250,18 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             getShell: () => Effect.succeedSome(project),
           }),
           Layer.mock(GitManager.GitManager)({
-            branchPullRequest: (_input, options) =>
+            branchPullRequest: (input, options) =>
               Effect.gen(function* () {
-                const refresh = options?.refresh ?? false;
-                lookups.push({ refresh });
-                if (!refresh) {
+                lookups.push({ branch: input.branch, refresh: options?.refresh ?? false });
+                if (!(yield* Deferred.isDone(turnEndQueued))) {
                   yield* Deferred.succeed(sweepStarted, undefined);
                   yield* Deferred.await(turnEndQueued);
+                } else if (
+                  input.branch === thread.branch &&
+                  !(yield* Deferred.isDone(followUpQueued))
+                ) {
+                  yield* Deferred.succeed(lookupStarted, undefined);
+                  yield* Deferred.await(followUpQueued);
                 }
                 return null;
               }),
@@ -272,12 +297,19 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
-          yield* Deferred.await(turnEndQueued);
+          yield* Deferred.await(followUpQueued);
           yield* service.drain;
         }).pipe(Effect.provide(dependencies));
 
-        // The startup sweep, then one refresh lookup for the whole turn-end batch.
-        expect(lookups).toEqual([{ refresh: false }, { refresh: true }]);
+        // The startup sweep, one refresh lookup per thread for its turn-end batch, then one
+        // follow-up refresh for the events that arrived during the thread's lookup.
+        expect(lookups).toEqual([
+          { branch: thread.branch, refresh: false },
+          { branch: otherThread.branch, refresh: false },
+          { branch: thread.branch, refresh: true },
+          { branch: otherThread.branch, refresh: true },
+          { branch: thread.branch, refresh: true },
+        ]);
       }),
     ),
   );
