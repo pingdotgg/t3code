@@ -123,7 +123,12 @@ export function HighlightedCodeBlock(props: {
       {wrapped ? (
         content
       ) : (
-        <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+        <ScrollView
+          horizontal
+          // As in the thread feed: a long-press opens the copy menu instead of closing the keyboard.
+          keyboardShouldPersistTaps="always"
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
           {content}
         </ScrollView>
       )}
