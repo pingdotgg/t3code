@@ -470,6 +470,7 @@ function AdaptiveWorkspaceLayoutContent(
         ),
       );
       setFileInspectorPreferredVisible(true);
+      if (Platform.OS === "android" && sidebarFloats) setPrimarySidebarVisible(false);
     }
 
     return () => {
@@ -497,7 +498,7 @@ function AdaptiveWorkspaceLayoutContent(
     if (
       !panes.primarySidebarVisible &&
       (panes.primarySidebarSuppressedByAuxiliary ||
-        (Platform.OS === "android" && panes.auxiliaryPaneVisible))
+        (Platform.OS === "android" && !sidebarFloats && panes.auxiliaryPaneVisible))
     ) {
       setFileInspectorPreferredVisible(false);
       setPrimarySidebarVisible(true);
@@ -508,7 +509,7 @@ function AdaptiveWorkspaceLayoutContent(
   const revealPrimarySidebar = () => {
     if (
       panes.primarySidebarSuppressedByAuxiliary ||
-      (Platform.OS === "android" && panes.auxiliaryPaneVisible)
+      (Platform.OS === "android" && !sidebarFloats && panes.auxiliaryPaneVisible)
     ) {
       setFileInspectorPreferredVisible(false);
     }
@@ -527,6 +528,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const showInspector = () => {
     setFileInspectorPreferredVisible(true);
+    if (Platform.OS === "android" && sidebarFloats) setPrimarySidebarVisible(false);
     if (fileInspector.supported) {
       setInspectorSheetRoute(null);
       return;
@@ -549,8 +551,8 @@ function AdaptiveWorkspaceLayoutContent(
   };
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
   const toggleAuxiliaryPane = () => {
-    if (fileInspector.supported) {
-      setFileInspectorPreferredVisible((current) => !current);
+    if (fileInspector.supported && fileInspectorPreferredVisible) {
+      setFileInspectorPreferredVisible(false);
       setInspectorSheetRoute(null);
     } else if (inspectorSheetOpen) dismissInspectorSheet();
     else showInspector();
@@ -838,8 +840,8 @@ function AdaptiveWorkspaceLayoutContent(
       if (state && workspaceRoutesOf(state.routes.slice(0, state.index + 1)).overlays.length > 0) {
         return false;
       }
-      if (inspectorOpen) setFileInspectorPreferredVisible(false);
-      else setPrimarySidebarVisible(false);
+      if (floatingSidebarOpen) setPrimarySidebarVisible(false);
+      else setFileInspectorPreferredVisible(false);
       return true;
     });
     return () => subscription.remove();
@@ -1163,6 +1165,7 @@ function AdaptiveWorkspaceLayoutContent(
         <WorkspaceInspectorPane
           renderedInspectorWidth={renderedInspectorWidth}
           active={workspaceInspector?.active ?? false}
+          obscured={floatingSidebarOpen}
           panes={panes}
           content={workspaceInspector?.content}
           setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}

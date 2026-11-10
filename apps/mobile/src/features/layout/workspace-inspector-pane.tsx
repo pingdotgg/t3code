@@ -22,6 +22,7 @@ const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
 export function WorkspaceInspectorPane(props: {
   readonly renderedInspectorWidth: SharedValue<number>;
   readonly active?: boolean;
+  readonly obscured?: boolean;
   readonly onClose: () => void;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
@@ -33,6 +34,7 @@ export function WorkspaceInspectorPane(props: {
   const inspectorSupported = props.content !== undefined && inspectorWidth !== null;
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
+  const inspectorInteractive = inspectorVisible && !props.obscured;
   const resizeStartWidth = useRef(0);
   const [resizing, setResizing] = useState(false);
 
@@ -92,7 +94,7 @@ export function WorkspaceInspectorPane(props: {
 
   return (
     <>
-      {inspectorVisible ? (
+      {inspectorInteractive ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize detail pane"
           currentWidth={inspectorWidth ?? 0}
@@ -105,10 +107,10 @@ export function WorkspaceInspectorPane(props: {
       {inspectorSupported ? (
         <Animated.View
           className="shrink-0 overflow-hidden"
-          accessibilityElementsHidden={!inspectorVisible}
+          accessibilityElementsHidden={!inspectorInteractive}
           collapsable={false}
-          importantForAccessibility={inspectorVisible ? "auto" : "no-hide-descendants"}
-          pointerEvents={inspectorVisible ? "auto" : "none"}
+          importantForAccessibility={inspectorInteractive ? "auto" : "no-hide-descendants"}
+          pointerEvents={inspectorInteractive ? "auto" : "none"}
           style={inspectorStyle}
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>

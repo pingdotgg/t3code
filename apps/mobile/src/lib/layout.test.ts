@@ -211,7 +211,7 @@ describe("deriveWorkspacePaneLayout", () => {
         auxiliaryPaneVisible: true,
         auxiliaryPaneWidth: expect.closeTo(inspectorWidth),
         auxiliaryPaneGap: gap,
-        primarySidebarVisible: false,
+        primarySidebarVisible: input.layout.variant === "medium",
       });
       expect(width - inspectorWidth - gap).toBeCloseTo(mainEnd);
       expect(
@@ -248,8 +248,8 @@ describe("deriveWorkspacePaneLayout", () => {
           auxiliaryPanePreferredVisible: true,
         };
         expect(deriveWorkspacePaneLayout(input)).toMatchObject({
-          primarySidebarVisible: false,
-          primarySidebarSuppressedByAuxiliary: true,
+          primarySidebarVisible: primarySidebarFloats,
+          primarySidebarSuppressedByAuxiliary: !primarySidebarFloats,
           auxiliaryPaneVisible: true,
           auxiliaryPaneWidth: defaultWidth,
           contentPaneWidth: viewportWidth,
@@ -265,7 +265,7 @@ describe("deriveWorkspacePaneLayout", () => {
             deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
           ).toMatchObject({
             auxiliaryPaneWidth: width,
-            primarySidebarVisible: !primarySidebarFloats && viewportWidth === 1100 && width <= 400,
+            primarySidebarVisible: primarySidebarFloats || (viewportWidth === 1100 && width <= 400),
           });
         }
         expect(

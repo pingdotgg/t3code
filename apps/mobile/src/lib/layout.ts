@@ -251,18 +251,17 @@ export function deriveWorkspacePaneLayout(input: {
   const primarySidebarSuppressedByAuxiliary =
     preferredPrimarySidebarVisible &&
     auxiliaryPaneVisible &&
-    ((input.inspectorSizing === "android" && floats) ||
-      (!floats &&
-        inspectorWidth !== null &&
-        input.layout.listPaneWidth !== null &&
-        viewportWidth -
-          (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
-          input.layout.listPaneWidth -
-          (input.layout.listPaneGap ?? 0) -
-          inspectorWidth <
-          (input.nativeWorkspace || input.inspectorSizing === "android"
-            ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH
-            : FILE_INSPECTOR_MIN_MAIN_WIDTH)));
+    !floats &&
+    inspectorWidth !== null &&
+    input.layout.listPaneWidth !== null &&
+    viewportWidth -
+      (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
+      input.layout.listPaneWidth -
+      (input.layout.listPaneGap ?? 0) -
+      inspectorWidth <
+      (input.nativeWorkspace || input.inspectorSizing === "android"
+        ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH
+        : FILE_INSPECTOR_MIN_MAIN_WIDTH);
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
