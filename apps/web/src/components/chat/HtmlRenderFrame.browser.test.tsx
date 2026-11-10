@@ -38,4 +38,25 @@ describe("HtmlRenderFrame", () => {
     await screen.unmount();
     expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
   });
+
+  it("zooming out keeps the document filling the full-screen frame", async () => {
+    await using screen = await render(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
+        threadRef={undefined}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
+    const frame = screen.getByRole("dialog").element().querySelector("iframe")!;
+    const fullWidth = frame.getBoundingClientRect().width;
+    await userEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    await userEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Reset zoom" }))
+      .toHaveTextContent("50%");
+
+    expect(frame.getBoundingClientRect().width).toBeCloseTo(fullWidth, 0);
+  });
 });
