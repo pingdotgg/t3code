@@ -300,10 +300,15 @@ function RemoteSubagentRow(props: {
     : props.agent.model
       ? formatModelSlugName(props.agent.model)
       : null;
+  // Older servers keep no selection on a remote task; the thread there still knows its own.
+  const remoteThread = useQuietThreadShell(
+    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
+  );
+  const modelSelection = props.agent.modelSelection ?? remoteThread?.modelSelection;
   const effort = props.agent.model
     ? formatSubagentEffort({
         modelSlug: props.agent.model,
-        modelSelection: props.agent.modelSelection,
+        modelSelection,
         provider: props.provider,
       })
     : null;
@@ -339,6 +344,14 @@ function RemoteSubagentRow(props: {
             driver={props.provider?.driver}
             provider={props.provider}
             fallbackIcon={BotIcon}
+            // The machine it runs on rides the logo, so the second line lines up with local rows.
+            badge={
+              <EnvironmentMachineIcon
+                kind={machine}
+                aria-label={`On ${remoteChild.label}`}
+                className="size-2.5"
+              />
+            }
           />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-center gap-1.5">
@@ -356,12 +369,6 @@ function RemoteSubagentRow(props: {
               ) : null}
             </span>
             <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
-              {/* The machine it runs on; the tooltip names it. */}
-              <EnvironmentMachineIcon
-                kind={machine}
-                aria-label={`On ${remoteChild.label}`}
-                className="size-3 shrink-0"
-              />
               {props.agent.model ? <span className="min-w-0 truncate">{modelLabel}</span> : null}
               {effort ? <span className="shrink-0">{effort}</span> : null}
               {failed ? null : (
