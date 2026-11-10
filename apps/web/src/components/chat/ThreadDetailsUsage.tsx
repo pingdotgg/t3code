@@ -82,7 +82,7 @@ export function ThreadDetailsUsage({
   );
 }
 
-/** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
+/** The thread's context window. Below the window, auto-compaction is the bar's limit. */
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
@@ -90,11 +90,16 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
       : null;
   const threshold = usage.autoCompactThreshold ?? null;
-  const tick =
-    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
-      ? (threshold / maxTokens) * 100
-      : null;
+  const compactsBeforeFull =
+    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens;
+  const limit = compactsBeforeFull ? threshold : maxTokens;
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const usedLabel =
+    used === null
+      ? `Context: ${usedTokens} tokens used`
+      : compactsBeforeFull
+        ? `Context: ${used}% of the way to auto-compaction`
+        : `Context: ${used}% used`;
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
@@ -106,28 +111,34 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
           label="Context"
           fill={used}
           tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
           muted
           value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
+            limit !== null ? `${usedTokens} / ${formatContextWindowTokens(limit)}` : usedTokens
           }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
+          ariaValue={
+            used === null
+              ? `${usedTokens} tokens used`
+              : compactsBeforeFull
+                ? `${used}% of the way to auto-compaction`
+                : `${used}% used`
+          }
           tooltip={
             <>
-              <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
-              </span>
-              {maxTokens !== null ? (
+              <span className="text-foreground">{usedLabel}</span>
+              {limit !== null ? (
                 <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
+                  {usage.usedTokens.toLocaleString("en-US")} of {limit.toLocaleString("en-US")}{" "}
                   tokens
                 </span>
               ) : null}
               {threshold !== null && threshold > 0 ? (
                 <span className="text-muted-foreground">
                   {formatContextWindowCompactionMessage(threshold)}
+                </span>
+              ) : null}
+              {compactsBeforeFull ? (
+                <span className="text-muted-foreground">
+                  Context window: {maxTokens.toLocaleString("en-US")} tokens
                 </span>
               ) : null}
             </>
@@ -179,7 +190,6 @@ function UsageRow({
   label,
   fill,
   tone,
-  tick = null,
   value,
   ariaValue = value,
   tooltip,
@@ -189,8 +199,6 @@ function UsageRow({
   /** Bar fill from 0 to 100. Null hides the bar. */
   readonly fill: number | null;
   readonly tone: UsageTone;
-  /** A marker on the bar, from 0 to 100. */
-  readonly tick?: number | null;
   readonly value: string;
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
@@ -223,13 +231,6 @@ function UsageRow({
                         : "bg-foreground/80",
                 )}
                 style={{ width: `max(${fill}%, 6px)` }}
-              />
-            ) : null}
-            {tick !== null ? (
-              <span
-                aria-hidden
-                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/60"
-                style={{ left: `${tick}%` }}
               />
             ) : null}
           </span>
