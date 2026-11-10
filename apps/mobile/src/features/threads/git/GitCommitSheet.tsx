@@ -112,6 +112,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         <NativeStackScreenOptions
           options={{ unstable_sheetFooter: () => footer }}
           optionsVersion={{
+            threadId: selectedThread?.id,
+            cwd: selectedThreadCwd,
             commitMessage: dialogCommitMessage,
             filePaths: selectedFiles.map((file) => file.path),
             allSelected,
