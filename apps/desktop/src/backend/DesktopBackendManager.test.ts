@@ -1,4 +1,5 @@
 import {
+  SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -192,6 +193,49 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
+  it.effect("notifies readiness waiters on HTTP readiness and stop without clock advancement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probe = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.acquireRelease(
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                  }),
+                ),
+                () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+              ),
+            ),
+          ),
+          httpClientLayer: Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Deferred.succeed(probe, undefined).pipe(
+                Effect.andThen(Deferred.await(ready)),
+                Effect.as(HttpClientResponse.fromWeb(request, new Response("{}"))),
+              ),
+            ),
+          ),
+        });
+        yield* instance.start;
+        yield* Deferred.await(probe);
+        const waiter = yield* instance.waitForReady(Duration.seconds(15)).pipe(Effect.forkChild);
+        yield* Deferred.succeed(ready, undefined);
+        assert.isTrue(yield* Fiber.join(waiter));
+        yield* instance.stop();
+        assert.isFalse(yield* instance.waitForReady(Duration.seconds(15)));
+      }),
+    ),
+  );
+
   it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -580,56 +624,63 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("reports a crash loop with the server output on the third restart", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
-        let exitCount = 0;
-        const firstExit = yield* Deferred.make<void>();
-        const reports = yield* Queue.unbounded<{
-          readonly exitCount: number;
-          readonly failure: DesktopBackendManager.BackendStartupFailure;
-        }>();
-        const instance = yield* makeTestInstance({
-          spawnerLayer: Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
-              Effect.succeed(
-                makeProcess({
-                  // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
-                  // lands inside the emoji's surrogate pair.
-                  stderr: Stream.make(
-                    new TextEncoder().encode(
-                      `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+  // A policy refusal is reported on the first exit, since retrying cannot fix it.
+  it.effect.each([
+    { code: 1, exits: 3, managedPolicy: false },
+    { code: SERVER_EXIT_CODE_MANAGED_POLICY, exits: 1, managedPolicy: true },
+  ])(
+    "reports exit $code with the server output after $exits exits",
+    ({ code, exits, managedPolicy }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const message = "Error: Cannot find module 'zod/v4' in /Users/René";
+          let exitCount = 0;
+          const firstExit = yield* Deferred.make<void>();
+          const reports = yield* Queue.unbounded<{
+            readonly exitCount: number;
+            readonly failure: DesktopBackendManager.BackendStartupFailure;
+          }>();
+          const instance = yield* makeTestInstance({
+            spawnerLayer: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(
+                  makeProcess({
+                    // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
+                    // lands inside the emoji's surrogate pair.
+                    stderr: Stream.make(
+                      new TextEncoder().encode(
+                        `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+                      ),
+                      new Uint8Array([0xc3]),
+                      new Uint8Array([0xa9]),
                     ),
-                    new Uint8Array([0xc3]),
-                    new Uint8Array([0xa9]),
-                  ),
-                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
-                }),
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+                  }),
+                ),
               ),
             ),
-          ),
-          httpClientLayer: layerHttpClient(() => Effect.never),
-          backendOutputLog: {
-            persistFailure: () => {
-              exitCount += 1;
-              return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
+            httpClientLayer: layerHttpClient(() => Effect.never),
+            backendOutputLog: {
+              persistFailure: () => {
+                exitCount += 1;
+                return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
+              },
             },
-          },
-          onStartupFailure: (failure) =>
-            Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
-        });
-        yield* instance.start;
-        yield* Deferred.await(firstExit);
-        yield* TestClock.adjust(Duration.minutes(1));
-        const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
-        assert.equal(exitsWhenReported, 3);
-        assert.equal(failure.reason, "The server could not start (code=1).");
-        assert.isTrue(failure.output.endsWith(message));
-        assert.isTrue(failure.output.isWellFormed());
-      }).pipe(Effect.provide(TestClock.layer())),
-    ),
+            onStartupFailure: (failure) =>
+              Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
+          });
+          yield* instance.start;
+          yield* Deferred.await(firstExit);
+          yield* TestClock.adjust(Duration.minutes(1));
+          const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
+          assert.equal(exitsWhenReported, exits);
+          assert.equal(failure.reason, `The server could not start (code=${code}).`);
+          assert.equal(failure.managedPolicy, managedPolicy);
+          assert.isTrue(failure.output.endsWith(message));
+          assert.isTrue(failure.output.isWellFormed());
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
   );
 
   it.effect("waits out a slow startup and reports one that never becomes ready", () =>
@@ -666,6 +717,60 @@ describe("DesktopBackendManager", () => {
         yield* TestClock.adjust(Duration.seconds(1));
         const failure = yield* Queue.take(reports);
         assert.equal(failure.reason, "The server started but did not become ready in time.");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("the quit stop deadline waits for a backend that only exits at the force kill", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<void>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const teardownFinished = yield* Deferred.make<void>();
+        // The real spawner sends SIGTERM, waits the grace, then SIGKILLs. A backend that
+        // ignores SIGTERM therefore finishes tearing down just after the grace.
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.gen(function* () {
+                const scope = yield* Scope.Scope;
+                yield* Deferred.succeed(spawned, undefined);
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep(Duration.seconds(6))),
+                    Effect.andThen(Deferred.succeed(teardownFinished, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+                return makeProcess({
+                  exitCode: Deferred.await(teardownFinished).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          ),
+          httpClientLayer: layerHttpClient(() => Effect.never),
+        });
+        yield* instance.start;
+        yield* Deferred.await(spawned);
+
+        // App quit and the updater stop every backend with this deadline.
+        const quitDone = yield* Deferred.make<void>();
+        const quitFiber = yield* instance
+          .stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT })
+          .pipe(Effect.andThen(Deferred.succeed(quitDone, undefined)), Effect.forkChild);
+
+        yield* Deferred.await(teardownStarted);
+        // Past the SIGTERM grace but before the force kill lands: quit must still be waiting.
+        yield* TestClock.adjust(Duration.millis(5_500));
+        assert.isFalse(yield* Deferred.isDone(quitDone));
+
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* Fiber.join(quitFiber);
+        assert.isTrue(yield* Deferred.isDone(teardownFinished));
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

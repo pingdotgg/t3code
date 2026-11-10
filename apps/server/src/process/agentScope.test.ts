@@ -127,8 +127,11 @@ const withFakeSystemd = <A, E>(
     ),
   );
 
-const unitOf = (launch: { readonly args: ReadonlyArray<string> }) =>
-  launch.args.find((arg) => arg.startsWith("--unit="))?.slice("--unit=".length) ?? "";
+const unitOf = (launch: Pick<ChildProcess.StandardCommand, "args">) =>
+  launch.args
+    .map(String)
+    .find((arg) => arg.startsWith("--unit="))
+    ?.slice("--unit=".length) ?? "";
 
 const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
