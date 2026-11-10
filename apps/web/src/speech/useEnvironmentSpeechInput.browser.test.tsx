@@ -453,6 +453,24 @@ it("drops a confirmed send whose draft changed before its transcript landed", as
   expect(a.draft.text).toBe("edited elsewhere");
 });
 
+it.each([
+  ["another thread is shown", () => <Probe ownerKey="thread-b" />],
+  ["its editor unmounts", () => <span />],
+])("drops a confirmed send when voice is turned off while %s", async (_, away) => {
+  setup({ destination: "env-a" });
+  mocks.draft = "a-draft";
+  const a = confirmedSend("a-draft");
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => a.confirm());
+  await screen.rerender(away());
+  await act(async () => setDestination(null));
+  await act(async () => a.land("from A"));
+  await vi.waitFor(() => expect(a.draft.cancel).toHaveBeenCalledOnce());
+  expect(a.draft.submit).not.toHaveBeenCalled();
+  expect(a.draft.text).toBe("a-draft");
+});
+
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";

@@ -235,7 +235,8 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  /** Binds a side chat to the shown thread and its settings, for a send that opens it later. */
+  readonly bindSideChat?: (() => (prompt: string) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -374,7 +375,7 @@ export function useComposerSend(input: ComposerSendInput) {
     setKeepFullHistory,
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
-    onSideChat,
+    bindSideChat,
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
@@ -427,6 +428,7 @@ export function useComposerSend(input: ComposerSendInput) {
     dictation?: Promise<string | null>,
   ) => {
     e?.preventDefault();
+    const onSideChat = bindSideChat?.();
     const stillHere = () => currentRouteThreadKeyRef.current === routeThreadKey;
     // A dictated send resumes once its transcript lands, possibly while another thread is shown:
     // it reads its own draft and leaves the shared editor refs alone unless it is still shown.

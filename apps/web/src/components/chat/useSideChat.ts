@@ -18,11 +18,19 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
 /**
- * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
- * composer's settings, and shows the tab. It resolves false when the side chat did not
- * start, or another one is still starting.
+ * `open` forks `threadRef` (none when null), sends `prompt` with `readSettings()` and shows the
+ * tab, resolving false when it did not start or another is starting. `bind` captures the thread
+ * and settings now for a send that opens the side chat later, wherever the composer is by then.
  */
+type SideChatSource = {
+  readonly threadRef: ScopedThreadRef;
+  readonly settings: {
+    readonly runtimeMode: RuntimeMode;
+    readonly modelSelection: ModelSelection | undefined;
+  };
+  readonly onError: (message: string) => void;
+};
+
 export function useSideChat(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly readSettings: () => {
@@ -40,16 +48,19 @@ export function useSideChat(input: {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
-  const reportFailure = (
-    failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
-    fallback: string,
+  const start = async (
+    { threadRef, settings, onError }: SideChatSource,
+    prompt: string | undefined,
   ) => {
-    if (isAtomCommandInterrupted(failure)) return;
-    const error = squashAtomCommandFailure(failure);
-    input.onError(error instanceof Error ? error.message : fallback);
-  };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
-    const { runtimeMode, modelSelection } = input.readSettings();
+    const reportFailure = (
+      failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
+      fallback: string,
+    ) => {
+      if (isAtomCommandInterrupted(failure)) return;
+      const error = squashAtomCommandFailure(failure);
+      onError(error instanceof Error ? error.message : fallback);
+    };
+    const { runtimeMode, modelSelection } = settings;
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
@@ -67,13 +78,13 @@ export function useSideChat(input: {
       });
     const targetRef = scopeThreadRef(threadRef.environmentId, targetThreadId);
     if (!(await waitForThreadShell(targetRef))) {
-      input.onError("The side chat was created, but it did not reach this client.");
+      onError("The side chat was created, but it did not reach this client.");
       discard();
       return false;
     }
     const sideChat = readThreadShell(targetRef);
     if (sideChat === null) {
-      input.onError("The side chat is no longer available.");
+      onError("The side chat is no longer available.");
       discard();
       return false;
     }
@@ -114,13 +125,24 @@ export function useSideChat(input: {
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
-    const { threadRef } = input;
-    if (!threadRef || pendingRef.current) return false;
+  const run = async (source: SideChatSource | null, prompt?: string) => {
+    if (!source || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(source, prompt).finally(() => {
       pendingRef.current = false;
     });
   };
-  return { available: input.threadRef !== null, open: useStableCallback(open) };
+  const capture = (): SideChatSource | null =>
+    input.threadRef
+      ? { threadRef: input.threadRef, settings: input.readSettings(), onError: input.onError }
+      : null;
+  const bind = () => {
+    const source = capture();
+    return (prompt: string) => run(source, prompt);
+  };
+  return {
+    available: input.threadRef !== null,
+    open: useStableCallback((prompt?: string) => run(capture(), prompt)),
+    bind: useStableCallback(bind),
+  };
 }

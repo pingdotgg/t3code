@@ -271,14 +271,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
-    if (!prepared || !grantId || typeof navigator === "undefined") return;
-    // A changed destination or consent abandons confirmed sends recorded under the old one.
+    // A changed, revoked, or unavailable destination abandons confirmed sends recorded under the old one.
     for (const [ownerKey, entry] of confirmedSends) {
       if (entry.prepared !== prepared || entry.grantId !== grantId) {
         entry.controller.cancel();
         updateConfirmedSend(ownerKey, null);
       }
     }
+    if (!prepared || !grantId || typeof navigator === "undefined") return;
     const hasAudioConsent = bindAudioGrant(grantId);
     let disposed = false;
     let controller: VoiceInputController;
@@ -421,6 +421,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       readDraft,
       commitDraft: (text, selection) => {
         if (detached) {
+          // No editor may be mounted to cancel it, so the send rechecks consent itself.
+          if (!hasAudioConsent()) return;
           detached.draft.commit(text);
           detached.text = text;
           return;
