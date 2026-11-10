@@ -127,10 +127,11 @@ of `main` for that work, never the tag-pinned diagnosis clone.
 - Note at the end of the issue which model and agent produced it.
 - If `gh` is authenticated, post through the "Triage report" issue template. It
   applies `via-triage` for every reporter, while `gh issue create --label` drops
-  the label without triage permission. Write the approved body to a file, then
-  run:
+  the label without triage permission. Write the approved title and body to
+  files, the title without a trailing newline, so the shell never parses their
+  text. Then run:
 
-      gh api graphql -f repo="$(gh api repos/pingdotgg/t3code --jq .node_id)" -f template="Triage report" -f title="<title>" -F body=@<body-file> -f query='mutation($repo:ID!,$template:String!,$title:String!,$body:String!){createIssue(input:{repositoryId:$repo,issueTemplate:$template,title:$title,body:$body}){issue{url labels(first:20){nodes{name}}}}}'
+      gh api graphql -f repo="$(gh api repos/pingdotgg/t3code --jq .node_id)" -f template="Triage report" -F title=@<title-file> -F body=@<body-file> -f query='mutation($repo:ID!,$template:String!,$title:String!,$body:String!){createIssue(input:{repositoryId:$repo,issueTemplate:$template,title:$title,body:$body}){issue{url labels(first:20){nodes{name}}}}}'
 
   Report the issue URL and whether its labels include `via-triage`. Never file a
   second issue to repair a label. If you cannot tell whether the issue was
