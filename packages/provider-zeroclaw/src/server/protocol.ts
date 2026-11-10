@@ -5,63 +5,54 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const InitializeResult = Schema.Struct({
+const InitializeResult = Schema.Struct({
   protocolVersion: Schema.Number,
   serverVersion: Schema.optional(Schema.String),
 }).pipe(
   Schema.encodeKeys({ protocolVersion: "protocol_version", serverVersion: "server_version" }),
 );
-export type InitializeResult = typeof InitializeResult.Type;
 
-export const StatusResult = Schema.Struct({
+const StatusResult = Schema.Struct({
   version: Schema.optional(Schema.String),
 }).pipe(Schema.encodeKeys({ version: "server_version" }));
-export type StatusResult = typeof StatusResult.Type;
 
-export const AgentInfo = Schema.Struct({
+const AgentInfo = Schema.Struct({
   alias: Schema.String,
   enabled: Schema.optional(Schema.Boolean),
 });
-export type AgentInfo = typeof AgentInfo.Type;
 
-export const AgentsListResult = Schema.Struct({
+const AgentsListResult = Schema.Struct({
   agents: Schema.Array(AgentInfo),
 });
-export type AgentsListResult = typeof AgentsListResult.Type;
 
-export const SessionNewResult = Schema.Struct({
+const SessionNewResult = Schema.Struct({
   sessionId: Schema.String,
   agentAlias: Schema.optional(Schema.String),
 }).pipe(Schema.encodeKeys({ sessionId: "session_id", agentAlias: "agent_alias" }));
-export type SessionNewResult = typeof SessionNewResult.Type;
 
-export const SessionPromptResult = Schema.Struct({
+const SessionPromptResult = Schema.Struct({
   sessionId: Schema.optional(Schema.String),
   stopReason: Schema.optional(Schema.String),
   content: Schema.optional(Schema.String),
 }).pipe(Schema.encodeKeys({ sessionId: "session_id", stopReason: "stop_reason" }));
-export type SessionPromptResult = typeof SessionPromptResult.Type;
 
-export const SessionStateResult = Schema.Struct({
+const SessionStateResult = Schema.Struct({
   sessionId: Schema.String,
   state: Schema.optional(Schema.String),
   turnId: Schema.optional(Schema.String),
 }).pipe(Schema.encodeKeys({ sessionId: "session_id", turnId: "turn_id" }));
-export type SessionStateResult = typeof SessionStateResult.Type;
 
-export const ConversationMessage = Schema.Struct({
+const ConversationMessage = Schema.Struct({
   kind: Schema.optional(Schema.String),
   role: Schema.String,
   content: Schema.optional(Schema.String),
 });
-export type ConversationMessage = typeof ConversationMessage.Type;
 
-export const SessionMessagesResult = Schema.Struct({
+const SessionMessagesResult = Schema.Struct({
   messages: Schema.Array(ConversationMessage),
 });
-export type SessionMessagesResult = typeof SessionMessagesResult.Type;
 
-export const ApprovalRequestUpdate = Schema.Struct({
+const ApprovalRequestUpdate = Schema.Struct({
   type: Schema.Literal("approval_request"),
   sessionId: Schema.optional(Schema.String),
   requestId: Schema.String,
@@ -77,16 +68,14 @@ export const ApprovalRequestUpdate = Schema.Struct({
     timeoutSecs: "timeout_secs",
   }),
 );
-export type ApprovalRequestUpdate = typeof ApprovalRequestUpdate.Type;
 
-export const TurnCompleteUpdate = Schema.Struct({
+const TurnCompleteUpdate = Schema.Struct({
   type: Schema.Literal("turn_complete"),
   sessionId: Schema.optional(Schema.String),
   outcome: Schema.Literals(["completed", "cancelled", "failed"]),
   /** Final text when completed, partial text when cancelled, the error when failed. */
   content: Schema.optional(Schema.String),
 }).pipe(Schema.encodeKeys({ sessionId: "session_id" }));
-export type TurnCompleteUpdate = typeof TurnCompleteUpdate.Type;
 
 const TextChunkUpdate = Schema.Struct({
   type: Schema.Literals(["agent_message_chunk", "agent_thought_chunk"]),
