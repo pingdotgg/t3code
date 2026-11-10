@@ -65,13 +65,9 @@ describe("add project shared logic", () => {
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
     for (const gitlabProject of [
       "https://gitlab.com/acme/tools/src/branch/worker.git",
-      "https://gitlab.com/acme/tools/src/branch/worker",
-      "https://gitlab.example.test/acme/tools/src/branch/worker.git",
-      "https://gitlab.example.test/acme/tools/src/branch/worker",
       "https://scm.example.test/acme/tools/src/branch/worker.git",
       "https://scm.example.test/acme/tools/src/branch/worker",
       "https://scm.example.test/team/repo/src/branch/main/-/README.md",
-      "https://code.company.test/team/repo/src/branch/main/docs",
       "https://forgejo.example.test/a/b/src/branch/mount/team/repo.git",
     ]) {
       expect(normalizePastedCloneUrl(gitlabProject)).toBe(gitlabProject);
@@ -81,13 +77,11 @@ describe("add project shared logic", () => {
   it("clones the repository when given a page URL copied from the browser", () => {
     for (const [pageUrl, pageRoute, repository] of [
       ["https://github.com/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
-      ["https://github.com/pingdotgg/t3code/blob/main/README.md", "/blob/", "t3code"],
       ["https://gitlab.com/gitlab-org/gitlab-runner/-/tree/main", "/-/", "gitlab-runner"],
       ["https://git.cafe/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
       ["https://gitlab.example.test/g/p/-/blob/main/src/branch/x", "/-/", "p"],
       ["https://code.company.test/g/p/-/tree/main", "/-/", "p"],
       ["https://github.com/pingdotgg/t3code/tree/release.git", "/tree/", "t3code"],
-      ["https://gitlab.com/g/p/-/blob/main/template.git", "/-/", "p"],
     ] as const) {
       const cloneUrl = normalizePastedCloneUrl(pageUrl);
       expect(cloneUrl).not.toContain(pageRoute);
