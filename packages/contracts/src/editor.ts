@@ -174,6 +174,19 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+// `goto` editors share VS Code's `file:line:col` addressing, so their remote schemes also open
+// a local file as `<scheme>://file/<absolute path>[:line[:col]]`. Zed and JetBrains differ.
+export const LOCAL_FILE_LINK_SCHEMES: ReadonlyArray<string> = EDITORS.flatMap((editor) =>
+  editor.launchStyle === "goto" && "remoteScheme" in editor ? [editor.remoteScheme] : [],
+);
+
+export const isLocalEditorFileUrl = (url: URL): boolean =>
+  LOCAL_FILE_LINK_SCHEMES.includes(url.protocol.slice(0, -1)) &&
+  url.host === "file" &&
+  url.username.length === 0 &&
+  url.password.length === 0 &&
+  url.pathname.length > 1;
+
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
