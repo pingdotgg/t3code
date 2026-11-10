@@ -45,9 +45,24 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   );
   expect(withoutFrenchOrSpeed.models[0]?.benchmark).toEqual({
     accuracy: { en: { grade: "A-", errorPercent: 3.99 } },
-    secondsPer30s: null,
+    secondsPer30s: { cpu: null, accelerated: null },
   });
-  expect(generate().models[0]?.benchmark.secondsPer30s).toBeCloseTo(1.19, 2);
+  expect(generate().models[0]?.benchmark.secondsPer30s.accelerated).toBeCloseTo(1.19, 2);
+  for (const performance of [{ cpu: 2 }, { accelerated: 10 }, { cpu: 2, accelerated: 10 }]) {
+    const result = generateSpeechCatalog(
+      {
+        ...catalog.data,
+        models: [parakeet],
+        results: { [parakeet.id]: { accuracy: {}, performance } },
+      },
+      "0.2.3",
+      "0.4.1",
+    );
+    expect(result.models[0]?.benchmark.secondsPer30s).toEqual({
+      cpu: performance.cpu ? 15 : null,
+      accelerated: performance.accelerated ? 3 : null,
+    });
+  }
 });
 
 it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {
