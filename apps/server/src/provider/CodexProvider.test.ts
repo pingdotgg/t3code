@@ -194,24 +194,6 @@ it("defaults cyber access to Standard when the catalog offers it", () => {
   assert.deepInclude(cyber(["daybreakBlue"]), { currentValue: "daybreakBlue" });
 });
 
-it("finds the default cyber access program for a model", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: [],
-    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
-    defaultReasoningEffort: "medium",
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    supportedReasoningEfforts: [],
-  });
-  const models = [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }];
-  assert.strictEqual(codexDefaultCyberAccessProgram(models, "gpt-test"), "standard");
-  assert.strictEqual(codexDefaultCyberAccessProgram(models, "my-model"), undefined);
-});
-
 it("follows Codex's daybreak setting for the default program", () => {
   const capabilities = (cyber: ReadonlyArray<"standard" | "daybreakBlue">) =>
     mapCodexModelCapabilities({
