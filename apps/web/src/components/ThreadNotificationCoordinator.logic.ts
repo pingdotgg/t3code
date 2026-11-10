@@ -17,6 +17,19 @@ export function createThreadNotificationGate<Key>(
   const skip = (key: Key, at: number | null) => {
     if (at !== null && at > (handled.get(key) ?? -Infinity)) handled.set(key, at);
   };
+  // Attention keys seen since the thread last stopped needing attention.
+  const attended = new Map<Key, Set<string>>();
+  const attend = (key: Key, attention: string | null): boolean => {
+    if (attention === null) {
+      attended.delete(key);
+      return false;
+    }
+    const seen = attended.get(key);
+    if (seen?.has(attention)) return false;
+    if (seen) seen.add(attention);
+    else attended.set(key, new Set([attention]));
+    return true;
+  };
   return {
     observe(
       key: Key,
@@ -26,8 +39,9 @@ export function createThreadNotificationGate<Key>(
     ): void {
       // The first sighting, archived threads, and stopped or silent runs never notify completion.
       if (!prior || options.archived || options.quiet) skip(key, next.completedAt);
+      const fresh = attend(key, next.attention);
       if (!prior || options.archived) return;
-      if (next.attention && next.attention !== prior.attention) {
+      if (fresh) {
         notify(key, "input");
         return;
       }
@@ -39,9 +53,11 @@ export function createThreadNotificationGate<Key>(
     /** Forgets threads that left the snapshot. */
     retain(keys: ReadonlySet<Key>): void {
       for (const key of handled.keys()) if (!keys.has(key)) handled.delete(key);
+      for (const key of attended.keys()) if (!keys.has(key)) attended.delete(key);
     },
     clear(): void {
       handled.clear();
+      attended.clear();
     },
   };
 }
