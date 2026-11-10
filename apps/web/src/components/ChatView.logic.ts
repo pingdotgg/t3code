@@ -211,6 +211,15 @@ export function shouldOpenProactiveTurnDiff(input: {
   );
 }
 
+export function shouldShowComposerTasks(input: {
+  steps: ReadonlyArray<{ status: string }>;
+  planRunSettled: boolean;
+  isSendBusy: boolean;
+}): boolean {
+  if (!input.planRunSettled) return true;
+  return !input.isSendBusy && input.steps.some((step) => step.status !== "completed");
+}
+
 export function resolveProactiveTurnDiffAction(input: {
   checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal"> | undefined;
   isGitRepo: boolean | undefined;
