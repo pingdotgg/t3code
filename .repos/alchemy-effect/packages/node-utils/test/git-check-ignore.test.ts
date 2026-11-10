@@ -9,17 +9,12 @@ const gitAvailable = spawnSync("git", ["--version"]).status === 0;
 
 const withoutEndingSlash = (value: string) => value.replace(/\/$/, "");
 
-const containsAnotherPath = (
-  candidate: string,
-  index: number,
-  paths: string[],
-) => {
+const containsAnotherPath = (candidate: string, index: number, paths: string[]) => {
   const path = withoutEndingSlash(candidate);
   return paths.some(
     (other, otherIndex) =>
       otherIndex !== index &&
-      (other === path ||
-        (other.startsWith(path) && other[path.length] === "/")),
+      (other === path || (other.startsWith(path) && other[path.length] === "/")),
   );
 };
 
@@ -32,14 +27,11 @@ const nativeGitResult = (
     const contents =
       typeof patterns === "string"
         ? patterns
-        : patterns
-            .map((rule) => (typeof rule === "string" ? rule : rule.pattern))
-            .join("\n");
+        : patterns.map((rule) => (typeof rule === "string" ? rule : rule.pattern)).join("\n");
     writeFileSync(join(root, ".gitignore"), contents);
 
     paths.forEach((path, index) => {
-      if (path === ".gitignore" || containsAnotherPath(path, index, paths))
-        return;
+      if (path === ".gitignore" || containsAnotherPath(path, index, paths)) return;
       const target = join(root, path);
       if (path.endsWith("/")) {
         mkdirSync(target, { recursive: true });
@@ -62,23 +54,18 @@ const nativeGitResult = (
   }
 };
 
-describe.skipIf(IS_WINDOWS || !gitAvailable)(
-  "parity with git check-ignore",
-  () => {
-    cases(({ description, patterns, skip_test_fixture, paths, expected }) => {
-      if (
-        skip_test_fixture ||
-        !paths.some(Boolean) ||
-        !expected.every((path: string) => !path.startsWith(".git/"))
-      ) {
-        return;
-      }
+describe.skipIf(IS_WINDOWS || !gitAvailable)("parity with git check-ignore", () => {
+  cases(({ description, patterns, skip_test_fixture, paths, expected }) => {
+    if (
+      skip_test_fixture ||
+      !paths.some(Boolean) ||
+      !expected.every((path: string) => !path.startsWith(".git/"))
+    ) {
+      return;
+    }
 
-      it(description, () => {
-        expect(nativeGitResult(patterns, paths).sort()).toEqual(
-          expected.sort(),
-        );
-      });
+    it(description, () => {
+      expect(nativeGitResult(patterns, paths).sort()).toEqual(expected.sort());
     });
-  },
-);
+  });
+});

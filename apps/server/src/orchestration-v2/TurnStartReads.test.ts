@@ -406,11 +406,30 @@ it.effect.each(["sqlite"] as const)(
           },
         },
       });
+      const recordingId = "thread-completion-reads-0b9f6c1e-3c1d-4f7a-9d2e-5a6b7c8d9e0f-webm";
+      yield* store.apply({
+        id: EventId.make("attachment:recording-event"),
+        type: "turn-item.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          id: TurnItemId.make("attachment:recording"),
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__preview_recording_stop",
+          input: {},
+          output: [
+            { type: "text", text: JSON.stringify({ id: recordingId, mimeType: "video/webm" }) },
+          ],
+        },
+      });
       assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).toSorted(), [
         "answer-document",
         "answer-image",
         "attachment:old",
         "message-file",
+        recordingId,
       ]);
     }).pipe(Effect.provide(layerDatabase)),
 );

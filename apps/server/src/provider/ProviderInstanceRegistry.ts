@@ -9,6 +9,8 @@ import {
   type SecretReference,
   secretReferencesInSettings,
   type ServerProvider,
+  type SettingsSecretSlot,
+  withSettingsSecrets,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -45,7 +47,7 @@ export class ProviderInstanceRegistry extends Context.Service<
 
 interface InstanceSecrets {
   readonly environment: ResolvedProviderInstanceEnvironment;
-  readonly config: Readonly<Record<string, string>>;
+  readonly config: ReadonlyArray<SettingsSecretSlot & { readonly value: string }>;
 }
 
 interface LiveEntry {
@@ -58,6 +60,9 @@ interface LiveEntry {
 interface RegistryState {
   readonly entries: Ref.Ref<ReadonlyMap<ProviderInstanceId, LiveEntry>>;
   readonly unavailable: Ref.Ref<ReadonlyMap<ProviderInstanceId, ServerProvider>>;
+  // Configs parked on an unreadable secret. A settings save that leaves one alone does not read
+  // its vault again, so a locked vault is not prompted for on every unrelated save.
+  readonly secretsUnreadable: Ref.Ref<ReadonlyMap<ProviderInstanceId, ProviderInstanceConfig>>;
   readonly changes: PubSub.PubSub<void>;
 }
 
@@ -101,21 +106,26 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
     references.length === 0 ? [] : yield* (yield* SecretResolver.SecretResolver).read(references);
   const unreadable: Array<string> = [];
   let index = 0;
+  // An empty secret reads as unreadable, so a driver cannot fall back to an inherited credential.
+  const next = () => {
+    const secret = values[index++];
+    return secret === undefined || secret.trim() === "" ? undefined : secret;
+  };
   const environment: ResolvedProviderInstanceEnvironment = variables.flatMap((variable) => {
     if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
-    const secret = values[index++];
+    const secret = next();
     if (secret === undefined) {
       unreadable.push(variable.name);
       return [];
     }
     return [{ ...variable, value: secret, sensitive: true }];
   });
-  const config: Record<string, string> = {};
-  for (const { field } of configFields) {
-    const secret = values[index++];
-    if (secret === undefined) unreadable.push(field);
-    else config[field] = secret;
-  }
+  const config = configFields.flatMap(({ field, key }) => {
+    const secret = next();
+    if (secret !== undefined) return [{ field, key, value: secret }];
+    unreadable.push(field);
+    return [];
+  });
   const secrets: InstanceSecrets = { environment, config };
   return { secrets, unreadable };
 });
@@ -153,7 +163,11 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   readonly deferSecrets: boolean;
 }): Effect.fn.Return<
   | { readonly kind: "live"; readonly live: LiveEntry }
-  | { readonly kind: "unavailable"; readonly snapshot: ServerProvider },
+  | {
+      readonly kind: "unavailable";
+      readonly snapshot: ServerProvider;
+      readonly secretsUnreadable?: true;
+    },
   never,
   R | SecretResolver.SecretResolver
 > {
@@ -224,7 +238,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   const { secrets, unreadable } = enabled
     ? yield* readInstanceSecrets(driver, entry)
     : {
-        secrets: { environment: withoutSecretReferences(entry.environment ?? []), config: {} },
+        secrets: { environment: withoutSecretReferences(entry.environment ?? []), config: [] },
         unreadable: [],
       };
   // Starting with a blank credential would fail later with a less useful error, or fall back to
@@ -232,6 +246,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   if (unreadable.length > 0) {
     return {
       kind: "unavailable" as const,
+      secretsUnreadable: true as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
         driverKind: entry.driver,
         instanceId,
@@ -252,9 +267,9 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       environment: secrets.environment,
       enabled,
       config:
-        Object.keys(secrets.config).length === 0
+        secrets.config.length === 0
           ? typedConfig
-          : { ...typedConfig, ...secrets.config },
+          : withSettingsSecrets(typedConfig, secrets.config),
     })
     .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
   if (createResult._tag === "Failure") {
@@ -302,6 +317,7 @@ const makeReconcile = <R>(input: {
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
+      const previousSecretsUnreadable = yield* Ref.get(state.secretsUnreadable);
       const nextRaw = Object.entries(configMap);
       const nextKeys = new Set<ProviderInstanceId>(
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
@@ -336,12 +352,21 @@ const makeReconcile = <R>(input: {
         }
       }
 
+      const parkedSnapshot = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) => {
+        const parked = previousSecretsUnreadable.get(instanceId);
+        return !rebuild.has(instanceId) && parked !== undefined && entryEqual(parked, entry)
+          ? previousUnavailable.get(instanceId)
+          : undefined;
+      };
+
       // Read every secret the builds below need in one go, so a vault unlocks once.
       const references = yield* Effect.forEach(nextRaw, ([rawInstanceId, entry]) =>
         Effect.gen(function* () {
           const instanceId = ProviderInstanceId.make(rawInstanceId);
           const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
-          return kept || !(yield* isEntryEnabled(driversById, entry))
+          return kept ||
+            parkedSnapshot(instanceId, entry) !== undefined ||
+            !(yield* isEntryEnabled(driversById, entry))
             ? []
             : secretReferencesOf(driversById, entry);
         }),
@@ -352,6 +377,7 @@ const makeReconcile = <R>(input: {
 
       const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
+      const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
       let orderChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
@@ -363,6 +389,12 @@ const makeReconcile = <R>(input: {
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
           builtEntries.set(instanceId, existing);
+          continue;
+        }
+        const parked = parkedSnapshot(instanceId, entry);
+        if (parked !== undefined) {
+          builtUnavailable.set(instanceId, parked);
+          builtSecretsUnreadable.set(instanceId, entry);
           continue;
         }
 
@@ -379,6 +411,7 @@ const makeReconcile = <R>(input: {
           builtEntries.set(instanceId, result.live);
         } else {
           builtUnavailable.set(instanceId, result.snapshot);
+          if (result.secretsUnreadable) builtSecretsUnreadable.set(instanceId, entry);
         }
       }
 
@@ -408,6 +441,7 @@ const makeReconcile = <R>(input: {
 
       yield* Ref.set(state.entries, builtEntries);
       yield* Ref.set(state.unavailable, builtUnavailable);
+      yield* Ref.set(state.secretsUnreadable, builtSecretsUnreadable);
 
       if (entriesChanged || unavailableChanged) {
         yield* PubSub.publish(state.changes, undefined);
@@ -444,10 +478,13 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   const entries = yield* Ref.make<ReadonlyMap<ProviderInstanceId, LiveEntry>>(new Map());
   const unavailable = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ServerProvider>>(new Map());
+  const secretsUnreadable = yield* Ref.make<
+    ReadonlyMap<ProviderInstanceId, ProviderInstanceConfig>
+  >(new Map());
   const changes = yield* PubSub.unbounded<void>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
-  const state: RegistryState = { entries, unavailable, changes };
+  const state: RegistryState = { entries, unavailable, secretsUnreadable, changes };
   const reconcileWithR = makeReconcile({
     state,
     driversById,
@@ -486,7 +523,10 @@ export const makeProviderInstanceRegistry = Effect.fn(
         const rebuild = new Set<ProviderInstanceId>();
         for (const [rawInstanceId, entry] of targets) {
           const current = live.get(ProviderInstanceId.make(rawInstanceId));
-          if (current === undefined) continue;
+          if (current === undefined) {
+            rebuild.add(ProviderInstanceId.make(rawInstanceId));
+            continue;
+          }
           const { secrets, unreadable } = yield* readInstanceSecrets(
             driversById.get(entry.driver),
             entry,

@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
   sessions: new Map<string, Pick<AuthSessionState, "authenticated" | "scopes">>(),
   refresh: vi.fn(),
   download: vi.fn(),
+  downloadPreview: vi.fn(),
+  saveImage: vi.fn(),
   shareLocal: vi.fn(),
   shareDraft: vi.fn(),
   navigate: vi.fn(),
@@ -52,7 +54,16 @@ vi.mock("../state/atom-registry", () => ({
 }));
 vi.mock("./attachmentDownload", () => ({
   downloadAndShareAttachment: state.download,
+  downloadAttachmentForPreview: state.downloadPreview,
   shareLocalAttachment: state.shareLocal,
+}));
+vi.mock("./saveImageToLibrary", () => ({
+  canSaveImageToLibrary: (mimeType: string) => mimeType === "image/png",
+  saveImageToLibrary: state.saveImage,
+}));
+vi.mock("expo-haptics", () => ({
+  notificationAsync: async () => {},
+  NotificationFeedbackType: { Success: "success" },
 }));
 vi.mock("./copyTextWithHaptic", () => ({ copyTextWithHaptic: state.copy }));
 vi.mock("./localAttachmentPreview", () => ({
@@ -90,6 +101,8 @@ beforeEach(() => {
   state.sessions.set(environmentId, denied);
   state.refresh.mockReset().mockResolvedValue("https://host.test/image.png");
   state.download.mockReset().mockResolvedValue(undefined);
+  state.downloadPreview.mockReset();
+  state.saveImage.mockReset().mockResolvedValue(undefined);
   state.shareLocal.mockReset().mockResolvedValue(undefined);
   state.shareDraft.mockReset().mockResolvedValue(undefined);
   state.navigate.mockReset();
@@ -109,6 +122,7 @@ it.each(["workspace-file", "media-file"] as const)(
     expect(state.navigate).not.toHaveBeenCalled();
     expect(state.copy).toHaveBeenCalledWith("/repo/image.png");
     expect(media.actions.find(({ id }) => id === "save")?.disabled).toBe(true);
+    expect(media.actions.find(({ id }) => id === "save-image")?.disabled).toBe(true);
     expect(media.actions.find(({ id }) => id === "open-file")?.disabled).toBe(true);
   },
 );
@@ -178,3 +192,22 @@ it.each(["https://cdn.test/image.png", "file:///device/image.png"])(
     expect(uri.startsWith("file:") ? state.shareLocal : state.download).toHaveBeenCalledOnce();
   },
 );
+
+it("saves a host image from its downloaded file, then removes the file", async () => {
+  state.sessions.set(environmentId, granted);
+  const disposed = Promise.withResolvers<void>();
+  state.downloadPreview.mockResolvedValue({
+    uri: "file:///cache/image.png",
+    dispose: disposed.resolve,
+  });
+
+  useMediaActions(hostSource())
+    .actions.find(({ id }) => id === "save-image")!
+    .run();
+  await disposed.promise;
+
+  expect(state.downloadPreview).toHaveBeenCalledWith(
+    expect.objectContaining({ url: "https://host.test/image.png" }),
+  );
+  expect(state.saveImage).toHaveBeenCalledWith("file:///cache/image.png", "image/png", "image.png");
+});

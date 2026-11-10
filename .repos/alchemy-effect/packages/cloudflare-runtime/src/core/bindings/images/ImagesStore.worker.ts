@@ -29,10 +29,7 @@ export default {
   fetch(request, env) {
     const stub = env[BINDING_KV_OBJECT].getByName(IMAGES_STORE_NAMESPACE);
     const headers = new Headers(request.headers);
-    headers.set(
-      HEADER_KV_NAMESPACE,
-      encodeURIComponent(IMAGES_STORE_NAMESPACE),
-    );
+    headers.set(HEADER_KV_NAMESPACE, encodeURIComponent(IMAGES_STORE_NAMESPACE));
     return stub.fetch(new Request(request, { headers }));
   },
 } satisfies ExportedHandler<Env>;
