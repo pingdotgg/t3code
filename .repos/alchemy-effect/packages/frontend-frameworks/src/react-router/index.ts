@@ -63,15 +63,11 @@ export {
  * The structural subset of the e2e harness's `Options` this package reads.
  */
 export interface HarnessOptions {
-  readonly reactRouter?:
-    | { readonly buildDirectory?: string | undefined }
-    | undefined;
+  readonly reactRouter?: { readonly buildDirectory?: string | undefined } | undefined;
 }
 
 /** Map the harness's options onto {@link ReactRouterOptions}. */
-export const fromHarnessOptions = (
-  options: HarnessOptions,
-): ReactRouterOptions => ({
+export const fromHarnessOptions = (options: HarnessOptions): ReactRouterOptions => ({
   buildDirectory: options.reactRouter?.buildDirectory,
 });
 
