@@ -239,6 +239,7 @@ function pullRequestMarkdownContext(
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
     repository: detail?.repository ?? null,
+    host: detail === null ? null : (URL.parse(detail.url)?.host.toLowerCase() ?? null),
   };
 }
 

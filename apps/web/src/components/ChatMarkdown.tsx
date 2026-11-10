@@ -251,6 +251,8 @@ interface ChatMarkdownProps {
   sourceControlMedia?: boolean | undefined;
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
+  /** The change request's host, so a self-hosted forge's media loads through the server too. */
+  sourceControlMediaHost?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -499,6 +501,7 @@ function useChatMarkdownState({
   headingLevelOffset = 0,
   sourceControlMedia = false,
   sourceControlMediaRepository,
+  sourceControlMediaHost,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -897,6 +900,7 @@ function useChatMarkdownState({
     fileLinkChip,
     sourceControlMedia,
     sourceControlMediaRepository,
+    sourceControlMediaHost,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -1376,6 +1380,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       environmentId,
       sourceControlMedia,
       sourceControlMediaRepository,
+      sourceControlMediaHost,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -1450,8 +1455,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const hostMediaUrl =
       directUri === null
         ? null
-        : (sourceControlClients.mediaUrl(resolveProtocolRelativeMediaUrl(directUri))?.fetchUrl ??
-          null);
+        : (sourceControlClients.mediaUrl(
+            resolveProtocolRelativeMediaUrl(directUri),
+            sourceControlMedia ? sourceControlMediaHost : undefined,
+          )?.fetchUrl ?? null);
     if (
       sourceControlMedia &&
       cwd !== undefined &&
@@ -1467,6 +1474,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             cwd,
             url: hostMediaUrl,
             ...(sourceControlMediaRepository ? { repository: sourceControlMediaRepository } : {}),
+            ...(sourceControlMediaHost ? { host: sourceControlMediaHost } : {}),
           }}
           alt={altText}
           kind={kind}

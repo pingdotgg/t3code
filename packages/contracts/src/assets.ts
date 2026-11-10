@@ -60,6 +60,8 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
     repository: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+    /** The change request's host, for a self-hosted forge the URL alone cannot be matched to. */
+    host: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(253))),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;

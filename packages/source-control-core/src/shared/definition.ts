@@ -345,9 +345,10 @@ export interface SourceControlDefinition {
   readonly canonicalRepositoryKey?: (key: string) => string | null;
   /**
    * Null when `url` is not media this host keeps behind a credential. A client cannot load such
-   * media itself, so it asks the server, whose driver for this host fetches it.
+   * media itself, so it asks the server, whose driver for this host fetches it. `knownHost` is the
+   * host of the change request the media is shown in, for a host this definition cannot name.
    */
-  readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
+  readonly mediaUrl?: (url: URL, knownHost?: string) => SourceControlMediaUrl | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -633,7 +634,7 @@ export interface SourceControlDefinitionRegistry {
     kind: Kind,
   ) => string | Kind;
   /** The first host, in registry order, that keeps `url` behind a credential. */
-  readonly mediaUrl: (url: string) => SourceControlMedia | null;
+  readonly mediaUrl: (url: string, knownHost?: string) => SourceControlMedia | null;
 }
 
 function httpUrl(value: string): URL | null {
@@ -773,11 +774,11 @@ export function makeSourceControlDefinitionRegistry(
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),
-    mediaUrl: (value) => {
+    mediaUrl: (value, knownHost) => {
       const url = httpUrl(value);
       if (url === null) return null;
       for (const definition of definitions) {
-        const media = definition.mediaUrl?.(url);
+        const media = definition.mediaUrl?.(url, knownHost);
         if (media != null) return { ...media, definition };
       }
       return null;
