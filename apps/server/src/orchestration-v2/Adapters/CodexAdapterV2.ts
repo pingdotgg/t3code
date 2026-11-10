@@ -7397,7 +7397,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
-              threadClosings.set(nativeThreadId, yield* Deferred.make<void>());
+              // A resume may already wait on the pending entry; replacing it would strand that wait.
+              if (!threadClosings.has(nativeThreadId)) {
+                threadClosings.set(nativeThreadId, yield* Deferred.make<void>());
+              }
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
             },
             (effect, unloadInput) =>
