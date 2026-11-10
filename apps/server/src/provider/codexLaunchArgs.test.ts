@@ -50,7 +50,13 @@ describe("codex exec and mcp list launch args", () => {
     ]);
   });
 
-  it("drops exec-only flags for codex mcp list", () => {
-    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), ["--enable", "foo"]);
+  it("keeps the selected profile and drops exec-only flags for codex mcp list", () => {
+    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), [
+      "--profile",
+      "local",
+      "-p=work",
+      "--enable",
+      "foo",
+    ]);
   });
 });

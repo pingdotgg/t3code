@@ -25,11 +25,10 @@ const SHARED_INLINE_PREFIXES = ["--config=", "-c=", "--enable=", "--disable="];
 
 const MCP_LIST_FILTER: LaunchArgFilter = {
   switches: new Set(),
-  valueFlags: new Set(SHARED_VALUE_FLAGS),
-  inlinePrefixes: SHARED_INLINE_PREFIXES,
+  valueFlags: new Set([...SHARED_VALUE_FLAGS, "--profile", "-p"]),
+  inlinePrefixes: [...SHARED_INLINE_PREFIXES, "--profile=", "-p="],
 };
 
-// `codex exec` also takes the local model provider flags; `codex mcp list` rejects them.
 const EXEC_FILTER: LaunchArgFilter = {
   switches: new Set(["--strict-config", "--oss"]),
   valueFlags: new Set([...SHARED_VALUE_FLAGS, "--local-provider", "--profile", "-p"]),
