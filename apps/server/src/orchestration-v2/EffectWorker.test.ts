@@ -1,4 +1,3 @@
-import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -22,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -115,6 +115,7 @@ function layerExecutorFor(input: {
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),
         releaseUnlessBusy: () => Effect.succeed(true),
+        subscribePromptSuggestion: () => Stream.empty,
       }),
     ),
     Layer.succeed(

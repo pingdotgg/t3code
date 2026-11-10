@@ -98,6 +98,7 @@ function makeFakeBrowserWindow() {
       setPermissionRequestHandler: vi.fn(),
     },
     setBackgroundThrottling: vi.fn(),
+    setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     toggleDevTools: vi.fn(),
   };
@@ -147,6 +148,7 @@ function makeFakeBrowserWindow() {
     reloadIgnoringCache: webContents.reloadIgnoringCache,
     toggleDevTools: webContents.toggleDevTools,
     navigationHistory: webContents.navigationHistory,
+    setIgnoreMenuShortcuts: webContents.setIgnoreMenuShortcuts,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
@@ -483,6 +485,30 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("restores a window saved 1px past a display edge, and nothing further out", () => {
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1280 },
+      { x: 1920, y: 0, width: 1280, height: 1920 },
+    ];
+    const snappedBounds = { x: 1921, y: 30, width: 1280, height: 945 };
+
+    assert.strictEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(snappedBounds, displays),
+      snappedBounds,
+    );
+    for (const bounds of [
+      { x: 1922, y: 30, width: 1280, height: 945 },
+      { x: 1918, y: 30, width: 1280, height: 945 },
+      { x: 1921, y: -2, width: 1279, height: 945 },
+      { x: 1920, y: 976, width: 1280, height: 946 },
+    ]) {
+      assert.deepEqual(
+        DesktopWindow.resolveInitialMainWindowBounds(bounds, displays),
+        DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+      );
+    }
+  });
+
   it("rejects renderer navigations whose origin only serializes as null", () => {
     for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
       assert.isTrue(
@@ -626,7 +652,7 @@ describe("DesktopWindow", () => {
       }),
   );
 
-  it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
+  it.effect("leaves Cmd+W to the renderer and blocks repeated presses", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -667,6 +693,13 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+
+        assert.deepEqual(
+          fakeWindow.setIgnoreMenuShortcuts.mock.calls.map(([ignore]) => ignore),
+          [true, true, false],
+        );
+        beforeInput(event, { ...input, key: "r", isAutoRepeat: false });
+        assert.isFalse(fakeWindow.setIgnoreMenuShortcuts.mock.lastCall?.[0]);
       }).pipe(Effect.provide(layer));
     }),
   );
