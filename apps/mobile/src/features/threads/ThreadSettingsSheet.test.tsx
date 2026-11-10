@@ -80,12 +80,10 @@ vi.mock("../../native/createV5StackNavigator", () => ({
 vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
-vi.mock("../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
-vi.mock("../../components/ui/Toolbar", () => ({ Toolbar: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
-vi.mock("../../components/ui/AndroidAnchoredMenu", () => ({ AndroidAnchoredMenu: () => null }));
-vi.mock("../../components/ui/IconButton", () => ({ IconButton: () => null }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
+vi.mock("../../components/ui/useBarInset", () => ({ useSearchToolbarInset: () => 0 }));
+vi.mock("../layout/nested-stacks", () => ({ useSheetStackOptions: () => ({}) }));
 vi.mock("../../components/ui/ScreenContent", () => ({ ScreenContent: Children }));
 vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("../../components/ui/ThemedSwitch", () => ({
@@ -103,20 +101,6 @@ vi.mock("../../components/ui/ThemedSwitch", () => ({
   ),
 }));
 vi.mock("../../lib/appState", () => ({ useReduceMotionEnabled: () => true }));
-vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
-vi.mock("../../native/StackHeader", () => ({
-  NativeStackScreenOptions: () => null,
-  nativeHeaderScrollEdgeEffects: () => undefined,
-}));
-vi.mock("../../native/native-glass", () => ({ NATIVE_LIQUID_GLASS_SUPPORTED: false }));
-vi.mock("../../native/native-layout-metrics", () => ({ useNativeLayoutMetrics: () => null }));
-vi.mock("../../native/use-native-mail-search-toolbar", () => ({
-  useNativeMailSearchToolbar: () => false,
-}));
-vi.mock("../layout/native-mail-search-toolbar", () => ({
-  createNativeMailSearchToolbarItem: () => null,
-  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET: 0,
-}));
 vi.mock("./ChatGptSharingStatus", () => ({ ChatGptSharingStatus: () => null }));
 vi.mock("./new-task-flow-provider", () => ({ useNewTaskFlow: () => ({}) }));
 vi.mock("../../state/use-model-option-memory", () => ({
@@ -129,9 +113,9 @@ vi.mock("../../state/entities", () => ({ useThreadReportedModelSelection: () => 
 vi.mock("../../state/use-composer-drafts", () => ({}));
 vi.mock("../../state/use-thread-detail", () => ({}));
 vi.mock("../../state/queued-run-edit", () => ({}));
-vi.mock("../../state/use-thread-composer-state", () => ({}));
 vi.mock("../../state/use-thread-selection", () => ({}));
 vi.mock("../../state/thread-provider-switching", () => ({}));
+vi.mock("../../state/thread-model-selection", () => ({}));
 vi.mock("../../state/preferences", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
@@ -151,6 +135,7 @@ import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
 const environmentId = EnvironmentId.make("env-1");
 const codex = ProviderInstanceId.make("codex");
 const config = {
+  environment: { capabilities: {} },
   settings: {
     ...DEFAULT_SERVER_SETTINGS,
     favorites: [],
@@ -239,7 +224,7 @@ it("shows a tapped model as hidden while its hide request is still saving", asyn
   // The save has not settled and no settings push has arrived yet.
   expect(
     sheet.button("Show model: Codex, GPT-6.1-Sol"),
-    "the tapped row still shows the model as visible until the server responds",
+    "the tapped row shows the model as hidden before the server responds",
   ).not.toBeNull();
 
   act(() => sheet.button("Show model: Codex, GPT-6.1-Sol")!.click());
@@ -258,9 +243,6 @@ it("holds a saved hidden state until the settings push and reverts a failed save
     "a response that lands before the push keeps the tapped state",
   ).not.toBeNull();
 
-  act(() => sheet.pushConfig({ ...config, settings: hiddenSettings }));
-  expect(sheet.button("Show model: Codex, GPT-6.1-Sol")).not.toBeNull();
-
   const show = Promise.withResolvers<unknown>();
   mocks.updateSettings.mockReturnValueOnce(show.promise);
   act(() => sheet.button("Show model: Codex, GPT-6.1-Sol")!.click());
@@ -269,8 +251,11 @@ it("holds a saved hidden state until the settings push and reverts a failed save
   await act(async () => show.resolve(AsyncResult.failure(Cause.fail("rejected"))));
   expect(
     sheet.button("Show model: Codex, GPT-6.1-Sol"),
-    "a failed save returns the row to the server's state",
+    "a failed follow-up save returns to the earlier saved state, not the stale settings",
   ).not.toBeNull();
+
+  act(() => sheet.pushConfig({ ...config, settings: hiddenSettings }));
+  expect(sheet.button("Show model: Codex, GPT-6.1-Sol")).not.toBeNull();
 });
 
 it("returns the row to the server's state when the saved settings do not hide the model", async () => {

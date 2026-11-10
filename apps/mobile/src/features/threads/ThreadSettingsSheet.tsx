@@ -462,6 +462,7 @@ function ThreadSettingsSessionProvider(
     if (!settings || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
       return;
     pendingHidden.current.add(option.key);
+    const previous = hiddenOverrides.get(option.key);
     const override: HiddenModelOverride = { hidden: !option.isHidden, settledSettings: null };
     setHiddenOverrides((current) => new Map(current).set(option.key, override));
     void Haptics.selectionAsync();
@@ -490,6 +491,9 @@ function ThreadSettingsSessionProvider(
         const next = new Map(current);
         if (confirmed && latest) {
           next.set(option.key, { ...override, settledSettings: latest });
+        } else if (AsyncResult.isFailure(result) && previous) {
+          // The earlier save's push may still be on its way; keep showing what it saved.
+          next.set(option.key, previous);
         } else {
           next.delete(option.key);
         }
