@@ -5228,6 +5228,25 @@ describe("PiAdapterV2", () => {
       yield* ackFor(dialogPrompt, "handled");
       const dialog = yield* takeEvent((event) => event.type === "user_message.delivered");
       assert.deepInclude(dialog, { messageId: "message:thread-pi-test:dialog" as never });
+
+      // Pi queues in ack order: a skill whose expansion was delayed queues after a later one.
+      yield* steer("message:thread-pi-test:skill-a", "/skill:a");
+      const skillAPrompt = yield* fake.takeRequest("prompt");
+      yield* steer("message:thread-pi-test:skill-b", "/skill:b");
+      const skillBPrompt = yield* fake.takeRequest("prompt");
+      yield* ackFor(skillBPrompt, "queued");
+      yield* ackFor(skillAPrompt, "queued");
+      for (const [text, messageId] of [
+        ["<skill>B</skill>", "message:thread-pi-test:skill-b"],
+        ["<skill>A</skill>", "message:thread-pi-test:skill-a"],
+      ] as const) {
+        yield* fake.emit({
+          type: "message_start",
+          message: { role: "user", content: [{ type: "text", text }] },
+        });
+        const started = yield* takeEvent((event) => event.type === "user_message.delivered");
+        assert.deepInclude(started, { messageId: messageId as never });
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

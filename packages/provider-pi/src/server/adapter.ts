@@ -376,7 +376,7 @@ interface ActivePiTurn {
   failure: ReturnType<typeof makeProviderFailure> | null;
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
-  /** Steers Pi queued but has not started, oldest first. */
+  /** Steers Pi has not started: acked ones first in Pi's queue (ack) order, then unacked ones. */
   readonly unreadSteers: Array<{
     readonly messageId: MessageId;
     readonly text: string;
@@ -2285,7 +2285,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 yield* emitSteerDelivered(responseTurn, steer.messageId);
               }
             } else if (responseTurn !== null && steerIndex !== -1) {
-              responseTurn.unreadSteers[steerIndex]!.queuedMessage = true;
+              // Pi queues in ack order, so queued steers lead the list in that order.
+              const [steer] = responseTurn.unreadSteers.splice(steerIndex, 1);
+              const queuedEnd = responseTurn.unreadSteers.findIndex((s) => !s.queuedMessage);
+              responseTurn.unreadSteers.splice(
+                queuedEnd === -1 ? responseTurn.unreadSteers.length : queuedEnd,
+                0,
+                { ...steer!, queuedMessage: true },
+              );
             }
             if (event["success"] === true) {
               // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
