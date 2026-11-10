@@ -8486,6 +8486,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       !context.interrupted &&
                       hasDeferredBackgroundWork(context)
                     ) {
+                      // A foreground tool still open at end_turn is stale; left open it would
+                      // hold the deferred finalize until Stop.
+                      yield* terminalizeOpenForegroundTools(context);
                       yield* closeTextStreams(context);
                       yield* (
                         options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
