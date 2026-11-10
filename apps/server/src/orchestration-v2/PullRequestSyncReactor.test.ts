@@ -1785,6 +1785,25 @@ describe("PullRequestSyncReactor", () => {
       linked: [124],
     },
     {
+      name: "an existing GitHub pull request printed beside GitHub and Azure DevOps creates",
+      input:
+        "gh pr view --json url --jq .url && az repos pr create --title test --output none && gh pr create --fill",
+      output:
+        "https://github.com/owner/repository/pull/120\nhttps://github.com/owner/repository/pull/124\n",
+      linked: [],
+    },
+    {
+      name: "a GitHub pull request beside an Azure DevOps create that also printed an existing one",
+      input:
+        'az repos pr show --id "$PR_ID" && az repos pr create --title test && gh pr create --fill',
+      output: [
+        AZURE_PULL_REQUEST_CREATED,
+        AZURE_PULL_REQUEST_CREATED.replaceAll("42", "43"),
+        "https://github.com/owner/repository/pull/124",
+      ].join("\n"),
+      linked: [124],
+    },
+    {
       name: "an Azure DevOps pull request after a push",
       input:
         'git push -u origin feature 2>&1 && az repos pr create --source-branch feature --target-branch main --title "Fix the thing"',

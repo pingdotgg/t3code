@@ -139,8 +139,8 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
 /**
  * The change requests a shell command opened: the URLs a host's create command printed, on lines
  * of their own unless the host reads its output another way. One the command also names, as
- * `gh pr view 12` does, existed before it ran. More URLs than create commands means something
- * else printed some, such as `gh pr list`, so none are taken.
+ * `gh pr view 12` does, existed before it ran. More of a host's URLs than its create commands
+ * means something else printed some, such as `gh pr list`, so none of that host's are taken.
  */
 export function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
@@ -156,10 +156,11 @@ export function changeRequestsCreatedBy(input: string, output: string) {
   const otherScript = shellSegments(script)
     .filter((segment) => createCommandCount(shellCode(segment)) === 0)
     .join("\n");
-  const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
+  const created: Array<ThreadPullRequestKey & { readonly url: string }> = [];
   for (const { definition, run } of CREATE_COMMANDS) {
-    if (code.match(run) === null || definition.changeRequestListCommand?.test(otherCommands))
-      continue;
+    const hostCreates = [...code.matchAll(run)].length;
+    if (hostCreates === 0 || definition.changeRequestListCommand?.test(otherCommands)) continue;
+    const hostCreated = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
     const printed =
       definition.changeRequestCreateOutputUrls?.(output) ??
       Array.from(output.matchAll(URL_LINE), ([, url = ""]) => url);
@@ -172,10 +173,11 @@ export function changeRequestsCreatedBy(input: string, output: string) {
       // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
       if (named.test(otherScript)) continue;
       const key = normalizeThreadPullRequestKey(link);
-      created.set(threadPullRequestKeyOf(key), { ...key, url });
+      hostCreated.set(threadPullRequestKeyOf(key), { ...key, url });
     }
+    if (hostCreated.size <= hostCreates) created.push(...hostCreated.values());
   }
-  return created.size > creates ? [] : [...created.values()];
+  return created;
 }
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
