@@ -417,11 +417,12 @@ export const make = Effect.gen(function* () {
             results.length < limit &&
             items.some((item) => item.head.ref !== branch && item.head.label !== branch)
           ) {
+            // A failed scan falls back to paging only as far as this branch needs.
             const pulls = yield* Cache.get(
               repositoryPulls,
               new RepositoryPullsKey(repo, scanFrom(input, repo, items)),
-            );
-            return matching(pulls).slice(0, limit);
+            ).pipe(Effect.option);
+            if (Option.isSome(pulls)) return matching(pulls.value).slice(0, limit);
           }
           if (items.length === 0) break;
         }

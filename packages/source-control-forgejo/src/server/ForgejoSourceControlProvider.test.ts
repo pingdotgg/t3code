@@ -1124,6 +1124,62 @@ it.effect("branch lookups on a Forgejo that ignores head do not each read every 
   );
 });
 
+it.effect("a failed later page does not fail a lookup that already has enough matches", () => {
+  const repo = { full_name: "maria/project", owner: { login: "maria" } };
+  const pull = (number: number, branch: string) => ({
+    number,
+    title: `PR ${number}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+    state: "open",
+    merged: false,
+    base: { ref: "main", label: "main", sha: "base", repo },
+    head: { ref: branch, label: branch, sha: "head", repo },
+  });
+  const pages = [
+    Array.from({ length: 50 }, (_, index) => pull(index + 1, `other-${index + 1}`)),
+    Array.from({ length: 20 }, (_, index) => pull(index + 51, "feature")),
+  ];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const found = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all",
+      limit: 20,
+    });
+    assert.strictEqual(found.length, 20);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+            const items = pages[page - 1];
+            if (items === undefined)
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: input.cwd,
+                  httpStatus: 503,
+                  detail: "Forgejo API request failed (HTTP 503): Service Unavailable",
+                }),
+              );
+            return encodeJsonEffect(items).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
   () => {
