@@ -105,5 +105,17 @@ describe("thread undo notice", () => {
     await notice().undo();
     expect(add).toHaveBeenCalledOnce();
     expect(announce).toHaveBeenLastCalledWith("Unsettled 1 thread");
+
+    showThreadUndoNotice({
+      ...options,
+      claim: ThreadUndo.begin("pin", "env/only-failure"),
+      undo: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    });
+    vi.mocked(announce).mockClear();
+    await notice().undo();
+    expect(add).toHaveBeenCalledTimes(2);
+    expect(announce).not.toHaveBeenCalled();
   });
 });
