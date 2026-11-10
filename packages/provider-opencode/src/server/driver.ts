@@ -539,7 +539,10 @@ export const OpenCodeDriver: ProviderDriver<
                   v2: Effect.all([
                     snapshot.getSnapshot,
                     listOpenCode2Workspace(cwd).pipe(
-                      Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 20_000, processEnv)),
+                      // Leaves room for the reads around the scan wait, which uses the same override.
+                      Effect.timeout(
+                        2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                      ),
                       Effect.mapError(
                         (cause) =>
                           new ProviderDriverError({
