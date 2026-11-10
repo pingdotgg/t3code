@@ -55,7 +55,7 @@ const mocks = vi.hoisted(() => ({
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
-  transcripts: [] as Array<string | Error>,
+  transcripts: [] as Array<string | Error | Promise<string>>,
   committed: vi.fn(),
   draft: "",
 }));
@@ -243,6 +243,7 @@ function setDestination(environmentId: string | null) {
 }
 
 function Probe(props: {
+  readonly ownerKey?: string;
   readonly projectId?: string;
   readonly projectName?: string;
   readonly cleanup?: boolean;
@@ -253,7 +254,7 @@ function Probe(props: {
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
-    ownerKey: "draft",
+    ownerKey: props.ownerKey ?? "draft",
     draftText: mocks.draft,
     readDraft: () => ({
       text: mocks.draft,
@@ -373,6 +374,21 @@ it("retries a failed transcription on the same chosen environment", async () => 
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("still sends a confirmed dictation after leaving its thread and coming back", async () => {
+  setup({ destination: "env-a" });
+  const transcript = Promise.withResolvers<string>();
+  mocks.transcripts = [transcript.promise];
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.submitAfterDictation(submit));
+  expect(mocks.voice.state.phase).toBe("transcribing");
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  await act(async () => transcript.resolve("dictated"));
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
