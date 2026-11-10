@@ -7,19 +7,20 @@ import { watchLinuxNotificationService } from "./LinuxNotificationService.ts";
 
 class FakeBus extends NodeEvents.EventEmitter {
   readonly calls: Message[] = [];
-  readonly replies: Array<PromiseWithResolvers<Message>> = [];
+  readonly probes: Array<PromiseWithResolvers<Message>> = [];
   disconnect = vi.fn();
 
   call(message: Message) {
     this.calls.push(message);
+    if (message.member !== "StartServiceByName") return Promise.resolve(message);
     const reply = Promise.withResolvers<Message>();
-    this.replies.push(reply);
+    this.probes.push(reply);
     return reply.promise;
   }
 
   // StartServiceByName answers 1 when it started the service and 2 when it was already running.
   async answer(index: number, result: 1 | 2) {
-    const reply = this.replies[index]!;
+    const reply = this.probes[index]!;
     reply.resolve(
       new Message({
         type: MessageType.METHOD_RETURN,
@@ -32,9 +33,24 @@ class FakeBus extends NodeEvents.EventEmitter {
   }
 
   async fail(index: number, error: DBusError) {
-    const reply = this.replies[index]!;
+    const reply = this.probes[index]!;
     reply.reject(error);
     await Promise.allSettled([reply.promise]);
+  }
+
+  nameOwnerChanged(oldOwner: string, newOwner: string) {
+    this.emit(
+      "message",
+      new Message({
+        type: MessageType.SIGNAL,
+        sender: "org.freedesktop.DBus",
+        path: "/org/freedesktop/DBus",
+        interface: "org.freedesktop.DBus",
+        member: "NameOwnerChanged",
+        signature: "sss",
+        body: ["org.freedesktop.Notifications", oldOwner, newOwner],
+      }),
+    );
   }
 }
 
@@ -47,26 +63,14 @@ it("does not offer notifications while the notification service is still being a
   // An activatable service that never claims its name keeps this call pending until the bus's
   // activation timeout, which libnotify would otherwise wait out on Electron's main thread.
   expect(service.available()).toBe(false);
-  expect(bus.calls).toHaveLength(1);
-  expect(bus.calls[0]).toMatchObject({
+  expect(bus.probes).toHaveLength(1);
+  expect(bus.calls.find((call) => call.member === "StartServiceByName")).toMatchObject({
     destination: "org.freedesktop.DBus",
     path: "/org/freedesktop/DBus",
     interface: "org.freedesktop.DBus",
-    member: "StartServiceByName",
     signature: "su",
     body: ["org.freedesktop.Notifications", 0],
   });
-  service.stop();
-});
-
-it("offers notifications once the notification service is running", async () => {
-  const bus = new FakeBus();
-  const service = watch(bus);
-
-  await bus.answer(0, 1);
-
-  expect(service.available()).toBe(true);
-  expect(bus.calls).toHaveLength(1);
   service.stop();
 });
 
@@ -83,12 +87,39 @@ it("keeps notifications off after activation fails and probes again on the next 
   );
 
   expect(service.available()).toBe(false);
-  expect(bus.calls).toHaveLength(2);
+  expect(bus.probes).toHaveLength(2);
   expect(service.available()).toBe(false);
-  expect(bus.calls).toHaveLength(2);
+  expect(bus.probes).toHaveLength(2);
 
   await bus.answer(1, 2);
 
   expect(service.available()).toBe(true);
+  expect(bus.probes).toHaveLength(2);
+  service.stop();
+});
+
+it("withdraws notifications when the notification service exits or the bus fails", async () => {
+  const bus = new FakeBus();
+  const service = watch(bus);
+  expect(bus.calls[0]).toMatchObject({
+    member: "AddMatch",
+    body: [expect.stringContaining("arg0='org.freedesktop.Notifications'")],
+  });
+
+  await bus.answer(0, 1);
+  expect(service.available()).toBe(true);
+
+  bus.nameOwnerChanged(":1.42", ":1.43");
+  expect(service.available()).toBe(true);
+
+  bus.nameOwnerChanged(":1.43", "");
+  expect(service.available()).toBe(false);
+  expect(bus.probes).toHaveLength(2);
+
+  await bus.answer(1, 1);
+  expect(service.available()).toBe(true);
+
+  bus.emit("error", new Error("connection reset"));
+  expect(service.available()).toBe(false);
   service.stop();
 });
