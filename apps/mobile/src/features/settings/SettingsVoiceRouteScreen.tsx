@@ -214,8 +214,11 @@ export function SettingsVoiceRouteScreen() {
     : undefined;
   // An environment whose cloud sheet is open; it may not hold the grant yet.
   const [cloudSheet, setCloudSheet] = useState<EnvironmentId | null>(null);
+  // A sheet whose environment lost cloud transcription is gone, so its pending choice is too.
   const sheetEnvironment = environments.find(
-    (environment) => environment.environmentId === cloudSheet,
+    (environment) =>
+      environment.environmentId === cloudSheet &&
+      environment.serverConfig?.environment.capabilities.cloudVoiceTranscription === true,
   );
   const methodEnvironment = sheetEnvironment ?? grantEnvironment;
   const insets = useSafeAreaInsets();
@@ -278,7 +281,10 @@ export function SettingsVoiceRouteScreen() {
             label="This device"
             description="Audio stays on this device and is transcribed here."
             selected={!grant && !sheetEnvironment}
-            onPress={() => saveDestination(null)}
+            onPress={() => {
+              setCloudSheet(null);
+              saveDestination(null);
+            }}
           />
           {hasEnvironmentVoiceCapture &&
             environments.map((environment) => (
