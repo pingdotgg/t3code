@@ -1565,7 +1565,7 @@ export function isFreshSessionPending(draftKey: string): boolean {
   return getComposerDraftSnapshot(draftKey).freshContext === true;
 }
 
-export function subscribeComposerDraftModelReconciliation(input: {
+export function subscribeComposerDraftSettingsReconciliation(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
   readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<EnvironmentThreadShell | null>;
@@ -1573,6 +1573,9 @@ export function subscribeComposerDraftModelReconciliation(input: {
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
   readonly pendingThreadIdsAtom: (environmentId: EnvironmentId) => Atom.Atom<ReadonlySet<ThreadId>>;
+  readonly queuedMessagesByThreadKeyAtom: Atom.Atom<
+    Readonly<Record<string, ReadonlyArray<{ readonly runtimeMode?: RuntimeMode }>>>
+  >;
 }): () => void {
   const draftsAtom = Atom.make(appAtomRegistry.get(composerDraftsAtom));
   const unsubscribeDrafts = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) =>
@@ -1584,14 +1587,35 @@ export function subscribeComposerDraftModelReconciliation(input: {
   );
   const matchesAtom = Atom.make((get) => {
     const threadKeys = get(threadKeysAtom);
-    const matches: Array<readonly [string, ComposerDraft]> = [];
+    const queuedMessages = get(input.queuedMessagesByThreadKeyAtom);
+    const matches: Array<
+      readonly [string, ComposerDraft, { readonly model: boolean; readonly runtimeMode: boolean }]
+    > = [];
     for (const [key, draft] of Object.entries(get(draftsAtom))) {
-      if (!draft.modelSelection || isNewTaskDraftKey(key) || isQueuedEditDraftKey(key)) continue;
+      if (
+        (!draft.modelSelection && !draft.runtimeMode) ||
+        isNewTaskDraftKey(key) ||
+        isQueuedEditDraftKey(key)
+      )
+        continue;
       const ref = parseScopedThreadKey(key);
       if (!ref || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
-      if (!thread || !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection))
-        continue;
+      if (!thread) continue;
+      // A queued message sent in another mode can still switch the thread away from this pick.
+      const queuedModeChange = (queuedMessages[key] ?? []).some(
+        (message) => message.runtimeMode !== undefined && message.runtimeMode !== draft.runtimeMode,
+      );
+      const pickMatches = (
+        candidate: Pick<EnvironmentThreadShell, "modelSelection" | "runtimeMode">,
+      ) => ({
+        model:
+          draft.modelSelection !== undefined &&
+          draftModelPickMatchesThread(draft.modelSelection, candidate.modelSelection),
+        runtimeMode: draft.runtimeMode === candidate.runtimeMode && !queuedModeChange,
+      });
+      const cached = pickMatches(thread);
+      if (!cached.model && !cached.runtimeMode) continue;
       // The pick can match an old model while an earlier pick in flight still replaces it.
       if (get(input.pendingThreadIdsAtom(ref.environmentId)).has(ref.threadId)) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
@@ -1600,12 +1624,13 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const authoritativeThread = Option.getOrNull(shell.snapshot)?.threads.find(
         (candidate) => candidate.id === ref.threadId,
       );
-      if (
-        authoritativeThread &&
-        draftModelPickMatchesThread(draft.modelSelection, authoritativeThread.modelSelection)
-      ) {
-        matches.push([key, draft]);
-      }
+      if (!authoritativeThread) continue;
+      const live = pickMatches(authoritativeThread);
+      const release = {
+        model: cached.model && live.model,
+        runtimeMode: cached.runtimeMode && live.runtimeMode,
+      };
+      if (release.model || release.runtimeMode) matches.push([key, draft, release]);
     }
     return matches;
   });
@@ -1615,10 +1640,14 @@ export function subscribeComposerDraftModelReconciliation(input: {
       if (matches.length === 0) return;
       updateComposerDrafts((current) => {
         let next = current;
-        for (const [key, matchedDraft] of matches) {
+        for (const [key, matchedDraft, release] of matches) {
           if (next[key] !== matchedDraft) continue;
-          const { modelSelection: _modelSelection, ...draft } = matchedDraft;
-          next = withComposerDraft(next, key, draft);
+          const { modelSelection, runtimeMode, ...draft } = matchedDraft;
+          next = withComposerDraft(next, key, {
+            ...draft,
+            ...(release.model || modelSelection === undefined ? {} : { modelSelection }),
+            ...(release.runtimeMode || runtimeMode === undefined ? {} : { runtimeMode }),
+          });
         }
         return next;
       });

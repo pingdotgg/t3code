@@ -48,7 +48,8 @@ import {
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
-import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
+import { subscribeComposerDraftSettingsReconciliation } from "./state/use-composer-drafts";
+import { threadOutboxManager } from "./state/thread-outbox";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { environmentShell } from "./state/shell";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
@@ -182,12 +183,13 @@ declare const module: { readonly hot?: FoundationHotModule } | undefined;
 
 const appServiceDisposers = [
   installUiRuntimeMemoryWarningGc(),
-  subscribeComposerDraftModelReconciliation({
+  subscribeComposerDraftSettingsReconciliation({
     registry: appAtomRegistry,
     threadShellAtom: environmentThreadShells.threadShellAtom,
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
     pendingThreadIdsAtom: threadEnvironment.pendingThreadIdsAtom,
+    queuedMessagesByThreadKeyAtom: threadOutboxManager.queuedMessagesByThreadKeyAtom,
   }),
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),

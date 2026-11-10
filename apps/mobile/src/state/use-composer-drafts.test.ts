@@ -25,6 +25,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ShellSnapshot,
   type ModelSelection,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
@@ -181,7 +182,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
-  subscribeComposerDraftModelReconciliation,
+  subscribeComposerDraftSettingsReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -311,6 +312,11 @@ function modelReconciliationHarness(
     ]),
   });
   const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
+  const queuedModeAtom = Atom.make<RuntimeMode | null>(null);
+  const queuedMessagesByThreadKeyAtom = Atom.make((get) => {
+    const runtimeMode = get(queuedModeAtom);
+    return runtimeMode === null ? {} : { [`${environmentId}:${threadId}`]: [{ runtimeMode }] };
+  });
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
     snapshotAtom: () => snapshotAtom,
@@ -319,12 +325,13 @@ function modelReconciliationHarness(
   const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });
   onTestFinished(registry.mount(selectedShell));
   onTestFinished(
-    subscribeComposerDraftModelReconciliation({
+    subscribeComposerDraftSettingsReconciliation({
       registry,
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
       pendingThreadIdsAtom: () => noPendingThreadIdsAtom,
+      queuedMessagesByThreadKeyAtom,
     }),
   );
   flush();
@@ -332,6 +339,10 @@ function modelReconciliationHarness(
     flush,
     setStatus(status: EnvironmentShellStatus) {
       registry.set(shellStateAtom, { ...registry.get(shellStateAtom), status });
+      flush();
+    },
+    setQueuedMode(runtimeMode: RuntimeMode | null) {
+      registry.set(queuedModeAtom, runtimeMode);
       flush();
     },
     update(changes: Partial<OrchestrationV2ThreadShell>, status?: EnvironmentShellStatus) {
@@ -549,6 +560,24 @@ describe("mobile composer drafts", () => {
     });
     expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+  });
+
+  it("releases a permission mode pick once the live thread runs in it", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const key = `${environmentId}:${threadId}`;
+    const modelPick = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    const h = modelReconciliationHarness(environmentId, threadId);
+    updateComposerDraftSettings(key, { runtimeMode: "auto", modelSelection: modelPick });
+    h.flush();
+    const before = getComposerDraftSnapshot(key);
+    expect(before.runtimeMode).toBe("auto");
+
+    h.setQueuedMode("full-access");
+    h.update({ runtimeMode: "auto" });
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    h.setQueuedMode("auto");
+    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, runtimeMode: undefined });
   });
 
   it("retains an unavailable provider pick through differing durable model updates", () => {
