@@ -170,7 +170,7 @@ import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useBarInset } from "../../components/ui/useBarInset";
+import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import {
@@ -181,7 +181,6 @@ import {
 import { cn } from "../../lib/cn";
 import {
   deriveCenteredContentHorizontalPadding,
-  deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
@@ -237,8 +236,9 @@ import { readEnvironmentScope, usePreparedConnection } from "../../state/session
 import { projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
-  pickWorkspaceBasenameMatch,
+  pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
+  workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
@@ -333,7 +333,6 @@ export interface ThreadFeedProps {
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
   readonly fitShortFeedToViewport?: boolean;
-  readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly contentMaxWidth?: number;
@@ -2773,15 +2772,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const markdownContentWidth = Math.max(0, contentWidth - ASSISTANT_ROW_HORIZONTAL_PADDING * 2);
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const barInset = useBarInset();
-  const topContentInset = props.contentTopInset ?? barInset;
+  const columnTopInset = useContentTopInset();
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
-  const initialContentInset = deriveThreadFeedInitialContentInset({
-    platform: Platform.OS,
-    usesNativeAutomaticInsets,
-    bottomContentInset,
-  });
+  // Without the native contentInset, a list-header spacer clears the bar the column lays content under.
+  const topContentInset = usesNativeAutomaticInsets ? 0 : columnTopInset;
   const anchorTopInset = usesNativeAutomaticInsets ? barInset : topContentInset;
 
   const theme = useUniwindTheme();
@@ -2899,17 +2895,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.workspaceRoot &&
         relativePath &&
         !/[\\/]$/.test(presentation.path) &&
-        needsWorkspaceBasenameLookup(relativePath) &&
+        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
+        const workspaceRoot = props.workspaceRoot;
         const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
         void executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
             environmentId: props.environmentId,
             input: {
-              cwd: props.workspaceRoot,
-              query: relativePath,
+              cwd: workspaceRoot,
+              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
               kind: "file",
               limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
             },
@@ -2919,7 +2916,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           (result) => {
             const match =
               result._tag === "Success"
-                ? pickWorkspaceBasenameMatch(relativePath, result.value.entries)
+                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
                 : null;
             if (!match || match === relativePath) {
               openAt(relativePath);
@@ -2936,7 +2933,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ).then(
               (metadata) =>
                 openAt(
-                  metadata._tag === "Success" && metadata.value?.kind !== "directory"
+                  metadata._tag === "Success" &&
+                    (needsWorkspaceBasenameLookup(relativePath)
+                      ? metadata.value?.kind !== "directory"
+                      : metadata.value === null)
                     ? match
                     : relativePath,
                 ),
@@ -3206,7 +3206,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (state) onIsAtEndChange?.(state.isAtEnd);
   };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
+    reportHeaderMaterialVisibility(
+      event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
+    );
     handleMetricsChange();
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the list's end state to report it to the parent
@@ -3649,13 +3651,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      {/* While the pane tracks a sliding sidebar, rows keep its settled width and re-wrap once. */}
-      <View
-        className="flex-1"
-        style={settledPaneWidth !== null ? { width: settledPaneWidth } : undefined}
-        onLayout={handleViewportLayout}
-      >
-        <View className="flex-1">
+      <View className="flex-1" onLayout={handleViewportLayout}>
+        {/* In a split, rows only re-wrap in the render that hands the list its new width. A native
+            column resize would re-wrap them first, and the list would place the taller or shorter
+            rows at their old offsets until their measurements came back. */}
+        <View
+          className="flex-1"
+          style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
+        >
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={attachList}
@@ -3670,7 +3673,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
             keyboardOffset={props.keyboardOffset}
-            contentInset={usesNativeAutomaticInsets ? { top: anchorTopInset } : initialContentInset}
+            {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
             maintainVisibleContentPosition
@@ -3697,6 +3700,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             drawDistance={500}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
+            // Android scrolls a tapped selectable message into view when it takes focus, which reads
+            // as a user scroll and drops end following before the keyboard closes.
+            scrollsChildToFocus={false}
             keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
             // Seed the initial viewport before native onLayout.
             {...(viewportHeight > 0 && viewportWidth > 0

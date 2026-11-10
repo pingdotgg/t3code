@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -112,23 +113,38 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
-  Effect.gen(function* () {
+it.effect("offers nothing, and says why once, when the data dir sits inside a Git checkout", () => {
+  const warnings: string[] = [];
+  const logger = Logger.make(({ logLevel, message }) => {
+    if (logLevel === "Warn") warnings.push(String(message));
+  });
+  return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
     yield* git(checkout, ["init", "--quiet"]);
     const baseDir = path.join(checkout, ".t3");
     yield* fileSystem.makeDirectory(baseDir);
+    const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
       assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
+      assert.include(failure.message, baseDir);
+      // The root prefixes the data dir, so it must appear on its own.
+      assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
+      yield* Effect.flip(scratch.ensureScratchProject);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer(baseDir), Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    );
+    assert.equal(warnings.length, 1);
+    assert.include(warnings[0], baseDir);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+});
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(
