@@ -827,6 +827,105 @@ it.effect("record reads filter notification sources without dropping matching me
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("shells flag a latest run triggered by a provider background wake", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("background-wake");
+    const initial = yield* store.getThreadProjection(threadId);
+    const at = initial.updatedAt;
+    let ordinal = 1;
+    for (const [id, source, outcome, expected] of [
+      ["background-task", { kind: "background_task" }, "updated", true],
+      ["monitor", { kind: "monitor" }, "updated", true],
+      ["command", { kind: "command" }, "updated", true],
+      ["command-finished", { kind: "command" }, "completed", false],
+      ["monitor-stopped", { kind: "monitor" }, "cancelled", false],
+      ["subagent", { kind: "subagent" }, "updated", false],
+      ["delegated", { kind: "delegated_task", taskIds: [] }, "updated", false],
+      ["steered", { kind: "background_task" }, "updated", false],
+    ] as const) {
+      const messageId = MessageId.make(`message:background-wake:${id}`);
+      yield* store.apply({
+        id: EventId.make(`event:background-wake:${id}:message`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          id: messageId,
+          threadId,
+          runId: null,
+          nodeId: null,
+          createdBy: "agent",
+          creationSource: "server",
+          role: "user",
+          text: id,
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+          notification: { source, outcome, summary: "Background activity updated" },
+          ...(id === "delegated"
+            ? {
+                delegatedCompletion: {
+                  parentRunId: initial.runs[0]!.id,
+                  generation: 1,
+                  taskIds: [],
+                },
+              }
+            : {}),
+        },
+      });
+      ordinal += 1;
+      yield* store.apply({
+        id: EventId.make(`event:background-wake:${id}:run`),
+        type: "run.created",
+        threadId,
+        occurredAt: at,
+        payload: {
+          ...initial.runs[0]!,
+          id: RunId.make(`run:background-wake:${id}`),
+          ordinal,
+          userMessageId: messageId,
+          status: "completed",
+          completedAt: at,
+        },
+      });
+      if (id === "steered") {
+        yield* store.apply({
+          id: EventId.make("event:background-wake:steered:follow-up"),
+          type: "message.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            id: MessageId.make("message:background-wake:steered:follow-up"),
+            threadId,
+            runId: RunId.make("run:background-wake:steered"),
+            nodeId: null,
+            createdBy: "user",
+            creationSource: "web",
+            role: "user",
+            text: "also fix X",
+            attachments: [],
+            streaming: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+      }
+      const shells = [
+        yield* store.getThreadShell(threadId),
+        ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId)),
+      ];
+      assert.deepEqual(
+        shells.map((shell) => shell?.latestRunBackgroundWake),
+        [expected, expected],
+        id,
+      );
+      yield* assertShellIndexCoversShells();
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("SQL queue readiness skips held runs without bypassing active work", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
