@@ -1986,7 +1986,7 @@ it.effect(
 );
 
 it.effect(
-  "reports an fj login on a plain-HTTP server as authenticated without a project remote",
+  "never retries an fj login over HTTP when its HTTPS check gets a plain-HTTP reply",
   () => {
     const whoamiHosts: string[] = [];
     return Effect.gen(function* () {
@@ -1994,9 +1994,9 @@ it.effect(
       assert.strictEqual(spec.type, "managed-cli");
       if (spec.type !== "managed-cli") return;
       const result = yield* spec.probe("/home/maria");
-      assert.include(whoamiHosts, "http://forgejo.internal:3000");
+      assert.deepStrictEqual(whoamiHosts, ["https://forgejo.internal:3000"]);
       assert.strictEqual(result.executable, "fj");
-      assert.strictEqual(result.auth.status, "authenticated");
+      assert.strictEqual(result.auth.status, "unknown");
       assert.deepStrictEqual(result.auth.host, Option.some("forgejo.internal:3000"));
     }).pipe(
       Effect.provide(ForgejoCli.layer),
@@ -2016,11 +2016,7 @@ it.effect(
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          request.url.startsWith("http://forgejo.internal:3000/")
-            ? Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(encodeJson({ login: "maria" }))),
-              )
-            : Effect.die(new Error(`HTTPS request to an HTTP-only server: ${request.url}`)),
+          Effect.die(new Error(`Unexpected token request: ${request.url}`)),
         ),
       ),
       Effect.provide(
@@ -2049,12 +2045,10 @@ it.effect(
               const host = input.args[1]!;
               whoamiHosts.push(host);
               return Effect.succeed(
-                host.startsWith("http://")
-                  ? processOutput("currently signed into maria@forgejo.internal:3000")
-                  : processOutput("", {
-                      exitCode: ChildProcessSpawner.ExitCode(1),
-                      stderr: `Error: error sending request for url (${host}/api/v1/user?)\n\nCaused by:\n   0: client error (Connect)\n   1: received corrupt message of type InvalidContentType`,
-                    }),
+                processOutput("", {
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                  stderr: `Error: error sending request for url (${host}/api/v1/user?)\n\nCaused by:\n   0: client error (Connect)\n   1: received corrupt message of type InvalidContentType`,
+                }),
               );
             },
           },
