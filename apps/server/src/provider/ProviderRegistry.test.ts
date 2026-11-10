@@ -1497,6 +1497,7 @@ it.layer(
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
+        const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -1515,6 +1516,7 @@ it.layer(
               skills: [],
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
+            const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
             const instance = {
               instanceId,
@@ -1536,7 +1538,7 @@ it.layer(
                     ),
                   ),
                 getSnapshot: Effect.succeed(provider),
-                refresh: Effect.succeed(provider),
+                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -1545,7 +1547,7 @@ it.layer(
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
-            return { instance, invalidations, takeMaintenanceReads };
+            return { instance, invalidations, probes, takeMaintenanceReads };
           });
         const first = yield* makeInstance("codex_first");
         const second = yield* makeInstance("codex_second");
@@ -1562,11 +1564,12 @@ it.layer(
           },
         );
         const layerModelManifest = Layer.succeed(ModelManifest.ModelManifest, {
-          current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          current: Ref.get(manifest),
           refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
           forceRefresh: Ref.update(forceRefreshCalls, (count) => count + 1).pipe(
             Effect.as(ModelManifest.BUNDLED_MODEL_MANIFEST),
           ),
+          refreshOnDemand: Ref.get(manifest),
           refreshInBackground: Effect.void,
         });
         const layerLatestVersions = Layer.effect(
@@ -1576,9 +1579,9 @@ it.layer(
             ["codex_second-package", "1.0.0"],
           ]),
         );
-        const readCachedVersion = (key: string) =>
+        const readCachedVersion = (key: string, latest = "2.0.0") =>
           ProviderLatestVersions.ProviderLatestVersions.use((latestVersions) =>
-            latestVersions.cached(key, Effect.succeed("2.0.0")),
+            latestVersions.cached(key, Effect.succeed(latest)),
           );
 
         yield* Effect.gen(function* () {
@@ -1612,6 +1615,21 @@ it.layer(
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [true]);
           yield* registry.invalidateModelCaches({ ...workspace, fresh: true });
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
+
+          // An opened model picker probes only when the manifest differs from what the last pass saw.
+          const probesBefore = yield* Ref.get(second.probes);
+          yield* registry.refreshModelCatalog;
+          assert.strictEqual(yield* Ref.get(second.probes), probesBefore);
+          assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "2.0.0");
+          yield* Ref.set(manifest, {
+            ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+            updatedAt: "2999-01-01T00:00:00Z",
+          });
+          yield* registry.refreshModelCatalog;
+          yield* registry.refreshModelCatalog;
+          assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
+          // A changed manifest also rechecks latest CLI versions.
+          assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(

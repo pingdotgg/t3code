@@ -2537,6 +2537,10 @@ export const layerWsRpc = (
       [WS_METHODS.serverRefreshProviders]:
         /* Request instrumentation already owns the span; keep this helper in that context. */
         Effect.fnUntraced(function* (input) {
+          if (input.modelCatalogOnly === true) {
+            yield* providerRegistry.refreshModelCatalog;
+            return { providers: [] };
+          }
           // Only explicit catalog refreshes bypass T3's caches. Workspace
           // discovery and background status checks retain their timers.
           if (input.refreshModels) {

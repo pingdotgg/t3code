@@ -7,6 +7,7 @@ import type { HttpClient } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   type EnvironmentCloudLinkStateResult,
+  type EnvironmentConnectReachability,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
@@ -254,6 +255,24 @@ export const readCloudLinkState: (input: {
         request: ({ client, headers }) => client.linkState({ headers }),
       },
       "Could not read environment cloud link state.",
+    );
+  });
+
+/** Runs the environment's T3 Connect reachability check now; the link state then reports it. */
+export const checkCloudReachability: (input: {
+  readonly target: CloudLinkTarget;
+}) => Effect.Effect<EnvironmentConnectReachability, CloudEnvironmentLinkError, CloudLinkServices> =
+  Effect.fn("linkEnvironment.checkCloudReachability")(function* (input: {
+    readonly target: CloudLinkTarget;
+  }) {
+    return yield* connectRequest(
+      input.target,
+      {
+        method: "POST",
+        url: (urls) => urls.checkReachability(),
+        request: ({ client, headers }) => client.checkReachability({ headers }),
+      },
+      "Could not check T3 Connect.",
     );
   });
 

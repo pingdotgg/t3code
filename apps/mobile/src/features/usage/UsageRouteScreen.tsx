@@ -265,7 +265,7 @@ function UsageScreen(props: {
                 onSelect={setView}
                 size="compact"
                 role="tab"
-                className="w-60"
+                className="flex-1"
               />
             </View>
           ) : (

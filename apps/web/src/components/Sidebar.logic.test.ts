@@ -662,7 +662,28 @@ describe("getFallbackThreadIdAfterDelete", () => {
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
-  ] as const)("skips a %s thread parked on its shelf", (_state, parked) => {
+    [
+      "side chat",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      },
+    ],
+    [
+      "subagent",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "subagent",
+        },
+      },
+    ],
+  ] as const)("skips a %s thread the sidebar does not list", (_state, parked) => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [
         makeThread({

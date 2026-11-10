@@ -186,10 +186,12 @@ An existing fork PR can appear beside the branch even if you pushed without sett
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
-Choose the writing style and model in **Settings → Source control**. **Repository conventions**
+Choose how commit messages and pull request titles and descriptions are written in
+**Settings → Source control → Commits & pull requests**. **Repository conventions**
 follows the commit conventions in the project's root `AGENTS.md` (and `CLAUDE.md` when Claude Code
 writes the text), then the style of recent commit subjects. Conventions kept only in `README.md`
-or `CONTRIBUTING.md` are not read; copy them into `AGENTS.md`.
+or `CONTRIBUTING.md` are not read; copy them into `AGENTS.md`. **Custom instructions** applies
+your own instructions to commits and pull requests.
 
 ## Review and merge
 
@@ -324,7 +326,7 @@ review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails, the required checks pass, someone else comments or reviews, or the branch starts to
+check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends

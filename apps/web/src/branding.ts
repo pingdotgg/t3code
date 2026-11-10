@@ -45,3 +45,5 @@ export const APP_DISPLAY_VERSION = formatDisplayedAppVersion({
 });
 export const APP_GITHUB_REPOSITORY = "munimtechnologies/mtcode";
 export const DESKTOP_DOWNLOAD_URL = `https://github.com/${APP_GITHUB_REPOSITORY}/releases/latest`;
+// Redirects to the App Store or Google Play to match the phone that opens it.
+export const MOBILE_APP_URL = "https://t3.codes/mobile";

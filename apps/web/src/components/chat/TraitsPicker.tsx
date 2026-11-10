@@ -99,10 +99,13 @@ type TraitsPersistence =
   | {
       threadRef?: ScopedThreadRef;
       draftId?: DraftId;
+      /** Runs after a change is written to the draft. */
+      onDraftModelOptionsChange?: () => void;
       onModelOptionsChange?: never;
     }
   | {
       threadRef?: undefined;
+      onDraftModelOptionsChange?: never;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
@@ -400,6 +403,7 @@ export function useTraitsSelection({
       model,
       persistSticky: true,
     });
+    persistence.onDraftModelOptionsChange?.();
   };
   const selected = getTraitsSectionVisibility({
     provider,

@@ -449,7 +449,7 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            query: debouncedTarget.query.slice(0, 256).replace(/[\uD800-\uDBFF]$/, ""),
             limit: COMPOSER_PATH_SEARCH_LIMIT,
           },
         }

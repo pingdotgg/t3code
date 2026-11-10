@@ -49,6 +49,7 @@ type ComposerTraitsTarget = {
   instanceId: ProviderInstanceId;
   threadRef?: ScopedThreadRef | undefined;
   draftId?: DraftId | undefined;
+  onDraftModelOptionsChange?: () => void;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
