@@ -15,10 +15,9 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -705,11 +704,9 @@ const makeCapturingLogger = (logs: CapturedLog[]) =>
 
 const sha256File = Effect.fn("LegacyV1Cutover.sha256File")(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(
-    yield* crypto.digest("SHA-256", yield* fs.readFile(filePath)).pipe(Effect.orDie),
-  );
-}, Effect.provide(NodeCrypto.layer));
+  const digest = yield* Digest.Digest;
+  return yield* digest.digestHex(Digest.sha256, yield* fs.readFile(filePath));
+}, Effect.provide(NodeCrypto.layerDigest));
 
 interface LegacyTableSnapshot {
   readonly columns: ReadonlyArray<string>;
