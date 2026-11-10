@@ -704,6 +704,8 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
       kill "$REMOTE_PID" 2>/dev/null || true
       wait_for_pid_exit "$REMOTE_PID"
     fi
+    # An interrupted transfer must not leave an older PID under the managed marker.
+    rm -f "$PID_FILE"
     printf 'managed\\n' >"$MANAGED_FILE"
     printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
     cp "$PREVIOUS_STATE_DIR/process-start" "$PROCESS_START_FILE"
