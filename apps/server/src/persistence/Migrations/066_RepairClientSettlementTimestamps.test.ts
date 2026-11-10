@@ -6,13 +6,13 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { runMigrations } from "../Migrations.ts";
 import Migration0066 from "./066_RepairClientSettlementTimestamps.ts";
 
 const layer = it.layer(
-  ProjectionMaintenance.layer.pipe(
+  ProjectionReplay.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
         Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
@@ -363,7 +363,7 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
       yield* Migration0066;
       assert.deepEqual(yield* snapshot, repaired);
 
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* imported, expectedImported);
     }),
