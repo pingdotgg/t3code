@@ -748,6 +748,7 @@ describe("PreviewManager", () => {
         const preview = makeFaviconWebContents();
         const goBack = vi.fn();
         const goForward = vi.fn();
+        const send = vi.fn();
         let canGoBack = false;
         Object.assign(preview.webContents, {
           navigationHistory: {
@@ -756,6 +757,8 @@ describe("PreviewManager", () => {
             goBack,
             goForward,
           },
+          getZoomFactor: () => 2,
+          send,
         });
         fromId.mockReturnValue(preview.webContents);
         yield* manager.createTab("tab_mouse_navigation");
@@ -789,6 +792,15 @@ describe("PreviewManager", () => {
         }
         expect(goBack).toHaveBeenCalledOnce();
         expect(goForward).toHaveBeenCalledOnce();
+        // The guest replays dropped presses for human input and recordings, in CSS px.
+        expect(send.mock.calls.filter(([channel]) => channel === "preview:thumb-press")).toEqual([
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 4],
+          ["preview:thumb-press", "up", 5, 5, 4],
+        ]);
       }),
     ),
   );

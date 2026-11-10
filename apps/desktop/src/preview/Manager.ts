@@ -84,6 +84,7 @@ import {
   RECORDING_CONTROLLER_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
@@ -1434,7 +1435,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (button !== "back" && button !== "forward") return;
       if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return;
       event.preventDefault();
-      if (mouse.type !== "mouseUp") return;
+      // The page never sees the press, so the guest replays it; these coordinates are DIPs, not CSS px.
+      const zoom = wc.getZoomFactor();
+      const phase = mouse.type === "mouseDown" ? "down" : "up";
+      wc.send(
+        THUMB_PRESS_CHANNEL,
+        phase,
+        mouse.x / zoom,
+        mouse.y / zoom,
+        button === "back" ? 3 : 4,
+      );
+      if (phase !== "up") return;
       runFork(
         attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
           if (button === "back") {

@@ -38,6 +38,7 @@ import {
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
@@ -202,6 +203,15 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+ipcRenderer.on(
+  THUMB_PRESS_CHANNEL,
+  (_event, phase: unknown, x: unknown, y: unknown, button: unknown) => {
+    if (phase !== "down" && phase !== "up") return;
+    if (typeof x !== "number" || typeof y !== "number" || typeof button !== "number") return;
+    if (phase === "down") ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
+    recordingCursor?.press({ x, y }, phase);
+  },
+);
 
 const nextId = createAnnotationIdSource();
 
