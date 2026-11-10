@@ -463,7 +463,9 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? pathTriggerQuery.trim()
+        ? "No matching files or folders."
+        : "Type to search files and folders."
       : "No matching command.";
   })();
 
