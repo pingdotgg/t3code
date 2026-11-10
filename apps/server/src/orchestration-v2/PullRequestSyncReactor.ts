@@ -3,6 +3,7 @@ import {
   isOrchestrationV2WorkActive,
   type OrchestrationV2TurnItem,
   type PullRequestSummary,
+  PullRequestUnavailableError,
   type ThreadId,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
@@ -175,6 +176,7 @@ export function changeRequestsCreatedBy(input: string, output: string) {
 }
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
+const isPullRequestUnavailableError = Schema.is(PullRequestUnavailableError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -316,6 +318,11 @@ function rateLimitRetryAt(cause: Cause.Cause<unknown>): number | undefined {
   return undefined;
 }
 
+function isProviderUnsupported(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.squash(cause);
+  return isPullRequestUnavailableError(error) && error.reason === "provider-unsupported";
+}
+
 function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
@@ -348,6 +355,8 @@ export const make = Effect.gen(function* () {
   const retryStacks = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
+  // Links whose host this server cannot browse; only sweeps wait, a requested refresh reads through.
+  const unsupportedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
@@ -404,6 +413,7 @@ export const make = Effect.gen(function* () {
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
+    for (const key of unsupportedUntil.keys()) if (!groups.has(key)) unsupportedUntil.delete(key);
 
     const linkedThisSweep = new Set<string>();
     // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
@@ -582,11 +592,17 @@ export const make = Effect.gen(function* () {
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
       syncGroup(key, entries).pipe(
+        Effect.tap(() => Effect.sync(() => unsupportedUntil.delete(key))),
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
           const retryAt = rateLimitRetryAt(cause);
           if (retryAt !== undefined) {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
+          }
+          if (isProviderUnsupported(cause)) {
+            unsupportedUntil.set(key, nowMs + SLOW_SYNC_INTERVAL_MS);
+            // The refresh was answered; keeping it would bypass the pause on every sweep.
+            requested.delete(key);
           }
           const reason = skipReason(cause);
           const skip = skips.get(reason);
@@ -606,7 +622,8 @@ export const make = Effect.gen(function* () {
         // Check pauses at each read so changes during the sweep apply immediately.
         return Clock.currentTimeMillis.pipe(
           Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
+            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs ||
+            (!requested.has(key) && (unsupportedUntil.get(key) ?? 0) > startedAtMs)
               ? Effect.void
               : readGroup(key, entries, pauseKey),
           ),
