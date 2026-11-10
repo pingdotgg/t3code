@@ -202,7 +202,7 @@ describe("materializePiT3McpExtension", () => {
             // The pacing models a production reader's cadence and gives the
             // writer's rename realistic gaps on Windows; real fs timing is the
             // fixture under test here.
-            // @effect-diagnostics-next-line no-real-time-wait-in-tests:off -- see above
+            // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a pacing boundary that models a production reader, not a wait for time
             yield* Effect.sleep("1 millis");
             // A read that SUCCEEDS must return the full extension: an empty or
             // partial read means the writer truncated the file mid-write.
