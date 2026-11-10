@@ -310,7 +310,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
               "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
           };
         }
-        return base;
+        return promptDisposition && isStreaming
+          ? { ...base, data: { disposition: "queued" } }
+          : base;
       case "get_available_models":
         return { ...base, data: { models } };
       case "new_session": {
@@ -5591,6 +5593,62 @@ describe("PiAdapterV2", () => {
       yield* fake.closeStdout;
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { outcome: "Pi reads it", status: "completed" },
+    { outcome: "Stop clears it unread", status: "cancelled" },
+  ] as const)("reports a queued steer unread until $outcome", ({ status }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.setClearQueue({ steering: ["Steer behind a command"], followUp: [] });
+      fake.setStreaming(false);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      const providerTurnId =
+        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+      fake.setStreaming(true);
+      yield* fake.emit({ type: "agent_start" });
+
+      const messageId = "message:thread-pi-test:queued-steer" as never;
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: providerTurnId!,
+        message: {
+          messageId,
+          text: "Steer behind a command",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      const queued = yield* takeEvent((event) => event.type === "steer.updated");
+      assert.deepInclude(queued, { messageId, status: "pending" });
+
+      if (status === "completed") {
+        yield* fake.emit({ type: "message_start", message: { role: "user" } });
+      } else {
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
+        yield* fake.takeRequest("abort");
+        fake.setStreaming(false);
+        yield* fake.emit({ type: "agent_settled", aborted: true });
+      }
+      const settled = yield* takeEvent((event) => event.type === "steer.updated");
+      assert.deepInclude(settled, { messageId, status });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
