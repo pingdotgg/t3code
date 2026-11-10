@@ -593,13 +593,14 @@ export function desiredGatewayPeers(
   return peers;
 }
 
-/** Peers the catalog already reaches through this gateway (paired or learned); never unregister them. */
+/** Enabled peers the catalog reaches through this gateway (paired or learned). */
 export function retainedGatewayPeerIds(
   catalog: Iterable<ConnectionCatalogEntry>,
   gatewayEnvironmentId: EnvironmentId,
 ): ReadonlySet<EnvironmentId> {
   const ids = new Set<EnvironmentId>();
   for (const entry of catalog) {
+    if (!entry.enabled) continue;
     const environmentId = entry.target.environmentId;
     if (environmentId === gatewayEnvironmentId) continue;
     if (
