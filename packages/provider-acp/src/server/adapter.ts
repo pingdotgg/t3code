@@ -1369,6 +1369,8 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  /** A continuation's sparse tool updates merge from the finalized run before it. */
+  readonly precedingRunTools: AcpRunTools | null;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
@@ -1611,6 +1613,8 @@ function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boole
     acpSubagentStatusBlocksTurnSettlement(subagent.task.status) || !subagent.terminalStatusProjected
   );
 }
+
+type AcpRunTools = Pick<ActiveAcpTurn, "tools" | "toolStartedAt">;
 
 type AcpCarryoverSubagents = {
   readonly sessionId: string;
@@ -2208,6 +2212,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        const finalizedRunTools = yield* Ref.make<
+          (AcpRunTools & { readonly sessionId: string }) | null
+        >(null);
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -3879,7 +3886,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (context.reasoning.current?.sourceMessageId == null)
             yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "user");
-          const previous = context.tools.get(incoming.toolCallId);
+          const previous =
+            context.tools.get(incoming.toolCallId) ??
+            context.precedingRunTools?.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
@@ -4049,7 +4058,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: toolCall.toolCallId,
             strength: "strong" as const,
           };
-          const startedAt = context.toolStartedAt.get(toolCall.toolCallId) ?? now;
+          const startedAt =
+            context.toolStartedAt.get(toolCall.toolCallId) ??
+            context.precedingRunTools?.toolStartedAt.get(toolCall.toolCallId) ??
+            now;
           context.toolStartedAt.set(toolCall.toolCallId, startedAt);
           const completedAt = completedAtForStatus(status, now);
           const title = toolCall.title ?? null;
@@ -7793,6 +7805,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          if (postSettleContinuationEnabled && settledStatus === "completed") {
+            yield* Ref.set(finalizedRunTools, {
+              sessionId: context.nativeThreadId,
+              tools: context.tools,
+              toolStartedAt: context.toolStartedAt,
+            });
+          }
           yield* Ref.set(activeTurn, null);
           steerInjections.clear();
           if (
@@ -8195,6 +8214,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            const precedingRunTools = yield* Ref.getAndSet(finalizedRunTools, null);
             const context: ActiveAcpTurn = {
               input: turnInput,
               providerTurnId,
@@ -8215,6 +8235,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               tools: new Map(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
+              precedingRunTools:
+                isContinuationTurn && precedingRunTools?.sessionId === requestedSessionId
+                  ? precedingRunTools
+                  : null,
               subagents: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),

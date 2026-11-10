@@ -2175,9 +2175,21 @@ describe("AcpRegistryAdapterV2", () => {
       assert.lengthOf(session.offers, 1, "Droid's Task completion must offer a continuation run");
       yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
       yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
-      const taskSettled = yield* Effect.forkScoped(session.terminal);
+      const taskSettled = yield* Effect.forkScoped(
+        session.until((event) => event.type === "turn.terminal"),
+      );
       yield* TestClock.adjust("3 seconds");
-      assert.include(yield* Fiber.join(taskSettled), { runOrdinal: 2, status: "completed" });
+      const taskRun = yield* Fiber.join(taskSettled);
+      assert.include(taskRun.at(-1), { runOrdinal: 2, status: "completed" });
+      const task = taskRun.findLast(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "task-1",
+      );
+      if (task?.type !== "turn_item.updated") throw new Error("Missing Task update");
+      assert.include(task.turnItem, { title: "Task", status: "completed" });
+      assert.deepInclude(task.turnItem, {
+        input: { subagent_type: "explorer", prompt: "sleep 20; ls /tmp | head -3" },
+      });
       // Droid answers ~4 s after the Task result, past the quiet window.
       gate.release("answer");
       yield* session.throughMarker("late answer");
@@ -2230,6 +2242,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
         },
+        { ...claudeMarker("still waiting"), label: "check" },
         {
           type: "expect_outbound",
           frame: {
@@ -2239,6 +2252,41 @@ describe("AcpRegistryAdapterV2", () => {
           },
         },
       ],
+      response: { answers: { question_1: "option_0" } },
+    },
+    {
+      blocker: "an unanswered approval",
+      frames: [
+        {
+          type: "emit_inbound",
+          label: "blocker",
+          frame: {
+            kind: "request",
+            method: "session/request_permission",
+            params: {
+              sessionId: CLAUDE_ROOT_SESSION,
+              toolCall: {
+                toolCallId: "approve-command",
+                title: "Run tests",
+                kind: "execute",
+                status: "pending",
+                rawInput: { command: "vp test run" },
+              },
+              options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+            },
+          },
+        },
+        { ...claudeMarker("still waiting"), label: "check" },
+        {
+          type: "expect_outbound",
+          frame: {
+            kind: "response",
+            method: "session/request_permission",
+            result: { outcome: { outcome: "selected", optionId: "allow" } },
+          },
+        },
+      ],
+      response: { decision: "accept" as const },
     },
     {
       blocker: "a running tool",
@@ -2255,6 +2303,7 @@ describe("AcpRegistryAdapterV2", () => {
           label: "blocker",
         },
         claudeMarker("blocked"),
+        { ...claudeMarker("still waiting"), label: "check" },
         {
           ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
             sessionUpdate: "tool_call_update",
@@ -2264,63 +2313,69 @@ describe("AcpRegistryAdapterV2", () => {
           }),
           label: "resolve",
         },
+        claudeMarker("resolved"),
       ],
+      response: undefined,
     },
-  ])("keeps a Factory Droid continuation open past the quiet window for $blocker", ({ frames }) =>
-    Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["wake", "blocker", "resolve"]);
-      const session = yield* openClaudeReplaySession(
-        [
-          ...droidFirstTurn(),
-          {
-            ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: "Checking the background result" },
-            }),
-            label: "wake",
-          },
-          claudeMarker("woke"),
-          ...frames,
-          claudeMarker("resolved"),
-          claudeFrames.closeRequest,
-          claudeFrames.closed,
-        ],
-        gate,
-        true,
-        "factory-droid",
-      );
-      yield* session.runtime.startTurn(session.turnInput(1));
-      assert.equal((yield* session.terminal).status, "completed");
-      gate.release("wake");
-      yield* session.throughMarker("woke");
-      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
-      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
-      gate.release("blocker");
-      const blocked = (yield* session.until(
-        (event) =>
-          (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending") ||
-          (event.type === "provider_thread.updated" &&
-            event.providerThread.nativeMetadata?.title === "blocked"),
-      )).at(-1)!;
-      yield* TestClock.adjust("3 seconds");
-      if (blocked.type === "runtime_request.updated") {
-        yield* session.runtime.respondToRuntimeRequest({
-          requestId: blocked.runtimeRequest.id,
-          answers: { question_1: "option_0" },
-        });
-      } else {
-        gate.release("resolve");
-      }
-      const beforeResolved = yield* session.throughMarker("resolved");
-      assert.notInclude(
-        beforeResolved.map((event) => event.type),
-        "turn.terminal",
-        "the continuation must not settle while Droid still waits",
-      );
-      const settled = yield* Effect.forkScoped(session.terminal);
-      yield* TestClock.adjust("3 seconds");
-      assert.include(yield* Fiber.join(settled), { runOrdinal: 2, status: "completed" });
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  ])(
+    "keeps a Factory Droid continuation open past the quiet window for $blocker",
+    ({ frames, response }) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["wake", "blocker", "check", "resolve"]);
+        const session = yield* openClaudeReplaySession(
+          [
+            ...droidFirstTurn(),
+            {
+              ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Checking the background result" },
+              }),
+              label: "wake",
+            },
+            claudeMarker("woke"),
+            ...frames,
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          gate,
+          true,
+          "factory-droid",
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        gate.release("wake");
+        yield* session.throughMarker("woke");
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        gate.release("blocker");
+        const blocked = (yield* session.until(
+          (event) =>
+            (event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "pending") ||
+            (event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.title === "blocked"),
+        )).at(-1)!;
+        yield* TestClock.adjust("3 seconds");
+        gate.release("check");
+        assert.notInclude(
+          (yield* session.throughMarker("still waiting")).map((event) => event.type),
+          "turn.terminal",
+          "the continuation must not settle while Droid still waits",
+        );
+        // Requests are answered with no later update, so only their resolution rearms the finalize.
+        if (blocked.type === "runtime_request.updated" && response !== undefined) {
+          yield* session.runtime.respondToRuntimeRequest({
+            requestId: blocked.runtimeRequest.id,
+            ...response,
+          });
+        } else {
+          gate.release("resolve");
+          yield* session.throughMarker("resolved");
+        }
+        const settled = yield* Effect.forkScoped(session.terminal);
+        yield* TestClock.adjust("3 seconds");
+        assert.include(yield* Fiber.join(settled), { runOrdinal: 2, status: "completed" });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect.each(["error", "end_turn"])(
