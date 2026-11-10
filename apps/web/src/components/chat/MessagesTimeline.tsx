@@ -967,12 +967,33 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (viewportElement) measureTimelineGutter(viewportElement);
     });
   };
+  const maintainScrollAtEnd =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null
+      ? false
+      : isWorking && !prefersReducedMotion && settlingListIdentity === null
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+  // Legend animates every end pin of an animated list and queues a resize pin behind a running
+  // one, so a viewport resize (terminal drawer) would push the live end out of view for a beat.
+  const pinEndOnViewportResize = useStableCallback(() => {
+    const list = listRef.current;
+    if (maintainScrollAtEnd !== TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) return;
+    if (list?.getState().isFollowingEnd) void list.scrollToEnd({ animated: false });
+  });
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
-    const stopObserving = observeResize(viewportElement, () =>
-      measureTimelineGutter(viewportElement),
-    );
+    let viewportHeight = viewportElement.clientHeight;
+    const stopObserving = observeResize(viewportElement, () => {
+      measureTimelineGutter(viewportElement);
+      if (viewportElement.clientHeight === viewportHeight) return;
+      viewportHeight = viewportElement.clientHeight;
+      pinEndOnViewportResize();
+    });
     return () => {
       stopObserving();
       setTimelineViewportElement(null);
@@ -1302,17 +1323,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
+              maintainScrollAtEnd={maintainScrollAtEnd}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||

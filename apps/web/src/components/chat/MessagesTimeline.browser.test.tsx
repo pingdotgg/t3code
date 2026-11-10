@@ -297,6 +297,66 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
   });
 
+  it("pins the live end at once when the viewport shrinks during a turn", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const runId = RunId.make("live-run");
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    const reply = (id: string) =>
+      message("Streamed reply\n\n".repeat(40), { role: "assistant", runId }, id);
+    const entries = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      reply("progress"),
+    ];
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    using scrollTo = vi.spyOn(viewport, "scrollTo");
+    const pinnedEnd = (behavior: ScrollBehavior) =>
+      vi.waitFor(() => {
+        expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior }));
+        expect(distanceFromEnd()).toBeLessThan(2);
+      });
+
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={[...entries, reply("first")]} />,
+    );
+    await vi.waitFor(() =>
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" })),
+    );
+    // Shrinks by more than the new viewport while that smooth pin runs.
+    container.style.height = "200px";
+    await pinnedEnd("instant");
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[...entries, reply("first"), reply("second")]}
+      />,
+    );
+    await pinnedEnd("smooth");
+
+    viewport.scrollTop = 0;
+    await vi.waitFor(() => expect(props.listRef.current!.getState().isFollowingEnd).toBe(false));
+    scrollTo.mockClear();
+    await new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(viewport);
+      container.style.height = "500px";
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(viewport.scrollTop).toBe(0);
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
