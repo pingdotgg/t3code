@@ -919,7 +919,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               id: thread.source.background ? "foreground" : "background",
               title: thread.source.background
                 ? "Move to Active"
-                : variant === "settled" || snoozedRow
+                : variant === "slim" || snoozedRow
                   ? "Run future turns in background"
                   : "Run in background",
               attributes: { disabled: !canOperateThread },
