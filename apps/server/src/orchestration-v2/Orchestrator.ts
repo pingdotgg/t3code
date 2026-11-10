@@ -11871,8 +11871,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       incoming.type === "run.force-stop.settle" &&
-      (run.activeAttemptId !== incoming.attemptId ||
-        !["preparing", "starting", "running"].includes(run.status))
+      (run.activeAttemptId !== incoming.attemptId || !isActiveRun(run))
     )
       return undefined;
     const ownership =
@@ -11888,6 +11887,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Option.isSome(ownership) &&
       (providerTurn === undefined || ownership.value.startPending);
     const now = yield* DateTime.now;
+    if (incoming.type === "run.force-stop.settle" && run.status === "waiting") {
+      yield* settleBackgroundWork({
+        command,
+        events,
+        projection,
+        stoppedProviderThreadId: providerThread.id,
+        throughRunOrdinal: run.ordinal,
+        now,
+      });
+      return undefined;
+    }
     const completionMessage = projection.messages.find(
       (candidate) => candidate.id === run.userMessageId,
     );
