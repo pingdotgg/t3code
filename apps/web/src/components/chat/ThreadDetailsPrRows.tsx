@@ -103,7 +103,7 @@ export function ThreadDetailsPrRows({
   return (
     <>
       {currentRow}
-      {expanded ? (
+      {expanded || rest.length === 1 ? (
         <div data-thread-details-pr-list className="flex flex-col">
           {rest.map((link) => (
             <ThreadDetailsPrLinkRow
@@ -117,22 +117,24 @@ export function ThreadDetailsPrRows({
           ))}
         </div>
       ) : null}
-      <ThreadDetailsControl
-        variant="ghost"
-        size="sm"
-        onClick={() => setExpanded(!expanded)}
-        part="row"
-        tone="muted"
-        className="w-full active:scale-100"
-      >
-        <MorphIcon
-          aria-hidden
-          className="size-4 shrink-0"
-          // Chevrons, not plus and minus: the plus already means "add" in this card.
-          icon={expanded ? ChevronUp : ChevronDown}
-        />
-        {expanded ? "Show less" : `Show ${rest.length} more`}
-      </ThreadDetailsControl>
+      {rest.length === 1 ? null : (
+        <ThreadDetailsControl
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpanded(!expanded)}
+          part="row"
+          tone="muted"
+          className="w-full active:scale-100"
+        >
+          <MorphIcon
+            aria-hidden
+            className="size-4 shrink-0"
+            // Chevrons, not plus and minus: the plus already means "add" in this card.
+            icon={expanded ? ChevronUp : ChevronDown}
+          />
+          {expanded ? "Show less" : `Show ${rest.length} more`}
+        </ThreadDetailsControl>
+      )}
     </>
   );
 }

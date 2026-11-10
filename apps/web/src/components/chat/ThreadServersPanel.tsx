@@ -63,7 +63,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   if (servers.length === 0) return null;
   const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
-  const hiddenCount = Math.max(0, servers.length - visibleCount);
+  // A toggle row is nearly as tall as a server row, so never hide just one.
+  const shownCount = servers.length - visibleCount > 1 ? visibleCount : servers.length;
+  const hiddenCount = servers.length - shownCount;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -108,7 +110,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   return (
     <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
       <ul className="m-0 list-none p-0">
-        {servers.slice(0, visibleCount).map((server, index) => {
+        {servers.slice(0, shownCount).map((server, index) => {
           const key = serverKey(server);
           const stoppable = canStop && supportsStop && server.pid !== null;
           return (
@@ -179,7 +181,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           );
         })}
       </ul>
-      {servers.length > SERVER_PAGE_COUNT ? (
+      {servers.length > SERVER_PAGE_COUNT + 1 ? (
         <ThreadDetailsControl
           variant="ghost"
           size="sm"
