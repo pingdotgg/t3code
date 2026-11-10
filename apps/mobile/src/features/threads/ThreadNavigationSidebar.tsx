@@ -45,6 +45,7 @@ import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
+import { useProjectsInSidebarOrder } from "../home/useProjectsInSidebarOrder";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
@@ -116,7 +117,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
 
   const insets = useSafeAreaInsets();
   const { fabClearance, fabSize } = useAndroidControlSizing();
-  const projects = useProjects();
+  const projects = useProjectsInSidebarOrder(useProjects());
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();

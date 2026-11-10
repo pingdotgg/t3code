@@ -5,7 +5,13 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
+import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
+
+import {
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import { buildThreadListV2Items } from "../threads/threadListV2";
 
@@ -116,6 +122,44 @@ describe("home project scopes", () => {
         now: "2026-06-01T00:00:00.000Z",
       }).items.map((item) => item.thread.id),
     ).toEqual([threads[1]!.id]);
+  });
+
+  it("lists project filters by latest user message once projects are in sidebar order", () => {
+    const environmentId = EnvironmentId.make("local");
+    const projects = ["alpha", "beta", "gamma"].map((id) =>
+      makeProject({ environmentId, id: ProjectId.make(id), title: id }),
+    );
+    const threads = [
+      ["alpha", "2026-06-02T00:00:00.000Z"],
+      ["beta", "2026-06-04T00:00:00.000Z"],
+      ["gamma", "2026-06-03T00:00:00.000Z"],
+    ].map(([projectId, latestUserMessageAt]) =>
+      makeThread({
+        environmentId,
+        projectId: ProjectId.make(projectId!),
+        id: ThreadId.make(`thread-${projectId}`),
+        title: projectId!,
+        latestUserMessageAt: latestUserMessageAt!,
+      }),
+    );
+    const sidebarOrder = sortHomeProjectScopes({
+      scopes: buildHomeProjectScopes({
+        projects,
+        environmentId: null,
+        projectGroupingMode: "separate",
+      }),
+      threads,
+      pendingTasks: [],
+      projectSortOrder: "updated_at",
+    }).map((scope) => ({ memberProjectRefs: scope.projectRefs }));
+
+    const filterTitles = buildHomeProjectScopes({
+      projects: sortProjectsByGroupOrder(projects, sidebarOrder),
+      environmentId,
+      projectGroupingMode: "separate",
+    }).map((scope) => scope.title);
+
+    expect(filterTitles).toEqual(["beta", "gamma", "alpha"]);
   });
 
   it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
