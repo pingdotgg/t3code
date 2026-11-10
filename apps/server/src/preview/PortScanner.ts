@@ -923,11 +923,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const pollIfRetained = Ref.get(stateRef).pipe(
     Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
   );
-  const scheduledPoll = Effect.gen(function* () {
-    if ((yield* Ref.get(stateRef)).retainCount === 0) return;
-    if (!(yield* backgroundPolicy.shouldRunOpportunisticWork)) return;
-    yield* pollTick();
-  });
+  const scheduledPoll = backgroundPolicy.shouldRunOpportunisticWork.pipe(
+    Effect.flatMap((foreground) => (foreground ? pollIfRetained : Effect.void)),
+  );
   yield* Effect.forkScoped(scheduledPoll.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {

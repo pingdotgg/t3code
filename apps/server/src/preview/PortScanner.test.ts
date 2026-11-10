@@ -598,7 +598,7 @@ effectIt.effect.each([
   let lsofSpawns = 0;
   let procWalks = 0;
   const missing = FileSystem.makeNoop({});
-  const layer = PortScanner.layer.pipe(
+  const layer = layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
