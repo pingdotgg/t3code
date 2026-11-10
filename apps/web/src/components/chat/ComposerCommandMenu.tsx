@@ -163,11 +163,6 @@ function composerCommandItemGroup(
   }
 }
 
-/**
- * Splits a ranked menu list into labelled groups. Groups appear in the order of their best
- * item and keep the ranking inside, so the top match stays first and highlighted. Callers
- * flatten the groups to get the arrow-key order, which then matches what the menu shows.
- */
 export function groupComposerCommandItems(
   items: ReadonlyArray<ComposerCommandItem>,
   triggerKind: ComposerTriggerKind | null,
@@ -182,7 +177,12 @@ export function groupComposerCommandItems(
       groups.set(group.key, { ...group, items: [item] });
     }
   }
-  return [...groups.values()];
+  const ordered = [...groups.values()];
+  if (triggerKind === "path") {
+    const order = ["threads", "environments", "paths"];
+    ordered.sort((left, right) => order.indexOf(left.key) - order.indexOf(right.key));
+  }
+  return ordered;
 }
 
 const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
