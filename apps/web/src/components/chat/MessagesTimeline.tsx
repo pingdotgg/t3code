@@ -1119,7 +1119,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
-    const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const viewport = scrollNode
+      ? attachTimelineViewport(scrollNode, (frame) => {
+          const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
+          if (rowId && list) {
+            list.cancelScroll();
+            list.anchorVisibleContent({ key: rowId });
+          }
+        })
+      : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
