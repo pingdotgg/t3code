@@ -2934,6 +2934,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           .map((link) => link.url),
         [21353, 21354].map((number) => `https://git.cafe/pingdotgg/t3code/pulls/${number}`),
       );
+      const linked = (yield* orchestrator.getThreadShell(threadId))?.pullRequests;
+      for (const [index, branch] of ["feature/pr-links", "feature/next"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`branch-pr-switch-${index}`),
+          threadId,
+          branch,
+        });
+        const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        assert.equal(thread.branchPullRequest?.number ?? null, index === 0 ? 1 : null);
+        assert.deepEqual(thread.pullRequests, linked);
+      }
     }),
   );
 
