@@ -54,19 +54,17 @@ export function threadMatchesPullRequestListFilters(
     readonly pullRequest?: ThreadPullRequestIdentityFilter | undefined;
   },
 ): boolean {
-  const visible = visibleThreadPullRequests(links ?? []);
-  if (filters.pullRequestStates !== undefined && filters.pullRequestStates.length > 0) {
-    const states = new Set(filters.pullRequestStates);
-    if (!visible.some((link) => link.snapshot?.state != null && states.has(link.snapshot.state))) {
-      return false;
-    }
-  }
-  if (filters.pullRequest !== undefined) {
-    if (!visible.some((link) => threadPullRequestMatchesIdentity(link, filters.pullRequest!))) {
-      return false;
-    }
-  }
-  return true;
+  const states =
+    filters.pullRequestStates !== undefined && filters.pullRequestStates.length > 0
+      ? new Set(filters.pullRequestStates)
+      : undefined;
+  const identity = filters.pullRequest;
+  if (states === undefined && identity === undefined) return true;
+  return visibleThreadPullRequests(links ?? []).some(
+    (link) =>
+      (states === undefined || (link.snapshot?.state != null && states.has(link.snapshot.state))) &&
+      (identity === undefined || threadPullRequestMatchesIdentity(link, identity)),
+  );
 }
 
 function latestUpdatedAt(link: ThreadPullRequestLink): number {

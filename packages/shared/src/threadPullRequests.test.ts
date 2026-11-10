@@ -82,6 +82,12 @@ describe("threadMatchesPullRequestListFilters", () => {
       threadMatchesPullRequestListFilters([open, merged], { pullRequest: { number: 2 } }),
     ).toBe(true);
     expect(threadMatchesPullRequestListFilters([open], { pullRequest: { number: 2 } })).toBe(false);
+    expect(
+      threadMatchesPullRequestListFilters([open, merged], {
+        pullRequestStates: ["open"],
+        pullRequest: { number: 2 },
+      }),
+    ).toBe(false);
   });
 });
 
