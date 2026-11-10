@@ -49,17 +49,35 @@ type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][numb
 
 // Render records the route before deciding, so the first render of a new route
 // already widens the scope. Only a route reveal widens: the once-per-mount
-// scroll never changes a scope the user chose.
+// scroll never changes a scope the user chose. Widening adds the thread's project
+// to the scope; only a thread outside every scopable project widens to all projects.
 export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly reveal: SidebarRouteReveal;
   readonly routeKey: string | null;
   readonly isSearching: boolean;
+  readonly scopeKeys: readonly string[];
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scopeGroups: readonly {
+    readonly projectKey: string;
+    readonly memberProjectRefs: readonly { environmentId: string; projectId: string }[];
+  }[];
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
-}): { readonly pendingKey: string | null; readonly widensScope: boolean } {
-  const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
-    input;
+}): {
+  readonly pendingKey: string | null;
+  readonly widensScope: boolean;
+  readonly scopeKeys: readonly string[];
+} {
+  const {
+    reveal,
+    routeKey,
+    isSearching,
+    scopeKeys,
+    scopedProjectKeys,
+    scopeGroups,
+    delegatedUnderParent,
+    findThread,
+  } = input;
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey);
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
@@ -68,5 +86,15 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
     scopedProjectKeys !== null &&
     filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
     filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
-  return { pendingKey, widensScope };
+  if (!widensScope) return { pendingKey, widensScope, scopeKeys };
+  const threadProjectKey = scopeGroups.find((group) =>
+    group.memberProjectRefs.some(
+      (ref) => ref.environmentId === thread.environmentId && ref.projectId === thread.projectId,
+    ),
+  )?.projectKey;
+  return {
+    pendingKey,
+    widensScope,
+    scopeKeys: threadProjectKey === undefined ? [] : [...scopeKeys, threadProjectKey],
+  };
 }

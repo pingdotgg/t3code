@@ -1122,15 +1122,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
   // thread once. Render decides the widening, so the first frame of the new route
   // already lists the row; the active row's ref callback scrolls to it.
-  const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
-    reveal: routeReveal,
-    routeKey: routeRowThreadKey,
-    isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
-    delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
-  });
-  const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
+  const { widensScope: revealWidensScope, scopeKeys: projectScopeKeys } = resolveSidebarRouteReveal(
+    {
+      reveal: routeReveal,
+      routeKey: routeRowThreadKey,
+      isSearching: isSearchingThreads,
+      scopeKeys: chosenProjectScopeKeys,
+      scopedProjectKeys: chosenScopeProjectKeys,
+      scopeGroups,
+      delegatedUnderParent,
+      findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    },
+  );
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
@@ -1146,8 +1149,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useEffect(() => {
     if (!revealWidensScope) return;
     clearSelection();
-    setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    setPersistedProjectScopeKeys(projectScopeKey === null ? [] : projectScopeKey.split("\n"));
+  }, [clearSelection, revealWidensScope, projectScopeKey, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
