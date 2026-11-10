@@ -1,3 +1,7 @@
+import {
+  pullRequestMarkdownPlugins,
+  pullRequestRehypePlugins,
+} from "./pullRequest/pullRequestMarkdown.logic";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
@@ -120,9 +124,6 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 
 import ChatMarkdown from "./ChatMarkdown";
 import { AudioPreview } from "./files/AudioPreview";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
-import { rehypePullRequestMentions } from "./pullRequest/pullRequestMentions";
-import { rehypePullRequestAutolinks } from "./pullRequest/pullRequestMarkdown.logic";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -559,171 +560,40 @@ describe("ChatMarkdown Windows file links", () => {
   });
 });
 
-describe("GitHub mentions through the markdown pipeline", () => {
-  const extraRehypePlugins: NonNullable<Parameters<typeof ChatMarkdown>[0]["extraRehypePlugins"]> =
-    [
-      [
-        rehypePullRequestMentions,
-        { repositoryUrl: "https://github.com/pingdotgg/t3code", viewer: "Adamulek123" },
-      ],
-      [
-        rehypePullRequestAutolinks,
-        {
-          userMentionsHandled: true,
-          autolinks: changeRequestReferenceAutolinker({
-            provider: "github",
-            url: "https://github.com/pingdotgg/t3code/pull/1",
-          })!,
-        },
-      ],
-    ];
-
-  it("keeps lists, formatting, code, images and authored links intact", async () => {
+describe("PR authored mention rendering", () => {
+  const pr = { provider: "github", url: "https://github.com/team/repo/pull/8" };
+  const plugins = {
+    extraRemarkPlugins: pullRequestMarkdownPlugins(pr),
+    extraRehypePlugins: pullRequestRehypePlugins(pr),
+  };
+  it("preserves escapes and entities alongside literal user and team mentions", async () => {
     setup();
     await using screen = await renderText(
-      "- **Thanks @Adamulek123** and *@PixPMusic*.\n\n`@Adamulek123`\n\n```text\n@Adamulek123\n```\n\n[@Adamulek123](https://example.com)\n\n![ignore @Adamulek123](https://example.com/image.png)\n\\@Adamulek123\n\n-       **@PixPMusic**\n\n-       @PixPMusic",
-      { extraRehypePlugins },
+      "\\@reader &#64;reader @reader &#64;team/reviewers @team/reviewers",
+      plugins,
     );
-    const { container } = screen;
-    const links = [
-      ...container.querySelectorAll<HTMLAnchorElement>("a[data-pull-request-mention]"),
-    ];
-    expect(links.map((link) => [link.textContent, link.href])).toEqual([
-      ["@Adamulek123", "https://github.com/Adamulek123"],
-      ["@PixPMusic", "https://github.com/PixPMusic"],
-      ["@PixPMusic", "https://github.com/PixPMusic"],
-      ["@PixPMusic", "https://github.com/PixPMusic"],
-    ]);
-    expect(container.querySelector("li strong a")?.textContent).toBe("@Adamulek123");
-    expect(container.querySelector("em a")?.textContent).toBe("@PixPMusic");
-    expect(container.querySelector("code a")).toBeNull();
-    expect(container.querySelector("a[href='https://example.com']")?.textContent).toBe(
-      "@Adamulek123",
-    );
-    expect(links[0]?.querySelector("img")).toBeNull();
-  });
-
-  it("links mentions inside raw HTML details and tables after sanitization", async () => {
-    setup();
-    await using screen = await renderText(
-      "<details open><summary>Ask @PixPMusic</summary><table><tbody><tr><td>Thanks @Adamulek123</td></tr></tbody></table></details>",
-      { extraRehypePlugins },
-    );
-    const { container } = screen;
-    expect(container.querySelector("[data-markdown-details-summary] a")?.textContent).toBe(
-      "@PixPMusic",
-    );
-    expect(container.querySelector("td a[data-pull-request-mention=self]")?.textContent).toBe(
-      "@Adamulek123",
-    );
-    expect(container.querySelectorAll("table")).toHaveLength(1);
-  });
-
-  it("preserves escaped and entity-authored text without turning it into a ping", async () => {
-    setup();
-    await using screen = await renderText("\\@Adamulek123 and &#64;PixPMusic, then @Adamulek123.", {
-      extraRehypePlugins,
-    });
-    const { container } = screen;
-    expect(container.querySelectorAll("a[data-pull-request-mention]")).toHaveLength(1);
-    expect(container.textContent).toBe("@Adamulek123 and @PixPMusic, then @Adamulek123.");
-  });
-
-  it("shows the profile URL on hover and opens it through the link context menu", async () => {
-    setup();
-    await using screen = await renderText("Thanks @Adamulek123.", { extraRehypePlugins });
-    using open = vi.spyOn(window, "open").mockReturnValue(null);
-    const { container } = screen;
-    const link = container.querySelector<HTMLAnchorElement>("a[data-pull-request-mention]")!;
-    await userEvent.hover(link);
-    await expect
-      .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
-      .toBe("https://github.com/Adamulek123");
-    await userEvent.click(link, { button: "right" });
-    await userEvent.click(page.getByRole("menuitem", { name: "Open in system browser" }));
-    expect(open).toHaveBeenCalledWith(
-      "https://github.com/Adamulek123",
-      "_blank",
-      "noopener,noreferrer",
-    );
-  });
-
-  it.each(["&#64;", "&#x40;", "&commat;", "\\@"])(
-    "links the literal occurrence after repeated %s mentions of the same person",
-    async (at) => {
-      setup();
-      await using screen = await renderText(
-        `${at}Adamulek123, ${at}Adamulek123, then @Adamulek123 and @Adamulek123.`,
-        { extraRehypePlugins },
-      );
-      const { container } = screen;
-      const paragraph = container.querySelector("p")!;
-      expect(paragraph.firstChild?.textContent).toBe("@Adamulek123, @Adamulek123, then ");
-      expect(paragraph.querySelectorAll("a[data-pull-request-mention]")).toHaveLength(2);
-      expect(paragraph.querySelector("a")?.nextSibling?.textContent).toBe(" and ");
-      expect(paragraph.lastChild?.textContent).toBe(".");
-    },
-  );
-
-  it("keeps source alignment through unrelated escapes, entities and invalid at signs", async () => {
-    setup();
-    await using screen = await renderText(
-      "\\&commat;Adamulek123, &#64;Adamulek123, @@Adamulek123, \\* &amp; @Adamulek123 and @Ada&#109;ulek123.",
-      { extraRehypePlugins },
-    );
-    const { container } = screen;
-    const paragraph = container.querySelector("p")!;
-    expect(paragraph.querySelectorAll("a[data-pull-request-mention]")).toHaveLength(1);
-    expect(paragraph.querySelector("a")?.previousSibling?.textContent).toBe(
-      "&commat;Adamulek123, @Adamulek123, @@Adamulek123, * & ",
-    );
-    expect(paragraph.querySelector("a")?.nextSibling?.textContent).toBe(" and @Adamulek123.");
-  });
-
-  it.each(["#123", "a".repeat(40)])(
-    "preserves escapes and repeated mentions on both sides of the reference %s",
-    async (reference) => {
-      setup();
-      await using screen = await renderText(
-        `\\@Adamulek123, &#64;Adamulek123, @Adamulek123 before ${reference}, then \\@Adamulek123, &commat;Adamulek123, @Adamulek123.`,
-        { extraRehypePlugins },
-      );
-      const { container } = screen;
-      const paragraph = container.querySelector("p")!;
-      const mentions = [...paragraph.querySelectorAll("a[data-pull-request-mention]")];
-      expect(mentions).toHaveLength(2);
-      expect(mentions[0]?.previousSibling?.textContent).toBe("@Adamulek123, @Adamulek123, ");
-      expect(mentions[1]?.previousSibling?.textContent).toBe(", then @Adamulek123, @Adamulek123, ");
-      const autolink = paragraph.querySelector<HTMLAnchorElement>("a[data-pull-request-autolink]");
-      expect(autolink?.href).toBe(
-        reference === "#123"
-          ? "https://github.com/pingdotgg/t3code/issues/123"
-          : `https://github.com/pingdotgg/t3code/commit/${reference}`,
-      );
-      expect(autolink?.textContent).toBe(reference === "#123" ? reference : reference.slice(0, 7));
-    },
-  );
-
-  it("keeps host-qualified references while excluding code, authored links and invalid SHAs", async () => {
-    setup();
-    const sha = "a".repeat(40);
-    await using screen = await renderText(
-      `#123, ${sha}.\n\n\`#123 ${sha}\`\n\n\`\`\`text\n#123 ${sha}\n\`\`\`\n\n[#123 ${sha}](https://example.com)\n\nword#123 ${sha}x x${sha}`,
-      { extraRehypePlugins },
-    );
-    const { container } = screen;
     expect(
-      [...container.querySelectorAll<HTMLAnchorElement>("a[data-pull-request-autolink]")].map(
-        (link) => [link.textContent, link.href],
-      ),
+      [...screen.container.querySelectorAll("a")].map((a) => [
+        a.textContent,
+        a.getAttribute("href"),
+      ]),
     ).toEqual([
-      ["#123", "https://github.com/pingdotgg/t3code/issues/123"],
-      [sha.slice(0, 7), `https://github.com/pingdotgg/t3code/commit/${sha}`],
-      ["word#123", "https://github.com/word/t3code/issues/123"],
+      ["@reader", "https://github.com/reader"],
+      ["@team/reviewers", "https://github.com/orgs/team/teams/reviewers"],
     ]);
-    expect(container.querySelector("code a")).toBeNull();
-    expect(container.querySelector("a[href='https://example.com']")?.textContent).toBe(
-      `#123 ${sha}`,
+    expect(screen.container.textContent).toBe(
+      "@reader @reader @reader @team/reviewers @team/reviewers",
     );
+  });
+  it("links sanitized details and table mentions without linking code or escaped mentions", async () => {
+    setup();
+    await using screen = await renderText(
+      "<details open><summary>@reader</summary><table><tr><td>&#64;reader @team/reviewers</td></tr></table><code>@code</code></details>",
+      plugins,
+    );
+    expect([...screen.container.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([
+      "https://github.com/reader",
+      "https://github.com/orgs/team/teams/reviewers",
+    ]);
   });
 });

@@ -7,7 +7,7 @@ import {
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PluggableList } from "unified";
-import { rehypePullRequestMentions } from "./pullRequestMentions";
+import { authoredMentionOffsets } from "./pullRequestMentions";
 
 export {
   splitPullRequestBody,
@@ -21,14 +21,17 @@ type MarkdownNode = {
   url?: string;
   tagName?: string;
   properties?: Record<string, unknown>;
+  position?:
+    | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
+    | undefined;
 };
 
 const AUTOLINK_IGNORED_TYPES = new Set(["a", "code", "pre", "kbd", "samp", "script", "style"]);
 
 export function rehypePullRequestAutolinks(options: {
   readonly autolinks: (text: string) => ReadonlyArray<ReferenceAutolink>;
-  readonly userMentionsHandled?: boolean;
 }) {
+  let source: string | undefined;
   const visit = (node: MarkdownNode): void => {
     const children = node.children;
     if (children === undefined) return;
@@ -40,13 +43,21 @@ export function rehypePullRequestAutolinks(options: {
         continue;
       }
       const value = child.value;
-      // The mention pass already checked authored escapes and username boundaries.
-      // Keep host-specific team links, but do not relink rejected user mentions.
+      const startOffset = child.position?.start.offset;
+      const endOffset = child.position?.end.offset;
+      const authored =
+        source !== undefined && startOffset !== undefined && endOffset !== undefined
+          ? source.slice(startOffset, endOffset)
+          : undefined;
+      const offsets = authored === undefined ? undefined : authoredMentionOffsets(value, authored);
       const links = options
         .autolinks(value)
         .filter(
           (link) =>
-            !options.userMentionsHandled || link.kind !== "mention" || link.text.includes("/"),
+            link.kind !== "mention" ||
+            (authored !== undefined &&
+              offsets?.get(link.index) !== undefined &&
+              authored.startsWith(link.text, offsets.get(link.index))),
         );
       if (links.length === 0) continue;
       const replacements: MarkdownNode[] = [];
@@ -68,7 +79,10 @@ export function rehypePullRequestAutolinks(options: {
       index += replacements.length - 1;
     }
   };
-  return (tree: MarkdownNode) => visit(tree);
+  return (tree: MarkdownNode, file: { value?: unknown }) => {
+    source = typeof file.value === "string" ? file.value : undefined;
+    visit(tree);
+  };
 }
 
 function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: string }) {
@@ -111,22 +125,17 @@ export function pullRequestRehypePlugins(
   changeRequest: {
     readonly provider: string;
     readonly url: string;
-    readonly viewer?: string | null | undefined;
   } | null,
 ): PluggableList {
   if (changeRequest === null) return NO_PLUGINS;
   const repositoryUrl = changeRequestRepositoryUrl(changeRequest);
   if (repositoryUrl === undefined) return NO_PLUGINS;
-  const key = `${changeRequest.provider}\u0000${repositoryUrl}\u0000${changeRequest.viewer ?? ""}`;
+  const key = `${changeRequest.provider}\u0000${repositoryUrl}\u0000`;
   let plugins = rehypePlugins.get(key);
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
-    const github = changeRequest.provider === "github";
     plugins = [];
-    if (github)
-      plugins.push([rehypePullRequestMentions, { repositoryUrl, viewer: changeRequest.viewer }]);
-    if (autolinks)
-      plugins.push([rehypePullRequestAutolinks, { autolinks, userMentionsHandled: github }]);
+    if (autolinks) plugins.push([rehypePullRequestAutolinks, { autolinks }]);
     rehypePlugins.set(key, plugins);
   }
   return plugins;

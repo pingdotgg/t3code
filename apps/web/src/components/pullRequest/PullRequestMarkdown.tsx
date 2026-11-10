@@ -213,7 +213,6 @@ export function PullRequestMarkdown({
         className,
       )}
       data-image-gallery
-      data-pull-request-markdown
     >
       {segments.map((segment) => (
         <PullRequestBodySegmentView

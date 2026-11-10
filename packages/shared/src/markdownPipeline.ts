@@ -363,7 +363,7 @@ function breakLinesAroundImages(paragraph: Paragraph) {
     }
     const breakAfter = beforeImage && /\n[ \t]*$/.test(value);
     if (breakAfter) value = value.replace(/[ \t]*\n[ \t]*$/, "");
-    if (value) parts.push({ type: "text", value, position: child.position });
+    if (value) parts.push({ type: "text", value });
     if (breakAfter) parts.push({ type: "break" });
     return parts;
   });

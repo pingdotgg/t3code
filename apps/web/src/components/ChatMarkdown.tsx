@@ -1119,7 +1119,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
         resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
       : null;
     if (!fileLinkMeta) {
-      const isPullRequestMention = node?.properties.dataPullRequestMention !== undefined;
       const faviconHost = resolveExternalWebLinkHost(href);
       const hasText = hastHasText(node);
       const pullRequestAutolink = String(
@@ -1281,7 +1280,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             });
           }}
         >
-          {faviconHost && hasText && !isPullRequestAutolink && !isPullRequestMention ? (
+          {faviconHost && hasText && !isPullRequestAutolink ? (
             <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
               {linkChildren}
             </MarkdownExternalLinkContent>
