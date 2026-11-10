@@ -21,6 +21,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -5233,20 +5234,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     "checks out the submodules of the head an existing PR branch moves onto (head %s one)",
     (headChange) =>
       Effect.gen(function* () {
-        // Git refuses `file:` submodule transports by default (CVE-2022-39253) and ignores
-        // repo-level config for it, so a local fixture needs the env allowance.
-        const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-        process.env.GIT_ALLOW_PROTOCOL = "file";
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (previousAllowedProtocol === undefined) {
-              delete process.env.GIT_ALLOW_PROTOCOL;
-            } else {
-              process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
-            }
-          }),
-        );
-
         const submoduleDir = yield* makeTempDir("t3code-git-submodule-");
         yield* initRepo(submoduleDir);
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5305,7 +5292,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         );
         expect((yield* runGit(worktreePath, ["status", "--porcelain"])).stdout).toBe("");
         expect(result).toMatchObject({ isOnPullRequestHead: true });
-      }),
+      }).pipe(
+        // Git refuses `file:` submodule transports by default (CVE-2022-39253) and ignores
+        // repo-level config for it, so a local fixture needs the env allowance.
+        (effect) =>
+          Effect.flatMap(HostProcess.Environment, (env) =>
+            effect.pipe(
+              Effect.provideService(HostProcess.Environment, {
+                ...env,
+                GIT_ALLOW_PROTOCOL: "file",
+              }),
+            ),
+          ),
+      ),
   );
 
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
