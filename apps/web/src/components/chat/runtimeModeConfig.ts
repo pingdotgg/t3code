@@ -4,7 +4,13 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import type { MessageKey } from "@t3tools/client-runtime/i18n";
-import { type LucideIcon, LockIcon, PenLineIcon, ShieldOffIcon, SparklesIcon } from "lucide-react";
+import {
+  type LucideIcon,
+  LockIcon,
+  PenLineIcon,
+  ShieldCheckIcon,
+  ShieldOffIcon,
+} from "lucide-react";
 
 export const runtimeModeConfig: Record<
   RuntimeMode,
@@ -35,7 +41,7 @@ export const runtimeModeConfig: Record<
     descriptionKey: "runtimeMode.auto.description",
     label: "Auto",
     description: "Supported providers approve routine actions; others still ask.",
-    icon: SparklesIcon,
+    icon: ShieldCheckIcon,
   },
   "full-access": {
     labelKey: "runtimeMode.fullAccess.label",
