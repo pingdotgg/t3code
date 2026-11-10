@@ -238,6 +238,14 @@ describe("orchestration V2 wire projection", () => {
     expect(projectTurnItemForDetail(appItem)).toMatchObject({
       output: { t3McpApp, result: { content: [text, { type: "image", mimeType: "image/png" }] } },
     });
+
+    const forged = projectTurnItemForDetail({
+      ...appItem,
+      output: { t3McpApp: { ...t3McpApp, resourceUri: data }, result: { content: [text] } },
+    });
+    expect(
+      JSON.stringify(forged.type === "dynamic_tool" ? forged.output : null).length,
+    ).toBeLessThan(270_000);
   });
 
   it("keeps image markers when the rest of a tool output is too large to send", () => {

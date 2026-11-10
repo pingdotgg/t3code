@@ -15,7 +15,7 @@ import {
   dedupeSubagentBodies,
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
-import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import {
   compactDynamicToolOutput,
   omitToolOutputImageData,
@@ -241,12 +241,14 @@ function boundToolResult(output: unknown): unknown {
 }
 
 function boundToolOutput(output: unknown): unknown {
-  return typeof output === "object" &&
-    output !== null &&
-    MCP_APP_OUTPUT_KEY in output &&
-    "result" in output
-    ? { [MCP_APP_OUTPUT_KEY]: output[MCP_APP_OUTPUT_KEY], result: boundToolResult(output.result) }
-    : boundToolResult(output);
+  if (typeof output !== "object" || output === null || !("result" in output)) {
+    return boundToolResult(output);
+  }
+  const app =
+    MCP_APP_OUTPUT_KEY in output ? readMcpAppReference(output[MCP_APP_OUTPUT_KEY]) : undefined;
+  return app === undefined
+    ? boundToolResult(output)
+    : { [MCP_APP_OUTPUT_KEY]: app, result: boundToolResult(output.result) };
 }
 
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
