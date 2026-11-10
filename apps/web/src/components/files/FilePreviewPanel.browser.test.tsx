@@ -329,6 +329,61 @@ describe("file view comments", () => {
     expect(screen.getByText("Note from thread A").query()).toBeNull();
   });
 
+  it("drops a comment removed from the composer and does not re-add it on the next edit", async () => {
+    using _settings = setup();
+    const contents = "export const one = 1;\nexport const two = 2;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const store = useComposerDraftStore.getState();
+    const comment = buildFileReviewComment({
+      id: "file-comment-removed",
+      filePath: "config.ts",
+      startLine: 2,
+      endLine: 2,
+      text: "Removed from the composer",
+      contents,
+    });
+    store.addReviewComment(threadRef, comment);
+    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
+
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("Removed from the composer")).toBeVisible();
+    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
+    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+
+    await act(async () => store.removeReviewComment(threadRef, comment.id));
+    await expect.element(screen.getByText("Removed from the composer")).not.toBeInTheDocument();
+
+    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
+    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
+    content()!.focus();
+    const selectionSynced = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
+    await selectionSynced;
+    await act(async () => {
+      content()!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          inputType: "insertParagraph",
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(draft?.reviewComments ?? []).toEqual([]);
+    expect(screen.getByText("Removed from the composer").query()).toBeNull();
+  });
+
   it("keeps a linked line revealed when the thread changes under the file view", async () => {
     using _settings = setup();
     const contents = Array.from(

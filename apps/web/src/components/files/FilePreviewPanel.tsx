@@ -69,7 +69,7 @@ import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { composerTargetKey, type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileReviewComment } from "~/reviewCommentContext";
+import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
@@ -97,6 +97,7 @@ import {
   formatFileCommentRange,
   nextFileCommentId,
   normalizeFileCommentRange,
+  reconcileFileCommentAnnotations,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
@@ -131,6 +132,7 @@ import {
 } from "./projectFilesQueryState";
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -692,12 +694,21 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
-  const [lineAnnotations, setLineAnnotations] = useState(() =>
-    fileCommentAnnotationsFromReviewComments(
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments ?? [],
-      relativePath,
-    ),
+  const reviewComments = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
   );
+  const [lineAnnotations, setLineAnnotations] = useState(() =>
+    fileCommentAnnotationsFromReviewComments(reviewComments, relativePath),
+  );
+  // The composer draft owns completed comments; the editor's copy only tracks their moved lines.
+  const reconciledLineAnnotations = reconcileFileCommentAnnotations(
+    lineAnnotations,
+    reviewComments,
+    relativePath,
+  );
+  if (reconciledLineAnnotations !== lineAnnotations) {
+    setLineAnnotations(reconciledLineAnnotations);
+  }
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
@@ -744,6 +755,7 @@ function EditableFileSurface({
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
         if (entry.kind !== "comment") continue;
+        if (!reviewComments.some((comment) => comment.id === entry.id)) continue;
         addReviewComment(
           composerDraftTarget,
           buildFileReviewComment({

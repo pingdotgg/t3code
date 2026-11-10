@@ -93,3 +93,29 @@ export function fileCommentAnnotationsFromReviewComments(
       [],
     );
 }
+
+function fileCommentEntriesKey(entries: ReadonlyArray<FileCommentAnnotationEntry>): string {
+  return JSON.stringify(
+    entries
+      .toSorted((left, right) => left.id.localeCompare(right.id))
+      .map((entry) => [entry.id, entry.startLine, entry.endLine, entry.text]),
+  );
+}
+
+export function reconcileFileCommentAnnotations(
+  annotations: FileCommentLineAnnotation[],
+  reviewComments: ReadonlyArray<ReviewCommentContext>,
+  relativePath: string,
+): FileCommentLineAnnotation[] {
+  const stored = fileCommentAnnotationsFromReviewComments(reviewComments, relativePath);
+  const entries = annotations.flatMap((annotation) => annotation.metadata.entries);
+  const storedKey = fileCommentEntriesKey(
+    stored.flatMap((annotation) => annotation.metadata.entries),
+  );
+  if (fileCommentEntriesKey(entries.filter((entry) => entry.kind === "comment")) === storedKey) {
+    return annotations;
+  }
+  return entries
+    .filter((entry) => entry.kind === "draft")
+    .reduce<FileCommentLineAnnotation[]>(appendFileCommentEntry, stored);
+}
