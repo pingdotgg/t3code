@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { shortcutLabelForCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
-import { findInOpenLayers } from "../lib/openLayers";
+import { findInOpenLayers, isInOpenLayer } from "../lib/openLayers";
 import { isModalDialogOpen } from "../lib/modalDialog";
 import { cn, isMacPlatform } from "../lib/utils";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -340,6 +340,7 @@ function useOverviewGestures(): void {
     let gestureOverflow = 1;
     const onWheel = (event: WheelEvent) => {
       if (event.defaultPrevented || isModalDialogOpen() || isOverviewInteractive()) return;
+      if (isInOpenLayer(event.target)) return;
       if (!event.ctrlKey || Number.isInteger(event.deltaY)) return;
       event.preventDefault();
       travel += event.deltaY;
@@ -355,13 +356,13 @@ function useOverviewGestures(): void {
     };
     // Safari's GestureEvent is not in the DOM typings; its scale is cumulative.
     const startGesture = (event: Event) => {
-      if (isModalDialogOpen()) return;
+      if (isModalDialogOpen() || isInOpenLayer(event.target)) return;
       event.preventDefault();
       gestureScale = 1;
       gestureOverflow = 1;
     };
     const onGesture = (event: Event) => {
-      if (isModalDialogOpen()) return;
+      if (isModalDialogOpen() || isInOpenLayer(event.target)) return;
       event.preventDefault();
       const gesture = event as Event & { scale?: number; clientX?: number; clientY?: number };
       const scale = gesture.scale ?? 1;
@@ -788,6 +789,7 @@ export function useOverviewStage(
     let foreignWheelUntil = 0;
     const onWheel = (event: WheelEvent) => {
       if (!isOverviewInteractive() || event.defaultPrevented) return;
+      if (isInOpenLayer(event.target)) return;
       event.preventDefault();
       // Own only the overview: do not also drive the strip's modifier-wheel handler.
       event.stopPropagation();
