@@ -96,6 +96,24 @@ describe("V2 client presentation", () => {
         pendingBackgroundTasks: [],
       }).runtime,
     ).toBeNull();
+
+    const importedProviderThreadId = ProviderThreadId.make("imported-provider-thread");
+    const imported = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: null,
+      activeProviderThreadId: importedProviderThreadId,
+      activeRunId: null,
+      status: "idle",
+      pendingBackgroundTasks: [],
+    });
+    expect(imported.runtime?.status).not.toBe("idle");
+    expect(isThreadWorking(imported)).toBe(false);
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        thread: { ...v2Projection.thread, activeProviderThreadId: importedProviderThreadId },
+      })?.status,
+    ).not.toBe("idle");
   });
 
   it.each([
