@@ -3207,20 +3207,18 @@ it.effect.each(["completed", "failed"] as const)(
               } as OrchestrationV2ProviderThread,
             };
           };
-          return Stream.fromIterable([
-            roster(true),
-            rootTerminalEvent(ids, status),
-            roster(false),
-          ]).pipe(
-            Stream.tap((event) =>
-              event.type === "provider_thread.updated"
-                ? Ref.set(pending, (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0)
-                : Effect.void,
-            ),
-          );
+          return Stream.fromIterable([roster(true), rootTerminalEvent(ids, status), roster(false)]);
         },
+        // The adapter clears its live roster before ingestion reaches the queued clear.
+        beforeTerminalWrite: () => Ref.set(pending, false).pipe(Effect.as(true)),
         ingestNormalized: (input) =>
-          Ref.update(ingested, (all) => [...all, input.event]).pipe(Effect.as([])),
+          Ref.update(ingested, (all) => [...all, input.event]).pipe(
+            Effect.as(
+              input.event.type === "provider_thread.updated"
+                ? [{} as OrchestrationV2StoredEvent]
+                : [],
+            ),
+          ),
       });
       const rosters = (yield* Ref.get(ingested)).flatMap((event) =>
         event.type === "provider_thread.updated"
