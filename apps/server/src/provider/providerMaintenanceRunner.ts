@@ -422,10 +422,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
 
     const runProviderUpdate = Effect.fn("ProviderMaintenanceRunner.runProviderUpdate")(
       function* () {
+        // Uninterruptible, so a dropped request cannot leave settled set without the state.
         const finish = (state: ServerProviderUpdateState) =>
           Ref.set(settled, true).pipe(
             Effect.andThen(setUpdateState(state)),
             Effect.map((providers) => ({ providers })),
+            Effect.uninterruptible,
           );
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
