@@ -272,32 +272,6 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
 });
 
-it("resends the terminal size after a resize request fails", async () => {
-  const { other: threadRef } = setup();
-  const resizes: unknown[] = [];
-  fixture.runResize = (input) => {
-    resizes.push(input);
-    return Promise.resolve(
-      resizes.length === 1
-        ? AsyncResult.failure(Cause.die(new Error("resize rejected")))
-        : AsyncResult.success(undefined),
-    );
-  };
-  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
-  await act(async () => {
-    fixture.pendingSurfaces.shift()?.();
-  });
-  await act(async () => {
-    fixture.reportedSize = { cols: 57, rows: 41 };
-    fixture.surfaceOptions.at(-1)!.onResize(57, 41);
-  });
-  const resize = {
-    environmentId: threadRef.environmentId,
-    input: { threadId: threadRef.threadId, terminalId: "term-1", cols: 57, rows: 41 },
-  };
-  expect(resizes).toEqual([resize, resize]);
-});
-
 it("resends a failed resize once in each writable session", async () => {
   const { other: threadRef } = setup();
   const resizes: unknown[] = [];
@@ -334,5 +308,9 @@ it("resends a failed resize once in each writable session", async () => {
   await act(async () => {
     appAtomRegistry.set(session, running(2));
   });
-  expect(resizes).toHaveLength(3);
+  const resize = {
+    environmentId: threadRef.environmentId,
+    input: { threadId: threadRef.threadId, terminalId: "term-1", cols: 57, rows: 41 },
+  };
+  expect(resizes).toEqual([resize, resize, resize]);
 });
