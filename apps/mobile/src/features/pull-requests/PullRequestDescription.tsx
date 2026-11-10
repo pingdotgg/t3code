@@ -13,7 +13,7 @@ import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import type { FilePreviewItem } from "../../components/FilePreviewModal";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal";
 import { isBotBadgeImage } from "./botBadgeImages";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";

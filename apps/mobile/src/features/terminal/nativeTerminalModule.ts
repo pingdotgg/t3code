@@ -16,6 +16,10 @@ interface TerminalInputEvent {
   readonly data: string;
 }
 
+interface TerminalPasteEvent {
+  readonly text: string;
+}
+
 interface TerminalResizeEvent {
   readonly cols: number;
   readonly rows: number;
@@ -39,6 +43,8 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   /** `[cols, rows]` of the shared PTY, or empty before the server reports one. */
   readonly sharedGrid?: ReadonlyArray<number>;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;
+  /** iOS only: clipboard text from a system paste (edit menu, ⌘V, shortcut bar). */
+  readonly onPaste?: (event: NativeSyntheticEvent<TerminalPasteEvent>) => void;
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
 }
 
