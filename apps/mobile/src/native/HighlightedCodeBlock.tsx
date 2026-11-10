@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import type { MarkdownStyle } from "react-native-enriched-markdown";
 
+import { Menu } from "../components/ui/Menu";
 import { useMarkdownCodeHighlight } from "../features/threads/markdownCodeHighlightState";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { resolveHighlightLanguage } from "../lib/highlightLanguage";
 import type { HighlightScheme } from "../lib/highlights";
 import { CodeBlockFrame, CodeBlockHeaderButton } from "./CodeBlockFrame";
+import { fencedCodeMarkdown } from "./codeBlockMarkdown";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 // Fences enriched-markdown colours itself: cpp/highlight/CodeBlockLanguages.cpp entries with a default grammar.
@@ -56,6 +58,12 @@ const FENCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   xml: "XML",
 };
 
+// The native block's long-press menu, with its labels and iOS symbols.
+const CODE_MENU_ACTIONS = [
+  { id: "copy-code", title: "Copy", image: "doc.on.doc" },
+  { id: "copy-markdown", title: "Copy as Markdown", image: "doc.text" },
+];
+
 /** The highlights language for a fence enriched-markdown leaves plain, or null to keep its block. */
 export function fallbackHighlightLanguage(fence: string): string | null {
   const name = fence.toLowerCase();
@@ -86,8 +94,8 @@ export function HighlightedCodeBlock(props: {
   const fence = props.fence.toLowerCase();
   let offset = 0;
   const text = (
+    // Not selectable: as in the native block, a long-press opens the copy menu instead.
     <Text
-      selectable
       style={{
         color: codeStyle.color,
         fontFamily: codeStyle.fontFamily,
@@ -136,13 +144,25 @@ export function HighlightedCodeBlock(props: {
         </>
       }
     >
-      {wrapped ? (
-        <View style={padding}>{text}</View>
-      ) : (
-        <ScrollView horizontal contentContainerStyle={padding}>
-          {text}
-        </ScrollView>
-      )}
+      <Menu
+        shouldOpenOnLongPress
+        actions={CODE_MENU_ACTIONS}
+        onPressAction={({ nativeEvent }) => {
+          copyTextWithHaptic(
+            nativeEvent.event === "copy-markdown" ? fencedCodeMarkdown(code, props.fence) : code,
+          );
+        }}
+      >
+        <Pressable>
+          {wrapped ? (
+            <View style={padding}>{text}</View>
+          ) : (
+            <ScrollView horizontal contentContainerStyle={padding}>
+              {text}
+            </ScrollView>
+          )}
+        </Pressable>
+      </Menu>
     </CodeBlockFrame>
   );
 }
