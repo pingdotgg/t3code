@@ -2578,10 +2578,8 @@ it.effect("a tab stuck in an agent action does not hold back setting changes for
         input: { reuseExistingTab: false, show: false },
       });
       const stalled = stallColorScheme(contexts[0]!.page);
-      const applied = Promise.withResolvers<unknown>();
-      contexts[1]!.page.emulateMedia.mockImplementationOnce(async (options: unknown) => {
-        applied.resolve(options);
-      });
+      const applied = Promise.withResolvers<void>();
+      contexts[1]!.page.emulateMedia.mockImplementationOnce(async () => applied.resolve());
       yield* broker
         .invoke({
           scope,
@@ -2598,7 +2596,8 @@ it.effect("a tab stuck in an agent action does not hold back setting changes for
         tabId: PreviewTabId.make(other.tabId!),
         colorScheme: "dark",
       });
-      expect(yield* Effect.promise(() => applied.promise)).toEqual({ colorScheme: "dark" });
+      yield* Effect.promise(() => applied.promise);
+      expect(contexts[1]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
     }),
   ).pipe(Effect.provide(layer)),
 );
