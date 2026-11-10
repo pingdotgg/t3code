@@ -51,6 +51,7 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
+const UNREACHABLE_PHASES = new Set(["offline", "reconnecting", "error", "unsupported"]);
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
 export function usePullRequestScope(search: PullRequestsSearch) {
@@ -120,10 +121,16 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
+    const unreachable = new Set(
+      environments.flatMap((environment) =>
+        UNREACHABLE_PHASES.has(environment.connection.phase) ? [environment.environmentId] : [],
+      ),
+    );
     const assignment = assignProjectsToEnvironments(
       projects,
       queryEnvironmentIds,
       queryEnvironmentIds[0],
+      unreachable,
     );
     const totals = new Map<EnvironmentId, number>();
     for (const project of projects) {

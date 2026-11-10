@@ -50,6 +50,20 @@ describe("one server per repository", () => {
     expect(plain(assignment)).toEqual({ "env-2": ["a2"] });
   });
 
+  it("lets a reachable server list a repository an unreachable one also holds", () => {
+    const assignment = assignProjectsToEnvironments(
+      [
+        project("a1", "env-1", "github.com/acme/app"),
+        project("b1", "env-1", "github.com/acme/tools"),
+        project("a2", "env-2", "github.com/acme/app"),
+      ],
+      envs("env-1", "env-2"),
+      "env-1" as EnvironmentId,
+      new Set(envs("env-1")),
+    );
+    expect(plain(assignment)).toEqual({ "env-1": ["b1"], "env-2": ["a2"] });
+  });
+
   it("keeps every copy of a project that has no identity to compare", () => {
     const assignment = assignProjectsToEnvironments(
       [project("p1", "env-1"), project("p2", "env-2")],

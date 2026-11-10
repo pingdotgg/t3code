@@ -14,8 +14,15 @@ export function assignProjectsToEnvironments(
   projects: ReadonlyArray<AssignableProject>,
   environmentIds: ReadonlyArray<EnvironmentId>,
   preferredEnvironmentId?: EnvironmentId | null,
+  unreachableEnvironmentIds: ReadonlySet<EnvironmentId> = new Set(),
 ): Map<EnvironmentId, ProjectId[]> {
-  const rank = new Map(environmentIds.map((id, index) => [id, index] as const));
+  const priority = (id: EnvironmentId) =>
+    (unreachableEnvironmentIds.has(id) ? 2 : 0) + (id === preferredEnvironmentId ? 0 : 1);
+  const rank = new Map(
+    environmentIds
+      .toSorted((left, right) => priority(left) - priority(right))
+      .map((id, index) => [id, index] as const),
+  );
   const owner = new Map<string, EnvironmentId>();
   for (const project of projects) {
     const key = repositoryKey(project);
@@ -23,15 +30,7 @@ export function assignProjectsToEnvironments(
     const environmentRank = rank.get(project.environmentId);
     if (environmentRank === undefined) continue;
     const current = owner.get(key);
-    if (current === undefined) {
-      owner.set(key, project.environmentId);
-      continue;
-    }
-    if (current === preferredEnvironmentId) continue;
-    if (
-      project.environmentId === preferredEnvironmentId ||
-      environmentRank < (rank.get(current) ?? Number.MAX_SAFE_INTEGER)
-    ) {
+    if (current === undefined || environmentRank < (rank.get(current) ?? Number.MAX_SAFE_INTEGER)) {
       owner.set(key, project.environmentId);
     }
   }
