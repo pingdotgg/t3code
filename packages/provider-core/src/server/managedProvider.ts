@@ -26,7 +26,8 @@ import type { ManagedServerProvider } from "./snapshot.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
-  readonly usageAuthLabel: string | undefined;
+  // null preserves an explicitly cleared plan across probes and enrichment.
+  readonly usageAuthLabel: string | null | undefined;
 }
 
 function withUsageLimits(
@@ -95,7 +96,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       const merged = withUsageLimits(
         state.usageAuthLabel === undefined
           ? nextSnapshot
-          : { ...nextSnapshot, auth: { ...nextSnapshot.auth, label: state.usageAuthLabel } },
+          : {
+              ...nextSnapshot,
+              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+            },
         state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
@@ -196,7 +200,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const labeledProbe =
           usageAuthLabel === undefined
             ? probedSnapshot
-            : { ...probedSnapshot, auth: { ...probedSnapshot.auth, label: usageAuthLabel } };
+            : {
+                ...probedSnapshot,
+                auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
+              };
         const snapshot = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
@@ -246,7 +253,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           {
             ...state,
             snapshot,
-            usageAuthLabel: label ?? (complete ? undefined : state.usageAuthLabel),
+            usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
           },
         ] as const;
       });

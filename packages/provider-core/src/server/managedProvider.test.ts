@@ -637,7 +637,10 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("keeps live usage windows across a failed probe and a stale enrichment", () =>
+  it.effect.each([
+    { name: "a live plan", clearPlan: false },
+    { name: "a cleared plan", clearPlan: true },
+  ])("keeps $name and usage across a failed probe and stale enrichment", ({ clearPlan }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const releaseEnrichment = yield* Deferred.make<void>();
@@ -657,7 +660,7 @@ describe("makeManagedServerProvider", () => {
               count === 1
                 ? {
                     ...refreshedSnapshot,
-                    auth: { ...refreshedSnapshot.auth, workspaceId: "ws-a" },
+                    auth: { ...refreshedSnapshot.auth, workspaceId: "ws-a", label: "tier-1" },
                     usageLimits: probedLimits,
                   }
                 : {
@@ -699,6 +702,14 @@ describe("makeManagedServerProvider", () => {
           windows: [liveWindow],
         });
 
+        if (clearPlan) {
+          yield* provider.applyUsageLimits({
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            complete: true,
+            windows: [liveWindow],
+          });
+        }
+
         yield* Deferred.succeed(releaseEnrichment, undefined);
         const enriched = yield* Stream.take(provider.streamChanges, 1).pipe(
           Stream.runCollect,
@@ -706,13 +717,13 @@ describe("makeManagedServerProvider", () => {
         );
         assert.deepStrictEqual(enriched.models, enrichedSnapshot.models);
         assert.deepStrictEqual(enriched.usageLimits?.windows, [liveWindow]);
-        assert.strictEqual(enriched.auth.label, "tier-2");
+        assert.strictEqual(enriched.auth.label, clearPlan ? undefined : "tier-2");
 
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.message, refreshedSnapshotSecond.message);
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
         assert.strictEqual(refreshed.auth.workspaceId, "ws-a");
-        assert.strictEqual(refreshed.auth.label, "tier-2");
+        assert.strictEqual(refreshed.auth.label, clearPlan ? undefined : "tier-2");
 
         const switched = yield* provider.refresh;
         assert.strictEqual(switched.auth.workspaceId, "ws-b");
@@ -722,9 +733,11 @@ describe("makeManagedServerProvider", () => {
   );
 
   it.effect.each([
-    { name: "an empty reading", hasUsage: true },
-    { name: "no reading", hasUsage: false },
-  ])("keeps a live plan and limits when an overlapping probe returns $name", ({ hasUsage }) =>
+    { name: "an empty reading", hasUsage: true, clearPlan: false },
+    { name: "no reading", hasUsage: false, clearPlan: false },
+    { name: "an empty reading after clearing the plan", hasUsage: true, clearPlan: true },
+    { name: "no reading after clearing the plan", hasUsage: false, clearPlan: true },
+  ])("keeps the live plan and limits after $name", ({ hasUsage, clearPlan }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
@@ -759,9 +772,16 @@ describe("makeManagedServerProvider", () => {
           complete: true,
           windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
         });
+        if (clearPlan) {
+          yield* provider.applyUsageLimits({
+            checkedAt: "2026-04-10T00:00:04.000Z",
+            complete: true,
+            windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+          });
+        }
         yield* Deferred.succeed(release, undefined);
         const refreshed = yield* Fiber.join(refresh);
-        assert.strictEqual(refreshed.auth.label, "tier-2");
+        assert.strictEqual(refreshed.auth.label, clearPlan ? undefined : "tier-2");
         assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 70);
         assert.strictEqual(refreshed.usageLimits?.unavailable, undefined);
       }),
