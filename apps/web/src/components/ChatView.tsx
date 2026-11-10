@@ -2128,7 +2128,14 @@ export default function ChatView(props: ChatViewProps) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (
+      embedded ||
+      !splitPaneActive ||
+      !activeThread?.id ||
+      terminalUiState.terminalOpen ||
+      isMobileViewport
+    )
+      return;
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -2156,6 +2163,7 @@ export default function ChatView(props: ChatViewProps) {
     embedded,
     focusComposerStable,
     isMobileViewport,
+    splitPaneActive,
     terminalUiState.terminalOpen,
   ]);
 
@@ -2750,14 +2758,14 @@ export default function ChatView(props: ChatViewProps) {
   // A focused desktop browser page forwards these chords as menu actions.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle the right panel
   useEffect(() => {
-    if (embedded) return;
+    if (embedded || !splitPaneActive) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
     });
-  }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
+  }, [embedded, splitPaneActive, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
-  usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
+  usePasteToFocusComposer(embedded || !splitPaneActive ? null : activeThreadId, composerRef);
   // A delegated task is a remote thread's subagent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
