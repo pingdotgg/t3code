@@ -1001,6 +1001,16 @@ it.effect("finds a merged Forgejo pull request whose head branch was deleted", (
                       base: { ref: "main", label: "main", sha: "base", repo },
                       head: { ref: "refs/pull/7/head", label: "feature", sha: "head", repo },
                     },
+                    {
+                      number: 8,
+                      title: "Merged from a deleted fork",
+                      html_url: "https://forgejo.test/maria/project/pulls/8",
+                      state: "closed",
+                      merged: true,
+                      merged_at: "2026-10-11T00:00:00Z",
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: { ref: "refs/pull/8/head", label: "feature", sha: "fork", repo: null },
+                    },
                   ]
                 : [],
             ).pipe(Effect.orDie, Effect.map(processOutput));

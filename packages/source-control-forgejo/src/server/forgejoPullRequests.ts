@@ -14,12 +14,16 @@ const Branch = Schema.Struct({
   repo: Schema.NullOr(Repository),
 });
 // Once a pull request's head branch is deleted, Forgejo reports `ref` as `refs/pull/<N>/head`
-// and keeps the branch name only in `label`.
+// and keeps the branch name only in `label`. Without `repo` (a deleted fork) the label could name
+// any repository's branch, so the ref stays.
 export function forgejoHeadBranch(head: {
   readonly ref: string;
   readonly label?: string | undefined;
+  readonly repo: unknown;
 }) {
-  return head.ref.startsWith("refs/pull/") && head.label ? head.label : head.ref;
+  return head.ref.startsWith("refs/pull/") && head.label && head.repo !== null
+    ? head.label
+    : head.ref;
 }
 export const ForgejoPullRequestSchema = Schema.Struct({
   number: Schema.Int,

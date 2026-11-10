@@ -45,7 +45,7 @@ describe("forgejoComment", () => {
 });
 
 describe("forgejoChangeRequest", () => {
-  const headBranch = (head: { ref: string; label?: string }) =>
+  const headBranch = (head: { ref: string; label?: string; repo: { full_name: string } | null }) =>
     forgejoChangeRequest(
       decodeForgejoPullRequest({
         number: 7,
@@ -55,7 +55,7 @@ describe("forgejoChangeRequest", () => {
         user: null,
         state: "closed",
         merged: true,
-        head: { ...head, sha: "head", repo: null },
+        head: { ...head, sha: "head" },
         base: { ref: "main", label: "main", sha: "base", repo: null },
         created_at: "2026-10-10T19:52:40Z",
         updated_at: "2026-10-12T00:00:00Z",
@@ -66,11 +66,14 @@ describe("forgejoChangeRequest", () => {
     ).headBranch;
 
   it("reads a deleted head branch from its label", () => {
-    assert.strictEqual(headBranch({ ref: "refs/pull/7/head", label: "feature" }), "feature");
+    const head = { ref: "refs/pull/7/head", label: "feature" };
+    assert.strictEqual(headBranch({ ...head, repo: { full_name: "maria/project" } }), "feature");
+    // A deleted fork leaves no repository to say whose `feature` that was.
+    assert.strictEqual(headBranch({ ...head, repo: null }), "refs/pull/7/head");
   });
 
   it("keeps the ref when the server sends no label", () => {
-    assert.strictEqual(headBranch({ ref: "feature" }), "feature");
+    assert.strictEqual(headBranch({ ref: "feature", repo: null }), "feature");
   });
 });
 
