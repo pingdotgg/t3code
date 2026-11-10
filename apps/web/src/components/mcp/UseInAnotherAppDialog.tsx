@@ -662,7 +662,16 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       </div>
     );
   }
-  const { copy, link } = action;
+  const { copy, link, appLink } = action;
+  // The desktop app reports a link nothing opens and falls back; a browser cannot tell, and
+  // opens an app link in place (a new tab for it would stay blank), so its toast keeps the web.
+  const openApp = () => {
+    if (appLink === null) return openLink(link);
+    if (!isElectron) return window.location.assign(appLink);
+    void readLocalApi()
+      ?.shell.openExternal(appLink)
+      .catch(() => openLink(link));
+  };
   const handOff = async () => {
     if (copy !== null) {
       // The app opens only once the copy lands, so it never gets an older clipboard.
@@ -678,13 +687,19 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       toastManager.add({
         type: "success",
         title: copy.title,
-        // A browser can block an open that follows the copy; this keeps a way through.
-        ...(isElectron
+        // A browser can block an open that follows the copy, and no platform reliably reports an
+        // app link nothing handles (Linux says it opened), so these keep a way through.
+        ...(isElectron && appLink === null
           ? {}
-          : { actionProps: { children: `Open ${app.name}`, onClick: () => openLink(link) } }),
+          : {
+              actionProps: {
+                children: appLink === null ? `Open ${app.name}` : `Open ${app.name} on the web`,
+                onClick: () => openLink(link),
+              },
+            }),
       });
     }
-    openLink(link);
+    openApp();
   };
   return (
     <div className="space-y-2">
