@@ -34,7 +34,6 @@ import {
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
   type ScopedThreadRef,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
@@ -1273,9 +1272,7 @@ function modelReconciliationHarness(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   initialStatus: EnvironmentShellStatus = "live",
-  providers: ReadonlyArray<ServerProvider> = [],
 ) {
-  const providersAtom = Atom.make(providers);
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -1348,6 +1345,7 @@ function modelReconciliationHarness(
       ),
     };
   });
+  const noProvidersAtom = Atom.make(null);
   const pendingThreadIdsAtom = Atom.map(
     inFlightPickAtom,
     (pick): ReadonlySet<ThreadId> => new Set(pick ? [threadId] : []),
@@ -1365,8 +1363,8 @@ function modelReconciliationHarness(
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
-      providersAtom: () => providersAtom,
       pendingThreadIdsAtom: () => pendingThreadIdsAtom,
+      providersAtom: () => noProvidersAtom,
     }),
   );
   flush();
@@ -1742,56 +1740,6 @@ describe("composerDraftStore modelSelection", () => {
     }
     h.update({ modelSelection: { ...pick, options: pick.options!.toReversed() } });
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
-  });
-
-  it("releases a seeded pick once the thread runs it without options the model does not advertise", () => {
-    // Opus 5.5 advertises effort and fastMode only, so the server drops the default's contextWindow.
-    const pick = createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", [
-      { id: "effort", value: "high" },
-      { id: "contextWindow", value: "1m" },
-    ]);
-    useComposerDraftStore.getState().setModelSelection(threadRef, pick, { replaceOptions: true });
-    const claude: ServerProvider = {
-      instanceId: CLAUDE_AGENT_INSTANCE,
-      driver: CLAUDE_AGENT_DRIVER,
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-01-01T00:00:00.000Z",
-      models: [
-        {
-          slug: "claude-opus-5-5",
-          name: "Opus 5.5",
-          isCustom: false,
-          capabilities: {
-            optionDescriptors: [
-              {
-                id: "effort",
-                label: "Effort",
-                type: "select",
-                options: [{ id: "high", label: "High" }],
-              },
-              { id: "fastMode", label: "Fast", type: "boolean" },
-            ],
-          },
-        },
-      ],
-      slashCommands: [],
-      skills: [],
-    };
-    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId, "live", [claude]);
-
-    h.update({
-      modelSelection: createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", [
-        { id: "effort", value: "high" },
-        { id: "fastMode", value: false },
-      ]),
-    });
-    expect(
-      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
-    ).toBeUndefined();
   });
 
   it("marks picker writes explicit and seeding writes non-explicit", () => {

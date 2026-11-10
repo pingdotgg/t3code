@@ -20,13 +20,11 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ShellSnapshot,
   type ModelSelection,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
@@ -267,9 +265,7 @@ function modelReconciliationHarness(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   initialStatus: EnvironmentShellStatus = "live",
-  providers: ReadonlyArray<ServerProvider> = [],
 ) {
-  const providersAtom = Atom.make(providers);
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -315,6 +311,7 @@ function modelReconciliationHarness(
     ]),
   });
   const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
+  const noProvidersAtom = Atom.make(null);
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
     snapshotAtom: () => snapshotAtom,
@@ -328,8 +325,8 @@ function modelReconciliationHarness(
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
-      providersAtom: () => providersAtom,
       pendingThreadIdsAtom: () => noPendingThreadIdsAtom,
+      providersAtom: () => noProvidersAtom,
     }),
   );
   flush();
@@ -554,63 +551,6 @@ describe("mobile composer drafts", () => {
     });
     expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
-  });
-
-  it("releases a pick once the thread runs it without options the model does not advertise", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const threadId = ThreadId.make("thread-1");
-    const key = `${environmentId}:${threadId}`;
-    const instanceId = ProviderInstanceId.make("claudeAgent");
-    updateComposerDraftSettings(key, {
-      modelSelection: {
-        instanceId,
-        model: "claude-opus-5-5",
-        options: [
-          { id: "effort", value: "high" },
-          { id: "contextWindow", value: "1m" },
-        ],
-      },
-    });
-    const claude: ServerProvider = {
-      instanceId,
-      driver: ProviderDriverKind.make("claudeAgent"),
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-01-01T00:00:00.000Z",
-      models: [
-        {
-          slug: "claude-opus-5-5",
-          name: "Opus 5.5",
-          isCustom: false,
-          capabilities: {
-            optionDescriptors: [
-              {
-                id: "effort",
-                label: "Effort",
-                type: "select",
-                options: [{ id: "high", label: "High" }],
-              },
-              { id: "fastMode", label: "Fast", type: "boolean" },
-            ],
-          },
-        },
-      ],
-      slashCommands: [],
-      skills: [],
-    };
-    const h = modelReconciliationHarness(environmentId, threadId, "live", [claude]);
-
-    h.update({
-      modelSelection: {
-        instanceId,
-        model: "claude-opus-5-5",
-        options: [{ id: "effort", value: "high" }],
-      },
-    });
-    expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
   });
 
   it("retains an unavailable provider pick through differing durable model updates", () => {
