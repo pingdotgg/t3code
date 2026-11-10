@@ -65,56 +65,63 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
 
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 
-it("a triage draft switched to another machine links a playbook prepared there", async () => {
-  setup();
-  const draftId = DraftId.make("draft-33771");
-  const store = useComposerDraftStore.getState();
-  store.setProjectDraftThreadId(scopeProjectRef(machineA, scratchProject(machineA).id), draftId);
-  store.setPrompt(draftId, triagePrompt(machineA));
+it.each([
+  { case: "with no scratch project on the target yet", targetProjectId: null },
+  { case: "with a scratch project on the target", targetProjectId: scratchProject(machineB).id },
+])(
+  "a triage draft switched to another machine links a playbook prepared there, $case",
+  async ({ targetProjectId }) => {
+    setup();
+    const draftId = DraftId.make("draft-33771");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(scopeProjectRef(machineA, scratchProject(machineA).id), draftId);
+    store.setPrompt(draftId, triagePrompt(machineA));
 
-  function Harness() {
-    const draftThread = useComposerDraftStore((state) => state.getDraftSession(draftId));
-    const routing = useDraftEnvironmentRouting({
-      draftId,
-      draftThread,
-      envLocked: false,
-      automaticEnvironment: false,
-      logicalProjectEnvironments: [machineA, machineB].map((environmentId) => ({
-        environmentId,
-        // Machine B has no scratch project yet, as when triage started on A.
-        projectId: environmentId === machineA ? scratchProject(machineA).id : null,
-        label: environmentId,
-        isPrimary: environmentId === machineB,
-        machine: "server",
-      })),
-      environmentById: new Map(),
-      providersByEnvironment: new Map(),
-      loadBalancingSettings: { loadBalancingWeights: {} },
-      referencedThreadContexts: [],
-      activeProviderInstanceId: null,
-      selectedProvider: ProviderDriverKind.make("codex"),
-      composerHasAttachments: false,
-      activeProjectKey: "scratch",
-      activeProjectIsScratch: true,
-      projectGroupingSettings: selectProjectGroupingSettings(DEFAULT_CLIENT_SETTINGS),
-      sendInFlightRef: { current: false },
+    function Harness() {
+      const draftThread = useComposerDraftStore((state) => state.getDraftSession(draftId));
+      const routing = useDraftEnvironmentRouting({
+        draftId,
+        draftThread,
+        envLocked: false,
+        automaticEnvironment: false,
+        logicalProjectEnvironments: [machineA, machineB].map((environmentId) => ({
+          environmentId,
+          projectId: environmentId === machineA ? scratchProject(machineA).id : targetProjectId,
+          label: environmentId,
+          isPrimary: environmentId === machineB,
+          machine: "server",
+        })),
+        environmentById: new Map(),
+        providersByEnvironment: new Map(),
+        loadBalancingSettings: { loadBalancingWeights: {} },
+        referencedThreadContexts: [],
+        activeProviderInstanceId: null,
+        selectedProvider: ProviderDriverKind.make("codex"),
+        composerHasAttachments: false,
+        activeProjectKey: "scratch",
+        activeProjectIsScratch: true,
+        projectGroupingSettings: selectProjectGroupingSettings(DEFAULT_CLIENT_SETTINGS),
+        sendInFlightRef: { current: false },
+      });
+      return (
+        <button type="button" onClick={() => routing.onEnvironmentChangeStable(machineB)}>
+          {draftThread?.environmentId}
+        </button>
+      );
+    }
+
+    // The hook reads no route.
+    await using screen = await render(<Harness />, { router: false });
+    await userEvent.click(screen.getByRole("button", { name: machineA }));
+    await expect.element(screen.getByRole("button")).toHaveTextContent(machineB);
+
+    await vi.waitFor(() => {
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+        triagePrompt(machineB),
+      );
     });
-    return (
-      <button type="button" onClick={() => routing.onEnvironmentChangeStable(machineB)}>
-        {draftThread?.environmentId}
-      </button>
+    expect(prepareTriage).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: machineB }),
     );
-  }
-
-  // The hook reads no route.
-  await using screen = await render(<Harness />, { router: false });
-  await userEvent.click(screen.getByRole("button", { name: machineA }));
-  await expect.element(screen.getByRole("button")).toHaveTextContent(machineB);
-
-  await vi.waitFor(() => {
-    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
-      triagePrompt(machineB),
-    );
-  });
-  expect(prepareTriage).toHaveBeenCalledWith(expect.objectContaining({ environmentId: machineB }));
-});
+  },
+);
