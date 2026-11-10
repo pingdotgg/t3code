@@ -460,6 +460,9 @@ describe("DesktopUpdates", () => {
         const state = yield* updates.getState;
         assert.equal(state.status, "available");
         assert.equal(state.notAppliedVersion, "1.2.4");
+
+        yield* updates.download;
+        assert.isDefined(harness.previousInstallRecord());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

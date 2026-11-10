@@ -604,8 +604,8 @@ export const make = Effect.gen(function* () {
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
-      // A kept install record would delete this download from pending/ on the next launch.
-      yield* removeInstallRecord;
+      // A kept applied record would delete this download from pending/ on the next launch.
+      if (Option.isNone(yield* Ref.get(notAppliedVersionRef))) yield* removeInstallRecord;
       yield* electronUpdater.downloadUpdate;
       return { accepted: true, completed: true };
     }).pipe(
