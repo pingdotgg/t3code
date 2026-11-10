@@ -1357,7 +1357,10 @@ export const withSubagentResults = (value: unknown): unknown => {
   const { providerInstanceId, ...failure } = value.subagentFailure;
   const run = { id: "run-failed", status: "failed", providerInstanceId };
   const error = { id: "error", runId: run.id, type: "error", ordinal: 1, failure };
-  return subagentResultForRun({ messages: [], turnItems: [error] } as never, run as never).text;
+  return subagentResultForRun(
+    { messages: [], turnItems: [error], providerTurns: [] } as never,
+    run as never,
+  ).text;
 };
 
 /** Cases mock a Claude caller, so the inherited fields follow the model under test. */
