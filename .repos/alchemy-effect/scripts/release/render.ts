@@ -1,7 +1,8 @@
 /**
- * Custom markdown renderer for changelogithub-parsed commits.
+ * Markdown renderer for the commits parsed by `changelog.ts`.
  *
- * Mirrors the output of changelogithub's built-in generator but groups
+ * Mirrors the output of changelogithub's built-in generator (which this
+ * repo used to depend on) but groups
  * conventional-commit scopes hierarchically by splitting on `/`. For
  * example commits like `fix(aws/lambda): ...`, `fix(aws/s3): ...` and
  * `fix(aws): ...` render as nested categories under a shared `**aws**`
@@ -11,38 +12,29 @@
  * `&nbsp;` spacing) is kept byte-compatible with changelogithub so output
  * for single-segment scopes is identical to the upstream renderer.
  */
-import type { ChangelogOptions, Commit } from "changelogithub";
+import type { Commit } from "./changelog.ts";
 
-export type RenderConfig = Required<
-  Pick<
-    ChangelogOptions,
-    | "titles"
-    | "types"
-    | "capitalize"
-    | "emoji"
-    | "baseUrl"
-    | "repo"
-    | "from"
-    | "to"
-  >
-> & {
+export interface RenderConfig {
+  titles: { breakingChanges?: string };
+  types: Record<string, { title: string }>;
+  capitalize: boolean;
+  emoji: boolean;
+  baseUrl: string;
+  repo: string;
+  from: string;
+  to: string;
   scopeMap?: Record<string, string>;
-};
+}
 
 const emojisRE =
   /([\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD10-\uDDFF])/g;
 
-export function renderMarkdown(
-  commits: Commit[],
-  config: RenderConfig,
-): string {
+export function renderMarkdown(commits: Commit[], config: RenderConfig): string {
   const lines: string[] = [];
   const [breaking, rest] = partition(commits, (c) => c.isBreaking);
 
   if (config.titles?.breakingChanges) {
-    lines.push(
-      ...renderSection(breaking, config.titles.breakingChanges, config),
-    );
+    lines.push(...renderSection(breaking, config.titles.breakingChanges, config));
   }
 
   const byType = groupBy(rest, (c) => c.type);
@@ -54,10 +46,7 @@ export function renderMarkdown(
   if (!lines.length) lines.push("*No significant changes*");
 
   const url = `https://${config.baseUrl}/${config.repo}/compare/${config.from}...${config.to}`;
-  lines.push(
-    "",
-    `##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](${url})`,
-  );
+  lines.push("", `##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](${url})`);
 
   return lines.join("\n").trim();
 }
@@ -71,11 +60,7 @@ function makeNode(): Node {
   return { commits: [], children: {} };
 }
 
-function renderSection(
-  commits: Commit[],
-  sectionName: string,
-  config: RenderConfig,
-): string[] {
+function renderSection(commits: Commit[], sectionName: string, config: RenderConfig): string[] {
   if (!commits.length) return [];
   const out: string[] = ["", formatTitle(sectionName, config), ""];
 
@@ -163,22 +148,12 @@ function formatTitle(name: string, config: RenderConfig): string {
 function formatLine(commit: Commit, config: RenderConfig): string {
   const prRefs = formatReferences(commit.references, config, "issues");
   const hashRefs = formatReferences(commit.references, config, "hash");
-  const authorNames = [
-    ...new Set(
-      (commit.resolvedAuthors ?? []).map((a) =>
-        a.login ? `@${a.login}` : `**${a.name}**`,
-      ),
-    ),
-  ];
+  const authorNames = [...new Set(commit.resolvedAuthors.map((a) => `**${a.name}**`))];
   const authors = joinWithAnd(authorNames).trim();
   const authorStr = authors ? `by ${authors}` : "";
-  let refs = [authorStr, prRefs, hashRefs]
-    .filter((s) => s && s.trim())
-    .join(" ");
+  let refs = [authorStr, prRefs, hashRefs].filter((s) => s && s.trim()).join(" ");
   if (refs) refs = `&nbsp;-&nbsp; ${refs}`;
-  const description = config.capitalize
-    ? capitalize(commit.description)
-    : commit.description;
+  const description = config.capitalize ? capitalize(commit.description) : commit.description;
   return [description, refs].filter((s) => s && s.trim()).join(" ");
 }
 
@@ -191,9 +166,7 @@ function formatReferences(
   const repo = config.repo;
   const refs = references
     .filter((r) =>
-      kind === "issues"
-        ? r.type === "issue" || r.type === "pull-request"
-        : r.type === "hash",
+      kind === "issues" ? r.type === "issue" || r.type === "pull-request" : r.type === "hash",
     )
     .map((ref) => {
       if (!repo) return ref.value;
@@ -211,15 +184,11 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function joinWithAnd(
-  array: string[],
-  glue = ", ",
-  finalGlue = " and ",
-): string {
+function joinWithAnd(array: string[], glue = ", ", finalGlue = " and "): string {
   if (!array || array.length === 0) return "";
   if (array.length === 1) return array[0];
   if (array.length === 2) return array.join(finalGlue);
-  return `${array.slice(0, -1).join(glue)}${finalGlue}${array.slice(-1)}`;
+  return `${array.slice(0, -1).join(glue)}${finalGlue}${array[array.length - 1]}`;
 }
 
 function partition<T>(items: T[], pred: (item: T) => boolean): [T[], T[]] {
