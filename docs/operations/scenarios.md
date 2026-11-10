@@ -49,6 +49,8 @@ whose schema differs. New threads default to the replay agent's `showcase` recor
 message and send it. To play something else, add a recording to the
 [replay agent](development.md#replay-provider).
 
+Write one test per file: a proof runs the file and needs exactly one test in it.
+
 Take an `app.screenshot("label")` where the bug shows. The proof pairs base and head captures by
 label. e2e adds a capture at the point of failure itself.
 

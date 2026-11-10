@@ -66,10 +66,15 @@ export function readSide(
   report: E2EReport | undefined,
 ): SideResult {
   // The report also lists the tests the run did not select, with no attempts.
-  const result = report?.run.results.find((candidate) => candidate.attempts.length > 0);
+  const executed = report?.run.results.filter((candidate) => candidate.attempts.length > 0) ?? [];
+  // One scenario is one test: with several, a pass in the first could hide a failure in another.
+  const result = executed.length === 1 ? executed[0] : undefined;
   const attempt = result?.attempts.at(-1);
   if (result === undefined || attempt === undefined) {
-    const message = "e2e wrote no report: the app did not start, or no test was selected";
+    const message =
+      executed.length > 1
+        ? `the scenario file ran ${executed.length} tests; a proof needs exactly one`
+        : "e2e wrote no report: the app did not start, or no test was selected";
     return { sha, status: "error", title: "", message, steps: [], captures: [], videos: [] };
   }
   const files = (kind: string) =>

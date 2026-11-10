@@ -35,6 +35,8 @@ const passed = report(0);
 const failed = report(1, { code: "ASSERTION_FAILED", message: "expected: focused" });
 // The control the scenario clicks is missing: the scenario is broken, the bug is not shown.
 const brokenScenario = report(1, { code: "LOCATOR_NOT_FOUND", message: "no node" });
+// A file with two tests: the first passes, so reading only it would hide the second.
+const twoTests = { run: { results: [...passed.run.results, ...failed.run.results] } };
 // e2e exits 0 when the test skips itself at runtime.
 const skipped = report(0, undefined, "skipped");
 
@@ -63,6 +65,13 @@ describe("prove-scenario", () => {
       failsOnBase: true,
       passesOnHead: false,
       verdict: /could not run on head/,
+    },
+    {
+      base: failed,
+      head: twoTests,
+      failsOnBase: true,
+      passesOnHead: false,
+      verdict: /could not run on head .*exactly one/,
     },
     // e2e writes no report when the app does not start.
     {
