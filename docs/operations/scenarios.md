@@ -71,6 +71,9 @@ port, runs the tests, and stops it. Results land in `scripts/.e2e`: `report.json
 and per test a `trace.md`, its screenshots, and a video. The first run downloads e2e's browser.
 `e2e run --help` lists the rest: `--grep`, `--watch`, `--last-failed`, `--changed-since`.
 
+Run one at a time per checkout: a run recreates the checkout's scenario T3 home and its `.e2e`
+output. Use a second worktree for a second run.
+
 ## Prove a fix
 
 ```sh

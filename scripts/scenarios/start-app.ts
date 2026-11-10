@@ -1,25 +1,42 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off
-// The app command of e2e.config.ts: starts this checkout's dev stack on a fresh T3 home.
-// Run from the checkout whose app should start.
-import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
-import * as NodeNet from "node:net";
-import * as NodePath from "node:path";
-import * as NodeReadline from "node:readline";
-import * as NodeTimersPromises from "node:timers/promises";
+#!/usr/bin/env node
+// The app command of e2e.config.ts: starts the dev stack of the checkout it runs in on a fresh
+// T3 home. e2e stops it with a signal, which ends the scope and the processes it started.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { Argument, Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-const [surface, home, ...ports] = process.argv.slice(2);
-if ((surface !== "web" && surface !== "mobile") || home === undefined || ports.length === 0) {
-  throw new Error(
-    "Usage: start-app.ts web <t3-home> <web-port> | mobile <t3-home> <server-port> <metro-port> <host>",
-  );
-}
+import { ScenarioError } from "./shell.ts";
 
 // The dev runner's web port is 5733 plus an offset. Mirror of BASE_WEB_PORT in dev-runner.ts.
 const BASE_WEB_PORT = 5733;
 // The replay agent `vp run dev` registers: free, recorded turns through the real adapter.
 const REPLAY = { instanceId: "devReplay", model: "showcase" };
+// Generated text (titles) cannot go to the replay agent: the server swaps an ACP agent for the
+// first enabled real provider, else its default, Codex. So every provider it could fall back to
+// is off and Codex is a command that only fails: no run reaches a paid model.
+// Mirror of TEXT_GENERATION_FALLBACK_DRIVERS in shared/serverSettings.
+const REAL_PROVIDERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+];
 
 // The server labels its environment with the host's name, probed through these commands.
 // Captures must not depend on, or show, the machine that made them.
@@ -33,101 +50,186 @@ case "$*" in
 esac
 `;
 
-NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
-NodeFS.mkdirSync(NodePath.join(home, "userdata"), { recursive: true });
-NodeFS.mkdirSync(NodePath.join(home, "bin"));
-for (const command of ["hostnamectl", "scutil"]) {
-  NodeFS.writeFileSync(NodePath.join(home, "bin", command), HOST_LABEL_SHIM, { mode: 0o755 });
-}
-// New threads and generated text (titles) go to the replay agent, so no run reaches a paid model.
-NodeFS.writeFileSync(
-  NodePath.join(home, "userdata/settings.json"),
-  JSON.stringify({ defaultModelSelection: REPLAY, textGenerationModelSelection: REPLAY }),
-);
+const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const env = {
-  ...process.env,
-  PATH: `${NodePath.join(home, "bin")}${NodePath.delimiter}${process.env.PATH ?? ""}`,
-  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
-};
-const children: Array<NodeChildProcess.ChildProcess> = [];
-const start = (
-  cwd: string,
-  command: string,
-  args: ReadonlyArray<string>,
-  extra: NodeJS.ProcessEnv,
-) => {
-  const child = NodeChildProcess.spawn(command, args, {
-    cwd,
-    stdio: ["ignore", "pipe", "inherit"],
-    env: { ...env, ...extra },
-  });
-  children.push(child);
-  child.on("exit", (code) => process.exit(code ?? 1));
-  return child;
-};
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => children.forEach((child) => child.kill(signal)));
-}
-const listening = (port: number) =>
-  new Promise<boolean>((resolve) => {
-    const socket = NodeNet.connect(port, "127.0.0.1");
-    socket.once("connect", () => (socket.destroy(), resolve(true)));
-    socket.once("error", () => resolve(false));
-  });
-
-if (surface === "web") {
-  const [webPort] = ports;
-  const serverPort = await new Promise<number>((resolve) => {
-    const probe = NodeNet.createServer().listen(0, "127.0.0.1", () => {
-      const { port } = probe.address() as NodeNet.AddressInfo;
-      probe.close(() => resolve(port));
-    });
-  });
-  const runner = start(
-    process.cwd(),
-    process.execPath,
-    ["scripts/dev-runner.ts", "dev", "--home-dir", home, "--no-seed", "--port", String(serverPort)],
-    {
-      T3CODE_PORT_OFFSET: String(Number(webPort) - BASE_WEB_PORT),
-      T3CODE_DEV_ALLOWED_ORIGINS: `http://127.0.0.1:${webPort}`,
-      // Makes the startup pairing link reusable, so every test can sign in with it.
-      T3CODE_DEV_AUTH_TOKEN: NodeCrypto.randomBytes(32).toString("hex"),
-    },
+const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.remove(home, { recursive: true, force: true });
+  yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
+  yield* fs.makeDirectory(path.join(home, "bin"));
+  for (const command of ["hostnamectl", "scutil"]) {
+    const shim = path.join(home, "bin", command);
+    yield* fs.writeFileString(shim, HOST_LABEL_SHIM);
+    yield* fs.chmod(shim, 0o755);
+  }
+  const noModel = path.join(home, "bin/no-model");
+  yield* fs.writeFileString(noModel, "#!/bin/sh\necho 'scenarios run no model' >&2\nexit 1\n");
+  yield* fs.chmod(noModel, 0o755);
+  yield* fs.writeFileString(
+    path.join(home, "userdata/settings.json"),
+    yield* encodeSettings({
+      defaultModelSelection: REPLAY,
+      providerInstances: Object.fromEntries(
+        REAL_PROVIDERS.map((driver) => [
+          driver,
+          {
+            driver,
+            enabled: false,
+            ...(driver === "codex" ? { config: { binaryPath: noModel } } : {}),
+          },
+        ]),
+      ),
+    }),
   );
-  NodeReadline.createInterface({ input: runner.stdout! }).on("line", (line) => {
-    const url = /pairingUrl:\s*(\S+)/.exec(line)?.[1];
-    if (url === undefined) return void process.stdout.write(`${line}\n`);
-    // The link is a credential: it goes to a file the tests read, never to the log.
-    const { pathname, search, hash } = new URL(url);
-    NodeFS.writeFileSync(NodePath.join(home, "pairing-path"), `${pathname}${search}${hash}`);
-  });
-} else {
+});
+
+/** Starts a process in the caller's scope and hands each line it prints to `onLine`. */
+const start = Effect.fn("startApp.start")(function* (input: {
+  readonly cwd: string;
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env: NodeJS.ProcessEnv;
+  readonly onLine: (line: string) => Effect.Effect<void, never, FileSystem.FileSystem>;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(
+    ChildProcess.make(input.command, [...input.args], {
+      cwd: input.cwd,
+      env: input.env,
+      extendEnv: false,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+      forceKillAfter: "5 seconds",
+    }),
+  );
+  yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach(input.onLine),
+    Effect.ignore,
+    Effect.forkScoped,
+  );
+  return child;
+});
+
+const startApp = Effect.fn("startApp")(function* (input: {
+  readonly surface: "web" | "mobile";
+  readonly home: string;
+  readonly ports: ReadonlyArray<string>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const net = yield* NetService.NetService;
+  const node = yield* HostProcess.ExecutablePath;
+  const checkout = yield* HostProcess.WorkingDirectory;
+  const hostEnvironment = yield* HostProcess.Environment;
+  yield* prepareHome(input.home);
+  const env = {
+    ...hostEnvironment,
+    PATH: `${path.join(input.home, "bin")}:${hostEnvironment.PATH ?? ""}`,
+    T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+  };
+  const devRunner = (mode: string, args: ReadonlyArray<string>) => [
+    "scripts/dev-runner.ts",
+    mode,
+    "--home-dir",
+    input.home,
+    "--no-seed",
+    ...args,
+  ];
+
+  if (input.surface === "web") {
+    const [webPort = ""] = input.ports;
+    const serverPort = yield* net.reserveLoopbackPort();
+    const token = yield* (yield* SecureRandom.SecureRandom).uuidV4();
+    const runner = yield* start({
+      cwd: checkout,
+      command: node,
+      args: devRunner("dev", ["--port", String(serverPort)]),
+      env: {
+        ...env,
+        T3CODE_PORT_OFFSET: String(Number(webPort) - BASE_WEB_PORT),
+        T3CODE_DEV_ALLOWED_ORIGINS: `http://127.0.0.1:${webPort}`,
+        // Makes the startup pairing link reusable, so every test can sign in with it.
+        T3CODE_DEV_AUTH_TOKEN: `${token}${token}`.replaceAll("-", ""),
+      },
+      onLine: (line) => {
+        const url = /pairingUrl:\s*(\S+)/.exec(line)?.[1];
+        if (url === undefined) return Console.log(line);
+        // The link is a credential: it goes to a file the tests read, never to the log.
+        const { pathname, search, hash } = new URL(url);
+        return fs
+          .writeFileString(path.join(input.home, "pairing-path"), `${pathname}${search}${hash}`)
+          .pipe(Effect.ignore);
+      },
+    });
+    return yield* runner.exitCode;
+  }
+
   // The device is another machine: the server listens on every interface, and Metro serves the
   // dev client its JavaScript. Tests mint their own pairing links, so the startup one is dropped.
-  const [serverPort, metroPort, host] = ports as [string, string, string];
-  const listen = ["--host", "0.0.0.0", "--port", serverPort];
-  const server = start(
-    process.cwd(),
-    process.execPath,
-    ["scripts/dev-runner.ts", "dev:server", "--home-dir", home, "--no-seed", ...listen],
-    {},
-  );
-  NodeReadline.createInterface({ input: server.stdout! }).on("line", (line) => {
-    if (!line.includes("pairingUrl:")) process.stdout.write(`${line}\n`);
+  const [serverPort = "", metroPort = "", host = ""] = input.ports;
+  const server = yield* start({
+    cwd: checkout,
+    command: node,
+    args: devRunner("dev:server", ["--host", "0.0.0.0", "--port", serverPort]),
+    env,
+    onLine: (line) => (line.includes("pairingUrl:") ? Effect.void : Console.log(line)),
   });
-  while (!(await listening(Number(serverPort)))) await NodeTimersPromises.setTimeout(500);
-  const metro = start(
-    NodePath.join(process.cwd(), "apps/mobile"),
-    "npx",
-    ["expo", "start", "--dev-client", "--scheme", "t3code-dev", "--lan", "--port", metroPort],
-    {
+  yield* net.hasListenerOnHost(Number(serverPort), "127.0.0.1").pipe(
+    Effect.filterOrFail(
+      (listening) => listening,
+      () => new ScenarioError({ message: "The server is not listening yet." }),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("500 millis"), times: 600 }),
+  );
+  const metro = yield* start({
+    cwd: path.join(checkout, "apps/mobile"),
+    command: "npx",
+    args: ["expo", "start", "--dev-client", "--scheme", "t3code-dev", "--lan", "--port", metroPort],
+    env: {
+      ...env,
       APP_VARIANT: "development",
       CI: "1",
       // Lazily fetched chunks sometimes arrive broken on pool devices.
       EXPO_NO_METRO_LAZY: "1",
       REACT_NATIVE_PACKAGER_HOSTNAME: host,
     },
+    onLine: Console.log,
+  });
+  return yield* Effect.raceFirst(server.exitCode, metro.exitCode);
+});
+
+const command = Command.make(
+  "start-app",
+  {
+    surface: Argument.Literals("surface", ["web", "mobile"]).pipe(
+      Argument.withDescription(
+        "web: server and Vite. mobile: server on every interface and Metro.",
+      ),
+    ),
+    home: Argument.String("t3-home").pipe(Argument.withDescription("T3 home to recreate.")),
+    ports: Argument.String("port").pipe(
+      Argument.withDescription("web: <web-port>. mobile: <server-port> <metro-port> <host>."),
+      Argument.variadic(),
+    ),
+  },
+  (input) =>
+    startApp(input).pipe(
+      Effect.flatMap((exitCode) =>
+        Effect.sync(() => {
+          process.exitCode = Number(exitCode) || 1;
+        }),
+      ),
+    ),
+);
+
+if (import.meta.main) {
+  Command.run(command, { version: "0.0.0" }).pipe(
+    Effect.scoped,
+    Effect.provide([NodeServices.layer, NodeCrypto.layer, NetService.layer]),
+    NodeRuntime.runMain,
   );
-  metro.stdout!.pipe(process.stdout);
 }

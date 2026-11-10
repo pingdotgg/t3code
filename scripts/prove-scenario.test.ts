@@ -2,15 +2,19 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { buildProof, readSide } from "./prove-scenario.ts";
 
-const report = (exitCode: number, error?: { code: string; message: string }) => ({
+const report = (
+  exitCode: number,
+  error?: { code: string; message: string },
+  status = error ? "failed" : "passed",
+) => ({
   run: {
-    exitCode,
     results: [
       { titlePath: ["Another scenario the run did not select"], attempts: [] },
       {
         titlePath: ["Tab reaches the submit button"],
         attempts: [
           {
+            status,
             steps: [
               { api: "app.open", label: "/pair#token=secret", status: "passed" },
               { api: "expect.toBeFocused", label: "Continue", status: error ? "failed" : "passed" },
@@ -31,6 +35,8 @@ const passed = report(0);
 const failed = report(1, { code: "ASSERTION_FAILED", message: "expected: focused" });
 // The control the scenario clicks is missing: the scenario is broken, the bug is not shown.
 const brokenScenario = report(1, { code: "LOCATOR_NOT_FOUND", message: "no node" });
+// e2e exits 0 when the test skips itself at runtime.
+const skipped = report(0, undefined, "skipped");
 
 describe("prove-scenario", () => {
   it.each([
@@ -51,6 +57,13 @@ describe("prove-scenario", () => {
       passesOnHead: true,
       verdict: /could not run on base/,
     },
+    {
+      base: failed,
+      head: skipped,
+      failsOnBase: true,
+      passesOnHead: false,
+      verdict: /could not run on head/,
+    },
     // e2e writes no report when the app does not start.
     {
       base: undefined,
@@ -61,8 +74,8 @@ describe("prove-scenario", () => {
     },
   ])("reports $verdict", (row) => {
     const proof = buildProof(
-      readSide("aaaaaaaaaaaa", "/out/base", row.base),
-      readSide("bbbbbbbbbbbb", "/out/head", row.head),
+      readSide("aaaaaaaaaaaa", "/out/base/results", row.base),
+      readSide("bbbbbbbbbbbb", "/out/head/results", row.head),
       (path) => path,
     );
     expect(proof).toMatchObject({ failsOnBase: row.failsOnBase, passesOnHead: row.passesOnHead });
@@ -71,8 +84,8 @@ describe("prove-scenario", () => {
 
   it("labels captures with their side and commit and keeps the pairing token out", () => {
     const proof = buildProof(
-      readSide("aaaaaaaaaaaa", "/out/base", failed),
-      readSide("bbbbbbbbbbbb", "/out/head", passed),
+      readSide("aaaaaaaaaaaa", "/out/base/results", failed),
+      readSide("bbbbbbbbbbbb", "/out/head/results", passed),
       (path) => `https://files.example${path}`,
     );
     expect(proof.markdown).toContain("|  | Base `aaaaaaaaaa` | Head `bbbbbbbbbb` |");
