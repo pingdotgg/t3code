@@ -43,6 +43,28 @@ import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 
+export function resolveSidebarThreadAfterPark(input: {
+  readonly orderedThreadKeys: ReadonlyArray<string>;
+  readonly threadKey: string;
+  readonly sectionByThreadKey: ReadonlyMap<string, SidebarSection>;
+  readonly coParkingKeys?: ReadonlySet<string>;
+}): string | null {
+  const currentIndex = input.orderedThreadKeys.indexOf(input.threadKey);
+  if (currentIndex === -1) return null;
+  return (
+    [
+      ...input.orderedThreadKeys.slice(currentIndex + 1),
+      ...input.orderedThreadKeys.slice(0, currentIndex),
+    ].find((key) => {
+      const section = input.sectionByThreadKey.get(key);
+      return (
+        (section === "pinned" || section === "active" || section === "working") &&
+        !input.coParkingKeys?.has(key)
+      );
+    }) ?? null
+  );
+}
+
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
   readonly currentThreadKey: string | null;

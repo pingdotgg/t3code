@@ -27,6 +27,7 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  resolveSidebarThreadAfterPark,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -885,6 +886,39 @@ describe("resolveSidebarSweepKeys", () => {
 });
 
 describe("navigation after parking a thread", () => {
+  it.each([
+    { target: "active", expected: "target" },
+    { target: "pinned", expected: "target" },
+    { target: "working", expected: "target" },
+    { target: "background", expected: null },
+    { target: "snoozed", expected: null },
+    { target: "settled", expected: null },
+  ] as const)("advances past quiet rows to $target: $expected", ({ target, expected }) => {
+    const sectionByThreadKey = new Map<string, SidebarSection>([
+      ["current", "active"],
+      ["quiet", "background"],
+      ["sleeping", "snoozed"],
+      ["done", "settled"],
+      ["target", target],
+    ]);
+    const orderedThreadKeys = ["target", "current", "quiet", "sleeping", "done"];
+    expect(
+      resolveSidebarThreadAfterPark({
+        orderedThreadKeys,
+        threadKey: "current",
+        sectionByThreadKey,
+      }),
+    ).toBe(expected);
+    expect(
+      resolveSidebarThreadAfterPark({
+        orderedThreadKeys,
+        threadKey: "current",
+        sectionByThreadKey,
+        coParkingKeys: new Set(["target"]),
+      }),
+    ).toBeNull();
+  });
+
   it.each([
     ["settle", "settled", null, "thread", true],
     ["settle", "active", null, "thread", false],
