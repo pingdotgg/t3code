@@ -547,6 +547,13 @@ interface ComposerDraftStoreState {
     options?: { allowDuplicates?: boolean },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  /** Swaps an image's pixels in place, keeping its id so prompt references still resolve. */
+  replaceImage: (
+    threadRef: ComposerThreadTarget,
+    imageId: string,
+    next: Pick<ComposerImageAttachment, "file" | "previewUrl" | "name" | "mimeType" | "sizeBytes"> &
+      Partial<Pick<ComposerImageAttachment, "source">>,
+  ) => boolean;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3340,6 +3347,38 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        replaceImage: (threadRef, imageId, next) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          const existing = threadKey ? get().draftsByThreadKey[threadKey] : undefined;
+          const previous = existing?.images.find((image) => image.id === imageId);
+          if (!existing || !previous) {
+            revokeObjectPreviewUrl(next.previewUrl);
+            return false;
+          }
+          if (previous.previewUrl !== next.previewUrl) {
+            revokeObjectPreviewUrl(previous.previewUrl);
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  images: current.images.map((image) =>
+                    image.id === imageId ? { ...image, ...next } : image,
+                  ),
+                  // Persistence reuses data URLs by id, so drop the stale one to force a re-read.
+                  persistedAttachments: current.persistedAttachments.filter(
+                    (attachment) => attachment.id !== imageId,
+                  ),
+                },
+              },
+            };
+          });
+          return true;
         },
         addFiles: (threadRef, files, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

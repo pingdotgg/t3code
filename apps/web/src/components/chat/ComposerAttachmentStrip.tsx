@@ -6,7 +6,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { CircleAlertIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, PaperclipIcon, PencilIcon, PlayIcon, XIcon } from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
@@ -125,6 +125,7 @@ export function ComposerAttachmentMediaRow({
   canOperateThread,
   onExpandImage,
   onFileOpen,
+  onAnnotateImage,
   onRemoveImage,
   onRemoveFile,
 }: {
@@ -144,6 +145,7 @@ export function ComposerAttachmentMediaRow({
   readonly canOperateThread: boolean;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
+  readonly onAnnotateImage: ((imageId: string) => void) | null;
   readonly onRemoveImage: (imageId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
@@ -291,11 +293,30 @@ export function ComposerAttachmentMediaRow({
               )}
               <span
                 className={cn(
-                  "absolute right-1 top-1 flex",
+                  "absolute right-1 top-1 flex gap-1",
                   source?.kind === "snap-shot" &&
                     "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
                 )}
               >
+                {ready?.previewUrl && onAnnotateImage ? (
+                  <span
+                    className={cn(
+                      "flex",
+                      source?.kind !== "snap-shot" &&
+                        "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
+                    )}
+                  >
+                    <Button
+                      variant="media-close"
+                      size="icon-xs"
+                      onClick={() => onAnnotateImage(image.id)}
+                      aria-label={`Edit ${image.name}`}
+                      title="Edit and annotate"
+                    >
+                      <PencilIcon />
+                    </Button>
+                  </span>
+                ) : null}
                 <Button
                   variant="media-close"
                   size="icon-xs"
