@@ -38,16 +38,19 @@ internal suspend fun probeGoogleVoiceTranscription(
   createClient: (Int) -> GoogleSpeechClient
 ): GoogleVoiceSupport? {
   for (mode in recognitionModes) {
-    createClient(mode).use { client ->
-      when (checkModelSupport(client)) {
-        FeatureStatus.AVAILABLE -> return GoogleVoiceSupport(mode, downloaded = true)
-        FeatureStatus.DOWNLOADABLE,
-        FeatureStatus.DOWNLOADING -> return GoogleVoiceSupport(mode, downloaded = false)
-      }
+    val status = createClient(mode).use { checkModelSupport(it) }
+    if (status in supportedStatuses) {
+      return GoogleVoiceSupport(mode, downloaded = status == FeatureStatus.AVAILABLE)
     }
   }
   return null
 }
+
+private val supportedStatuses = setOf(
+  FeatureStatus.AVAILABLE,
+  FeatureStatus.DOWNLOADABLE,
+  FeatureStatus.DOWNLOADING
+)
 
 internal suspend fun prepareGoogleVoiceTranscription(
   createClient: (Int) -> GoogleSpeechClient
