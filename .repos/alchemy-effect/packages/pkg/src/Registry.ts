@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Namespace from "alchemy/Namespace";
 import type * as ByteSize from "effect/ByteSize";
 import * as Config from "effect/Config";
@@ -20,14 +20,7 @@ import {
 } from "./Registry/Bindings.ts";
 import { handler } from "./Registry/Handler.ts";
 
-export {
-  Bucket,
-  Cache,
-  Database,
-  Policy,
-  RegistryConfig,
-  Settings,
-} from "./Registry/Bindings.ts";
+export { Bucket, Cache, Database, Policy, RegistryConfig, Settings } from "./Registry/Bindings.ts";
 
 export interface RegistryOptions {
   /**
@@ -99,9 +92,9 @@ const RegistryConfigFromEnv = Layer.effect(
   RegistryConfig,
   Effect.gen(function* () {
     const env = yield* Cloudflare.Workers.WorkerEnvironment;
-    const settings = yield* Schema.decodeUnknownEffect(Settings)(
-      env[SETTINGS_ENV],
-    ).pipe(Effect.orDie);
+    const settings = yield* Schema.decodeUnknownEffect(Settings)(env[SETTINGS_ENV]).pipe(
+      Effect.orDie,
+    );
     return {
       ...settings,
       worker: {},
@@ -134,7 +127,7 @@ export default RegistryLive.pipe(Layer.provide(RegistryConfigFromEnv));
  * // stacks/pkg.ts
  * import { PkgRegistry } from "@alchemy.run/pkg/Registry";
  * import * as Alchemy from "alchemy";
- * import * as Cloudflare from "alchemy/Cloudflare";
+ * import * as Cloudflare from "@alchemy.run/cloudflare";
  * import * as ByteSize from "effect/ByteSize";
  * import * as Config from "effect/Config";
  * import * as Duration from "effect/Duration";
@@ -165,10 +158,7 @@ export default RegistryLive.pipe(Layer.provide(RegistryConfigFromEnv));
  * @product Workers
  * @category Workers & Compute
  */
-export const PkgRegistry = <const Id extends string>(
-  id: Id,
-  options: RegistryOptions,
-) =>
+export const PkgRegistry = <const Id extends string>(id: Id, options: RegistryOptions) =>
   Registry.pipe(
     Effect.provide(
       RegistryLive.pipe(
