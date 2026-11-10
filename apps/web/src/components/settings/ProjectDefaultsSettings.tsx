@@ -223,7 +223,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             aria-label="Default workspace"
             leadingIcon={
               (effective?.defaultThreadEnvMode ?? null) === "worktree" && !mixedWorkspace ? (
@@ -350,7 +351,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             aria-label="Default permissions"
             leadingIcon={mixedPermissions ? undefined : <PermissionIcon />}
           >
@@ -477,7 +479,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             aria-label="Default pull request merge method"
             leadingIcon={<PullRequestGlyph.merged />}
           >
@@ -614,7 +617,12 @@ export function WorktreeSubmodulesRow() {
             if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
           }}
         >
-          <SelectTrigger size="sm" aria-label="Worktree submodules" leadingIcon={<GitBranchIcon />}>
+          <SelectTrigger
+            variant="well"
+            size="compact"
+            aria-label="Worktree submodules"
+            leadingIcon={<GitBranchIcon />}
+          >
             <SelectValue>
               {(value: string | null) =>
                 isWorktreeSubmodules(value)

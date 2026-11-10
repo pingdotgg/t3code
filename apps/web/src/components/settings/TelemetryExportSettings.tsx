@@ -209,7 +209,7 @@ function TelemetryExportForm() {
               <div className="flex gap-2">
                 <Input
                   id={key}
-                  size="sm"
+                  size="settings"
                   type="url"
                   pattern="[Hh][Tt][Tt][Pp][Ss]?://.*"
                   title="Enter an HTTP or HTTPS endpoint, or leave empty to disable export."

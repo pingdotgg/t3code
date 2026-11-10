@@ -10,6 +10,7 @@ import {
   LayoutPaneTab,
   LayoutPaneTabStrip,
   LayoutTabCloseButton,
+  showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
 } from "../../layout/PaneTabs";
 import { useLayoutPane } from "../../layout/layoutPaneContext";
@@ -48,6 +49,11 @@ export function SettingsTabNotch({
             className={cn(PANE_TAB_CLASS, "max-w-none")}
             data-layout-pane-tab={tabId ?? undefined}
             data-layout-settings-tab=""
+            onContextMenu={(event) => {
+              if (tabId === null) return;
+              event.preventDefault();
+              void showLayoutTabMenu(tabId, { x: event.clientX, y: event.clientY }, keybindings);
+            }}
           >
             <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span>
             {children}
