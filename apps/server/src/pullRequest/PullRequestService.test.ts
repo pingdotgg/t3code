@@ -2369,6 +2369,7 @@ const gitLabWithGlab = (
   }) => unknown,
   reads: Array<string>,
   version: (host: string) => string = () => "19.6.0",
+  rest: (path: string, host: string) => unknown = () => [],
 ) =>
   Effect.gen(function* () {
     const gitlab = yield* GitLabDriver.driver.make.pipe(
@@ -2388,7 +2389,9 @@ const gitLabWithGlab = (
                 }
                 reads.push(path ?? input.args.join(" "));
                 if (path !== "graphql") {
-                  return Effect.succeed(TestSourceControlHost.processOutput("[]"));
+                  return Effect.succeed(
+                    TestSourceControlHost.processOutput(JSON.stringify(rest(path ?? "", host))),
+                  );
                 }
                 const request = JSON.parse(input.stdin ?? "{}") as {
                   readonly query: string;
@@ -2735,16 +2738,35 @@ it.effect("reads each GitLab host's projects together under that host's own view
     const reads: Array<string> = [];
     const versionProbes: Array<string> = [];
     const batched: Array<string> = [];
+    const restReads: Array<string> = [];
     const gitlab = yield* gitLabWithGlab(
       ({ variables, host }) => {
-        const fullPaths = variables.fullPaths as ReadonlyArray<string>;
+        const fullPaths = variables.fullPaths as ReadonlyArray<string> | undefined;
+        // The single read's merge request states; no states is a valid answer.
+        if (fullPaths === undefined) return { project: { mergeRequests: { nodes: [] } } };
         batched.push(`${host} ${String(variables.authorUsername)} ${fullPaths.join(",")}`);
         return gitLabProjectsAnswer(fullPaths, () => [1]);
       },
       reads,
       (host) => {
         versionProbes.push(host);
-        return "19.6.0";
+        // Below the GraphQL list gate: this host is read one project at a time.
+        return host === "gitlab.com" ? "19.6.0" : "17.0.0";
+      },
+      (path, host) => {
+        if (!path.includes("/merge_requests?")) return [];
+        restReads.push(`${host} ${path.split("?")[0]}`);
+        return [
+          {
+            iid: 9,
+            title: "self-hosted acme/web!9",
+            web_url: `https://${host}/acme/web/-/merge_requests/9`,
+            source_branch: "b9",
+            target_branch: "main",
+            created_at: "2026-07-01T00:00:00Z",
+            updated_at: "2026-07-02T00:00:00Z",
+          },
+        ];
       },
     );
     const service = yield* makeService({
@@ -2753,9 +2775,9 @@ it.effect("reads each GitLab host's projects together under that host's own view
         gitLabProject(1, "acme/docs"),
         project({
           id: "p2",
-          title: "corp/api",
+          title: "acme/web",
           workspaceRoot: "/w/2",
-          repository: "corp/api",
+          repository: "acme/web",
           provider: "gitlab",
           host: "gitlab.example.test",
         }),
@@ -2765,11 +2787,13 @@ it.effect("reads each GitLab host's projects together under that host's own view
 
     const result = yield* service.list({ state: "open", involvement: "authored" });
 
-    expect(result.entries).toHaveLength(3);
-    expect(batched.toSorted()).toEqual([
-      "gitlab.com reviewer@gitlab.com acme/web,acme/docs",
-      "gitlab.example.test reviewer@gitlab.example.test corp/api",
+    expect(result.entries.map((entry) => entry.title).toSorted()).toEqual([
+      "acme/docs!1",
+      "acme/web!1",
+      "self-hosted acme/web!9",
     ]);
+    expect(batched).toEqual(["gitlab.com reviewer@gitlab.com acme/web,acme/docs"]);
+    expect(restReads).toEqual(["gitlab.example.test projects/acme%2Fweb/merge_requests"]);
     expect(versionProbes.toSorted()).toEqual(["gitlab.com", "gitlab.example.test"]);
   }),
 );

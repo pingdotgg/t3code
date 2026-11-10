@@ -1117,6 +1117,9 @@ describe("review decisions", () => {
           expect(
             yield* readTwice(Effect.fail(new GitLabCli.GitLabCliAuthenticationError(context))),
           ).toEqual({ reasons: ["unauthenticated", "unauthenticated"], versionReads: 2 });
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliUnavailableError(context))),
+          ).toEqual({ reasons: ["missing-tool", "missing-tool"], versionReads: 2 });
         }),
     );
   });
