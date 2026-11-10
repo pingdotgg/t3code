@@ -1,7 +1,8 @@
-import type { DesktopWslState } from "@t3tools/contracts";
+import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
@@ -141,6 +142,62 @@ describe("selectQrEndpointOption", () => {
   it("skips non-QR-shareable options in the fallback so the panel never opens on loopback", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
+    );
+  });
+});
+
+describe("resolveAccessEnvironmentId", () => {
+  const primary = EnvironmentId.make("primary");
+  const service = EnvironmentId.make("service");
+  const laptop = EnvironmentId.make("laptop");
+  it.each([
+    {
+      label: "defaults to the primary environment",
+      primaryEnvironmentId: primary,
+      environments: [
+        { environmentId: primary, connected: true },
+        { environmentId: service, connected: true },
+      ],
+      selected: null,
+      expected: primary,
+    },
+    {
+      label: "falls back to a connected saved environment without a primary",
+      primaryEnvironmentId: null,
+      environments: [
+        { environmentId: laptop, connected: false },
+        { environmentId: service, connected: true },
+      ],
+      selected: null,
+      expected: service,
+    },
+    {
+      label: "keeps an explicit choice",
+      primaryEnvironmentId: primary,
+      environments: [
+        { environmentId: primary, connected: true },
+        { environmentId: laptop, connected: false },
+      ],
+      selected: laptop,
+      expected: laptop,
+    },
+    {
+      label: "drops a choice that is no longer listed",
+      primaryEnvironmentId: null,
+      environments: [{ environmentId: service, connected: true }],
+      selected: laptop,
+      expected: service,
+    },
+    {
+      label: "has nothing to show without environments",
+      primaryEnvironmentId: null,
+      environments: [],
+      selected: null,
+      expected: null,
+    },
+  ])("$label", ({ primaryEnvironmentId, environments, selected, expected }) => {
+    expect(resolveAccessEnvironmentId({ primaryEnvironmentId, environments, selected })).toBe(
+      expected,
     );
   });
 });
