@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -90,7 +91,11 @@ describe("claudeResetCreditsToContract", () => {
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const reader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader(
+        configDir,
+        accountConfigPath,
+      );
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
@@ -107,26 +112,147 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, client),
-      );
+      const credits = yield* reader
+        .read("2.1.0")
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
       expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
     }),
   );
 
   it.effect("reads nothing from keychain logins or failed requests", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HttpClient.HttpClient, refuseRequests),
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const reader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader(
+        configDir,
+        accountConfigPath,
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, respond(429, {})),
-      );
+      const darwin = yield* reader
+        .read("2.1.0")
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HttpClient.HttpClient, refuseRequests),
+        );
+      const limited = yield* reader
+        .read("2.1.0")
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, respond(429, {})),
+        );
       expect([darwin, limited]).toEqual([undefined, undefined]);
+    }),
+  );
+
+  it.effect("backs off failed refreshes without renewing or reviving a cached balance", () =>
+    Effect.gen(function* () {
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const reader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader(
+        configDir,
+        accountConfigPath,
+      );
+      let status = 200;
+      let block: unknown = { eligible: true, next_grant_id: "grant_a", grants: [grant({})] };
+      let requests = 0;
+      const client = HttpClient.make((request) => {
+        requests++;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ cedar_ember: block }, { status })),
+        );
+      });
+      const read = reader
+        .read("2.1.0")
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+      const credits = yield* read;
+      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(yield* read).toEqual(credits);
+      expect(requests).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      status = 429;
+      expect(yield* read).toEqual(credits);
+      expect(yield* read).toEqual(credits);
+      expect(requests).toBe(2);
+
+      yield* TestClock.adjust("4 minutes");
+      expect(yield* read).toBeUndefined();
+      expect(requests).toBe(3);
+
+      yield* reader.invalidate;
+      status = 200;
+      expect(yield* read).toEqual(credits);
+      yield* TestClock.adjust("1 minute");
+      block = { eligible: true, grants: [] };
+      expect(yield* read).toEqual({ availableCount: 0 });
+      yield* TestClock.adjust("1 minute");
+      status = 503;
+      expect(yield* read).toEqual({ availableCount: 0 });
+
+      yield* reader.invalidate;
+      status = 200;
+      block = undefined;
+      expect(yield* read).toBeUndefined();
+      yield* TestClock.adjust("1 minute");
+      status = 429;
+      expect(yield* read).toBeUndefined();
+    }),
+  );
+
+  it.effect("expires cached grants and clears them when the login changes or is rejected", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const reader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader(
+        configDir,
+        accountConfigPath,
+      );
+      const active = respond(200, {
+        cedar_ember: {
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({ ends_at: "2026-09-22T12:00:30Z" })],
+        },
+      });
+      const read = (client: HttpClient.HttpClient) =>
+        reader
+          .read("2.1.0")
+          .pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+      expect((yield* read(active))?.availableCount).toBe(1);
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* read(refuseRequests)).toEqual({ availableCount: 0 });
+
+      yield* TestClock.setTime(NOW);
+      yield* reader.invalidate;
+      expect((yield* read(active))?.availableCount).toBe(1);
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"other-org"}}',
+      );
+      expect(yield* read(respond(429, {}))).toBeUndefined();
+
+      yield* reader.invalidate;
+      expect((yield* read(active))?.availableCount).toBe(1);
+      yield* fs.writeFileString(
+        path.join(configDir, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"other-token"}}',
+      );
+      expect(yield* read(respond(429, {}))).toBeUndefined();
+
+      yield* reader.invalidate;
+      expect((yield* read(active))?.availableCount).toBe(1);
+      yield* reader.invalidate;
+      expect(yield* read(respond(401, {}))).toBeUndefined();
+      yield* TestClock.adjust("1 minute");
+      expect(yield* read(respond(429, {}))).toBeUndefined();
     }),
   );
 });

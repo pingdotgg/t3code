@@ -8,7 +8,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const API_BASE = "https://api.anthropic.com";
@@ -150,27 +152,67 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
-    if (!token) return undefined;
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
-        urlParams: { cedar_ember: "1", skip_spend: "1" },
-      }).pipe(withClaudeHeaders(token, version)),
-    );
-    const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
+export const makeClaudeResetCreditsReader = Effect.fn("makeClaudeResetCreditsReader")(function* (
+  configDir: string,
+  accountConfigPath: string,
+) {
+  const cache = yield* Ref.make<
+    | {
+        readonly token: string;
+        readonly organization: string | undefined;
+        readonly checkedAt: number;
+        readonly retryAt: number;
+        readonly block: unknown;
+      }
+    | undefined
+  >(undefined);
+  const semaphore = yield* Semaphore.make(1);
+  const invalidate = semaphore.withPermits(1)(Ref.set(cache, undefined));
+  const read = Effect.fn("readClaudeResetCredits")(function* (version: string) {
+    const token = yield* readAccessToken(configDir).pipe(Effect.orElseSucceed(() => undefined));
+    if (!token) {
+      yield* Ref.set(cache, undefined);
+      return undefined;
+    }
+    const organization = yield* readClaudeOrganizationId(accountConfigPath);
+    const previous = yield* Ref.get(cache);
+    const sameAccount = previous?.token === token && previous.organization === organization;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    // A bounded fallback survives transient failures without renewing the balance's age.
+    const recent = sameAccount && now - previous.checkedAt < 5 * 60_000 ? previous : undefined;
+    if (sameAccount && now < previous.retryAt) {
+      return claudeResetCreditsToContract(recent?.block, now);
+    }
+    const result = yield* Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.execute(
+        HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
+          urlParams: { cedar_ember: "1", skip_spend: "1" },
+        }).pipe(withClaudeHeaders(token, version)),
+      );
+      if (response.status === 401 || response.status === 403) return undefined;
+      const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
+        yield* HttpClientResponse.filterStatusOk(response),
+      );
+      return body.cedar_ember;
+    }).pipe(Effect.timeout("10 seconds"), Effect.result);
+    const block = result._tag === "Success" ? result.success : recent?.block;
+    const checkedAt = result._tag === "Success" ? now : (recent?.checkedAt ?? now);
+    yield* Ref.set(cache, {
+      token,
+      organization,
+      checkedAt,
+      retryAt: now + 60_000,
+      block,
+    });
+    const completedAt = DateTime.toEpochMillis(yield* DateTime.now);
     return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
+      completedAt - checkedAt < 5 * 60_000 ? block : undefined,
+      completedAt,
     );
-  },
-  Effect.timeout("10 seconds"),
-  Effect.orElseSucceed(() => undefined),
-);
+  }, semaphore.withPermits(1));
+  return { read, invalidate };
+});
 
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
