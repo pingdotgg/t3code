@@ -1303,6 +1303,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       yield* h.send({
         sessionUpdate: "tool_call",
         toolCallId: "wake",
+        title: "Terminal",
         kind: "execute",
         status: "pending",
       });
