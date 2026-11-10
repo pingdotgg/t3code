@@ -98,6 +98,7 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
   }
   return (
     <HostedPromptLinkLanding
+      key={appPath}
       appPath={appPath}
       canContinue={canContinue}
       openInAppRemembered={opener === "app"}
@@ -125,18 +126,39 @@ function HostedPromptLinkLanding({
   const deepLink = promptLinkDeepLink(appPath);
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
+  const [openedInApp, setOpenedInApp] = useState(false);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redirects window.location to the app deep link once when the user chose to always open in the app
   useEffect(() => {
     if (!openInAppRemembered || !summary.ok || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
     window.location.href = deepLink;
+    setOpenedInApp(true);
   }, [deepLink, openInAppRemembered, summary.ok]);
 
   if (!summary.ok) {
     return (
       <StandalonePage>
         <StandalonePageHeader title="Could not open the link" description={summary.error} />
+      </StandalonePage>
+    );
+  }
+
+  if (openedInApp) {
+    return (
+      <StandalonePage>
+        <StandalonePageHeader
+          title="Opened in T3 Code"
+          description="You can close this tab. If T3 Code didn't open, try again or get the app."
+        />
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button render={<a href={deepLink} />}>
+            {onPhone ? "Open in app" : "Open in desktop app"}
+          </Button>
+          <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
+            Get T3 Code
+          </Button>
+        </div>
       </StandalonePage>
     );
   }
@@ -163,7 +185,13 @@ function HostedPromptLinkLanding({
         <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
-        <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
+        <Button
+          render={<a href={deepLink} />}
+          onClick={() => {
+            onChoose("app", remember);
+            setOpenedInApp(true);
+          }}
+        >
           {onPhone ? "Open in app" : "Open in desktop app"}
         </Button>
         {canContinue ? (
