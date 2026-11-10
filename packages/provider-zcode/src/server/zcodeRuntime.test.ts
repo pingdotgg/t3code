@@ -193,6 +193,44 @@ describe("resolveZcodeLaunchCommand", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("probes the Windows desktop shim as zcode.cmd when zcode is off PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode.cmd`, "@echo off\n");
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "zcode" },
+        { HOME: home, PATH: "C:\\nonexistent" },
+        fileSystem,
+      );
+      assert.equal(command, `${home}/.zcode/server/bin/zcode.cmd`);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect(
+    "keeps the plain binary name on Windows when the shim dir only holds a bare zcode",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectory();
+        yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
+        yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode`, "#!/bin/sh\n");
+        const command = yield* resolveZcodeLaunchCommand(
+          { binaryPath: "" },
+          { HOME: home, PATH: "C:\\nonexistent" },
+          fileSystem,
+        );
+        assert.equal(command, "zcode");
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provide(NodeServices.layer),
+      ),
+  );
+
   it.effect("keeps the plain binary name when no fallback exists", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

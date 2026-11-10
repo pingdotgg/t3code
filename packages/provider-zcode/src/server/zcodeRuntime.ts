@@ -192,9 +192,9 @@ export function zcodeSpawnArgs(launchArgs: string): ReadonlyArray<string> {
 }
 
 /**
- * Falls back to the desktop shim (`~/.zcode/server/bin/zcode`) when PATH lacks `zcode`; the
- * bare "zcode" is the schema's decoded default, not an explicit choice. PATH is probed
- * manually: resolveSpawnCommand is a no-op on POSIX and defers to exec.
+ * Falls back to the desktop shim (`~/.zcode/server/bin/zcode`, `zcode.cmd` on Windows) when PATH
+ * lacks `zcode`; the bare "zcode" is the schema's decoded default, not an explicit choice. PATH is
+ * probed manually: resolveSpawnCommand is a no-op on POSIX and defers to exec.
  */
 export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCommand")(function* (
   settings: { readonly binaryPath: string },
@@ -207,7 +207,7 @@ export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCo
   if (onPath) return DEFAULT_ZCODE_BINARY;
   const home = zcodeDataRoot(environment);
   if (home === undefined) return DEFAULT_ZCODE_BINARY;
-  const desktopShim = `${home}/.zcode/server/bin/zcode`;
+  const desktopShim = `${home}/.zcode/server/bin/${(yield* HostProcess.Platform) === "win32" ? "zcode.cmd" : "zcode"}`;
   const shimExists = yield* fileSystem.exists(desktopShim).pipe(Effect.orElseSucceed(() => false));
   return shimExists ? desktopShim : DEFAULT_ZCODE_BINARY;
 });
