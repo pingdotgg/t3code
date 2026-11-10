@@ -8806,105 +8806,137 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each(["no-reset", "expired-reset"] as const)(
-    "retries a usage-limit continuation the provider refuses with %s",
-    (scenario) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const events = yield* EventSink.EventSinkV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const threadId = ThreadId.make(`refused-resume:${scenario}`);
-        const projectId = ProjectId.make(`refused-resume:project:${scenario}`);
-        yield* seedProject({
-          projectId,
-          title: "Refused resume project",
-          workspaceRoot: process.cwd(),
-          defaultModelSelection: modelSelection,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(`refused-resume:create:${scenario}`),
-          threadId,
-          projectId,
-          title: "Limited thread",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`refused-resume:message:${scenario}`),
-          threadId,
-          messageId: MessageId.make(`refused-resume:message:${scenario}`),
-          text: "Work on this.",
-          attachments: [],
-          dispatchMode: { type: "defer_start" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const failRun = (run: OrchestrationV2Run, resetAt: string | null) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            yield* events.write({
-              events: [
-                {
-                  id: EventId.make(`refused-resume:run:${run.id}`),
-                  type: "run.updated",
+  it.effect.each([
+    { name: "no-reset", key: "none", reset: "none", autoResume: true, manualSnooze: false },
+    {
+      name: "expired-reset",
+      key: "expired",
+      reset: "expired",
+      autoResume: true,
+      manualSnooze: false,
+    },
+    // Global auto-resume off: the per-thread resume of the first limit carries over.
+    {
+      name: "no-reset under a per-thread resume",
+      key: "thread",
+      reset: "none",
+      autoResume: false,
+      manualSnooze: false,
+    },
+    // Snooze-on-limit on, and the user snoozes longer after the sweep picked the thread.
+    {
+      name: "expired-reset past a later manual snooze",
+      key: "snoozed",
+      reset: "expired",
+      autoResume: true,
+      manualSnooze: true,
+    },
+  ] as const)("retries a usage-limit continuation the provider refuses with $name", (row) =>
+    Effect.gen(function* () {
+      const scenario = row.key;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`refused-resume:${scenario}`);
+      const projectId = ProjectId.make(`refused-resume:project:${scenario}`);
+      yield* seedProject({
+        projectId,
+        title: "Refused resume project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`refused-resume:create:${scenario}`),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`refused-resume:message:${scenario}`),
+        threadId,
+        messageId: MessageId.make(`refused-resume:message:${scenario}`),
+        text: "Work on this.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const failRun = (run: OrchestrationV2Run, resetAt: string | null) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`refused-resume:run:${run.id}`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "failed", startedAt: now, completedAt: now },
+              },
+              {
+                id: EventId.make(`refused-resume:error:${run.id}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`refused-resume:error:${run.id}`),
+                  type: "error",
                   threadId,
                   runId: run.id,
-                  occurredAt: now,
-                  payload: { ...run, status: "failed", startedAt: now, completedAt: now },
-                },
-                {
-                  id: EventId.make(`refused-resume:error:${run.id}`),
-                  type: "turn-item.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: {
-                    id: TurnItemId.make(`refused-resume:error:${run.id}`),
-                    type: "error",
-                    threadId,
-                    runId: run.id,
-                    nodeId: run.rootNodeId,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: 2,
-                    status: "failed",
-                    title: "Usage limit reached",
-                    startedAt: now,
-                    completedAt: now,
-                    updatedAt: now,
-                    failure: {
-                      class: "usage_limit",
-                      message: "Plan limit reached.",
-                      code: "usageLimitExceeded",
-                      retryable: null,
-                      resetAt,
-                    },
+                  nodeId: run.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 2,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  failure: {
+                    class: "usage_limit",
+                    message: "Plan limit reached.",
+                    code: "usageLimitExceeded",
+                    retryable: null,
+                    resetAt,
                   },
                 },
-              ],
-            });
+              },
+            ],
           });
-        // One recovery worker sweep with auto-resume on, at the current test time.
-        const sweep = Effect.gen(function* () {
-          const now = yield* DateTime.now;
-          const candidate = (yield* projections.getLimitRecoveryCandidates({
-            now,
-            autoResume: true,
-            snooze: false,
-          })).find((row) => row.id === threadId);
+        });
+      const candidate = (autoResume: boolean) =>
+        Effect.gen(function* () {
+          return (yield* projections.getLimitRecoveryCandidates({
+            now: yield* DateTime.now,
+            autoResume,
+            snooze: row.manualSnooze,
+          })).find((thread) => thread.id === threadId);
+        });
+      // One recovery worker sweep at the current test time; `beforeAct` commits after selection.
+      const sweep = (
+        beforeAct: Effect.Effect<void, Orchestrator.OrchestratorV2Error> = Effect.void,
+      ) =>
+        Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          const thread = yield* candidate(row.autoResume);
           const command =
-            candidate === undefined
+            thread === undefined
               ? null
-              : limitRecoveryCommand(candidate, true, DateTime.toEpochMillis(now));
+              : limitRecoveryCommand(thread, row.autoResume, now, row.manualSnooze);
+          yield* beforeAct;
           if (command?.type === "thread.metadata.update" && command.limitRecovery != null) {
             yield* orchestrator.autoArmLimitRecovery({
               commandId: command.commandId,
@@ -8915,50 +8947,88 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             yield* orchestrator.dispatch(command);
           }
         });
-        const continuationOf = (runId: RunId) =>
-          orchestrator
-            .getThreadProjection(threadId)
-            .pipe(
-              Effect.map((projection) =>
-                projection.runs.find((run) => run.usageLimitContinuationOfRunId === runId),
-              ),
-            );
+      const continuationOf = (runId: RunId) =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              projection.runs.find((run) => run.usageLimitContinuationOfRunId === runId),
+            ),
+          );
+      const advanceTo = (atMs: number) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust(`${atMs - DateTime.toEpochMillis(yield* DateTime.now)} millis`);
+        });
+      // Nothing continues `runId` one tick before `atMs`; a sweep at `atMs` does.
+      const continuesAt = (runId: RunId, atMs: number) =>
+        Effect.gen(function* () {
+          yield* advanceTo(atMs - 1);
+          yield* sweep();
+          assert.isUndefined(yield* continuationOf(runId), "retried before its deadline");
+          yield* advanceTo(atMs);
+          yield* sweep();
+          const continuation = yield* continuationOf(runId);
+          assert.isDefined(continuation, "not retried at its deadline");
+          return continuation!;
+        });
 
-        const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-        const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
-        yield* failRun(source, resetAt);
-        yield* sweep;
-        yield* TestClock.adjust("1 minute");
-        yield* sweep;
-        const continuation = yield* continuationOf(source.id);
-        assert.isDefined(continuation, "the first reset should resume the limited run");
+      const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+      yield* failRun(source, resetAt);
+      if (!row.autoResume) {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`refused-resume:resume-at-reset:${scenario}`),
+          threadId,
+          limitRecovery: { runId: source.id, resetAt, autoResume: true },
+        });
+      }
+      yield* sweep();
+      let refused = yield* continuesAt(source.id, Date.parse(resetAt));
 
-        // Three refusals in a row retry; the fourth gives up.
-        let refused = continuation!;
-        for (let refusal = 1; refusal <= 4; refusal++) {
-          yield* TestClock.adjust("6 seconds");
-          // Codex reports no reset; a probe can report the window that just expired.
-          yield* failRun(refused, scenario === "no-reset" ? null : resetAt);
-          for (let minute = 0; minute < 20; minute++) {
-            yield* TestClock.adjust("1 minute");
-            yield* sweep;
-          }
-          const retry = yield* continuationOf(refused.id);
-          if (refusal === 4) {
-            assert.isUndefined(retry, "the fourth refused continuation should not retry");
-            assert.notStrictEqual(
-              (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery?.runId,
-              refused.id,
-            );
-          } else {
-            assert.isDefined(
-              retry,
-              "a refused continuation with no later reset should be retried after a backoff",
-            );
-            refused = retry!;
-          }
+      // Three refusals in a row retry after 2, 5 and 15 minutes; the fourth gives up.
+      for (const minutes of [2, 5, 15, null]) {
+        yield* TestClock.adjust("6 seconds");
+        // Codex reports no reset; a probe can report the window that just expired.
+        yield* failRun(refused, row.reset === "none" ? null : resetAt);
+        let retryAt = DateTime.toEpochMillis(yield* DateTime.now) + (minutes ?? 0) * 60_000;
+        if (row.manualSnooze && minutes === 2) {
+          const snoozedUntil = retryAt + 60 * 60_000;
+          yield* sweep(
+            orchestrator
+              .dispatch({
+                type: "thread.snooze",
+                commandId: CommandId.make(`refused-resume:manual-snooze:${scenario}`),
+                threadId,
+                snoozedUntil: DateTime.formatIso(DateTime.makeUnsafe(snoozedUntil)),
+              })
+              .pipe(Effect.asVoid),
+          );
+          const { thread } = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(thread.limitRecovery?.runId, refused.id);
+          assert.equal(DateTime.toEpochMillis(thread.snoozedUntil!), snoozedUntil);
+          yield* advanceTo(retryAt);
+          yield* sweep();
+          assert.isUndefined(yield* continuationOf(refused.id), "retried during a manual snooze");
+          retryAt = snoozedUntil;
+        } else {
+          yield* sweep();
         }
-      }),
+        if (minutes === null) {
+          assert.notStrictEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery?.runId,
+            refused.id,
+          );
+          yield* TestClock.adjust("20 minutes");
+          assert.isUndefined(yield* candidate(true), "a gave-up thread stays a candidate");
+          assert.isUndefined(yield* candidate(false), "a gave-up thread stays a candidate");
+          yield* sweep();
+          assert.isUndefined(yield* continuationOf(refused.id));
+        } else {
+          refused = yield* continuesAt(refused.id, retryAt);
+        }
+      }
+    }),
   );
 });
 

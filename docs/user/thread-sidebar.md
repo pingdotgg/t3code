@@ -249,8 +249,11 @@ thread** from its long-press menu on mobile.
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
-manually. Do this when the provider reports no reset time, because nothing
-continues the turn on its own.
+manually. Do this when the provider reports no reset time. If the provider
+refuses a scheduled continuation right after the reset, T3 Code retries it a
+few times over about 20 minutes before leaving it to you; stopping, settling,
+or archiving the thread, cancelling auto-resume, or sending a new message
+cancels a pending retry.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 

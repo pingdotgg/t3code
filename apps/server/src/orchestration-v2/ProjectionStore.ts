@@ -14,8 +14,8 @@ import type {
 import {
   latestRootProviderFailure,
   latestUnheldRun,
+  refusedContinuationRetryAt,
   threadErrorSummary,
-  usageLimitRecoveryResetAt,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -3987,6 +3987,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
+    // The latest run's usage-limit reset is after the run ended.
+    const laterReset = sql`COALESCE(julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))), 0)`;
+    const refusedContinuation = sql`(
+      json_extract(r.payload_json, '$.usageLimitContinuationOfRunId') IS NOT NULL AND NOT ${laterReset}
+    )`;
+    // The refused continuation `from` retried, when it was one too; mirrors usageLimitRecoveryResetAt.
+    const refusedSourceOf = (alias: string, from: string) => {
+      const run = sql.literal(alias);
+      return sql`LEFT JOIN orchestration_v2_projection_runs ${run}
+        ON ${run}.run_id = json_extract(${sql.literal(from)}.payload_json, '$.usageLimitContinuationOfRunId')
+        AND ${run}.thread_id = t.thread_id
+        AND ${run}.status = 'failed'
+        AND json_extract(${run}.payload_json, '$.usageLimitContinuationOfRunId') IS NOT NULL
+        AND COALESCE((
+          SELECT json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+            AND NOT COALESCE(julianday(json_extract(error.payload_json, '$.failure.resetAt'))
+              > julianday(COALESCE(${run}.completed_at, json_extract(${run}.payload_json, '$.requestedAt'))), 0)
+          FROM orchestration_v2_projection_turn_items error
+          WHERE error.thread_id = t.thread_id AND error.run_id = ${run}.run_id
+            AND error.type = 'error' AND error.status = 'failed'
+            AND error.node_id IS json_extract(${run}.payload_json, '$.rootNodeId')
+          ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+          LIMIT 1
+        ), 0)`;
+    };
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         const rows = yield* sql<{
@@ -3995,11 +4021,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
           readonly continuation_of_run_id: string | null;
+          readonly refusals: number;
           readonly last_error: string | null;
         }>`
           SELECT t.payload_json, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
             json_extract(r.payload_json, '$.usageLimitContinuationOfRunId') AS continuation_of_run_id,
+            CASE WHEN ${refusedContinuation}
+              THEN 1 + (c1.run_id IS NOT NULL) + (c2.run_id IS NOT NULL)
+              ELSE 0
+            END AS refusals,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
               -- Keep bindings outermost: one provider instance can hold every session.
@@ -4033,6 +4064,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
             LIMIT 1
           )
+          ${refusedSourceOf("c1", "r")}
+          ${refusedSourceOf("c2", "c1")}
+          ${refusedSourceOf("c3", "c2")}
           WHERE t.deleted_at IS NULL
             -- The sweep runs every scheduler tick. Without this list the latest-run
             -- lookup above sorts every run of every thread, tens of milliseconds
@@ -4045,18 +4079,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-            -- A continuation refused without a later reset retries after a backoff that
-            -- usageLimitRecoveryResetAt derives below; other expired resets never qualify.
-            AND (
-              COALESCE(julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))), 0)
-              OR json_extract(r.payload_json, '$.usageLimitContinuationOfRunId') IS NOT NULL
-            )
+            -- A continuation refused without a later reset retries after a backoff, which
+            -- gives up on the fourth refusal in a row; other expired resets never qualify.
+            AND (${laterReset} OR (${refusedContinuation} AND c3.run_id IS NULL))
             AND (
               (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND (
                   json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
-                  OR NOT COALESCE(julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))), 0)
+                  OR NOT ${laterReset}
                 )
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
                 AND julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
@@ -4070,7 +4101,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
                   OR (
                     json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')
-                    AND COALESCE(julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))), 0)
+                    AND ${laterReset}
                   )
                 )
                 AND (
@@ -4110,32 +4141,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.last_error,
           );
           if (summary.lastErrorClass !== "usage_limit") continue;
-          const endedAt = row.completed_at ?? DateTime.formatIso(thread.updatedAt);
-          const refused =
-            row.continuation_of_run_id !== null &&
-            !(
-              summary.usageLimitResetAt !== null &&
-              Date.parse(summary.usageLimitResetAt) > Date.parse(endedAt)
-            );
-          let usageLimitResetAt = summary.usageLimitResetAt;
-          if (refused) {
-            const records = yield* getThreadRecords(thread.id, ["runs", "turnItems"], {
-              turnItemTypes: ["error"],
-            });
-            usageLimitResetAt = usageLimitRecoveryResetAt(
-              records.runs.find((run) => run.id === row.run_id) ?? null,
-              records.runs,
-              records.turnItems,
-            );
-          }
+          const refusedSource = row.refusals > 0 ? row.continuation_of_run_id : null;
           candidates.push({
             id: thread.id,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
-            usageLimitResetAt,
-            ...(refused && row.continuation_of_run_id !== null
-              ? { refusedContinuationOfRunId: RunId.make(row.continuation_of_run_id) }
-              : {}),
+            usageLimitResetAt:
+              refusedSource !== null
+                ? refusedContinuationRetryAt(
+                    row.completed_at === null
+                      ? thread.updatedAt
+                      : DateTime.makeUnsafe(row.completed_at),
+                    row.refusals,
+                  )
+                : summary.usageLimitResetAt,
+            ...(refusedSource === null
+              ? {}
+              : { refusedContinuationOfRunId: RunId.make(refusedSource) }),
             latestRunId: RunId.make(row.run_id),
             latestRunCompletedAt:
               row.completed_at === null ? null : DateTime.makeUnsafe(row.completed_at),

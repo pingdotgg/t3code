@@ -115,21 +115,42 @@ export function usageLimitRecoveryResetAt(
   const limit = run === null ? null : laterUsageLimitReset(run, turnItems);
   if (run === null || limit === null) return null;
   if (limit.resetAt !== null) return limit.resetAt;
-  // Bounded by the backoff steps, so a long or cyclic chain costs at most that many walks.
   let refusals = 0;
-  let current: OrchestrationV2Run | undefined = run;
-  while (current?.usageLimitContinuationOfRunId !== undefined) {
+  for (const current of usageLimitContinuationChain(run, runs)) {
+    if (current.usageLimitContinuationOfRunId === undefined) break;
     const refused = laterUsageLimitReset(current, turnItems);
     if (refused === null || refused.resetAt !== null) break;
     refusals += 1;
-    if (refusals > REFUSED_CONTINUATION_BACKOFF_MINUTES.length) return null;
+  }
+  return refusedContinuationRetryAt(run.completedAt ?? run.requestedAt, refusals);
+}
+
+/** When recovery retries a continuation refused `refusals` times in a row; null once it gives up. */
+export function refusedContinuationRetryAt(endedAt: DateTime.Utc, refusals: number): string | null {
+  const minutes = REFUSED_CONTINUATION_BACKOFF_MINUTES[refusals - 1];
+  return minutes === undefined ? null : DateTime.formatIso(DateTime.add(endedAt, { minutes }));
+}
+
+/**
+ * `run` and the runs its continuation chain retries, as far as the backoff can count, so a
+ * long or cyclic chain costs at most one more step than the backoff has.
+ */
+export function usageLimitContinuationChain(
+  run: OrchestrationV2Run,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const chain = [run];
+  let current: OrchestrationV2Run | undefined = run;
+  while (
+    chain.length <= REFUSED_CONTINUATION_BACKOFF_MINUTES.length &&
+    current.usageLimitContinuationOfRunId !== undefined
+  ) {
     const sourceRunId: string = current.usageLimitContinuationOfRunId;
     current = runs.find((candidate) => candidate.id === sourceRunId);
+    if (current === undefined) break;
+    chain.push(current);
   }
-  const minutes = REFUSED_CONTINUATION_BACKOFF_MINUTES[refusals - 1];
-  return minutes === undefined
-    ? null
-    : DateTime.formatIso(DateTime.add(run.completedAt ?? run.requestedAt, { minutes }));
+  return chain;
 }
 
 /** Retains a limited run's outcome when higher-ordinal runs never started. */

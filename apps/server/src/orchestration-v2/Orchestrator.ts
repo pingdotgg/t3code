@@ -10,6 +10,7 @@ import {
   latestRootProviderFailure,
   runRanAfter,
   usageLimitBlockedRun,
+  usageLimitContinuationChain,
   usageLimitRecoveryResetAt,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
@@ -11207,7 +11208,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (latest?.status === "failed") {
       // A refused continuation's retry reads the failures of the runs it continued.
       const { turnItems } = yield* projectionStore
-        .getThreadRecords(thread.id, ["turnItems"], { turnItemTypes: ["error"] })
+        .getThreadRecords(thread.id, ["turnItems"], {
+          turnItemTypes: ["error"],
+          turnItemRunIds: usageLimitContinuationChain(latest, runs).map((run) => run.id),
+        })
         .pipe(mapDispatchError(input.command));
       const failure = latestRootProviderFailure(latest, turnItems);
       const resetAt =
@@ -14463,7 +14467,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.limitRecovery.resetAt === input.limitRecovery.resetAt
           )
             return;
-          const command = { type: "thread.metadata.update", ...input } as const;
+          // An automatic arm never shortens a snooze the user chose.
+          const keepsSnooze =
+            thread.snoozedUntil != null &&
+            DateTime.toEpochMillis(thread.snoozedUntil) > Date.parse(input.limitRecovery.resetAt);
+          const command = {
+            type: "thread.metadata.update",
+            ...input,
+            limitRecovery: keepsSnooze
+              ? { ...input.limitRecovery, snooze: false }
+              : input.limitRecovery,
+          } as const;
           // A Stop that reached the run before its limit failure landed had nothing to disarm.
           const stopped = yield* stopReachedRun(command, input.threadId, input.limitRecovery.runId);
           yield* dispatchWithReceiptEffect(

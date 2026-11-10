@@ -6596,7 +6596,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (detail) =>
             /^SEARCH (?:item|error) /.test(detail) && !detail.includes("(turn_item_id=?)"),
         );
-        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 1, marker);
+        // Candidates also read up to three runs back along a refused-continuation chain.
+        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 4, marker);
         for (const errorLookup of errorLookups) {
           assert.include(errorLookup, "turn_items_failed_error_idx");
           assert.include(errorLookup, "(thread_id=? AND run_id=? AND node_id=?)");
