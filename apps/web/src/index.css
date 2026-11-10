@@ -1529,8 +1529,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
 }
 
+/* Dark chrome paints the Orbital Sunrise vector itself, in its colors, dimmed to the level
+   the old grayscale render used so text keeps its footing. */
 :root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
+  --chrome-art-image:
+    linear-gradient(rgb(0 0 0 / 0.24), rgb(0 0 0 / 0.24)),
+    url("./assets/chrome/art-nightly-sunrise-color.svg") center / cover no-repeat;
 }
 
 [data-chrome-art="nightly"] {
