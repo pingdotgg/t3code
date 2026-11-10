@@ -20,6 +20,7 @@ import * as PluginHost from "./PluginHost.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginRunEvents from "./PluginRunEvents.ts";
 
 export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url)
   .pathname;
@@ -62,6 +63,7 @@ export const layerHost = (
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(themes),
       Layer.provideMerge(PluginMcpTools.layer),
+      Layer.provide(Layer.succeed(PluginRunEvents.PluginRunEvents, { runs: () => Stream.never })),
     ),
   );
 

@@ -12,6 +12,7 @@ import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
+import type * as PluginRunEvents from "./PluginRunEvents.ts";
 
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
@@ -60,6 +61,7 @@ export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly runEvents: PluginRunEvents.PluginRunEvents["Service"];
 }
 
 /**
@@ -96,10 +98,11 @@ export const makePluginApi = (input: {
   };
 
   return {
-    version: 1,
+    version: 2,
     id,
     rootDir: input.rootDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
+    events: { runs: (options) => facade.iterate(services.runEvents.runs(options)) },
     settings: {
       get: () => call(services.settings.get(id, input.settingsSchema)),
       changes: () => facade.iterate(services.settings.changes(id)),

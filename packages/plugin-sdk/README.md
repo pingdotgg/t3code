@@ -143,8 +143,30 @@ socket and stream you create an `'error'` listener.
   `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
   to start and says why.
 
-The server API can't read T3's threads, projects or providers. A tool can keep its own data per
+The server API can't look up T3's threads, projects or providers. A tool can keep its own data per
 thread in `storage` under the `threadId`, but it can't look that thread up.
+
+## Finished runs
+
+Server API version 2 adds `api.events.runs({ afterSequence })`, an async iterable of finished runs
+in the plugin's environment. Each event has `type: "run.finished"`, `threadId`, `runId`, `status`,
+`completedAt`, `sequence` and `deliveryId`. Status is `completed`, `failed`, `cancelled` or
+`interrupted`. It carries no message bodies or credentials and works regardless of which client
+or provider started the run. The iterable ends when the plugin deactivates.
+
+With no cursor it starts with new events when iteration begins. Pass a saved `afterSequence` to
+replay retained events after that sequence and then follow live events. Save each event's
+`sequence` with `api.storage.set` **after** handling it. A restart can deliver it again: use
+`deliveryId` to deduplicate that committed update. Later updates to a finished run, including a
+retry's result, have distinct delivery IDs; the newest event for a `runId` carries its latest
+finished status. This does not make an external side effect and the saved cursor atomic.
+
+A negative, fractional or unsafe cursor rejects with an error whose `code` is
+`PluginRunEventCursorError`. A cursor older than retained history rejects with code
+`PluginRunEventHistoryPrunedError`, including when pruning overlaps replay. For that error, choose
+whether to restart with no cursor; doing so deliberately skips the missing history. For a
+transient failure or a slow consumer's full live buffer, resume from the saved cursor. Catch errors
+in your background consumer. Do not await it in `activate`, since it listens until deactivation.
 
 ## Web half
 
