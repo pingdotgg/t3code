@@ -15,7 +15,7 @@ const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:
 const COMMIT_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
+  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 
 /**
  * Azure alone addresses one repository under two names that share no part: `ssh.dev.azure.com` and
@@ -117,6 +117,7 @@ export const definition = defineSourceControl({
   changeRequestCloseCommand:
     /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
   authorProfileUrl: () => null,
+  hardLineBreaks: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => {
     const args = CHECKOUT_COMMAND.exec(input)?.[1];

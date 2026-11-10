@@ -305,7 +305,17 @@ const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "PullRequestReviewGuideService.addWorktree",
       cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
+      // Scratch checkout for reading the change: repository hooks (installs, LFS) only slow or fail it.
+      args: [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "worktree",
+        "add",
+        "--detach",
+        "--quiet",
+        path,
+        resolvedHead.commitSha,
+      ],
       timeoutMs: 5 * 60_000,
     });
     yield* Effect.addFinalizer(() =>
@@ -344,7 +354,10 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout));
     const [nameOnly, patch] = yield* Effect.all(
-      [diff(["--name-only", "-z"]), diff(["--unified=0", "--no-color", "--no-ext-diff"])],
+      [
+        diff(["--name-only", "-z"]),
+        diff(["--unified=0", "--no-color", "--no-ext-diff", "--no-textconv"]),
+      ],
       { concurrency: "unbounded" },
     );
     return parseReviewGuideChange(nameOnly, patch);

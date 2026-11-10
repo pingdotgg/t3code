@@ -1,34 +1,25 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 /** Branded help screens + the CliOutput formatter that renders them. */
 import { stripVTControlCharacters } from "node:util";
-import * as Option from "effect/Option";
 import * as CliOutput from "effect/cli/CliOutput";
 import type { HelpDoc } from "effect/cli/HelpDoc";
-import { Box, Heading, Text, useGlyphs } from "../ui/index.ts";
+import * as Option from "effect/Option";
 import type { JSX } from "react";
 import packageJson from "../../../../package.json" with { type: "json" };
-import type { CliKit } from "../../CliKit/CliKit.ts";
-import {
-  ANSI_BOLD,
-  ANSI_DIM,
-  ansiFg,
-  glyphsFor,
-  paint,
-  truncate,
-  theme,
-} from "../../CliKit/index.ts";
+import type { Interaction } from "../../../Interaction.ts";
+import { ANSI_BOLD, ANSI_DIM, ansiFg, paint, truncate } from "../../../Util/Terminal.ts";
+import { glyphsFor, theme } from "../../../Util/Theme.ts";
+import { Box, Heading, Text, useGlyphs } from "../ui/index.ts";
+import { formatView } from "./Format.tsx";
 import { Logo } from "./Logo.tsx";
 
-const commandLabel = (command: {
-  readonly name: string;
-  readonly alias?: string | undefined;
-}) => (command.alias ? `${command.name}, ${command.alias}` : command.name);
+const commandLabel = (command: { readonly name: string; readonly alias?: string | undefined }) =>
+  command.alias ? `${command.name}, ${command.alias}` : command.name;
 
 /** Shell-like highlighting shared by usage lines, examples, and help hints. */
 function CommandText({ command }: { readonly command: string }): JSX.Element {
-  const tokens = command.match(
-    /\s+|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+/g,
-  ) ?? [command];
+  const tokens = command.match(/\s+|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+/g) ?? [command];
   let word = 0;
   let valueAfterFlag = false;
 
@@ -124,15 +115,12 @@ function SubHelp({ doc, root = false }: SubHelpProps): JSX.Element {
   const commands = doc.subcommands?.flatMap((group) => group.commands) ?? [];
   const flags = doc.flags ?? [];
   const globalFlags = root
-    ? (doc.globalFlags ?? []).filter(
-        (flag) => flag.name === "help" || flag.name === "version",
-      )
+    ? (doc.globalFlags ?? []).filter((flag) => flag.name === "help" || flag.name === "version")
     : (doc.globalFlags ?? []);
   const args = doc.args ?? [];
 
   const flagLabel = (flag: (typeof flags)[number]) => {
-    const aliases =
-      flag.aliases.length > 0 ? `, ${flag.aliases.join(", ")}` : "";
+    const aliases = flag.aliases.length > 0 ? `, ${flag.aliases.join(", ")}` : "";
     return `--${flag.name}${aliases}`;
   };
   const argLabel = (arg: (typeof args)[number]) =>
@@ -170,10 +158,7 @@ function SubHelp({ doc, root = false }: SubHelpProps): JSX.Element {
               </Text>
             ))}
             {flag.type === "boolean" || typeRoom < 8 ? null : (
-              <Text color={theme.color.warning}>
-                {" "}
-                {truncate(flag.type, typeRoom)}
-              </Text>
+              <Text color={theme.color.warning}> {truncate(flag.type, typeRoom)}</Text>
             )}
           </Text>
         }
@@ -267,8 +252,7 @@ function SubHelp({ doc, root = false }: SubHelpProps): JSX.Element {
           {doc.examples.map((example) => (
             <Text key={example.command}>
               {"  "}
-              <Text tone="brand">$</Text>{" "}
-              <CommandText command={example.command} />
+              <Text tone="brand">$</Text> <CommandText command={example.command} />
             </Text>
           ))}
         </>
@@ -280,9 +264,7 @@ function SubHelp({ doc, root = false }: SubHelpProps): JSX.Element {
             <CommandText
               command={`${doc.usage.replace(/\s*<subcommand>.*$/, "")} <command> --help`}
             />
-            <Text color={theme.color.muted}>
-              ' for more information on a command.
-            </Text>
+            <Text color={theme.color.muted}>' for more information on a command.</Text>
           </Text>
         </Box>
       )}
@@ -290,12 +272,13 @@ function SubHelp({ doc, root = false }: SubHelpProps): JSX.Element {
   );
 }
 
-const formatSubHelp = (cli: CliKit["Service"], doc: HelpDoc) => {
+const formatSubHelp = (cli: Interaction["Service"], doc: HelpDoc) => {
   const termCols = cli.terminal.columns;
-  return cli.output.format(
+  return formatView(
     <Box width={termCols}>
       <SubHelp doc={doc} />
     </Box>,
+    cli.terminal,
     { columns: termCols },
   );
 };
@@ -303,15 +286,16 @@ const formatSubHelp = (cli: CliKit["Service"], doc: HelpDoc) => {
 /** Hide the logo entirely when it can't be at least this many columns wide. */
 const MIN_LOGO_COLS = 20;
 
-const formatRootHelp = (cli: CliKit["Service"], doc: HelpDoc) => {
+const formatRootHelp = (cli: Interaction["Service"], doc: HelpDoc) => {
   const termCols = cli.terminal.columns;
 
   // First pass: render the text alone to measure its exact footprint (post
   // ANSI codes and wrapping), then size the logo into the leftover space.
-  const text = cli.output.format(
+  const text = formatView(
     <Box width={termCols}>
       <SubHelp doc={doc} root />
     </Box>,
+    cli.terminal,
     { columns: termCols },
   );
 
@@ -330,15 +314,10 @@ const formatRootHelp = (cli: CliKit["Service"], doc: HelpDoc) => {
 
   if (logoCols < MIN_LOGO_COLS) return text;
 
-  return cli.output.format(
+  return formatView(
     <Box flexDirection="row" width={termCols}>
       <SubHelp doc={doc} root />
-      <Box
-        flexGrow={1}
-        flexDirection="column"
-        justifyContent="center"
-        alignItems="center"
-      >
+      <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
         <Logo cols={logoCols} />
         <Box marginTop={1}>
           <Text>
@@ -350,19 +329,18 @@ const formatRootHelp = (cli: CliKit["Service"], doc: HelpDoc) => {
         </Box>
       </Box>
     </Box>,
+    cli.terminal,
     { columns: termCols },
   );
 };
 
-export const brandedCliFormatter = (
-  cli: CliKit["Service"],
-): CliOutput.Formatter => {
+export const brandedCliFormatter = (cli: Interaction["Service"]): CliOutput.Formatter => {
   const fallback = CliOutput.defaultFormatter();
   const glyphs = glyphsFor(cli.terminal.unicode);
   const formatErrorLine = (message: string) =>
     `${paint(ansiFg(theme.color.danger), `${glyphs.error} error:`)} ${message}`;
   return {
-    ...fallback,
+    formatCliError: fallback.formatCliError,
     formatHelpDoc: (doc) =>
       doc.usage.startsWith("alchemy <subcommand>")
         ? formatRootHelp(cli, doc)
