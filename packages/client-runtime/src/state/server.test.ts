@@ -1445,7 +1445,7 @@ describe("provider setup commands", () => {
       yield* Deferred.await(updateStarted);
       void atoms.updateSettings.run(registry, {
         environmentId: TARGET.environmentId,
-        input: { patch: { boringSidebarEnabled: true } },
+        input: { patch: { fastWorktreeCheckout: true } },
       });
 
       const saved = yield* Deferred.await(settingsSaved).pipe(
