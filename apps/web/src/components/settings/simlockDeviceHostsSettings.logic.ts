@@ -1,6 +1,7 @@
 import {
   SimlockDeviceHostConfig,
   type EnvironmentId,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig as SimlockDeviceHostConfigType,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -54,10 +55,10 @@ export interface SimlockHostEnvironment {
   readonly hosts: ReadonlyArray<SimlockDeviceHostConfigType>;
 }
 
-/** A token field: the environment's saved token, a replacement, or none. */
+/** A token field: the environment's saved token, a replacement or secret reference, or none. */
 export type SimlockTokenEntry =
   | { kind: "saved" }
-  | { kind: "new"; value: string }
+  | { kind: "new"; value: SettingsSecretValue }
   | { kind: "cleared" };
 
 /**
@@ -83,7 +84,13 @@ export function planSimlockDeviceHostSave(
     const saved = environment.hosts.find((host) => host.id === draft.id)?.agentToken ?? "";
     const entry = tokens.get(environment.environmentId) ?? { kind: "cleared" };
     const agentToken =
-      entry.kind === "saved" ? saved : entry.kind === "new" ? entry.value.trim() : "";
+      entry.kind === "saved"
+        ? saved
+        : entry.kind !== "new"
+          ? ""
+          : typeof entry.value === "string"
+            ? entry.value.trim()
+            : entry.value;
     patches.push({
       environmentId: environment.environmentId,
       hosts: updateSimlockDeviceHosts(environment.hosts, { ...draft, agentToken }, false),
