@@ -403,6 +403,9 @@ touch and hold an image or video thumbnail and choose **Save or share**. On iOS,
 return to the thumbnail to open this menu after watching a full-screen video.
 
 File links refer to the environment's machine, including when you connect remotely.
+For absolute paths outside the workspace, a file missing there can open in your
+local editor if it exists on your computer and the app has a local connection.
+Paths starting with `~/` always refer to the environment's home directory.
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
