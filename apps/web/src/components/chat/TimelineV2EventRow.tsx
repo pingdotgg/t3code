@@ -8,7 +8,7 @@ import { SecretRequestCard } from "./SecretRequestCard";
 export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility } = row.projectedItem;
-  if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
+  if (item.type === "subagent") {
     return <V2SubagentGroup key={row.id} row={row} />;
   }
   if (item.type === "secret_request") {
@@ -40,7 +40,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
 }
 
-/** Subagents started together: one quiet row each, in the order they were started. */
+/** Subagents in a turn: one row each on the tool rows' rhythm, in the order they were started. */
 export const V2SubagentGroup = memo(function V2SubagentGroup({
   row,
 }: {
