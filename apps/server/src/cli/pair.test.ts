@@ -343,6 +343,29 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // regression: #34060 a shared $HOME (NFS) holds a record a live server on another machine wrote.
+  it.effect("names the other machine that owns runtime state instead of reporting no server", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-host-test-"));
+      const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+      NodeFS.mkdirSync(NodePath.dirname(statePath), { recursive: true });
+      NodeFS.writeFileSync(
+        statePath,
+        `${JSON.stringify({ ...baseState, pid: 4_194_305, hostname: "t3-other-host" })}\n`,
+      );
+
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+      );
+
+      const rendered = String(
+        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+      );
+      assert.include(rendered, "t3-other-host");
+      assert.notInclude(rendered, "No running T3 Code server found.");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // regression: #10516 minting opens the target database with this checkout's
   // migrations, so a worktree must never fall back to the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>
