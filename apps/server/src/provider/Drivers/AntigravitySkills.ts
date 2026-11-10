@@ -37,7 +37,7 @@ export function antigravityUserSkillDirectories(
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
 const MAX_SCAN_ENTRIES = 10_000;
-// Typical frontmatter fits in one read, and the entry limit binds before the byte budget does.
+// Typical frontmatter fits in one chunk, so most skills cost about this much of the scan budget.
 const SKILL_READ_CHUNK_BYTES = 1024;
 
 const SkillFrontmatter = Schema.Struct({
