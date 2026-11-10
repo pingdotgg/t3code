@@ -515,7 +515,8 @@ export const OpenCodeDriver: ProviderDriver<
       const configDir =
         processEnv.OPENCODE_CONFIG_DIR ||
         pathService.join(
-          processEnv.XDG_CONFIG_HOME || pathService.join(homeDirectory, ".config"),
+          processEnv.XDG_CONFIG_HOME ||
+            pathService.join(processEnv.HOME || processEnv.USERPROFILE || homeDirectory, ".config"),
           "opencode",
         );
       yield* fileSystem.watch(configDir).pipe(
