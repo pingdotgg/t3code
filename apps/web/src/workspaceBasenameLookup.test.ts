@@ -70,6 +70,7 @@ describe("chat file links an agent shortened", () => {
       "packages/web/src/index.ts",
     );
     expect(workspaceLinkLookupQuery("./cloud/http.ts", cwd)).toBeNull();
+    expect(workspaceLinkLookupQuery("~/acme/src/config.ts", cwd)).toBeNull();
     expect(workspaceLinkLookupQuery("packages/server/", cwd)).toBeNull();
   });
 

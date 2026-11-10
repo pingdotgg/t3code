@@ -71,7 +71,7 @@ function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string
  */
 export function workspaceLinkLookupQuery(relativePath: string, cwd: string): string | null {
   const trimmed = relativePath.trim();
-  if (isAbsolutePath(trimmed) || /^\.{1,2}[\\/]/.test(trimmed) || /[\\/]$/.test(trimmed)) {
+  if (isAbsolutePath(trimmed) || /^(?:\.{1,2}|~)[\\/]/.test(trimmed) || /[\\/]$/.test(trimmed)) {
     return null;
   }
   if (needsWorkspaceBasenameLookup(trimmed)) return trimmed;
