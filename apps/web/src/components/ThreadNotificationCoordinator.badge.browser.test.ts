@@ -105,6 +105,7 @@ const thread = {
   id: "thread",
   title: "Test thread",
   archivedAt: null as string | null,
+  snoozedUntil: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingRequestId: "request-1",
@@ -163,6 +164,8 @@ function toV2ThreadShell(input: typeof thread) {
       ? DateTime.makeUnsafe(latestTurn.completedAt)
       : undefined,
     archivedAt: input.archivedAt ? DateTime.makeUnsafe(input.archivedAt) : null,
+    snoozedUntil: input.snoozedUntil ? DateTime.makeUnsafe(input.snoozedUntil) : null,
+    snoozedAt: input.snoozedUntil ? SHELL_NOW : null,
     settledOverride: null,
     settledAt: null,
     lastVisitedAt: null,
@@ -266,6 +269,28 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("stays quiet while a thread is snoozed, until it asks for approval", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  const snoozedUntil = "2999-01-01T00:00:00.000Z";
+  const completed = {
+    snoozedUntil,
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+  };
+  app.start();
+  state.shells.set("one", shell({ snoozedUntil }));
+  state.shells.set("one", shell(completed));
+  expect(TestNotification.sent).toEqual([]);
+  expect(state.sound).not.toHaveBeenCalled();
+
+  state.shells.set("one", shell({ ...completed, snoozedUntil: null }));
+  expect(state.sound).not.toHaveBeenCalled();
+
+  state.shells.set("one", shell({ snoozedUntil, hasPendingApprovals: true }));
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Approval needed"]);
+  expect(state.sound).toHaveBeenCalledWith("input", expect.any(Function));
 });
 
 it.each([false, true])(

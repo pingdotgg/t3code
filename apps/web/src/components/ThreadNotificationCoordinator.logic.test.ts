@@ -25,7 +25,7 @@ const woke = (at: number): ThreadNotificationObservation => ({
   ...completed(at),
   backgroundWake: true,
 });
-const visible = { archived: false, quiet: false };
+const visible = { hidden: false, quiet: false };
 
 function fakeTimers(): Disposable {
   vi.useFakeTimers();
@@ -119,7 +119,7 @@ describe("createThreadNotificationGate", () => {
     observe(completed(2), { ...visible, quiet: true });
     observe(completed(2));
     observe(working);
-    observe(completed(3), { ...visible, archived: true });
+    observe(completed(3), { ...visible, hidden: true });
     observe(completed(3));
     expect(notify).not.toHaveBeenCalled();
     observe(working);

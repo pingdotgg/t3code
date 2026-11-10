@@ -3,6 +3,7 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
@@ -285,9 +286,10 @@ export function startThreadNotifications(
     entry.reconnecting = false;
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
+    const now = new Date().toISOString();
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
-        archived: state.thread.archivedAt !== null,
+        hidden: state.thread.archivedAt !== null || effectiveSnoozed(state.thread, { now }),
         quiet: state.raw.latestRunStopRequested === true,
       });
     }

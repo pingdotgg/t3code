@@ -50,6 +50,7 @@ import {
 import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 
@@ -317,6 +318,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
+  readonly nowMs: number;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -352,9 +354,12 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   const childDrivesWait =
     input.pendingSubagentRequest !== null &&
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
+  // A snoozed thread stays hidden until its wake time, so its completion clears the card silently.
+  const hiddenCompletion =
+    state?.phase === "completed" && isSnoozed(input.thread.value, input.nowMs);
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(state),
+    state: hiddenCompletion ? null : sanitizeRelayAgentActivityState(state),
     subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
@@ -576,6 +581,7 @@ export const make = Effect.gen(function* () {
       thread,
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
+      nowMs: (yield* DateTime.now).epochMilliseconds,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -643,6 +649,7 @@ export const make = Effect.gen(function* () {
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
               pendingSubagentRequest: null,
+              nowMs,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
