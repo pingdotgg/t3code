@@ -1,5 +1,5 @@
+import * as AWS from "@alchemy.run/aws";
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -14,13 +14,7 @@ export default Alchemy.Stack(
       // skip the vinext build (and the deploy) entirely.
       memo: {
         lockfile: true,
-        include: [
-          "app/**",
-          "public/**",
-          "package.json",
-          "vite.config.ts",
-          "tsconfig.json",
-        ],
+        include: ["app/**", "public/**", "package.json", "vite.config.ts", "tsconfig.json"],
       },
       forceDestroy: true,
       env: {
