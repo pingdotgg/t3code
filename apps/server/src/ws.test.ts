@@ -144,6 +144,7 @@ import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
+import * as ProjectLock from "./project/ProjectLock.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
@@ -1462,6 +1463,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             IdAllocator.layer,
             Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
             Layer.mock(ThreadCommandExecutor.ThreadCommandExecutor)({}),
+            ProjectLock.layer,
           ),
         ),
       ),
