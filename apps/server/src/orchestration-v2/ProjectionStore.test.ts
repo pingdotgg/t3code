@@ -43,6 +43,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -3389,10 +3390,45 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
-        yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
-          WHERE thread_id = ${threadId} AND ordinal = 2`;
+      const secondItemId = TurnItemId.make("turn-item:bounded-sql-history:2");
+      const secondItem = {
+        id: secondItemId,
+        threadId,
+        runId: (yield* projectionStore.getTurnItem({ threadId, itemId: secondItemId }))!.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed" as const,
+        title: "command 2",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const writeSecondItem = (item: OrchestrationV2TurnItem) =>
+        projectionStore.apply({
+          id: EventId.make(`event:bounded-sql-history:item-2:${item.type}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: secondItem.runId ?? undefined,
+          driver,
+          occurredAt: now,
+          payload: item,
+        });
+      for (const inline of [
+        { toolName: "t3-code.delegate_task" },
+        { toolName: "mcp__t3_code__delegate_task" },
+        { toolName: "view_image", viewedImagePath: "/repo/screenshot.png" },
+        { toolName: "mcp__docs__chart", output: { [MCP_APP_OUTPUT_KEY]: { uri: "ui://chart" } } },
+      ]) {
+        yield* writeSecondItem({
+          ...secondItem,
+          type: "dynamic_tool",
+          input: {},
+          ...inline,
+        });
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
           userTurnLimit: 10,
@@ -3420,8 +3456,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.isUndefined(page.items.find((row) => row.item.ordinal === 2)?.item.deferredWork);
       }
-      yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
-        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal = 2`;
+      yield* writeSecondItem({
+        ...secondItem,
+        type: "command_execution",
+        input: "echo 2",
+        output: "ok",
+        exitCode: 0,
+      });
       const sharedRunId = "run:bounded-sql-history:1";
       for (const [ordinal, status] of [
         [0, "completed"],
