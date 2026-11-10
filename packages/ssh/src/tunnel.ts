@@ -9,13 +9,15 @@ import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -52,6 +54,9 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// Matches the node-script launch command's whole ssh run against the same host.
+const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_TIMEOUT_MS;
+const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -86,7 +91,7 @@ interface SshTunnelEntry {
 
 type SshEnvironmentEffectContext =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -867,7 +872,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+    ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
   > {
     const stateKey = yield* remoteStateKey(target);
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
@@ -929,7 +934,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     readonly credential: string;
   },
   SshCommandError | SshInvalidTargetError | SshPairingError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
@@ -981,7 +986,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logInfo("ssh.remoteServer.stop.start", {
@@ -1007,7 +1012,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
@@ -1096,6 +1101,29 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+// ssh only binds the forward after it connects, which can take ConnectTimeout per dead address.
+const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly localPort: number;
+}) {
+  const net = yield* NetService.NetService;
+  yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
+      until: (listening) => listening,
+    }),
+    Effect.timeoutOrElse({
+      duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
+      orElse: () =>
+        Effect.fail(
+          new SshReadinessError({
+            message: `SSH connection to ${input.target.alias} did not come up within ${SSH_TUNNEL_CONNECT_TIMEOUT_MS}ms.`,
+          }),
+        ),
+    }),
+  );
+});
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -1110,7 +1138,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -1271,10 +1299,14 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForHttpReady({
-      baseUrl: input.httpBaseUrl,
-      timeoutMs: SSH_READY_TIMEOUT_MS,
-    }),
+    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+      Effect.andThen(
+        waitForHttpReady({
+          baseUrl: input.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+        }),
+      ),
+    ),
     exitFailure,
   ).pipe(
     Effect.tap(() =>
@@ -1555,7 +1587,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cryptoService = yield* Crypto.Crypto;
+    const digestService = yield* Digest.Digest;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
@@ -1595,7 +1627,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               },
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(Crypto.Crypto, cryptoService),
+          Effect.provideService(Digest.Digest, digestService),
           Effect.provideService(FileSystem.FileSystem, fileSystemService),
           Effect.provideService(Path.Path, pathService),
         );
@@ -1778,7 +1810,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 });
 
 /**
- * @effect-expect-leaking ChildProcessSpawner | Crypto | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ * @effect-expect-leaking ChildProcessSpawner | Digest | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
  */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,

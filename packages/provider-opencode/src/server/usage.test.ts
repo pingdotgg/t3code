@@ -18,17 +18,16 @@ const openDatabase = (filename: string) =>
     Effect.map(Context.get(SqlClient.SqlClient)),
   );
 
-// Counts statements and fetched data values, the expensive column a warm cache skips.
+// Counts fetched data values, the expensive column a warm cache skips.
 const countQueries = Effect.acquireRelease(
   Effect.sync(() => {
-    const counts = { statements: 0, dataRows: 0 };
+    const counts = { dataRows: 0 };
     const originalAll = NodeSqlite.StatementSync.prototype.all;
     const spy = vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
       this: NodeSqlite.StatementSync,
       ...params
     ) {
       const rows = originalAll.apply(this, params);
-      counts.statements += 1;
       counts.dataRows += rows.filter((row) => "data" in row).length;
       return rows;
     });
@@ -54,7 +53,7 @@ describe("readOpenCodeUsage", () => {
         modelID: "claude-sonnet-4-5",
         time: { created: sinceMs },
         tokens: { input: 100, output: 20 },
-        body: "x".repeat(64 * 1024),
+        body: "x".repeat(256 * 1024),
       };
       const data = JSON.stringify(message);
       const insert = (rowId: number, id: string, payload: string, created = sinceMs) =>
@@ -67,11 +66,23 @@ describe("readOpenCodeUsage", () => {
       }
       yield* insert(300, "old", data, sinceMs - 1);
       yield* insert(301, "user", JSON.stringify({ ...message, role: "user" }));
+      for (let index = 0; index < 32; index++) {
+        yield* insert(
+          400 + index,
+          `user-${index}`,
+          JSON.stringify({
+            role: "user",
+            summary: { diffs: [{ patch: "x".repeat(1024 * 1024) }] },
+          }),
+        );
+      }
       yield* insert(302, "invalid", "{invalid");
       yield* insert(303, "msg-0", data);
 
-      const writer = new NodeSqlite.DatabaseSync(path.join(dir, "opencode.db"));
-      yield* Effect.addFinalizer(() => Effect.sync(() => writer.close()));
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(path.join(dir, "opencode.db"))),
+        (database) => Effect.sync(() => database.close()),
+      );
       let changed = false;
       let largestRawResult = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
@@ -116,48 +127,58 @@ describe("readOpenCodeUsage", () => {
         900,
       );
       assert.isAbove(largestRawResult, 0);
-      assert.isBelow(largestRawResult, 6 * 1024 * 1024);
+      assert.isBelow(largestRawResult, 64 * 1024);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads statements in proportion to the window, not the whole history", () =>
+  it.effect("reads statements in proportion to the window despite sparse, unordered rowids", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "usage-reader-window-test-",
-      });
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-window-" });
       const db = yield* openDatabase(path.join(dir, "opencode.db"));
       yield* db.unsafe(
         "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
       );
-      yield* db.unsafe("CREATE INDEX message_time_created_idx ON message (time_created)");
+      yield* db.unsafe("CREATE INDEX message_time ON message(time_created)");
       const sinceMs = 1780000000000;
-      const data = JSON.stringify({ role: "assistant", modelID: "m", tokens: { input: 1 } });
+      const data = JSON.stringify({ modelID: "m", tokens: { input: 1 } });
       yield* db.unsafe(
         `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
-         INSERT INTO message (rowid, id, session_id, data, time_created)
-         SELECT i * 2, 'old-' || i, 'session-1', ?, ? FROM n`,
+        INSERT INTO message SELECT 'old-' || i, 's', ?, ? FROM n`,
         [data, sinceMs - 1],
       );
-      // Rowids are not time-ordered: in-window rows sit below and between old ones.
-      for (const [rowId, id] of [
-        [5001, "b"],
-        [1, "a"],
+      for (const [rowid, id] of [
+        [-10, "a"],
+        [10000, "b"],
         [20000, "c"],
       ] as const) {
         yield* db.unsafe(
-          "INSERT INTO message (rowid, id, session_id, data, time_created) VALUES (?, ?, 'session-1', ?, ?)",
-          [rowId, id, data, sinceMs],
+          "INSERT INTO message(rowid, id, session_id, data, time_created) VALUES (?, ?, 's', ?, ?)",
+          [rowid, id, data, sinceMs],
         );
       }
-      const counts = yield* countQueries;
+      let statements = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            statements++;
+            return originalAll.apply(this, params);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
       const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.error);
       assert.deepStrictEqual(
         result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
         ["opencode:a", "opencode:b", "opencode:c"],
       );
-      assert.isBelow(counts.statements, 10);
+      assert.isBelow(statements, 10);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -210,6 +231,61 @@ describe("readOpenCodeUsage", () => {
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "projects both SQLite formats without changing malformed or optional field handling",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-formats-" });
+        const db = yield* openDatabase(path.join(dir, "opencode.db"));
+        const sinceMs = 1780000000000;
+        const message = { model: { id: "m" }, tokens: { input: 10 }, time: { created: sinceMs } };
+        const cases = [
+          ["assistant", JSON.stringify({ ...message, role: "assistant", cost: 0.25 }), true],
+          ["absent-role", JSON.stringify(message), true],
+          ["null-role", JSON.stringify({ ...message, role: null }), false],
+          ["user", JSON.stringify({ ...message, role: "user" }), false],
+          ["malformed", "{broken", false],
+          ["json5", "{role:'assistant'}", false],
+          ["null", null, false],
+          ["blob", new Uint8Array(Buffer.from(JSON.stringify(message))), false],
+          ["fallback", JSON.stringify({ modelID: "fallback-model", tokens: { output: 5 } }), true],
+        ] as const;
+        for (const table of ["message", "session_message"]) {
+          yield* db.unsafe(
+            `CREATE TABLE ${table} (id TEXT, session_id TEXT, data, type TEXT, time_created INTEGER)`,
+          );
+          for (const [id, data] of cases) {
+            yield* db.unsafe(`INSERT INTO ${table} VALUES (?, 's', ?, 'assistant', ?)`, [
+              `${table}-${id}`,
+              data,
+              sinceMs,
+            ]);
+          }
+          yield* db.unsafe(`INSERT INTO ${table} VALUES (?, 's', ?, 'user', ?)`, [
+            `${table}-type-user`,
+            JSON.stringify(message),
+            sinceMs,
+          ]);
+        }
+        const result = yield* readOpenCodeUsage(dir, sinceMs);
+        assert.isFalse(result.error);
+        const records = result.files.flatMap((file) => file.records);
+        assert.deepStrictEqual(
+          records.map((record) => record.dedupeKey),
+          [
+            ...cases.filter(([, , valid]) => valid).map(([id]) => `opencode:message-${id}`),
+            "opencode:message-type-user",
+            ...cases.filter(([, , valid]) => valid).map(([id]) => `opencode:session_message-${id}`),
+          ],
+        );
+        assert.strictEqual(records[0]?.reportedCostUsd, 0.25);
+        assert.strictEqual(records[2]?.model, "fallback-model");
+        assert.strictEqual(records[2]?.timestampMs, sinceMs);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads only legacy OpenCode messages written since the window opened", () =>

@@ -35,9 +35,7 @@ const write = (file: string, content: string) => {
  * TypeScript.
  */
 const makeProject = () => {
-  const root = realpathSync(
-    mkdtempSync(path.join(os.tmpdir(), "alchemy-register-oxc-")),
-  );
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "alchemy-register-oxc-")));
   temporaryDirectories.push(root);
   const at = (file: string) => path.join(root, file);
   write(at("package.json"), '{"type":"module"}');
@@ -64,26 +62,14 @@ const makeProject = () => {
     at("node_modules/wsdep/package.json"),
     '{"name":"wsdep","type":"module","exports":{".":"./src/index.ts"}}',
   );
-  write(
-    at("node_modules/wsdep/src/index.ts"),
-    'export const fromWorkspaceDep: string = "ws";\n',
-  );
+  write(at("node_modules/wsdep/src/index.ts"), 'export const fromWorkspaceDep: string = "ws";\n');
   write(
     at("node_modules/conditional/package.json"),
     '{"name":"conditional","type":"module","exports":{".":{"bun":"./src/index.ts","import":"./lib/index.js"}}}',
   );
-  write(
-    at("node_modules/conditional/src/index.ts"),
-    'export const selected: string = "src";\n',
-  );
-  write(
-    at("node_modules/conditional/lib/index.js"),
-    'export const selected = "lib";\n',
-  );
-  write(
-    at("src/lib/helper.ts"),
-    'export const helper = (): string => "helper";\n',
-  );
+  write(at("node_modules/conditional/src/index.ts"), 'export const selected: string = "src";\n');
+  write(at("node_modules/conditional/lib/index.js"), 'export const selected = "lib";\n');
+  write(at("src/lib/helper.ts"), 'export const helper = (): string => "helper";\n');
   write(at("src/lib/helper.js"), 'export const helper = () => "emitted";\n');
   write(at("src/dir/index.ts"), 'export const index = "dir-index";\n');
   write(at("src/sub.ts"), 'export const sub = "sub";\n');
@@ -122,16 +108,16 @@ const makeProject = () => {
   return root;
 };
 
-const registerUrl = pathToFileURL(
-  path.resolve(import.meta.dir, "../src/register-oxc.ts"),
-).href;
+const srcUrl = (file: string) => pathToFileURL(path.resolve(import.meta.dir, "../src", file)).href;
+const registerUrl = srcUrl("loader/register.ts");
 
 const runNode = (
   cwd: string,
   script: string,
   env: Record<string, string> = {},
+  nodeArgs: ReadonlyArray<string> = [],
 ) =>
-  spawnSync("node", ["--no-warnings", "--input-type=module", "-e", script], {
+  spawnSync("node", [...nodeArgs, "--no-warnings", "--input-type=module", "-e", script], {
     cwd,
     encoding: "utf8",
     env: { ...process.env, ...env },
@@ -178,7 +164,8 @@ describe("registerOxc", () => {
     for (const name of maps) {
       const map = JSON.parse(readFileSync(path.join(cache, name), "utf8"));
       expect(map.sourcesContent).toBeUndefined();
-      expect(map.sources[0]).toMatch(/\.(ts|tsx|cts|js)$/);
+      // By URL: a bare path would resolve against the cache directory.
+      expect(map.sources[0]).toMatch(/^file:\/\/.*\.(ts|tsx|cts|js)$/);
     }
     // The cache-hit path references the same file.
     const hit = runNode(root, script, { ALCHEMY_TRANSFORM_CACHE: cache });
@@ -190,12 +177,76 @@ describe("registerOxc", () => {
     expect(inline.stdout.trim().split("\n")[1]).toMatch(/entry\.ts:15:/);
   });
 
+  it("inlines source maps with their source while an inspector is attached", () => {
+    const root = makeProject();
+    const cache = path.join(root, "cache");
+    // What a debugger sees for each module: a map it can always read, not a
+    // reference into the shared cache directory. Run twice to cover a cold
+    // transform and a cache hit.
+    const script = `
+      const { Session } = await import("node:inspector");
+      const session = new Session();
+      session.connect();
+      const maps = {};
+      session.on("Debugger.scriptParsed", ({ params }) => {
+        if (params.url.endsWith("/src/sub.ts")) maps.sub = params.sourceMapURL;
+      });
+      session.post("Debugger.enable");
+      const { registerOxc } = await import(${JSON.stringify(registerUrl)});
+      registerOxc();
+      await import("./src/sub.ts");
+      console.log(maps.sub);
+      `;
+    for (const _ of [0, 1]) {
+      const result = runNode(root, script, { ALCHEMY_TRANSFORM_CACHE: cache }, ["--inspect=0"]);
+      expect(result.status, result.stderr).toBe(0);
+      const sourceMapUrl = result.stdout.trim();
+      expect(sourceMapUrl).toStartWith("data:application/json;base64,");
+      const map = JSON.parse(Buffer.from(sourceMapUrl.split(",")[1]!, "base64").toString("utf8"));
+      expect(map.sources).toEqual([pathToFileURL(path.join(root, "src/sub.ts")).href]);
+      expect(map.sourcesContent).toEqual([readFileSync(path.join(root, "src/sub.ts"), "utf8")]);
+    }
+  });
+
+  it("imports files as text with the type: text attribute", () => {
+    const root = makeProject();
+    write(path.join(root, "src/notes.txt"), "\uFEFFhéllo\n`${not code}`\n");
+    write(path.join(root, "node_modules/textdep/data.txt"), "from a dependency");
+    write(
+      path.join(root, "src/texts.ts"),
+      [
+        'import notes from "./notes.txt" with { type: "text" };',
+        'import source from "./sub.ts" with { type: "text" };',
+        'import { sub } from "./sub.ts";',
+        'import dependency from "textdep/data.txt" with { type: "text" };',
+        "export const texts = { notes, source, sub, dependency };",
+      ].join("\n"),
+    );
+    const result = runNode(
+      root,
+      `
+      const { registerOxc } = await import(${JSON.stringify(registerUrl)});
+      registerOxc({ filter: (path) => !path.includes("/node_modules/") });
+      const { texts } = await import("./src/texts.ts");
+      console.log(JSON.stringify(texts));
+      `,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      // UTF-8 decoded like TextDecoder: BOM stripped, nothing evaluated
+      notes: "héllo\n`${not code}`\n",
+      // TypeScript imported as text is its untranspiled source, a module
+      // distinct from the same file imported as code
+      source: 'export const sub = "sub";\n',
+      sub: "sub",
+      // the node_modules filter only limits transpiling
+      dependency: "from a dependency",
+    });
+  });
+
   it("adds configured package export conditions to project resolution", () => {
     const root = makeProject();
-    write(
-      path.join(root, "src/conditional.ts"),
-      'export { selected } from "conditional";\n',
-    );
+    write(path.join(root, "src/conditional.ts"), 'export { selected } from "conditional";\n');
     const result = runNode(
       root,
       `
@@ -214,16 +265,19 @@ describe("registerOxc", () => {
     const result = runNode(
       root,
       `
+      const { registerHooks } = await import("node:module");
+      const { createHooks } = await import(${JSON.stringify(srcUrl("loader/hooks.ts"))});
+      const { namespaced, importNamespaced } = await import(${JSON.stringify(srcUrl("loader/namespace.ts"))});
       const { registerOxc } = await import(${JSON.stringify(registerUrl)});
       const seen = [];
-      const one = registerOxc({ namespace: "one", onImport: (url) => seen.push(url.split("/").pop()) });
-      const a = await one.import("./src/sub.ts", import.meta.url);
-      const b = await one.import("./src/sub.ts", import.meta.url);
-      const two = registerOxc({ namespace: "two" });
-      const c = await two.import("./src/sub.ts", import.meta.url);
+      const one = registerHooks(namespaced(createHooks(), { namespace: "one", onImport: (url) => seen.push(url.split("/").pop()) }));
+      const a = await importNamespaced("./src/sub.ts", import.meta.url, "one");
+      const b = await importNamespaced("./src/sub.ts", import.meta.url, "one");
+      const two = registerHooks(namespaced(createHooks(), { namespace: "two" }));
+      const c = await importNamespaced("./src/sub.ts", import.meta.url, "two");
       console.log(JSON.stringify({ same: a === b, fresh: a !== c, seen }));
-      one.unregister();
-      two.unregister();
+      one.deregister();
+      two.deregister();
       registerOxc({ filter: (file) => !file.includes("/node_modules/") });
       try {
         await import("wsdep");
@@ -258,39 +312,20 @@ describe("transform cache", () => {
   it("reuses Oxc output across processes and keys on the tsconfig", () => {
     const root = makeProject();
     const cache = path.join(root, "cache");
-    const first = runNode(
-      root,
-      importSub(`{ cache: ${JSON.stringify(cache)} }`),
-    );
+    const first = runNode(root, importSub(`{ cache: ${JSON.stringify(cache)} }`));
     expect(first.status, first.stderr).toBe(0);
     expect(first.stdout.trim()).toBe("sub");
     const entries = readdirSync(cache)
-      .filter((name) => name.endsWith(".json"))
+      .filter((name) => name.endsWith(".code"))
       .map((name) => path.join(cache, name));
     expect(entries.length).toBeGreaterThan(0);
     // The only proof a second process READ the entry rather than
     // transforming again: make the cached code say something the source
     // does not.
-    const entry = entries.find((file) =>
-      (
-        JSON.parse(readFileSync(file, "utf8")) as { code: string }
-      ).code.includes('"sub"'),
-    );
+    const entry = entries.find((file) => readFileSync(file, "utf8").includes('"sub"'));
     expect(entry).toBeDefined();
-    const cached = JSON.parse(readFileSync(entry!, "utf8")) as {
-      code: string;
-    };
-    writeFileSync(
-      entry!,
-      JSON.stringify({
-        ...cached,
-        code: cached.code.replace('"sub"', '"from-cache"'),
-      }),
-    );
-    const second = runNode(
-      root,
-      importSub(`{ cache: ${JSON.stringify(cache)} }`),
-    );
+    writeFileSync(entry!, readFileSync(entry!, "utf8").replace('"sub"', '"from-cache"'));
+    const second = runNode(root, importSub(`{ cache: ${JSON.stringify(cache)} }`));
     expect(second.status, second.stderr).toBe(0);
     expect(second.stdout.trim()).toBe("from-cache");
     // The resolved tsconfig is part of the key: editing it is a miss.
@@ -300,10 +335,7 @@ describe("transform cache", () => {
     };
     config.compilerOptions.target = "ES2020";
     writeFileSync(tsconfig, JSON.stringify(config));
-    const third = runNode(
-      root,
-      importSub(`{ cache: ${JSON.stringify(cache)} }`),
-    );
+    const third = runNode(root, importSub(`{ cache: ${JSON.stringify(cache)} }`));
     expect(third.status, third.stderr).toBe(0);
     expect(third.stdout.trim()).toBe("sub");
   });

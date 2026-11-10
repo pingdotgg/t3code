@@ -127,6 +127,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   const seen = new Set<string>();
   let found = false;
   let error = false;
+  let databaseRows = 0;
+  let databasePages = 0;
   const append = (records: UsageRecord[], record: UsageRecord | null) => {
     if (record === null || record.timestampMs < sinceMs) return;
     if (record.dedupeKey !== null) {
@@ -175,7 +177,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
       Effect.orElseSucceed(() => null),
     );
     const beforeOpen = yield* readIdentity;
-    const readDatabase = Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const identity = yield* readIdentity;
       const cacheable = identity !== null && identity === beforeOpen;
@@ -201,26 +203,30 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const previous = cache?.rows.get(key);
         const hit = (row: ListedRow) =>
           row.fingerprint !== null && previous?.get(row.row_id)?.fingerprint === row.fingerprint;
-        // Use time indexes for the window; octet_length avoids loading overflow pages.
-        // OpenCode updates time_updated when a message changes.
+        // List rowids and fingerprints so SQLite can use time indexes without reading message bodies.
+        // OpenCode updates time_updated when a message changes; octet_length skips overflow pages.
         const fingerprint =
           columns.has("time_updated") && cacheable
             ? `CASE WHEN time_updated IS NOT NULL THEN json_array(?, id, session_id, ${timestamp}, time_updated, octet_length(data)) END`
             : "NULL";
         const listed = (yield* sql.unsafe<ListedRow>(
-          `SELECT rowid AS row_id, ${fingerprint} AS fingerprint
-           FROM ${table} ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
+          `SELECT rowid AS row_id, ${fingerprint} AS fingerprint FROM ${table}
+           ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}`,
           [
             ...(columns.has("time_updated") && cacheable ? [identity] : []),
             ...(timestamp === "NULL" ? [] : [sinceMs]),
           ],
         )).toSorted((a, b) => a.row_id - b.row_id);
+        databaseRows += listed.length;
         const misses = listed.filter((row) => !hit(row));
         const fetched = new Map<number, Omit<CachedOpenCodeRow, "fingerprint">>();
-        // StatementSync.all materializes results; fetch the large data column in pages.
-        // Omit tracing because large histories require thousands of statements.
+        // Filter and project in SQLite: user diffs and assistant bodies can be hundreds of MB.
+        const validAssistant = `CASE WHEN typeof(data) = 'text' AND json_valid(data)
+          THEN json_type(data, '$.role') IS NULL OR data ->> '$.role' = 'assistant' END`;
+        // Omit per-page spans; the enclosing scan records row and page counts.
         for (let start = 0; start < misses.length; start += MESSAGE_PAGE_SIZE) {
           const page = misses.slice(start, start + MESSAGE_PAGE_SIZE);
+          databasePages++;
           const rows = yield* sql
             .unsafe<{
               readonly row_id: number;
@@ -229,8 +235,14 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
-               FROM ${table} WHERE rowid IN (${page.map(() => "?").join(", ")})`,
+              `SELECT rowid AS row_id, id, session_id, ${timestamp} AS created, json_object(
+                 'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
+                 'model', data -> '$.model', 'modelID', data -> '$.modelID',
+                 'time', data -> '$.time', 'id', data -> '$.id', 'sessionID', data -> '$.sessionID'
+               ) AS data
+               FROM ${table}
+               WHERE rowid IN (${page.map(() => "?").join(", ")}) AND ${validAssistant}
+               ORDER BY rowid`,
               page.map((row) => row.row_id),
             )
             .pipe(Effect.withTracerEnabled(false));
@@ -243,6 +255,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
                 ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
               }),
             });
+          }
+          // Cache rows the SQL filter dropped so unchanged non-usage rows are not re-read.
+          for (const row of page) {
+            if (!fetched.has(row.row_id)) fetched.set(row.row_id, { created: null, record: null });
           }
           yield* Effect.yieldNow;
         }
@@ -268,8 +284,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         }
         cache.rows.set(key, next);
       }
-    });
-    yield* Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(readDatabase)).pipe(
+    }).pipe(
+      (read) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(read)),
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
       Effect.catchTags({
         SqlError: () => {
@@ -345,6 +361,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
       }),
     );
   }
+  yield* Effect.annotateCurrentSpan({
+    "usage.database_rows": databaseRows,
+    "usage.database_pages": databasePages,
+  });
   return { files, missing: !found && !error, error };
 });
 

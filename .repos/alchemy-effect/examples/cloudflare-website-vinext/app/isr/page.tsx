@@ -16,11 +16,7 @@ export default function CachedPage() {
           Rendered at: <LocalTime cached value={new Date().toISOString()} />
         </p>
         <form action={refreshCachedPage}>
-          <button
-            className={buttonClass}
-            data-testid="isr-refresh"
-            type="submit"
-          >
+          <button className={buttonClass} data-testid="isr-refresh" type="submit">
             Refresh cache now
           </button>
         </form>
