@@ -159,7 +159,10 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratchProject: () => Effect.succeed(false),
+    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
