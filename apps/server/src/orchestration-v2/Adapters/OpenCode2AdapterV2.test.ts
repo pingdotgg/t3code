@@ -1,4 +1,5 @@
 import * as NodeURL from "node:url";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -2715,48 +2716,67 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps thread-scoped T3 waits as dynamic tools through their lifecycle", () =>
-    Effect.gen(function* () {
-      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
-      const name = "t3-code-web_delegate_task";
-      const input = { task: "Review", mode: "wait" };
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.tool.input.started", { ...tool, name }),
-        event("session.tool.called", { ...tool, name, input, executed: true }),
-        event("session.tool.success", {
-          ...tool,
-          content: [{ type: "text", text: "Reviewed" }],
-          metadata: {},
-          executed: true,
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      const events = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread));
-      const items = (yield* Fiber.join(events)).flatMap((event) =>
-        event.type === "turn_item.updated" &&
-        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
-          ? [event.turnItem]
-          : [],
-      );
-      assert.deepEqual(
-        items.map((item) => item.type),
-        ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
-      );
-      assert.deepEqual(
-        items.map((item) => item.status),
-        ["running", "running", "completed"],
-      );
-      const last = items.at(-1);
-      assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
-      assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
-    }).pipe(Effect.scoped),
+  it.effect.each(["delegate_task", "html_preview", "mcp__acme__edit_document"])(
+    "keeps MCP %s as a dynamic tool through its lifecycle",
+    (toolName) =>
+      Effect.gen(function* () {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
+        const name = toolName.startsWith("mcp__") ? toolName : `t3-code-web_${toolName}`;
+        const input =
+          toolName !== "delegate_task"
+            ? { html: "<p>Preview</p>" }
+            : { task: "Review", mode: "wait" };
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.tool.input.started", { ...tool, name }),
+          event("session.tool.called", { ...tool, name, input, executed: true }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [
+                { type: "text", text: "Reviewed" },
+                ...(toolName !== "delegate_task"
+                  ? [{ type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" }]
+                  : []),
+              ],
+              metadata: {},
+              executed: true,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const items = (yield* Fiber.join(events)).flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((item) => item.type),
+          ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
+        );
+        assert.deepEqual(
+          items.map((item) => item.status),
+          ["running", "running", "completed"],
+        );
+        const last = items.at(-1);
+        assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
+        assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
+        assert.deepEqual(
+          toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
+          toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("stores a shell command that exits non-zero as failed", () =>
@@ -4909,6 +4929,114 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
+  it.effect("shows a question asked while OpenCode wakes for a background reply", () =>
+    Effect.gen(function* () {
+      const OTHER = "ses_other00000000000000000000";
+      const gate = makeProviderReplayGate(["continued"]);
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.get", { sessionID: OTHER }),
+          replyData("session.get", sessionInfo({ id: OTHER })),
+          out("permission.list", { sessionID: OTHER }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: OTHER }),
+          replyData("session.form.list", []),
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+          event("form.created", { form: colorForm }),
+          // Handled after the form, so its update proves the form reached the adapter.
+          event("session.model.selected", {
+            sessionID: OTHER,
+            model: { providerID: "opencode", id: "big-pickle", variant: "none" },
+          }),
+          // Released once the continuation started, so its update follows the replay.
+          event(
+            "session.model.selected",
+            {
+              sessionID: OTHER,
+              model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+            },
+            "continued",
+          ),
+          out("session.form.reply", {
+            sessionID: SESSION,
+            formID: colorForm.id,
+            answer: { q0: "Red" },
+          }),
+          reply("session.form.reply", null),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      yield* runtime.resumeThread({
+        providerThread: {
+          ...thread,
+          id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+          nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: OTHER, strength: "strong" },
+        },
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const formSeen = yield* Deferred.make<void>();
+      const replayed = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<void>();
+      const otherVariant = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.nativeThreadRef?.nativeId === OTHER
+          ? event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value
+          : undefined;
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (otherVariant(event) === "none") yield* Deferred.succeed(formSeen, undefined);
+            if (otherVariant(event) === "thinking") yield* Deferred.succeed(replayed, undefined);
+            if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
+              yield* Deferred.succeed(ended, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const offer = yield* Deferred.await(offered);
+      yield* Deferred.await(formSeen);
+      yield* runtime.startTurn(continuationTurn(thread, offer));
+      gate.release("continued");
+      yield* Deferred.await(replayed);
+      const requests = collected.flatMap((event) =>
+        event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+          ? [event.runtimeRequest]
+          : [],
+      );
+      assert.deepEqual(
+        requests.map((request) => request.nativeRequestRef?.nativeId),
+        [colorForm.id],
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: requests[0]!.id,
+        answers: { q0: "Red" },
+      });
+      yield* Deferred.await(ended);
+      const last = collected.findLast((event) => event.type === "turn.terminal");
+      assert.equal(last?.type === "turn.terminal" ? last.status : undefined, "completed");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("ends a follow-up turn a steer joined exactly once", () =>
