@@ -1,3 +1,4 @@
+import { isAbsolute, sep } from "node:path";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import ignore from "@alchemy.run/node-utils/ignore";
@@ -5,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import mime from "mime";
-import { isAbsolute, sep } from "node:path";
 import {
   CF_ASSETS_IGNORE_FILENAME,
   HEADERS_FILENAME,
@@ -22,11 +22,7 @@ export const normalizeFilePath = (relativeFilepath: string) => {
 
 export const getContentType = (absFilePath: string) => {
   let contentType = mime.getType(absFilePath);
-  if (
-    contentType &&
-    contentType.startsWith("text/") &&
-    !contentType.includes("charset")
-  ) {
+  if (contentType && contentType.startsWith("text/") && !contentType.includes("charset")) {
     contentType = `${contentType}; charset=utf-8`;
   }
   return contentType;
@@ -69,7 +65,7 @@ export const createAssetsIgnoreFunction = Effect.fn(function* (dir: string) {
   const assetsIgnore = yield* fs.readFileString(cfAssetIgnorePath).pipe(
     Effect.catchIf(
       (error) => error.reason._tag === "NotFound",
-      () => Effect.succeed(undefined),
+      () => Effect.undefined,
     ),
   );
   if (assetsIgnore !== undefined) {
