@@ -25,6 +25,10 @@ import {
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
   getThreadSortTimestamp,
   planPinnedReorder,
   sortThreads,
