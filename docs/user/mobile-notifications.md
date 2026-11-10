@@ -4,6 +4,8 @@ Sign in to T3 Connect, link your environments, and enable **Device Notifications
 
 Enable **Live Activity Updates** on iOS, **Agent Live Updates** on Android 16 and newer, or **Ongoing Agent Activity** on older Android versions to follow work without opening the app. Finished results remain visible for up to 15 minutes. You can dismiss an Android activity card without disabling alerts; turn off the same switch to stop future cards.
 
+For activity without ordinary alerts on Android 8 or newer, leave **Ongoing agent activity** enabled and turn off **Agent alerts** in Android's notification settings for T3 Code. Activity updates continue, and the same card shows the finished result without a separate alert. On Android 16 and newer, the finished result remains a Live Update until dismissed or expired. Keep app-wide notification permission and **Live updates** enabled so Android can display it.
+
 The iOS Agent Activity home-screen widget refreshes in the background through T3 Connect, even while the app is closed. On iOS 26 and newer, agent changes request an update through push notifications; scheduled refreshes also check for current activity. iOS controls refresh timing. If background reads stop succeeding for an hour, unfinished work becomes out of date. Direct connections refresh while T3 Code is open and become out of date after ten minutes without a confirmed observation. Completed and failed outcomes keep their labels.
 
 Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing activity continues to update. Viewing a thread on another device does not silence your phone's alerts.

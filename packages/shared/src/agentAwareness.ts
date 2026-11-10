@@ -1,8 +1,10 @@
 import {
   isListedThreadLineage,
   type EnvironmentId,
+  isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +19,31 @@ export type AgentAwarenessPhase =
   | "completed"
   | "failed"
   | "stale";
+
+export interface SubagentRequestAwareness {
+  readonly requestId: RuntimeRequestId;
+  /** The child's own update time, which moves whenever its request changes. */
+  readonly updatedAt: DateTime.Utc;
+}
+
+/** Provider-native subagents ask on their parent; the coordinator answers child questions. */
+export function subagentAwaitsApproval(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
+  >,
+): boolean {
+  const kind = thread.pendingRuntimeRequest?.kind;
+  return (
+    kind !== undefined &&
+    kind !== "auth_refresh" &&
+    kind !== "user_input" &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    !isProviderNativeSubagentThread(thread) &&
+    // The activity run stays set when a follow-up is queued behind a blocked run.
+    thread.activityRunStatus != null
+  );
+}
 
 export interface AgentAwarenessState {
   readonly environmentId: EnvironmentId;
@@ -63,6 +90,8 @@ export interface ProjectThreadAwarenessV2Input {
       | "title"
       | "updatedAt"
     >;
+  /** The approval a live subagent below this thread is waiting on. */
+  readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
 }
 
 export function projectThreadAwarenessV2(
@@ -70,6 +99,7 @@ export function projectThreadAwarenessV2(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage) || thread.archivedAt != null) return null;
+  const subagentRequest = input.pendingSubagentRequest ?? null;
   if (
     input.now !== undefined &&
     thread.snoozedUntil != null &&
@@ -81,9 +111,10 @@ export function projectThreadAwarenessV2(
         (thread.latestRunCompletedAt != null &&
           DateTime.toEpochMillis(thread.latestRunCompletedAt) >
             DateTime.toEpochMillis(thread.snoozedAt)));
-    if (thread.pendingRuntimeRequest == null && !failedAfterSnooze) return null;
+    if (thread.pendingRuntimeRequest == null && subagentRequest === null && !failedAfterSnooze)
+      return null;
   }
-  const phase = resolveThreadAwarenessPhaseV2(thread);
+  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
   if (phase === null) {
     return null;
   }
@@ -112,13 +143,20 @@ export function projectThreadAwarenessV2(
     retained: true,
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: DateTime.formatIso(thread.updatedAt),
+    // A child's request leaves the parent's own timestamp alone. Alerts are
+    // keyed by phase and time, so a second wait needs the child's time.
+    updatedAt: DateTime.formatIso(
+      subagentRequest === null
+        ? thread.updatedAt
+        : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
+    ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }
 
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
+  childAwaitsApproval: boolean,
 ): AgentAwarenessPhase | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
@@ -127,6 +165,9 @@ function resolveThreadAwarenessPhaseV2(
   ) {
     return "waiting_for_approval";
   }
+  // The parent can finish its own turn while a delegated child keeps working,
+  // so a child's request outranks the parent's run status.
+  if (childAwaitsApproval) return "waiting_for_approval";
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
