@@ -7808,8 +7808,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (postSettleContinuationEnabled && settledStatus === "completed") {
             yield* Ref.set(finalizedRunTools, {
               sessionId: context.nativeThreadId,
-              tools: context.tools,
-              toolStartedAt: context.toolStartedAt,
+              tools: new Map([...(context.precedingRunTools?.tools ?? []), ...context.tools]),
+              toolStartedAt: new Map([
+                ...(context.precedingRunTools?.toolStartedAt ?? []),
+                ...context.toolStartedAt,
+              ]),
             });
           }
           yield* Ref.set(activeTurn, null);

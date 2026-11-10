@@ -2121,18 +2121,37 @@ describe("AcpRegistryAdapterV2", () => {
     Effect.gen(function* () {
       const { update } = claudeFrames;
       const gate = makeProviderReplayGate(["task-completed", "answer"]);
+      const launchTask = (toolCallId: string) =>
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Task",
+          kind: "other",
+          status: "completed",
+          rawInput: { subagent_type: "explorer", prompt: `sleep 20; echo ${toolCallId}` },
+          rawOutput: { type: "Text", text: "Task launched in background" },
+        });
+      // A Task the previous run never saw must still merge with the run that launched it.
+      const assertTaskCard = (
+        events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+        toolCallId: string,
+      ) => {
+        const task = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === toolCallId,
+        );
+        if (task?.type !== "turn_item.updated") throw new Error(`Missing ${toolCallId} update`);
+        assert.include(task.turnItem, { title: "Task", status: "completed" });
+        assert.deepInclude(task.turnItem, {
+          input: { subagent_type: "explorer", prompt: `sleep 20; echo ${toolCallId}` },
+        });
+      };
       const session = yield* openClaudeReplaySession(
         [
           ...droidFirstTurn(
-            update(CLAUDE_ROOT_SESSION, {
-              sessionUpdate: "tool_call",
-              toolCallId: "task-1",
-              title: "Task",
-              kind: "other",
-              status: "completed",
-              rawInput: { subagent_type: "explorer", prompt: "sleep 20; ls /tmp | head -3" },
-              rawOutput: { type: "Text", text: "Task launched in background" },
-            }),
+            launchTask("task-1"),
+            launchTask("task-2"),
             update(CLAUDE_ROOT_SESSION, {
               sessionUpdate: "agent_message_chunk",
               content: { type: "text", text: "waiting" },
@@ -2150,12 +2169,18 @@ describe("AcpRegistryAdapterV2", () => {
           claudeMarker("task done"),
           {
             ...update(CLAUDE_ROOT_SESSION, {
-              sessionUpdate: "usage_update",
-              used: 2_000,
-              size: 10_000,
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-2",
+              status: "completed",
+              rawOutput: { type: "Text", text: "The second task exited with code 0." },
             }),
             label: "answer",
           },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "usage_update",
+            used: 2_000,
+            size: 10_000,
+          }),
           update(CLAUDE_ROOT_SESSION, {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: "The background task exited with code 0." },
@@ -2181,26 +2206,20 @@ describe("AcpRegistryAdapterV2", () => {
       yield* TestClock.adjust("3 seconds");
       const taskRun = yield* Fiber.join(taskSettled);
       assert.include(taskRun.at(-1), { runOrdinal: 2, status: "completed" });
-      const task = taskRun.findLast(
-        (event) =>
-          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "task-1",
-      );
-      if (task?.type !== "turn_item.updated") throw new Error("Missing Task update");
-      assert.include(task.turnItem, { title: "Task", status: "completed" });
-      assert.deepInclude(task.turnItem, {
-        input: { subagent_type: "explorer", prompt: "sleep 20; ls /tmp | head -3" },
-      });
+      assertTaskCard(taskRun, "task-1");
       // Droid answers ~4 s after the Task result, past the quiet window.
       gate.release("answer");
       yield* session.throughMarker("late answer");
       assert.lengthOf(session.offers, 2, "Droid's late answer must offer another continuation");
       yield* session.offers[1]!.dispatchIfCurrent!(Effect.void);
       yield* session.runtime.startTurn(session.turnInput(3, { continuation: true }));
-      const answer = (yield* session.until(
+      const answerRun = yield* session.until(
         (event) =>
           event.type === "message.updated" &&
           event.message.text === "The background task exited with code 0.",
-      )).at(-1);
+      );
+      assertTaskCard(answerRun, "task-2");
+      const answer = answerRun.at(-1);
       if (answer?.type !== "message.updated") throw new Error("Missing late answer");
       assert.equal(answer.message.runId, session.turnInput(3).runId);
       const answerSettled = yield* Effect.forkScoped(session.terminal);
