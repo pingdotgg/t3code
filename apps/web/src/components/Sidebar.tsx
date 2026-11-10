@@ -88,6 +88,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
 import {
@@ -235,6 +236,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import {
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
+  observeSidebarDraftPromotion,
   useActiveRowReveal,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -968,6 +970,20 @@ function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
  */
 const settledWhenOpened = new Map<string, boolean>();
 
+function revealSidebarShelf(header: HTMLElement) {
+  const viewport = header.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  const lastRow = Array.from(
+    header
+      .closest("ul")
+      ?.querySelectorAll<HTMLElement>(
+        `[data-sidebar-parent="${CSS.escape(header.dataset.sidebarRow ?? "")}"]`,
+      ) ?? [],
+  ).at(-1);
+  if (!viewport || !lastRow) return;
+  revealSidebarRow(viewport, lastRow);
+  revealSidebarRow(viewport, header);
+}
+
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
@@ -1199,6 +1215,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
 
+  if (routeTarget?.kind === "draft") {
+    observeSidebarDraftPromotion(routeReveal, routeRowThreadKey);
+  }
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
   // thread once. Render decides the widening, so the first frame of the new route
@@ -2195,6 +2214,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active row visible as layout changes until the user scrolls.
   useEffect(() => {
     if (routeRowThreadKey === null || !routeRowRendered || isSearchingThreads) return;
+    if (routeReveal.quietKey === routeRowThreadKey) return;
     const list = threadListRef.current;
     const viewport = list?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
     if (!list || !viewport) return;
@@ -2219,7 +2239,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       release();
       for (const type of userInput) viewport.removeEventListener(type, release);
     };
-  }, [isSearchingThreads, routeRowRendered, routeRowThreadKey]);
+  }, [isSearchingThreads, routeReveal, routeRowRendered, routeRowThreadKey]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
@@ -3622,6 +3642,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
+                      const shelfToggle = (
+                        shelfThreads: readonly EnvironmentThreadShell[],
+                        count: number,
+                        expanded: boolean,
+                        toggle: () => void,
+                      ) =>
+                        count > shelfThreads.length ||
+                        shelfThreads.some((thread) => threadShellKey(thread) !== routeRowThreadKey)
+                          ? {
+                              expanded,
+                              onToggle: (header: HTMLElement) => {
+                                if (expanded) return toggle();
+                                flushSync(toggle);
+                                revealSidebarShelf(header);
+                              },
+                            }
+                          : null;
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
@@ -3716,10 +3753,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className="mt-auto"
                                 label="Working"
                                 count={workingThreads.length}
-                                toggle={{
-                                  expanded: workingShelfExpanded,
-                                  onToggle: toggleWorkingShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  workingThreads,
+                                  workingThreads.length,
+                                  workingShelfExpanded,
+                                  toggleWorkingShelf,
+                                )}
                               />,
                             );
                             break;
@@ -3731,10 +3770,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
-                                toggle={{
-                                  expanded: snoozedShelfExpanded,
-                                  onToggle: toggleSnoozedShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  snoozedThreads,
+                                  snoozedThreads.length,
+                                  snoozedShelfExpanded,
+                                  toggleSnoozedShelf,
+                                )}
                               />,
                             );
                             break;
@@ -3756,10 +3797,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 concealed={settledCount === 0 && from === null}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
-                                toggle={{
-                                  expanded: settledShelfExpanded,
-                                  onToggle: toggleSettledShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  settledThreads,
+                                  settledCount,
+                                  settledShelfExpanded,
+                                  toggleSettledShelf,
+                                )}
                               />,
                             );
                             break;
