@@ -155,7 +155,8 @@ publish it. If Git has no name or email on that machine, the project is created 
 first commit.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
-provider or paste a Git URL, then choose where to save it. The project opens right away while the
+provider or paste a Git URL, then choose where to save it. A branch or file page copied from the
+browser also works: T3 Code clones that repository's default branch. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer. When the host refuses the machine's SSH key, T3 Code

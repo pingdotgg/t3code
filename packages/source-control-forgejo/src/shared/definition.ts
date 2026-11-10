@@ -90,6 +90,8 @@ export const definition = defineSourceControl({
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   repositoryUrlFromPage: (url, known) => {
+    // A mount path may itself contain `src/branch/`, so a `.git` path is always the clone URL.
+    if (url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
     const repositoryUrl = repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH);
     // Elsewhere the same path is a GitLab project nested under groups named `src` and `branch`.
     return repositoryUrl === null || known ? repositoryUrl : url.href;

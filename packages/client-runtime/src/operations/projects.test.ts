@@ -72,6 +72,7 @@ describe("add project shared logic", () => {
       "https://scm.example.test/acme/tools/src/branch/worker",
       "https://scm.example.test/team/repo/src/branch/main/-/README.md",
       "https://code.company.test/team/repo/src/branch/main/docs",
+      "https://forgejo.example.test/a/b/src/branch/mount/team/repo.git",
     ]) {
       expect(normalizePastedCloneUrl(gitlabProject)).toBe(gitlabProject);
     }
