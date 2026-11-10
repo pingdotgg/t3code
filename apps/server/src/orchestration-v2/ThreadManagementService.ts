@@ -339,7 +339,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "unavailable":
         return "This thread has no live provider session.";
       case "timed-out":
-        return "The provider session timed out; it may be busy. Try again with the same task IDs.";
+        return "Timed out waiting for the provider session; it may be busy. Try again with the same task IDs.";
       case "failed":
         return "Failed to update the awaited background work.";
     }
