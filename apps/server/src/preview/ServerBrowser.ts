@@ -1930,6 +1930,15 @@ const make = Effect.gen(function* () {
     );
   };
 
+  // Work blocked by a dialog outlives its request; point the agent at the dialog, not at `busy`.
+  const requireNoOverdueDialog = (tab: ServerTab, agentSessionId: string) => {
+    if (tab.dialog && tab.control.overdue && tab.control.agentCanActNow(agentSessionId))
+      throw new BrowserControlInterrupted({
+        message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+        reason: "dialogPending",
+      });
+  };
+
   const requireTab = async (request: PreviewAutomationRequest) => {
     if (!request.agentSessionId)
       throw new BrowserControlInterrupted({
@@ -2137,6 +2146,7 @@ const make = Effect.gen(function* () {
             message: "No recording is active for this thread.",
           });
         }
+        requireNoOverdueDialog(tab, request.agentSessionId ?? "");
         // A stop cannot act twice (a retry finds no recording);
         // dropping a late one would leave capture running.
         return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab), signal, {
@@ -2188,12 +2198,7 @@ const make = Effect.gen(function* () {
         return executeTabOperation(tab, request);
       });
     }
-    // An action blocked by a dialog outlives its request; point the agent at the dialog.
-    if (tab.dialog && tab.control.overdue && tab.control.agentCanActNow(agentSessionId))
-      throw new BrowserControlInterrupted({
-        message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-        reason: "dialogPending",
-      });
+    requireNoOverdueDialog(tab, agentSessionId);
     return tab.control.agent(
       agentSessionId,
       async () => {

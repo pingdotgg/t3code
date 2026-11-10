@@ -2578,6 +2578,10 @@ it.effect("a tab stuck in an agent action does not hold back setting changes for
         input: { reuseExistingTab: false, show: false },
       });
       const stalled = stallColorScheme(contexts[0]!.page);
+      const applied = Promise.withResolvers<unknown>();
+      contexts[1]!.page.emulateMedia.mockImplementationOnce(async (options: unknown) => {
+        applied.resolve(options);
+      });
       yield* broker
         .invoke({
           scope,
@@ -2594,8 +2598,7 @@ it.effect("a tab stuck in an agent action does not hold back setting changes for
         tabId: PreviewTabId.make(other.tabId!),
         colorScheme: "dark",
       });
-      yield* TestClock.adjust("2 seconds");
-      expect(contexts[1]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+      expect(yield* Effect.promise(() => applied.promise)).toEqual({ colorScheme: "dark" });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2607,6 +2610,7 @@ it.effect(
       Effect.gen(function* () {
         const { broker, tabId } = yield* ready;
         const page = contexts[0]!.page;
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
         const stalled = stallColorScheme(page);
         const stuck = yield* broker
           .invoke<void>({
@@ -2649,6 +2653,13 @@ it.effect(
           })
           .pipe(Effect.flip);
         expect(blocked).toMatchObject({
+          _tag: "PreviewAutomationControlInterruptedError",
+          reason: "dialogPending",
+        });
+        const stop = yield* broker
+          .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+          .pipe(Effect.flip);
+        expect(stop).toMatchObject({
           _tag: "PreviewAutomationControlInterruptedError",
           reason: "dialogPending",
         });
