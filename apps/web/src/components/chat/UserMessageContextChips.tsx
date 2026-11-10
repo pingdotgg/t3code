@@ -23,7 +23,6 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
-import { ModelContextChip } from "../ModelContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
@@ -524,9 +523,6 @@ export function UserMessageContextReferenceChip(props: {
     contextId: props.reference.contextId as ComposerContextId,
     label: props.reference.label,
   });
-  if (props.reference.kind === "model") {
-    return <ModelContextChip label={props.reference.label} copyMarkdown={copyMarkdown} />;
-  }
   return userMessageContextPresentationRegistry.render(props.reference.kind, props.record, {
     environmentId: activeThreadEnvironmentId,
     reference: props.reference,
