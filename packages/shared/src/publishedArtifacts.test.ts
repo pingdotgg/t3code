@@ -8,6 +8,7 @@ describe("publishedArtifactsFromTurnItems", () => {
       {
         id: "item-1",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "Artifact",
         input: { file_path: "/tmp/page.html", label: "Demo" },
         output: {
@@ -22,6 +23,7 @@ describe("publishedArtifactsFromTurnItems", () => {
       {
         id: "item-2",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "ArtifactComments",
         output: { url: "https://claude.ai/artifact/ignored" },
       },
@@ -46,6 +48,7 @@ describe("publishedArtifactsFromTurnItems", () => {
       {
         id: "item-1",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "artifact",
         output: "Published at https://claude.ai/code/artifact/xyz",
       },
@@ -61,6 +64,7 @@ describe("publishedArtifactsFromTurnItems", () => {
       {
         id: "item-1",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "mcp__t3-code__html_render",
         output: {
           htmlRender: {
@@ -91,12 +95,14 @@ describe("publishedArtifactsFromTurnItems", () => {
       {
         id: "item-1",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "Artifact",
         output: { url: "https://claude.ai/artifact/same", title: "First" },
       },
       {
         id: "item-2",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "Artifact",
         output: { url: "https://claude.ai/artifact/same", title: "Updated" },
       },
@@ -115,23 +121,26 @@ describe("publishedArtifactsFromTurnItems", () => {
     expect(isTempArtifactPath("/Users/a/project/src/app.ts")).toBe(false);
   });
 
-  it("extracts temp file writes from file_change items", () => {
+  it("extracts temp file writes from completed file_change items", () => {
     const artifacts = publishedArtifactsFromTurnItems([
       {
         id: "item-1",
         type: "file_change",
+        status: "completed",
         fileName: "/tmp/report.html",
         changes: [{ operation: "create", path: "/tmp/report.html" }],
       },
       {
         id: "item-2",
         type: "file_change",
+        status: "completed",
         fileName: "src/app.ts",
         changes: [{ operation: "update", path: "src/app.ts" }],
       },
       {
         id: "item-3",
         type: "file_change",
+        status: "completed",
         fileName: "/tmp/gone.html",
         changes: [{ operation: "delete", path: "/tmp/gone.html" }],
       },
@@ -151,17 +160,54 @@ describe("publishedArtifactsFromTurnItems", () => {
     ]);
   });
 
+  it("skips rejected, failed, and in-flight temp writes", () => {
+    const artifacts = publishedArtifactsFromTurnItems([
+      {
+        id: "item-1",
+        type: "file_change",
+        status: "cancelled",
+        fileName: "/tmp/rejected.html",
+        changes: [{ operation: "create", path: "/tmp/rejected.html" }],
+      },
+      {
+        id: "item-2",
+        type: "file_change",
+        status: "failed",
+        fileName: "/tmp/failed.html",
+        changes: [{ operation: "create", path: "/tmp/failed.html" }],
+      },
+      {
+        id: "item-3",
+        type: "file_change",
+        status: "waiting",
+        fileName: "/tmp/waiting.html",
+        changes: [{ operation: "create", path: "/tmp/waiting.html" }],
+      },
+      {
+        id: "item-4",
+        type: "dynamic_tool",
+        status: "pending",
+        toolName: "Write",
+        input: { file_path: "/tmp/pending.md", content: "hi" },
+      },
+    ]);
+
+    expect(artifacts).toEqual([]);
+  });
+
   it("extracts temp paths from Write-like dynamic tools", () => {
     const artifacts = publishedArtifactsFromTurnItems([
       {
         id: "item-1",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "Write",
         input: { file_path: "/tmp/notes.md", content: "hi" },
       },
       {
         id: "item-2",
         type: "dynamic_tool",
+        status: "completed",
         toolName: "Write",
         input: { file_path: "README.md", content: "hi" },
       },

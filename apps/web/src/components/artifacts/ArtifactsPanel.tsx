@@ -27,31 +27,12 @@ import { useThreadProjection } from "~/state/entities";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { artifactTreeEntries } from "./artifactTreeEntries";
+
 interface ArtifactsPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly visible: boolean;
-}
-
-function treeSegment(value: string): string {
-  return value.replaceAll("/", "⁄").trim() || "untitled";
-}
-
-function artifactTreeEntries(artifacts: ReadonlyArray<PublishedArtifact>) {
-  const used = new Map<string, number>();
-  return artifacts.map((artifact) => {
-    const base = treeSegment(artifact.title);
-    const count = (used.get(base) ?? 0) + 1;
-    used.set(base, count);
-    const stem = count === 1 ? base : `${base} (${count})`;
-    const path =
-      artifact.kind === "html-render"
-        ? `${stem}.html`
-        : artifact.path
-          ? treeSegment(artifact.path.split(/[\\/]/).at(-1) || stem)
-          : `${stem}.url`;
-    return { path, artifact };
-  });
 }
 
 export function ArtifactsPanel(props: ArtifactsPanelProps) {

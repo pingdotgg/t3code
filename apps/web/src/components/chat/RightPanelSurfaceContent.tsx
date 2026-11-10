@@ -203,6 +203,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <ArtifactsPanel
+            key={scopedThreadKey(threadRef)}
             environmentId={props.environmentId}
             threadId={threadRef.threadId}
             visible={visible}

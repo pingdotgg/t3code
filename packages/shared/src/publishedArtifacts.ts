@@ -182,10 +182,16 @@ function rememberTempFile(
   });
 }
 
+/** Pending, rejected, and failed writes are not session products yet. */
+function isCompletedArtifactItem(status: string | null | undefined): boolean {
+  return status === "completed";
+}
+
 export function publishedArtifactsFromTurnItems(
   items: ReadonlyArray<{
     readonly id: string;
     readonly type: string;
+    readonly status?: string | null | undefined;
     readonly toolName?: string | null | undefined;
     readonly fileName?: string | null | undefined;
     readonly input?: unknown;
@@ -203,6 +209,7 @@ export function publishedArtifactsFromTurnItems(
 
   for (const item of items) {
     if (item.type === "file_change") {
+      if (!isCompletedArtifactItem(item.status)) continue;
       const changes = item.changes ?? [];
       if (changes.length > 0) {
         for (const change of changes) {
@@ -231,6 +238,7 @@ export function publishedArtifactsFromTurnItems(
     }
 
     if (item.type !== "dynamic_tool") continue;
+    if (!isCompletedArtifactItem(item.status)) continue;
 
     if (isClaudeArtifactToolName(item.toolName)) {
       const fields = extractClaudeArtifactFields(item.output);
