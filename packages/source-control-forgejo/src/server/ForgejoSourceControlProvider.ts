@@ -1,5 +1,11 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -268,6 +274,24 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
+type ForgejoPullRequest = typeof ForgejoPullRequestSchema.Type;
+
+// Keyed by repository alone; the lookup rides along so the first caller's scan fills the entry.
+class RepositoryPullsKey {
+  readonly key: string;
+  readonly lookup: Effect.Effect<ReadonlyArray<ForgejoPullRequest>, ForgejoCli.ForgejoCliError>;
+  constructor(repo: ForgejoCli.ForgejoRepository, lookup: RepositoryPullsKey["lookup"]) {
+    this.lookup = lookup;
+    this.key = JSON.stringify([repo.command, repo.baseUrl, repo.login, repo.repository]);
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof RepositoryPullsKey && this.key === that.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
@@ -322,6 +346,33 @@ export const make = Effect.gen(function* () {
       ForgejoPullRequestSchema,
     );
   });
+  // Forgejo 15 and Gitea ignore `head` on the pull request list, so every branch lookup would
+  // read the whole list. One complete scan per repository serves all branches for a minute.
+  const repositoryPulls = yield* Cache.makeWith((key: RepositoryPullsKey) => key.lookup, {
+    capacity: 16,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(1) : Duration.zero),
+  });
+  const listPage = (input: ForgejoCli.ForgejoRepositoryInput, repository: string, query: string) =>
+    request(
+      { ...input, path: `${repositoryPath(repository)}/pulls?${query}` },
+      Schema.Array(ForgejoPullRequestSchema),
+    );
+  const scanFrom = Effect.fn("ForgejoSourceControlProvider.scanPulls")(function* (
+    input: ForgejoCli.ForgejoRepositoryInput,
+    repo: ForgejoCli.ForgejoRepository,
+    first: ReadonlyArray<ForgejoPullRequest>,
+  ) {
+    const pulls = [...first];
+    for (let page = first.length === 0 ? 1 : 2; ; page++) {
+      const items = yield* listPage(
+        input,
+        repo.repository,
+        `state=all&sort=recentupdate&limit=50&page=${page}`,
+      );
+      if (items.length === 0) return pulls;
+      pulls.push(...items);
+    }
+  });
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
@@ -332,26 +383,41 @@ export const make = Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const branch = SourceControlProvider.sourceBranch(input);
-        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
-          const items = yield* request(
-            {
-              ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
-            },
-            Schema.Array(ForgejoPullRequestSchema),
-          );
-          for (const item of items) {
+        const matching = (items: ReadonlyArray<ForgejoPullRequest>) =>
+          items.flatMap((item) => {
             const normalized = toForgejoChangeRequest(item);
-            if (
-              normalized.headRefName !== branch ||
+            return normalized.headRefName !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
-              (source?.owner && item.head.repo?.owner.login !== source.owner)
-            )
-              continue;
-            if (input.state === "all" || normalized.state === input.state) results.push(normalized);
+              (source?.owner && item.head.repo?.owner.login !== source.owner) ||
+              (input.state !== "all" && normalized.state !== input.state)
+              ? []
+              : [normalized];
+          });
+        const cached = yield* Cache.getOption(
+          repositoryPulls,
+          new RepositoryPullsKey(repo, scanFrom(input, repo, [])),
+        );
+        if (Option.isSome(cached)) return matching(cached.value).slice(0, limit);
+        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+        for (let page = 1; results.length < limit; page++) {
+          const items = yield* listPage(
+            input,
+            repo.repository,
+            `state=all&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
+          );
+          // Page 1 of an unfiltered `state=all` listing is the start of the full scan.
+          if (
+            page === 1 &&
+            items.some((item) => item.head.ref !== branch && item.head.label !== branch)
+          ) {
+            const pulls = yield* Cache.get(
+              repositoryPulls,
+              new RepositoryPullsKey(repo, scanFrom(input, repo, items)),
+            );
+            return matching(pulls).slice(0, limit);
           }
+          results.push(...matching(items));
           if (items.length === 0) break;
         }
         return results.slice(0, limit);
@@ -381,6 +447,10 @@ export const make = Effect.gen(function* () {
             body: yield* fs.readFileString(input.bodyFile),
           },
         });
+        yield* Cache.invalidate(
+          repositoryPulls,
+          new RepositoryPullsKey(repo, scanFrom(input, repo, [])),
+        );
       },
       (effect, input) => effect.pipe(mapError("createChangeRequest", input.cwd)),
     ),
