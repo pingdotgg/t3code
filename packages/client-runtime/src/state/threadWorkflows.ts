@@ -208,7 +208,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canPromoteToSteer,
     promoteSkipsCompaction,
     sendAsOneBlockedReason: !queueIsContiguous
-      ? "The queue changed. Review it and try again."
+      ? "A notification is waiting between these messages."
       : merged._tag === "Blocked"
         ? merged.reason
         : canSendNow || promoteSkipsCompaction

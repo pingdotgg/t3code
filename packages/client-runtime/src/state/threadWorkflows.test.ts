@@ -385,7 +385,7 @@ describe("thread workflows", () => {
     {
       name: "a notification between user messages",
       notificationPosition: 3,
-      asOne: "The queue changed. Review it and try again.",
+      asOne: "A notification is waiting between these messages.",
       each: null,
     },
     {
