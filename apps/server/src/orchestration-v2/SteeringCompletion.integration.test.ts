@@ -1818,6 +1818,7 @@ it.effect("starts a restart sent into a run that Stop reached once the stop sett
 // regression: #32891 a restart that arrives after the turn ended is lost
 it.effect.each([
   { status: "completed", settled: true },
+  { status: "completed", settled: false },
   { status: "interrupted", settled: true },
   { status: "interrupted", settled: false },
   { status: "cancelled", settled: false },
