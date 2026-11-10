@@ -3841,12 +3841,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --composer-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.4) !important;
 }
 
-/* Aqua blue: Full early Mac OS X: primary and send become the blue gloss jelly. Pen hlT1V (light), A7Wcpy (dark).
-   The jelly is drawn from the focus ring, capped at the stock ring's lightness: a theme's light
-   dark-mode ring would otherwise give the white labels a pale fill. */
+/* Aqua blue caps the gloss lightness so white labels keep AA contrast. */
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"] {
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.737) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.44) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.115) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -3909,7 +3907,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark[data-surface-style="aqua-blue"] > body,
 :root.dark [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.737) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.44) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.115) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -4443,6 +4441,20 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
+  --tint-overlay: linear-gradient(
+    180deg,
+    #ffffff18 0%,
+    #ffffff08 clamp(0%, 120px - 250%, 50%),
+    #00000000 clamp(50%, 350% - 120px, 100%),
+    #00000008 100%
+  );
+  --gloss-thumb-fill:
+    var(--tint-overlay), linear-gradient(var(--primary-foreground), var(--primary-foreground)) !important;
+  --gloss-off-thumb-fill: var(--tint-overlay), var(--ss-default-gloss-off-thumb-fill) !important;
+  --slider-thumb-fill: var(--gloss-off-thumb-fill);
+  --kbd-on-destructive-foreground: #fff !important;
+  --kbd-lit-foreground: #fff !important;
+  --kbd-lit-fill: #00000026 !important;
   --popover-top: oklch(from var(--popover-bottom) calc(l + 0.035) c h) !important;
   --popover-rim: linear-gradient(
     180deg,
