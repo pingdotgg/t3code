@@ -208,7 +208,10 @@ describe("t3 pair", () => {
           }),
         });
 
-        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        // regression: #34060 a hostname that changed since the server started still pairs locally.
+        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir])).pipe(
+          Effect.provideService(HostProcess.Hostname, "t3-renamed-host"),
+        );
 
         assert.include(output, `Pairing with pair-test (${origin})`);
         assert.include(output, `Pairing URL: ${origin}/pair#token=`);

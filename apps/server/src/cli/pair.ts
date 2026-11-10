@@ -294,25 +294,23 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (Option.isNone(state)) {
         continue;
       }
+      // A dead server's port may be reused; do not mint tokens in its old database for another server.
+      if (isProcessAlive(state.value.pid)) {
+        const probed = yield* probeEnvironmentDescriptor(state.value.origin);
+        if (probed._tag === "descriptor") {
+          return {
+            baseDir,
+            variant,
+            state: state.value,
+            descriptor: probed.descriptor,
+          } satisfies DiscoveredPairTarget;
+        }
+      }
+      // Checked only after the local probe: a machine's hostname can change while its server runs.
       const ownerHostname = yield* otherOwnerHostname(state.value);
       if (ownerHostname !== undefined) {
         otherMachine ??= { statePath, hostname: ownerHostname };
-        continue;
       }
-      // A dead server's port may be reused; do not mint tokens in its old database for another server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
-        continue;
-      }
-      return {
-        baseDir,
-        variant,
-        state: state.value,
-        descriptor: probed.descriptor,
-      } satisfies DiscoveredPairTarget;
     }
   }
   const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
