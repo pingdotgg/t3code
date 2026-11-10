@@ -179,6 +179,48 @@ describe("watchAntigravityPromptOutcome", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps only an absolute reset time for a prompt the watchdog retired", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "e6aba774-5472-4277-b6ee-27b2e05570a7";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const retiredTurn = (error: Uint8Array) =>
+        Effect.gen(function* () {
+          const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+          const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+            );
+            database
+              .prepare("INSERT INTO steps (step_type, step_payload) VALUES (?, ?)")
+              .run(ERROR_MESSAGE, error);
+          } finally {
+            database.close();
+          }
+          return yield* check({ stopReason: "end_turn" }, { retired: true });
+        });
+
+      assert.deepEqual(yield* retiredTurn(RATE_LIMIT_ERROR), {
+        class: "usage_limit",
+        message: "Resource has been exhausted (e.g. check quota).",
+        code: "RESOURCE_EXHAUSTED",
+        retryable: true,
+      });
+      assert.equal(
+        (yield* retiredTurn(
+          errorPayload(
+            "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:2026-11-09T01:05:00Z] reason:QUOTA_EXHAUSTED]]",
+          ),
+        ))?.resetAt,
+        "2026-11-09T01:05:00.000Z",
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("reads only this session's own unlinked log, and keeps a typed refusal", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

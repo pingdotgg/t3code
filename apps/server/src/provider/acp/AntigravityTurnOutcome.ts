@@ -92,12 +92,12 @@ const lastStepAfter =
     return { type: row.type, payload: row.payload instanceof Uint8Array ? row.payload : null };
   };
 
-function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
+function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | undefined {
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
   const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
-  if (delay === undefined) return undefined;
+  if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
     delayMs += Number(amount) * (GO_DURATION_UNIT_MS[unit!] ?? 0);
@@ -108,7 +108,7 @@ function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
 function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
-  now: DateTime.Utc,
+  now: DateTime.Utc | undefined,
 ): OrchestrationV2ProviderFailure | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
@@ -196,6 +196,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   }
   return Effect.fn("AntigravityTurnOutcome.check")(function* (
     result: EffectAcpSchema.PromptResponse,
+    options?: { readonly retired?: boolean },
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
     const after = yield* Effect.tryPromise({
@@ -214,6 +215,8 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    // A retired prompt's check runs long after the error, so a relative delay has no anchor.
+    const now = options?.retired === true ? undefined : yield* DateTime.now;
+    return turnFailure(result.stopReason, step, now);
   });
 });

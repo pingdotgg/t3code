@@ -308,15 +308,16 @@ export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   /**
    * Runs before `session/prompt`. The returned check sees a prompt the agent ended
-   * without an error or cancel, or, as `end_turn`, one the inactivity watchdog retired,
-   * and reports a failure the stop reason or silence hid. A reported failure restarts
-   * the runtime before the next turn.
+   * without an error or cancel, or, as `end_turn` and `retired`, one the inactivity
+   * watchdog retired long after the agent fell silent, and reports a failure the stop
+   * reason or silence hid. A reported failure restarts the runtime before the next turn.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
   ) => Effect.Effect<
     (
       result: EffectAcpSchema.PromptResponse,
+      options?: { readonly retired?: boolean },
     ) => Effect.Effect<OrchestrationV2ProviderFailure | undefined>
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
@@ -7865,7 +7866,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const recordedFailure =
                 checkPromptOutcome === undefined
                   ? undefined
-                  : yield* checkPromptOutcome({ stopReason: "end_turn" }).pipe(
+                  : yield* checkPromptOutcome({ stopReason: "end_turn" }, { retired: true }).pipe(
                       Effect.catchCause((cause) =>
                         Effect.logError("failed to check a silent ACP prompt's outcome", {
                           driver,
