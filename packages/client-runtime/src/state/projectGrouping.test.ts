@@ -265,16 +265,32 @@ describe("buildProjectGroups", () => {
     }
   });
 
-  it("keeps a shared title that differs from the repository name only in case", () => {
-    const projects = [
-      makeProject("one", "/work/one", { title: "T3Code" }),
-      makeProject("two", "/work/two", { title: "T3Code" }),
-    ];
+  it.each([
+    { name: "a checkout", identity: repositoryIdentity },
+    {
+      name: "a fork named after its origin",
+      identity: {
+        ...repositoryIdentity,
+        origin: {
+          canonicalKey: "github.com/forkowner/t3code",
+          remoteUrl: "https://github.com/ForkOwner/T3Code.git",
+          displayName: "ForkOwner/T3Code",
+        },
+      },
+    },
+  ])(
+    "keeps a shared title that differs from $name's repository name only in case",
+    ({ identity }) => {
+      const projects = [
+        makeProject("one", "/work/one", { title: "T3Code", repositoryIdentity: identity }),
+        makeProject("two", "/work/two", { title: "T3Code", repositoryIdentity: identity }),
+      ];
 
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3Code",
-    );
-  });
+      expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+        "T3Code",
+      );
+    },
+  );
 
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {

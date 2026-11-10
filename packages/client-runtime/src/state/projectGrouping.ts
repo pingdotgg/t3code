@@ -220,21 +220,21 @@ function repositoryGroupingRemoteOf(identity: RepositoryIdentity): string {
   return `https://${origin.displayName ? `${host}/${origin.displayName}` : origin.canonicalKey}`;
 }
 
-function repositoryGroupingLabelOf(identity: RepositoryIdentity): string | undefined {
-  return (
-    sourceControlClients.repositoryLabel(repositoryGroupingRemoteOf(identity)) ??
-    repositoryGroupingDisplayNameOf(identity)
-  );
-}
-
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
+  const providerLabels = input.members.map((member) =>
+    member.repositoryIdentity
+      ? sourceControlClients.repositoryLabel(repositoryGroupingRemoteOf(member.repositoryIdentity))
+      : null,
+  );
   const displayNames = uniqueNonEmptyValues(
-    input.members.map((member) =>
-      member.repositoryIdentity ? repositoryGroupingLabelOf(member.repositoryIdentity) : null,
+    input.members.map((member, index) =>
+      member.repositoryIdentity
+        ? (providerLabels[index] ?? repositoryGroupingDisplayNameOf(member.repositoryIdentity))
+        : null,
     ),
   );
   const sharedDisplayNames = uniqueLabels(displayNames);
@@ -242,14 +242,13 @@ export function deriveProjectGroupLabel(input: {
     input.members.map((member) => member.repositoryIdentity?.name),
   );
   const sharedTitle = sharedTitles[0];
-  // A label's last segment keeps the remote's case where the server's lower-cased name does not.
-  const namesTitle = (name: string) =>
-    name === sharedTitle || name.slice(name.lastIndexOf("/") + 1) === sharedTitle;
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !displayNames.some(namesTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    !displayNames.includes(sharedTitle) &&
+    !sharedRepositoryNames.includes(sharedTitle) &&
+    // A provider label's repository keeps the remote's case where the server's name may not.
+    !providerLabels.some((label) => label?.slice(label.lastIndexOf("/") + 1) === sharedTitle)
   ) {
     return sharedTitle;
   }
