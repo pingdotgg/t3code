@@ -109,6 +109,11 @@ export const PullRequestCheck = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
+  /**
+   * Not a check: it stands for ones the host could not list, such as workflow runs awaiting
+   * approval when that read fails, so nothing waits on it or counts it as passing.
+   */
+  placeholder: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
@@ -454,6 +459,7 @@ export const PullRequestLinkedThreadsResult = Schema.Struct({
       projectId: ProjectId,
       title: Schema.String,
       archivedAt: Schema.NullOr(IsoDateTime),
+      settled: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
@@ -859,6 +865,8 @@ export type PullRequestThreadCommentsInput = typeof PullRequestThreadCommentsInp
 export const PullRequestThreadCommentsResult = Schema.Struct({
   comments: Schema.Array(PullRequestThreadComment),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+  // Comments the host hid that this page left out; the thread's `commentCount` still counts them.
+  hiddenCount: Schema.optional(NonNegativeInt),
 });
 export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
