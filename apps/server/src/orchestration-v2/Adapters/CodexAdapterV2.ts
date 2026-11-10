@@ -1981,7 +1981,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const imageTurns = new Map<
           string,
           {
-            readonly running: Set<string>;
+            readonly running: Map<
+              string,
+              {
+                readonly revisedPrompt: string | null;
+                readonly transparentBackground: boolean | null;
+              }
+            >;
             readonly saved: Map<string, string>;
             pending: boolean;
             answer?: { readonly id: string; readonly text: string };
@@ -1990,7 +1996,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const imageTurn = (nativeTurnId: string) => {
           let state = imageTurns.get(nativeTurnId);
           if (state === undefined) {
-            state = { running: new Set(), saved: new Map(), pending: false };
+            state = { running: new Map(), saved: new Map(), pending: false };
             imageTurns.set(nativeTurnId, state);
           }
           return state;
@@ -2075,12 +2081,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const clearImageWork = Effect.fn("CodexAdapterV2.clearImageWork")(function* (
           context: ActiveCodexTurnContext,
         ) {
-          for (const id of imageTurns.get(context.nativeTurnId)?.running ?? []) {
+          for (const [id, input] of imageTurns.get(context.nativeTurnId)?.running ?? []) {
             yield* emitImageGenerationItem(
               context,
               {
                 type: "imageGeneration",
                 id,
+                ...input,
                 status: "cancelled",
                 result: "",
               },
@@ -5042,7 +5049,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.type === "imageGeneration") {
               if (!(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)) {
-                imageTurn(payload.turnId).running.add(payload.item.id);
+                imageTurn(payload.turnId).running.set(payload.item.id, {
+                  revisedPrompt: payload.item.revisedPrompt ?? null,
+                  transparentBackground: payload.item.transparentBackground ?? null,
+                });
                 yield* emitImageGenerationItem(context, payload.item, false);
                 yield* emitImageWorkState(context, true);
               }

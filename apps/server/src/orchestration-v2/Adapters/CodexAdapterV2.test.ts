@@ -4217,6 +4217,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               item: {
                 type: "imageGeneration",
                 id: image,
+                revisedPrompt: "A friendly green tree",
+                transparentBackground: true,
                 status: phase === "started" ? "inProgress" : "completed",
                 result: "",
                 ...(phase === "completed" ? { savedPath: `/tmp/${image}.png` } : {}),
@@ -4306,6 +4308,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             outcome === "complete" ? "completed" : "cancelled",
           );
           assert.strictEqual(updates[1]?.ordinal, updates[0]?.ordinal);
+          assert.deepEqual(updates[1]?.input, updates[0]?.input);
+          assert.deepEqual(updates[1]?.input, {
+            prompt: "A friendly green tree",
+            transparent_background: true,
+          });
         }
         // Run ingestion follows these updates, so they must bracket the terminal and the images.
         const indexOf = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
