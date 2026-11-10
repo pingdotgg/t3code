@@ -2549,46 +2549,6 @@ it.effect("shows a queued close before the action ahead of it answers", () =>
   ),
 );
 
-it.effect("leaves a merge as it is until the host says what it did", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const sent = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const client = actionReplyClient({
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.succeed({ ...actionReference, state: "open", observedAt: 100 }),
-        [WS_METHODS.pullRequestsRunAction]: () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(sent, undefined);
-            yield* Deferred.await(release);
-            // A merge queue takes the merge and merges later.
-            return { ...actionReply, state: "open", autoMergeEnabled: true };
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const detail = atoms.detail(target);
-      registry.mount(detail);
-      yield* Effect.promise(() => executeAtomQuery(registry, detail));
-
-      const acting = yield* Effect.promise(() =>
-        atoms.runAction.run(registry, {
-          ...target,
-          input: { ...actionReference, action: "merge" },
-        }),
-      ).pipe(Effect.forkScoped);
-      yield* Deferred.await(sent);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("open");
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(acting);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject({
-        state: "open",
-        autoMergeEnabled: true,
-      });
-    }),
-  ),
-);
-
 it.effect.each(["accepted", "refused"] as const)(
   "shows a title edit at once and keeps it only when the host takes it (%s)",
   (outcome) =>
@@ -2805,6 +2765,7 @@ it.effect.each(["loaded", "loading"] as const)(
 it.effect.each([
   [false, { state: "merged" }],
   [true, { state: "open", autoMergeEnabled: true }],
+  [undefined, { state: "open", autoMergeEnabled: true }],
 ] as const)(
   "shows a merge the host lands at once or queues before it replies (queue %s)",
   ([mergeQueue, shown]) =>
@@ -2852,9 +2813,11 @@ it.effect.each([
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(sent);
 
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject(shown);
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject(
+          mergeQueue === undefined ? { state: "open", autoMergeEnabled: false } : shown,
+        );
         expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toHaveLength(
-          mergeQueue ? 1 : 0,
+          mergeQueue === false ? 0 : 1,
         );
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(acting);
