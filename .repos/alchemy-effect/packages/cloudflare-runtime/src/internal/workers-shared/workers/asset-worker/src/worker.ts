@@ -4,13 +4,6 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { PerformanceTimer } from "../../../shared/performance.ts";
 import { setupSentry } from "../../../shared/sentry.ts";
 import { mockJaegerBinding } from "../../../shared/tracing.ts";
-import { Analytics, EntrypointType } from "./analytics.ts";
-import { AssetsManifest } from "./assets-manifest.ts";
-import { normalizeConfiguration } from "./configuration.ts";
-import { ExperimentAnalytics } from "./experiment-analytics.ts";
-import { canFetch, handleRequest } from "./handler.ts";
-import { handleError, submitMetrics } from "./utils/final-operations.ts";
-import { getAssetWithMetadataFromKV } from "./utils/kv.ts";
 import type {
   AssetConfig,
   ColoMetadata,
@@ -19,7 +12,14 @@ import type {
   UnsafePerformanceTimer,
 } from "../../../shared/types.ts";
 import type { AccountCohortQuerierBinding } from "../worker-configuration.d.ts";
+import { Analytics, EntrypointType, getRequestKind } from "./analytics.ts";
+import { AssetsManifest } from "./assets-manifest.ts";
+import { normalizeConfiguration } from "./configuration.ts";
+import { ExperimentAnalytics } from "./experiment-analytics.ts";
+import { canFetch, handleRequest } from "./handler.ts";
 import type { Environment, ReadyAnalytics } from "./types.ts";
+import { handleError, submitMetrics } from "./utils/final-operations.ts";
+import { getAssetWithMetadataFromKV } from "./utils/kv.ts";
 
 // ============================================================
 // SECTION 1: SHARED TYPES & INTERFACE CONTRACT
@@ -66,10 +66,7 @@ type GetByETagResult = {
 };
 
 type ExistsFn = (pathname: string, request?: Request) => Promise<string | null>;
-type GetByETagFn = (
-  eTag: string,
-  request?: Request,
-) => Promise<GetByETagResult>;
+type GetByETagFn = (eTag: string, request?: Request) => Promise<GetByETagResult>;
 
 /**
  * Interface defining the public API methods that both the outer and inner
@@ -80,10 +77,7 @@ interface AssetWorkerMethods {
   fetch(request: Request): Promise<Response>;
   unstable_canFetch(request: Request): Promise<boolean>;
   unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult>;
-  unstable_getByPathname(
-    pathname: string,
-    request?: Request,
-  ): Promise<GetByETagResult | null>;
+  unstable_getByPathname(pathname: string, request?: Request): Promise<GetByETagResult | null>;
   unstable_exists(pathname: string, request?: Request): Promise<string | null>;
 }
 
@@ -152,10 +146,7 @@ async function unstableGetByETagImpl(
   const jaeger = env.JAEGER ?? mockJaegerBinding();
   return jaeger.enterSpan("unstable_getByETag", async (span) => {
     const startTime = performance.now();
-    const asset = await getAssetWithMetadataFromKV(
-      env.ASSETS_KV_NAMESPACE,
-      eTag,
-    );
+    const asset = await getAssetWithMetadataFromKV(env.ASSETS_KV_NAMESPACE, eTag);
     const endTime = performance.now();
     const assetFetchTime = endTime - startTime;
 
@@ -312,6 +303,7 @@ async function runFetchRequest(
         userAgent: userAgent,
         entrypoint: EntrypointType.Inner,
         cohort: cohort ?? "unknown",
+        requestKind: getRequestKind(request),
       });
     }
 
@@ -323,14 +315,7 @@ async function runFetchRequest(
         version: env.VERSION_METADATA?.id,
       });
 
-      const response = await handleRequest(
-        request,
-        env,
-        config,
-        exists,
-        getByETag,
-        analytics,
-      );
+      const response = await handleRequest(request, env, config, exists, getByETag, analytics);
 
       analytics.setData({ status: response.status });
 
@@ -360,8 +345,14 @@ async function runFetchRequest(
  *
  * AssetWorkerOuter serves as the dispatch layer. It forwards all method
  * calls to AssetWorkerInner via ctx.exports.
+ *
+ * This now-unused entrypoint can be used for loopback invocations if made the
+ * default export, which is how cohorted deployments will be implemented.
+ * For now, the latency added by loopback invocations is too high for normal
+ * traffic. When that has been addressed, re-enable loopback by making this
+ * the default export.
  */
-export default class AssetWorkerOuter<TEnv extends Env = Env>
+export class AssetWorkerOuter<TEnv extends Env = Env>
   extends WorkerEntrypoint<TEnv>
   implements AssetWorkerMethods
 {
@@ -413,11 +404,7 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
     const performance = new PerformanceTimer(this.env.UNSAFE_PERFORMANCE);
     const startTimeMs = performance.now();
     try {
-      if (
-        this.env.COLO_METADATA &&
-        this.env.VERSION_METADATA &&
-        this.env.CONFIG
-      ) {
+      if (this.env.COLO_METADATA && this.env.VERSION_METADATA && this.env.CONFIG) {
         const url = new URL(request.url);
         analytics.setData({
           accountId: this.env.CONFIG.account_id,
@@ -429,6 +416,7 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
           hostname: url.hostname,
           version: this.env.VERSION_METADATA.tag,
           entrypoint: EntrypointType.Outer,
+          requestKind: getRequestKind(request),
         });
       }
       sentry = setupSentry(
@@ -449,7 +437,10 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
       const response = await this.getInnerEntrypoint(cohort).fetch(request);
       analytics.setData({ status: response.status });
       if (response.status >= 500) {
-        analytics.setData({ error: "inner entrypoint error" });
+        analytics.setData({
+          error: "inner entrypoint error",
+          servedBy: "error",
+        });
       }
       return response;
     } catch (err) {
@@ -466,10 +457,7 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
     return this.getInnerEntrypoint(cohort).unstable_canFetch(request);
   }
 
-  async unstable_getByETag(
-    eTag: string,
-    request?: Request,
-  ): Promise<GetByETagResult> {
+  async unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
     return this.getInnerEntrypoint(cohort).unstable_getByETag(eTag, request);
@@ -481,16 +469,10 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
   ): Promise<GetByETagResult | null> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
-    return this.getInnerEntrypoint(cohort).unstable_getByPathname(
-      pathname,
-      request,
-    );
+    return this.getInnerEntrypoint(cohort).unstable_getByPathname(pathname, request);
   }
 
-  async unstable_exists(
-    pathname: string,
-    request?: Request,
-  ): Promise<string | null> {
+  async unstable_exists(pathname: string, request?: Request): Promise<string | null> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
     return this.getInnerEntrypoint(cohort).unstable_exists(pathname, request);
@@ -503,10 +485,10 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
 
 /*
  * AssetWorkerInner contains the actual implementation logic for all asset
- * worker methods. In production, it is instantiated by AssetWorkerOuter via
- * ctx.exports. For local development, tools such as the Vite plugin can
- * subclass AssetWorkerInner directly to override methods like unstable_exists
- * and unstable_getByETag with dev-server-backed implementations.
+ * worker methods. AssetWorkerOuter can instantiate it via ctx.exports to
+ * enable cohort-based loopback. For local development, tools such as the Vite
+ * plugin can subclass AssetWorkerInner directly to override methods like
+ * unstable_exists and unstable_getByETag with dev-server-backed implementations.
  */
 export class AssetWorkerInner<TEnv extends Env = Env>
   extends WorkerEntrypoint<TEnv>
@@ -518,19 +500,19 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     const loopbackCtx = this.ctx as AssetWorkerContext;
     const traceContext = loopbackCtx.props?.traceContext ?? null;
     const cohort = this.ctx.version?.cohort;
+    const runRequest = () =>
+      runFetchRequest(
+        request,
+        this.env,
+        this.ctx,
+        this.unstable_exists.bind(this),
+        this.unstable_getByETag.bind(this),
+        cohort,
+      );
 
-    const response = await this.env.JAEGER.runWithSpanContext(
-      traceContext,
-      () =>
-        runFetchRequest(
-          request,
-          this.env,
-          this.ctx,
-          this.unstable_exists.bind(this),
-          this.unstable_getByETag.bind(this),
-          cohort,
-        ),
-    );
+    const response = traceContext
+      ? await this.env.JAEGER.runWithSpanContext(traceContext, runRequest)
+      : await runRequest();
 
     if (response instanceof Response) {
       return response;
@@ -551,10 +533,7 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     );
   }
 
-  async unstable_getByETag(
-    eTag: string,
-    request?: Request,
-  ): Promise<GetByETagResult> {
+  async unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult> {
     return unstableGetByETagImpl(this.env, eTag, request);
   }
 
@@ -571,10 +550,9 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     );
   }
 
-  async unstable_exists(
-    pathname: string,
-    request?: Request,
-  ): Promise<string | null> {
+  async unstable_exists(pathname: string, request?: Request): Promise<string | null> {
     return unstableExistsImpl(this.env, pathname, request);
   }
 }
+
+export default AssetWorkerInner;

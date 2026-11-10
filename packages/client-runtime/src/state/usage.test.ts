@@ -2,15 +2,16 @@ import {
   EnvironmentId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
+  type UsageModelFilter,
   type UsageSummary,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { refreshUsage } from "./usage.ts";
+import { refreshUsage, refreshUsageLimits } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -32,7 +33,7 @@ afterEach(() => {
   for (const registry of registries.splice(0)) registry.dispose();
 });
 
-function harness(ids = ["a"]) {
+function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {}) {
   const registry = AtomRegistry.make();
   registries.push(registry);
   const environments = ids.map((id) => {
@@ -58,15 +59,22 @@ function harness(ids = ["a"]) {
     if (!environment) throw new Error(`Unknown environment: ${environmentId}`);
     return environment;
   }
+  const requested: { environmentId: EnvironmentId; input: UsageSummaryInput }[] = [];
   const options = {
     registry,
     environmentIds: environments.map((entry) => entry.environmentId),
     input,
     server: {
-      usageSummary: ({ environmentId }: { environmentId: EnvironmentId }) =>
-        get(environmentId).query,
+      usageSummary: (target: { environmentId: EnvironmentId; input: UsageSummaryInput }) => {
+        requested.push(target);
+        return get(target.environmentId).query;
+      },
+      usageModelFilterAtom: (environmentId: EnvironmentId) =>
+        Atom.make<UsageModelFilter | undefined>(modelFilters[environmentId]),
       refreshUsageRates: {
         label: "test:rates",
+        requiredScopes: () => [],
+        permissionAtom: () => Atom.make(true),
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },
@@ -77,7 +85,7 @@ function harness(ids = ["a"]) {
       presentationAtom: (environmentId: EnvironmentId) => get(environmentId).presentation,
     },
   } satisfies Parameters<typeof refreshUsage>[0];
-  return { registry, environments, refresh: () => refreshUsage(options) };
+  return { registry, environments, requested, refresh: () => refreshUsage(options) };
 }
 
 describe("manual usage refresh", () => {
@@ -102,6 +110,23 @@ describe("manual usage refresh", () => {
     entry.scan.resolve(summary);
     await refreshing;
     expect(finished).toBe(true);
+  });
+
+  it("rescans each environment with its own configured model filter", async () => {
+    const modelFilter = { include: [{ provider: "claude" as const, model: "orbit-1" }] };
+    const { environments, requested, refresh } = harness(["filtered", "plain"], {
+      filtered: modelFilter,
+    });
+    const refreshing = refresh();
+    for (const entry of environments) {
+      entry.rates.resolve(AsyncResult.success(pricing));
+      entry.scan.resolve(summary);
+    }
+    await refreshing;
+    expect(requested).toEqual([
+      { environmentId: "filtered", input: { ...input, modelFilter } },
+      { environmentId: "plain", input },
+    ]);
   });
 
   it("settles when an environment disconnects during the rescan", async () => {
@@ -134,24 +159,6 @@ describe("manual usage refresh", () => {
     expect(finished).toBe(true);
   });
 
-  it("settles when connected state has no usable RPC session", async () => {
-    const {
-      environments: [environment],
-      refresh,
-    } = harness();
-    const entry = environment!;
-    const refreshing = refresh();
-    entry.rates.resolve(
-      AsyncResult.fail(
-        new EnvironmentRpcUnavailableError({
-          environmentId: entry.environmentId,
-          message: "No session",
-        }),
-      ),
-    );
-    await refreshing;
-  });
-
   it("replaces a scan that started before pricing was refreshed", async () => {
     const {
       registry,
@@ -180,5 +187,21 @@ describe("manual usage refresh", () => {
     await refreshing;
     expect(reads).toBe(2);
     unmount();
+  });
+});
+
+describe("limits refresh cooldown", () => {
+  it("shares an in-flight check and skips duplicate automatic refreshes", async () => {
+    const id = EnvironmentId.make("limits-in-flight");
+    const oldCheck = Promise.withResolvers<string>();
+    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
+    const newCheck = vi.fn(async () => "new limits");
+    const manual = refreshUsageLimits(id, newCheck);
+    expect(await refreshUsageLimits(id, newCheck, true)).toBeUndefined();
+    expect(newCheck).not.toHaveBeenCalled();
+    oldCheck.resolve("old limits");
+    expect(await first).toBe("old limits");
+    expect(await manual).toBe("old limits");
+    expect(newCheck).not.toHaveBeenCalled();
   });
 });

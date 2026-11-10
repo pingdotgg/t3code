@@ -7,10 +7,19 @@ public class T3TerminalModule: Module {
     // Bumped when native hardware-keyboard handling changes; surfaced in the JS debug
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants([
-      "hardwareKeyRevision": 3,
+      "hardwareKeyRevision": 4,
+      "outputRevision": 1,
     ])
 
     View(T3TerminalView.self) {
+      AsyncFunction("writeOutput") { (view: T3TerminalView, data: String, reset: Bool) in
+        view.writeOutput(data, reset: reset)
+      }
+
+      AsyncFunction("resetInput") { (view: T3TerminalView) in
+        view.resetInputField()
+      }
+
       Prop("terminalKey") { (view: T3TerminalView, terminalKey: String) in
         view.terminalKey = terminalKey
       }
@@ -25,6 +34,10 @@ public class T3TerminalModule: Module {
 
       Prop("focusRequest") { (view: T3TerminalView, focusRequest: Double) in
         view.focusRequest = focusRequest
+      }
+
+      Prop("readOnly") { (view: T3TerminalView, readOnly: Bool) in
+        view.readOnly = readOnly
       }
 
       Prop("autoFocus") { (view: T3TerminalView, autoFocus: Bool) in
@@ -51,7 +64,18 @@ public class T3TerminalModule: Module {
         view.mutedForegroundColorHex = mutedForegroundColor
       }
 
-      Events("onInput", "onResize")
+      Prop("captureRequest") { (view: T3TerminalView, request: Double) in
+        view.captureRequest = request
+      }
+
+      Prop("sharedGrid") { (view: T3TerminalView, sharedGrid: [Int]) in
+        view.sharedGrid = sharedGrid
+      }
+      Events("onInput", "onResize", "onCapture", "onPaste")
+
+      OnViewDidUpdateProps { (view: T3TerminalView) in
+        view.applyPendingBuffer()
+      }
     }
   }
 }

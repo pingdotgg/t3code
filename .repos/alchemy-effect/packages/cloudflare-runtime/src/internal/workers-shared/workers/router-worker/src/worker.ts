@@ -1,28 +1,21 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { generateStaticRoutingRuleMatcher } from "../../asset-worker/src/utils/rules-engine.ts";
 import { PerformanceTimer } from "../../../shared/performance.ts";
 import { TemporaryRedirectResponse } from "../../../shared/responses.ts";
 import { setupSentry } from "../../../shared/sentry.ts";
 import { mockJaegerBinding } from "../../../shared/tracing.ts";
-import {
-  Analytics,
-  DISPATCH_TYPE,
-  STATIC_ROUTING_DECISION,
-} from "./analytics.ts";
-import {
-  applyEyeballConfigDefaults,
-  applyRouterConfigDefaults,
-} from "./configuration.ts";
-import { renderLimitedResponse } from "./limited-response.ts";
-import type AssetWorker from "../../asset-worker/index.ts";
 import type {
   EyeballRouterConfig,
   JaegerTracing,
   RouterConfig,
   UnsafePerformanceTimer,
 } from "../../../shared/types.ts";
+import type AssetWorker from "../../asset-worker/index.ts";
+import { generateStaticRoutingRuleMatcher } from "../../asset-worker/src/utils/rules-engine.ts";
+import { Analytics, DISPATCH_TYPE, STATIC_ROUTING_DECISION } from "./analytics.ts";
+import { applyEyeballConfigDefaults, applyRouterConfigDefaults } from "./configuration.ts";
+import { renderLimitedResponse } from "./limited-response.ts";
 import type { ColoMetadata, Environment, ReadyAnalytics } from "./types.ts";
 
 export interface Env {
@@ -51,44 +44,49 @@ type LoopbackExecutionContext = ExecutionContext & {
   };
 };
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+// This now-unused Entrypoint can be used for loopback invocations if made the
+// default export, which is how cohorted deployments will be implemented.
+// For now, the latency added by loopback invocations is too much for such a
+// load-bearing Worker. When that has been addressed in the future, re-enable
+// loopback by making this the default export.
+export class RouterOuterEntrypoint extends WorkerEntrypoint<Env> {
+  override async fetch(request: Request): Promise<Response> {
     // Router worker is typechecked both in this package and as a transitive
     // dependency during miniflare builds. In the miniflare type context,
     // Cloudflare.Exports may not include this worker's mainModule mapping from
     // worker-configuration.d.ts, so `ctx.exports.RouterInnerEntrypoint` does not
     // resolve structurally. Keep this narrow cast so loopback typechecks in both
     // compilation contexts without changing runtime behavior.
-    const loopbackCtx = ctx as LoopbackExecutionContext;
+    const loopbackCtx = this.ctx as LoopbackExecutionContext;
 
-    const analytics = new Analytics(env.ANALYTICS);
+    const analytics = new Analytics(this.env.ANALYTICS);
     let inner;
     try {
-      if (env.COLO_METADATA && env.VERSION_METADATA && env.CONFIG) {
+      if (this.env.COLO_METADATA && this.env.VERSION_METADATA && this.env.CONFIG) {
         const url = new URL(request.url);
         analytics.setData({
-          accountId: env.CONFIG.account_id,
-          scriptId: env.CONFIG.script_id,
-          coloId: env.COLO_METADATA.coloId,
-          metalId: env.COLO_METADATA.metalId,
-          coloTier: env.COLO_METADATA.coloTier,
-          coloRegion: env.COLO_METADATA.coloRegion,
+          accountId: this.env.CONFIG.account_id,
+          scriptId: this.env.CONFIG.script_id,
+          coloId: this.env.COLO_METADATA.coloId,
+          metalId: this.env.COLO_METADATA.metalId,
+          coloTier: this.env.COLO_METADATA.coloTier,
+          coloRegion: this.env.COLO_METADATA.coloRegion,
           hostname: url.hostname,
-          version: env.VERSION_METADATA.tag,
+          version: this.env.VERSION_METADATA.tag,
         });
       }
       inner = loopbackCtx.exports.RouterInnerEntrypoint({ props: {} });
     } catch (err) {
       const sentry = setupSentry(
         request,
-        ctx,
-        env.SENTRY_DSN,
-        env.SENTRY_ACCESS_CLIENT_ID,
-        env.SENTRY_ACCESS_CLIENT_SECRET,
-        env.COLO_METADATA,
-        env.VERSION_METADATA,
-        env.CONFIG?.account_id,
-        env.CONFIG?.script_id,
+        this.ctx,
+        this.env.SENTRY_DSN,
+        this.env.SENTRY_ACCESS_CLIENT_ID,
+        this.env.SENTRY_ACCESS_CLIENT_SECRET,
+        this.env.COLO_METADATA,
+        this.env.VERSION_METADATA,
+        this.env.CONFIG?.account_id,
+        this.env.CONFIG?.script_id,
       );
       sentry?.captureException(err);
 
@@ -101,8 +99,8 @@ export default {
     }
 
     return inner.fetch(request);
-  },
-};
+  }
+}
 
 export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
   override async fetch(request: Request): Promise<Response> {
@@ -135,11 +133,7 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
 
       const url = new URL(request.url);
 
-      if (
-        this.env.COLO_METADATA &&
-        this.env.VERSION_METADATA &&
-        this.env.CONFIG
-      ) {
+      if (this.env.COLO_METADATA && this.env.VERSION_METADATA && this.env.CONFIG) {
         analytics.setData({
           accountId: this.env.CONFIG.account_id,
           scriptId: this.env.CONFIG.script_id,
@@ -160,23 +154,14 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
       //   routing and so must have actually started with `/cdn-cgi\`.
       // - in local dev it is possible for pathname to start with `/cdn-cgi/`
       //   even if it doesn't start with `/cdn-cgi\` so we also check the raw URL for that.
-      if (
-        url.pathname.startsWith("/cdn-cgi/") &&
-        request.url.includes("/cdn-cgi\\")
-      ) {
+      if (url.pathname.startsWith("/cdn-cgi/") && request.url.includes("/cdn-cgi\\")) {
         analytics.setData({ cdnCgiBackslashBypassUrl: request.url });
         return new TemporaryRedirectResponse(url.href);
       }
 
-      const routeToUserWorker = async ({
-        asset,
-      }: {
-        asset: "static_routing" | "none";
-      }) => {
+      const routeToUserWorker = async ({ asset }: { asset: "static_routing" | "none" }) => {
         if (!config.has_user_worker) {
-          throw new Error(
-            "Fetch for user worker without having a user worker binding",
-          );
+          throw new Error("Fetch for user worker without having a user worker binding");
         }
         if (eyeballConfig.limitedAssetsOnly) {
           analytics.setData({ userWorkerFreeTierLimiting: true });
@@ -202,10 +187,7 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
             const queryURLParam = url.searchParams.get("url");
             if (queryURLParam && !queryURLParam.startsWith("/")) {
               // that's a remote resource
-              if (
-                request.method !== "GET" ||
-                request.headers.get("sec-fetch-dest") !== "image"
-              ) {
+              if (request.method !== "GET" || request.headers.get("sec-fetch-dest") !== "image") {
                 // that was not loaded via a browser's <img> tag
                 shouldCheckContentType = true;
                 analytics.setData({ abuseMitigationURLHost: queryURLParam });
@@ -216,15 +198,10 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
 
           if (url.pathname === "/_image") {
             const hrefParam = url.searchParams.get("href");
-            if (
-              hrefParam &&
-              hrefParam.length > 2 &&
-              hrefParam.startsWith("//")
-            ) {
+            if (hrefParam && hrefParam.length > 2 && hrefParam.startsWith("//")) {
               try {
                 const hrefUrl = new URL("https:" + hrefParam);
-                const isImageFetchDest =
-                  request.headers.get("sec-fetch-dest") == "image";
+                const isImageFetchDest = request.headers.get("sec-fetch-dest") == "image";
 
                 if (hrefUrl.hostname !== url.hostname && !isImageFetchDest) {
                   analytics.setData({ xssDetectionImageHref: hrefParam });
@@ -253,27 +230,20 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
         });
       };
 
-      const routeToAssets = async ({
-        asset,
-      }: {
-        asset: "static_routing" | "found" | "none";
-      }) => {
+      const routeToAssets = async ({ asset }: { asset: "static_routing" | "found" | "none" }) => {
         analytics.setData({ dispatchtype: DISPATCH_TYPE.ASSETS });
-        return await this.env.JAEGER.enterSpan(
-          "dispatch_assets",
-          async (span) => {
-            span.setTags({
-              hasUserWorker: config.has_user_worker,
-              asset: asset,
-              dispatchType: DISPATCH_TYPE.ASSETS,
-            });
+        return await this.env.JAEGER.enterSpan("dispatch_assets", async (span) => {
+          span.setTags({
+            hasUserWorker: config.has_user_worker,
+            asset: asset,
+            dispatchType: DISPATCH_TYPE.ASSETS,
+          });
 
-            analytics.setData({
-              timeToDispatch: performance.now() - startTimeMs,
-            });
-            return this.env.ASSET_WORKER.fetch(request);
-          },
-        );
+          analytics.setData({
+            timeToDispatch: performance.now() - startTimeMs,
+          });
+          return this.env.ASSET_WORKER.fetch(request);
+        });
       };
 
       if (config.static_routing) {
@@ -302,9 +272,7 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
           })
         ) {
           if (!config.has_user_worker) {
-            throw new Error(
-              "Fetch for user worker without having a user worker binding",
-            );
+            throw new Error("Fetch for user worker without having a user worker binding");
           }
           // direct to user worker
           analytics.setData({
@@ -361,6 +329,8 @@ export class RouterInnerEntrypoint extends WorkerEntrypoint<Env> {
   }
 }
 
+export default RouterInnerEntrypoint;
+
 /**
  * Check if the Content Type is allowed for the the `_next/image` endpoint.
  *
@@ -386,8 +356,5 @@ function shouldBlockContentType(response: Response): boolean {
   // Allow only
   // - images (`image/...`)
   // - plain text (`text/plain`, `text/plain;charset=UTF-8`), used by Next errors
-  return !(
-    contentType.startsWith("image/") ||
-    contentType.split(";")[0] === "text/plain"
-  );
+  return !(contentType.startsWith("image/") || contentType.split(";")[0] === "text/plain");
 }

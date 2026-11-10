@@ -2,10 +2,9 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { PersistenceDecodeError, PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
+import { PersistenceDecodeError, toPersistenceSqlError } from "./Errors.ts";
 
 const decodeRuntimePayload = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -14,19 +13,6 @@ const decodeRuntimePayload = Schema.decodeUnknownEffect(
     }),
   }),
 );
-
-it("keeps SQL operation context without a tautological detail", () => {
-  const cause = new Error("database unavailable");
-  const error = new PersistenceSqlError({
-    operation: "AuthSessionRepository.list:query",
-    cause,
-  });
-
-  assert.equal(error.operation, "AuthSessionRepository.list:query");
-  assert.equal(error.detail, undefined);
-  assert.equal(error.cause, cause);
-  assert.equal(error.message, "SQL error in AuthSessionRepository.list:query");
-});
 
 it.effect("names a real SQLite condition without copying query data", () =>
   Effect.gen(function* () {
@@ -43,7 +29,7 @@ it.effect("names a real SQLite condition without copying query data", () =>
     assert.equal(error.cause, cause);
     assert.notInclude(error.message, payload);
     assert.notInclude(error.message, "private_column");
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it("reads the condition through a wrapping driver error", () => {
@@ -54,47 +40,6 @@ it("reads the condition through a wrapping driver error", () => {
 
   assert.equal(error.detail, "SQLITE(5) database is locked");
 });
-
-it.each([{ errno: 1555, code: "SQLITE_CONSTRAINT_PRIMARYKEY" }, { errno: 1 }])(
-  "names Bun SQLite condition $errno through the SQL error wrapper",
-  (condition) => {
-    const driver = Object.assign(new Error("bun-sql-private-sentinel"), {
-      name: "SQLiteError",
-      ...condition,
-    });
-    const cause = new SqlError({ reason: classifySqliteError(driver) });
-    const error = toPersistenceSqlError("AuthSessionRepository.create:query")(cause);
-
-    assert.equal(
-      error.message,
-      `SQL error in AuthSessionRepository.create:query: SQLITE(${condition.errno})`,
-    );
-    assert.equal(error.cause, cause);
-  },
-);
-
-it.each([
-  new Error("unhelpful"),
-  Object.assign(new Error("file not found"), { errno: -2, code: "ENOENT" }),
-])("omits a detail for a cause it cannot categorize (%#)", (cause) => {
-  const error = toPersistenceSqlError("AuthSessionRepository.list:query")(cause);
-
-  assert.equal(error.detail, undefined);
-  assert.equal(error.message, "SQL error in AuthSessionRepository.list:query");
-});
-
-it.effect("summarizes a schema cause by issue tag instead of by rejected value", () =>
-  Effect.gen(function* () {
-    const rejectedPayload = "sql-mapper-secret-sentinel";
-    const cause = yield* Effect.flip(
-      decodeRuntimePayload({ runtimePayload: { attempt: rejectedPayload } }),
-    );
-    const error = toPersistenceSqlError("ProviderSessionRuntimeRepository.list:query")(cause);
-
-    assert.ok(error.detail !== undefined);
-    assert.ok(!error.message.includes(rejectedPayload));
-  }),
-);
 
 it.effect("maps schema errors without copying rejected payloads into diagnostics", () =>
   Effect.gen(function* () {

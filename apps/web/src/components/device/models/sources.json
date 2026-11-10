@@ -1,0 +1,57 @@
+{
+  "author": "Apple Inc.",
+  "assetLicense": "No open-source or redistribution license has been established.",
+  "conversion": {
+    "blender": "4.5.9",
+    "gltfTransform": "4.2.1",
+    "changes": [
+      "Extracted device bodies and a separate Magic Keyboard accessory; excluded unrelated parts and presentation duplicates.",
+      "Normalized conventional device portrait axes, centered their screen and uniformly scaled its height to 2.2 scene units. The Duo retains its upstream centimeter hinge rig.",
+      "Replaced the baked marketing screen with a named placeholder for the live framebuffer.",
+      "Resized textures to at most 1024 pixels and encoded them as WebP; retained body geometry."
+    ]
+  },
+  "models": [
+    {
+      "id": "iphone-18-pro",
+      "file": "iphone-18-pro.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/iphone-18-pro/2026/591df885-5ee2-4173-86e6-401021249f7c/ar/iphone-18-pro-e-sim.usdz",
+      "sourceSha256": "0f2dac354fbc6505e7917983de460f2cc68e253f96aabf52e9f0468a4803f317",
+      "bodyNode": "UBGArkKGrAMRRnj",
+      "screenNode": "EHjrGDHNHzgNjtE.001"
+    },
+    {
+      "id": "iphone-18-pro-max",
+      "file": "iphone-18-pro-max.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/iphone-18-pro/2026/591df885-5ee2-4173-86e6-401021249f7c/ar/iphone-18-pro-e-sim.usdz",
+      "sourceSha256": "0f2dac354fbc6505e7917983de460f2cc68e253f96aabf52e9f0468a4803f317",
+      "bodyNode": "wUOhcMgiBmCgGaw",
+      "screenNode": "EHjrGDHNHzgNjtE"
+    },
+    {
+      "id": "ipad-pro-13-m5",
+      "file": "ipad-pro-13-m5.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/ipad-pro/2025/adee90db-c01e-430d-b726-fe64c0063f08/ar/ipad-pro-space-black.usdz",
+      "sourceSha256": "48098daf7c49117c81a4e4e1808899b93fad081faeba6c8b65124946b83b5ac6",
+      "bodyNode": "zRrSLDpdYmKeRJQ",
+      "screenNode": "lsDiIbtoSGSmWWZ"
+    },
+    {
+      "id": "ipad-pro-13-m5-magic-keyboard",
+      "file": "ipad-pro-13-m5-magic-keyboard.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/ipad-pro/2025/adee90db-c01e-430d-b726-fe64c0063f08/ar/ipad-pro-space-black.usdz",
+      "sourceSha256": "48098daf7c49117c81a4e4e1808899b93fad081faeba6c8b65124946b83b5ac6",
+      "bodyNode": "zRrSLDpdYmKeRJQ",
+      "screenNode": "lsDiIbtoSGSmWWZ",
+      "accessoryNode": "PoBqSMmyhhcJsBX"
+    },
+    {
+      "id": "iphone-duo",
+      "file": "iphone-duo.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/iphone-duo/2026/9305e4b9-72d9-4c05-9381-b572adadd5e5/ar/iPhone_Duo_e-sim_Star-White_Variant.usdz",
+      "sourceSha256": "5cab2ea636da0bc0b06c8abf4809843498f7c1d680042b4f95e383b5c6a718b2",
+      "upstreamConversionCommit": "bb265b11c13b395e5302d121458e2d42224a2e9f",
+      "conversion": "Preserved the centimeter split hinge rig and three display meshes from serve-sim; resized textures to 1024 pixels and encoded them as WebP without simplifying or flattening the rig."
+    }
+  ]
+}

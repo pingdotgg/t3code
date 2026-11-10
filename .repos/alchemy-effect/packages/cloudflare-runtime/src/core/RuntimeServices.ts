@@ -7,6 +7,7 @@ import {
   Cache,
   D1,
   DispatchNamespace,
+  Flagship,
   Hyperdrive,
   Images,
   KvNamespace,
@@ -19,21 +20,11 @@ import {
   Workflows,
 } from "./bindings/index.ts";
 import * as Docker from "./Docker.ts";
-import {
-  Globals,
-  Internet,
-  Loopback,
-  LoopbackServer,
-  Storage,
-} from "./globals/index.ts";
+import { Globals, Internet, Loopback, LoopbackServer, Storage } from "./globals/index.ts";
 import * as Paths from "./internal/Paths.ts";
 import * as WorkerProxy from "./proxy/WorkerProxy.ts";
 import { Registry, RegistryProxy } from "./registry/index.ts";
-import {
-  Access,
-  RemoteBindings,
-  RemoteWorker,
-} from "./remote-bindings/index.ts";
+import { Access, RemoteBindings, RemoteWorker } from "./remote-bindings/index.ts";
 import * as Runtime from "./Runtime.ts";
 import * as Workerd from "./workerd/Workerd.ts";
 
@@ -53,9 +44,7 @@ export interface StorageConfig {
 export const layerRemoteBindings = ({ accountId }: ApiConfig) =>
   RemoteBindings.RemoteBindingsLive.pipe(
     Layer.provide(
-      RemoteWorker.layer(
-        Effect.isEffect(accountId) ? accountId : Effect.succeed(accountId),
-      ),
+      RemoteWorker.layer(Effect.isEffect(accountId) ? accountId : Effect.succeed(accountId)),
     ),
     Layer.provide(Access.layer),
   );
@@ -74,6 +63,7 @@ export const layerLocalBindings = () =>
     Cache.CacheLive,
     D1.D1Live,
     DispatchNamespace.DispatchNamespaceLive,
+    Flagship.FlagshipLive,
     Hyperdrive.HyperdriveLive,
     Images.ImagesLive,
     KvNamespace.KvNamespaceLive,
@@ -93,6 +83,7 @@ export type BindingServices =
   | Cache.Cache
   | D1.D1
   | DispatchNamespace.DispatchNamespace
+  | Flagship.Flagship
   | Hyperdrive.Hyperdrive
   | Images.Images
   | KvNamespace.KvNamespace
@@ -109,11 +100,7 @@ export type BindingServices =
 
 export type RuntimeServices = Runtime.Runtime | BindingServices;
 
-export const layerProxy = () =>
-  Layer.provide(
-    WorkerProxy.WorkerProxyLive,
-    Layer.mergeAll(Internet.InternetLive, Workerd.WorkerdLive),
-  );
+export const layerProxy = () => WorkerProxy.WorkerProxyLive;
 
 export const layerRegistry = () =>
   RegistryProxy.RegistryProxyLive.pipe(Layer.provide(Registry.RegistryLive));

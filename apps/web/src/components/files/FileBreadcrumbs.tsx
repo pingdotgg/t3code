@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
@@ -10,29 +10,37 @@ import {
   MenuGroup,
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useTheme } from "~/hooks/useTheme";
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
-import { isAbsolutePath } from "~/terminal-links";
+import { isHostPath } from "@t3tools/shared/path";
 
 import {
+  breadcrumbPathOf,
   type FileBreadcrumb,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
   fileBreadcrumbs,
+  isListableHostFolder,
 } from "./filePath";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  /** Navigates to a folder; an empty path is the workspace root. */
+  readonly onNavigateFolder: (relativePath: string) => void;
   readonly onOpenFile: (relativePath: string) => void;
   readonly projectName: string;
+  /** Current path; an empty path is the workspace root. */
   readonly relativePath: string;
+  /** Deepest visible path, including descendants retained after navigating up. */
+  readonly trail: string;
   readonly workspaceMutationId: string | null;
 }
 
@@ -59,9 +67,7 @@ function BreadcrumbLabel(props: {
       >
         {props.label}
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-80">
-        {props.pathLabel}
-      </TooltipPopup>
+      <TooltipPopup side="top">{props.pathLabel}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -78,22 +84,17 @@ function BreadcrumbMenuContent(props: {
   readonly rootPath: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    refresh: entriesQuery.refresh,
-    resourceKey: `files:${props.environmentId}:${props.cwd}`,
-  });
+  const entriesQuery = useProjectEntriesQuery(
+    props.environmentId,
+    props.cwd,
+    props.directoryPath,
+    props.workspaceMutationId,
+  );
   const { resolvedTheme } = useTheme();
   const entries = entriesQuery.data?.entries ?? [];
   const entriesTruncated = entriesQuery.data?.truncated ?? false;
-  const children = useMemo(
-    () => fileBreadcrumbChildren(entries, props.directoryPath),
-    [entries, props.directoryPath],
-  );
-  const directoryAvailable =
-    props.directoryPath === "" ||
-    entries.some((entry) => entry.kind === "directory" && entry.path === props.directoryPath);
+  const children = fileBreadcrumbChildren(entries, props.directoryPath);
+  const directoryAvailable = entriesQuery.data !== null;
   const parentPath = fileBreadcrumbParent(props.directoryPath);
   const canGoBack =
     props.directoryPath !== props.rootPath &&
@@ -106,7 +107,6 @@ function BreadcrumbMenuContent(props: {
     <MenuPopup
       align="start"
       side="bottom"
-      className="w-max min-w-32 max-w-[min(19rem,var(--available-width))]"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" || !canGoBack || parentPath === null) return;
         event.preventDefault();
@@ -143,36 +143,56 @@ function BreadcrumbMenuContent(props: {
               : "This folder is empty."}
           </MenuItem>
         ) : (
-          children.map((entry) => {
-            const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
-            return (
-              <MenuItem
-                key={entry.path}
-                closeOnClick={entry.kind === "file"}
-                aria-current={isCurrentFile ? "page" : undefined}
-                className={cn(isCurrentFile && "bg-foreground/[0.08]")}
-                onClick={() => {
-                  if (entry.kind === "directory") {
-                    props.onDirectoryChange(entry.path);
-                    return;
-                  }
-                  props.onOpenChange(false);
-                  props.onOpenFile(entry.path);
-                }}
-              >
-                <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-                    {entry.label}
-                  </TooltipTrigger>
-                  <TooltipPopup side="right" className="max-w-80">
-                    {entry.path}
-                  </TooltipPopup>
-                </Tooltip>
-                {entry.kind === "directory" ? <ChevronRightIcon /> : null}
-              </MenuItem>
-            );
-          })
+          <MenuRadioGroup
+            value={props.currentFilePath}
+            onValueChange={(path) => {
+              props.onOpenChange(false);
+              props.onOpenFile(path);
+            }}
+          >
+            {children.map((entry) => {
+              const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
+              const row = (
+                <>
+                  <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className={cn(
+                            "min-w-0 flex-1 truncate",
+                            entry.ignored && "text-muted-foreground",
+                          )}
+                        />
+                      }
+                    >
+                      {entry.label}
+                    </TooltipTrigger>
+                    <TooltipPopup side="right">{entry.path}</TooltipPopup>
+                  </Tooltip>
+                </>
+              );
+              return entry.kind === "directory" ? (
+                <MenuItem
+                  key={entry.path}
+                  closeOnClick={false}
+                  onClick={() => props.onDirectoryChange(entry.path)}
+                >
+                  {row}
+                  <ChevronRightIcon />
+                </MenuItem>
+              ) : (
+                <MenuRadioItem
+                  key={entry.path}
+                  value={entry.path}
+                  closeOnClick
+                  aria-current={isCurrentFile ? "page" : undefined}
+                >
+                  <span className="flex min-w-0 items-center gap-2">{row}</span>
+                </MenuRadioItem>
+              );
+            })}
+          </MenuRadioGroup>
         )}
       </MenuGroup>
       {entriesQuery.error && entriesQuery.data !== null ? (
@@ -180,7 +200,7 @@ function BreadcrumbMenuContent(props: {
           <MenuSeparator />
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            Refresh failed — retry
+            Refresh failed. Retry
           </MenuItem>
         </>
       ) : null}
@@ -194,14 +214,18 @@ function BreadcrumbMenuContent(props: {
   );
 }
 
-function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
+function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
-
-  useEffect(() => {
+  const [shownFor, setShownFor] = useState({
+    crumbPath: props.crumb.path,
+    relativePath: props.relativePath,
+  });
+  if (shownFor.crumbPath !== props.crumb.path || shownFor.relativePath !== props.relativePath) {
+    setShownFor({ crumbPath: props.crumb.path, relativePath: props.relativePath });
     setOpen(false);
     setDirectoryPath(props.crumb.path);
-  }, [props.crumb.path, props.relativePath]);
+  }
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -210,26 +234,17 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
 
   return (
     <Menu open={open} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={`Browse ${props.crumb.label}`}
-                  className="relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-left text-muted-foreground outline-none pointer-coarse:after:-inset-y-3 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
-                />
-              }
-            />
-          }
-        >
-          <span className="block truncate">{props.crumb.label}</span>
-        </TooltipTrigger>
-        <TooltipPopup side="top" className="max-w-80">
-          {props.crumb.path || props.projectName}
-        </TooltipPopup>
-      </Tooltip>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Browse ${props.crumb.label}`}
+            className="relative mx-0.5 flex h-5 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 outline-none pointer-coarse:after:absolute pointer-coarse:after:-inset-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
+          />
+        }
+      >
+        <ChevronRightIcon className="size-3.5" />
+      </MenuTrigger>
       {open ? (
         <BreadcrumbMenuContent
           cwd={props.cwd}
@@ -248,31 +263,83 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
   );
 }
 
-export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
-  const hostPath = isAbsolutePath(props.relativePath);
-  const breadcrumbs = useMemo(
-    () => fileBreadcrumbs(props.projectName, props.relativePath),
-    [props.projectName, props.relativePath],
+function FolderBreadcrumb(props: {
+  readonly crumb: FileBreadcrumb;
+  /** Whether this crumb is below the current folder. */
+  readonly descendant: boolean;
+  readonly onNavigate: (path: string) => void;
+  readonly projectName: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={() => props.onNavigate(props.crumb.path)}
+            className={cn(
+              "relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-left outline-none pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              props.descendant ? "text-muted-foreground/70" : "text-muted-foreground",
+            )}
+          />
+        }
+      >
+        <span className="block truncate">{props.crumb.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.crumb.path || props.projectName}</TooltipPopup>
+    </Tooltip>
   );
+}
 
-  return breadcrumbs.map((crumb, index) => (
-    <div
-      key={crumb.path || "project"}
-      className="flex min-w-0 shrink-0 items-center"
-      data-current-file-crumb={crumb.kind === "file"}
-    >
-      {index > 0 ? (
-        <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-      ) : null}
-      {crumb.kind === "file" ? (
-        <span aria-current="page">
-          <BreadcrumbLabel current label={crumb.label} pathLabel={crumb.path} />
-        </span>
-      ) : hostPath ? (
-        <BreadcrumbLabel label={crumb.label} pathLabel={crumb.path} />
-      ) : (
-        <DirectoryBreadcrumb {...props} crumb={crumb} />
-      )}
-    </div>
-  ));
+/** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
+export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+  const hostPath = isHostPath(props.relativePath);
+  const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
+  const currentPath = breadcrumbPathOf(props.relativePath);
+  const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
+
+  return (
+    <nav aria-label="File path" className="flex h-full">
+      <ol className="flex items-center">
+        {breadcrumbs.map((crumb, index) => {
+          const current = index === currentIndex;
+          return (
+            <li
+              key={crumb.path || "project"}
+              className="flex min-w-0 shrink-0 items-center"
+              data-file-crumb
+              data-current-file-crumb={current}
+            >
+              {current ? (
+                <span aria-current="page">
+                  <BreadcrumbLabel
+                    current
+                    label={crumb.label}
+                    pathLabel={crumb.path || props.projectName}
+                  />
+                </span>
+              ) : hostPath && !isListableHostFolder(crumb.path) ? (
+                <BreadcrumbLabel label={crumb.label} pathLabel={crumb.path} />
+              ) : (
+                <FolderBreadcrumb
+                  crumb={crumb}
+                  descendant={index > currentIndex}
+                  onNavigate={props.onNavigateFolder}
+                  projectName={props.projectName}
+                />
+              )}
+              {index === breadcrumbs.length - 1 ? null : hostPath ? (
+                <ChevronRightIcon
+                  aria-hidden
+                  className="mx-1 size-3.5 shrink-0 text-muted-foreground/60"
+                />
+              ) : (
+                <FolderContentsMenu {...props} crumb={crumb} />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
 }

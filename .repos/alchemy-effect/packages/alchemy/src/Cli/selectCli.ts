@@ -1,20 +1,31 @@
+import * as CliOutput from "effect/cli/CliOutput";
+import type * as Prompt from "effect/cli/Prompt";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { isNonInteractive } from "../Util/interactive.ts";
-import type { Cli } from "./Cli.ts";
+import { Interaction } from "../Interaction.ts";
+import type { Cli } from "../Report.ts";
 import { LoggingCli } from "./LoggingCli.ts";
+import { plainCliFormatter } from "./PlainCliFormatter.ts";
 
-export { isNonInteractive } from "../Util/interactive.ts";
+type SelectedCli = Layer.Layer<Cli, never, Interaction | Prompt.Environment>;
 
-export const selectCli = (): Layer.Layer<Cli> =>
-  isNonInteractive()
-    ? LoggingCli
-    : // Defer importing the Ink/React TUI (`./tui/InkCLI.tsx` pulls in `ink`)
-      // until we actually need the interactive renderer. Non-interactive runs
-      // (agents, CI, piped output) take the cheap `LoggingCli` branch and never
-      // pay the TUI import cost.
-      Layer.unwrap(
-        Effect.promise(() =>
-          import("./tui/InkCLI.tsx").then((m) => m.inkCLI()),
-        ),
-      );
+/** Select the interactive or append-only root renderer. */
+export const selectCliServices = () =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const cli = yield* Interaction;
+      if (!cli.terminal.input) {
+        const plain: SelectedCli = Layer.mergeAll(
+          LoggingCli,
+          CliOutput.layer(plainCliFormatter({ columns: cli.terminal.columns })),
+        );
+        return plain;
+      }
+
+      return yield* Effect.promise<SelectedCli>(async () => {
+        const { sigilCli } = await import("./components/view/SigilCli.tsx");
+        const { brandedCliFormatter } = await import("./components/view/Help.tsx");
+        return Layer.mergeAll(sigilCli(), CliOutput.layer(brandedCliFormatter(cli)));
+      });
+    }),
+  );

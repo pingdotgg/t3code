@@ -1,7 +1,7 @@
 import type { ProviderMode } from "../ProviderMode.ts";
 
 /**
- * Pure formatting shared by the plan/deploy renderers (Ink TUI +
+ * Pure formatting shared by the plan/deploy renderers (Sigil TUI +
  * non-interactive LoggingCli) for the local-vs-live provider-mode
  * indicator on a resource row.
  *
@@ -25,8 +25,7 @@ import type { ProviderMode } from "../ProviderMode.ts";
  */
 
 /** The display label for a mode-stamped row (`"live"` renders as `remote`). */
-export const modeLabel = (mode: ProviderMode): string =>
-  mode === "live" ? "remote" : "local";
+export const modeLabel = (mode: ProviderMode): string => (mode === "live" ? "remote" : "local");
 
 /**
  * The mode note for a resource row, or `undefined` when nothing should be

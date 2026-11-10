@@ -10,6 +10,7 @@ import {
 
 export const PullRequestListSort = Schema.Literals([
   "ready",
+  "blocked",
   "updated",
   "newest",
   "oldest",
@@ -24,7 +25,7 @@ export interface PullRequestListPreferences {
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
-  readonly q?: string;
+  readonly q?: string | undefined;
   readonly draft?: "only" | "hide";
   readonly review?: NonNullable<PullRequestListFilters["review"]>;
   readonly checks?: NonNullable<PullRequestListFilters["checks"]>;
@@ -70,7 +71,6 @@ function resolvePreferenceStorage(
   return storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
 }
 
-/** Only list controls are remembered. The selected row remains a URL and right-panel concern. */
 export function pullRequestListPreferences(
   search: PullRequestListPreferences | Schema.Schema.Type<typeof PullRequestListPreferencesSchema>,
 ): PullRequestListPreferences {
@@ -116,7 +116,5 @@ export function writePullRequestListPreferences(
       PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
       JSON.stringify(preferences),
     );
-  } catch {
-    // Storage can be full or denied; the URL remains the source of truth for this visit.
-  }
+  } catch {}
 }

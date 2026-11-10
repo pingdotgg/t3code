@@ -1,7 +1,7 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Neon from "alchemy/Neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import Backend from "./src/backend/api.ts";
@@ -15,7 +15,8 @@ import { Hyperdrive, NeonDatabase } from "./src/backend/database.ts";
  */
 export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
   compatibility: {
-    flags: ["nodejs_compat", "enable_request_signal"],
+    // Node.js compatibility is supplied by Alchemy's 2026-08-31 default.
+    flags: ["enable_request_signal"],
   },
   env: {
     BACKEND: Backend,
@@ -27,11 +28,7 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 export default Alchemy.Stack(
   "CloudflareTanstackRpcDrizzleExample",
   {
-    providers: Layer.mergeAll(
-      Cloudflare.providers(),
-      Drizzle.providers(),
-      Neon.providers(),
-    ),
+    providers: Layer.mergeAll(Cloudflare.providers(), Drizzle.providers(), Neon.providers()),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {

@@ -1,6 +1,22 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
-/** Match the terms a user can actually see or recognize in the model picker. */
+export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
+  return `${provider}:${model}`;
+}
+
+export function favoritesFirst(
+  models: ReadonlyArray<ModelOption>,
+  favoriteKeys: ReadonlySet<string>,
+): ReadonlyArray<ModelOption> {
+  const favorites: ModelOption[] = [];
+  const others: ModelOption[] = [];
+  for (const model of models) {
+    (favoriteKeys.has(model.key) ? favorites : others).push(model);
+  }
+  return [...favorites, ...others];
+}
+
 export function modelMatchesCatalogQuery(input: {
   readonly model: ModelOption;
   readonly providerLabel: string;
@@ -19,32 +35,34 @@ export function modelMatchesCatalogQuery(input: {
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-/** Preserve staged provider options when the highlighted model is tapped again. */
 export function pendingModelAfterPress(input: {
   readonly current: ModelOption | null;
   readonly pressed: ModelOption;
   readonly pressedIsApplied: boolean;
+  readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
 }): ModelOption | null {
   if (input.pressedIsApplied) {
     return null;
   }
-  return input.current?.key === input.pressed.key ? input.current : input.pressed;
+  if (input.current?.key === input.pressed.key) {
+    return input.current;
+  }
+  return input.restoreSelection
+    ? { ...input.pressed, selection: input.restoreSelection(input.pressed.selection) }
+    : input.pressed;
 }
 
-/** A model can disappear while the picker is open. */
 export function canCommitPendingModel(
   pending: ModelOption,
   groups: ReadonlyArray<ProviderGroup>,
 ): boolean {
   return groups.some((group) =>
-    group.models.some((model) => model.key === pending.key && !model.isUnavailable),
+    group.models.some(
+      (model) => model.key === pending.key && !model.isUnavailable && !model.isHidden,
+    ),
   );
 }
 
-/**
- * Primary and selected providers start open; all other catalogs start closed.
- * A user's disclosure tap inverts that default until the picker is dismissed.
- */
 export function providerSectionIsCollapsed(input: {
   readonly defaultExpanded: boolean;
   readonly hasExpansionOverride: boolean;

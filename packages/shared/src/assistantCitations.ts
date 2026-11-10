@@ -24,7 +24,6 @@ function encodePathPart(value: string): string {
   );
 }
 
-/** Edits only the user comment, leaving the quote and its source selector unchanged. */
 export function withAssistantCitationComment(
   citation: AssistantCitation,
   comment: string,
@@ -34,7 +33,6 @@ export function withAssistantCitationComment(
   return trimmedComment ? { ...source, comment: trimmedComment } : source;
 }
 
-/** Self-contained and origin-independent, so draft, clipboard, and sent-message copies agree. */
 export function formatAssistantCitationHref(citation: AssistantCitation): string {
   const path = [citation.environmentId, citation.threadId, citation.messageId]
     .map(encodePathPart)
@@ -98,6 +96,18 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
   }
 }
 
+export function assistantCitationLabel(citation: AssistantCitation): string {
+  const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
+  if (preview.length <= 64) return preview;
+  let end = 64;
+  const previous = preview.charCodeAt(end - 1);
+  const next = preview.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${preview.slice(0, end)}…`;
+}
+
 export function serializeAssistantCitation(citation: AssistantCitation): string {
   return `[Assistant quote](${formatAssistantCitationHref(citation)})`;
 }
@@ -118,7 +128,6 @@ export function collectAssistantCitations(text: string) {
   return citations;
 }
 
-/** Titles and previews include the selected text and user comment without Markdown escaping. */
 export function assistantCitationsToPlainText(prompt: string): string {
   return prompt.replace(CITATION_LINK, (source: string, href: string) => {
     const citation = parseAssistantCitationHref(href);
@@ -129,7 +138,6 @@ export function assistantCitationsToPlainText(prompt: string): string {
   });
 }
 
-/** Provider adapters receive readable quote data; the persisted message keeps its clickable links. */
 export function expandAssistantCitationsForProvider(prompt: string): string {
   const matches = collectAssistantCitations(prompt);
   if (matches.length === 0) return prompt;
@@ -166,7 +174,6 @@ function escapeMarkdownText(text: string): string {
     .replace(/[\\`*_[\]{}()#+.!|~-]/g, "\\$&");
 }
 
-/** Native clients display the complete quote and keep the user's comment outside the quote block. */
 export function renderAssistantCitationsAsText(prompt: string): string {
   const matches = collectAssistantCitations(prompt);
   let text = "";

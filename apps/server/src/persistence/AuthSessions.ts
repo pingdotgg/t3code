@@ -1,16 +1,16 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
-  ClientSurface,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -58,6 +58,7 @@ export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 export const CreateReplacingActiveAuthSessionInput = Schema.Struct({
   session: CreateAuthSessionInput,
   revokedAt: Schema.DateTimeUtcFromString,
+  replaceSessionId: Schema.optionalKey(AuthSessionId),
 });
 export type CreateReplacingActiveAuthSessionInput =
   typeof CreateReplacingActiveAuthSessionInput.Type;
@@ -91,13 +92,6 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
-export const SetAuthSessionClientConnectionInput = Schema.Struct({
-  sessionId: AuthSessionId,
-  surface: Schema.NullOr(ClientSurface),
-  appVersion: Schema.NullOr(Schema.String),
-});
-export type SetAuthSessionClientConnectionInput = typeof SetAuthSessionClientConnectionInput.Type;
-
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -107,6 +101,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly createReplacingActive: (
       input: CreateReplacingActiveAuthSessionInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly createIfAbsent: (
+      input: CreateAuthSessionInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly getById: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
@@ -121,9 +118,6 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
-    ) => Effect.Effect<void, AuthSessionRepositoryError>;
-    readonly setClientConnection: (
-      input: SetAuthSessionClientConnectionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
@@ -200,14 +194,15 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const createSessionRow = SqlSchema.void({
-    Request: CreateAuthSessionInput,
-    execute: (input) =>
-      sql`
+  const insertSessionRow = (ignoreExisting: boolean) =>
+    SqlSchema.void({
+      Request: CreateAuthSessionInput,
+      execute: (input) =>
+        sql`
         INSERT INTO auth_sessions (
           session_id,
           subject,
@@ -238,8 +233,11 @@ export const make = Effect.gen(function* () {
           ${input.expiresAt},
           NULL
         )
+        ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
-  });
+    });
+  const createSessionRow = insertSessionRow(false);
+  const createSessionRowIfAbsent = insertSessionRow(true);
 
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
@@ -269,11 +267,15 @@ export const make = Effect.gen(function* () {
   const revokeActiveSessionsForReplacement = SqlSchema.findAll({
     Request: CreateReplacingActiveAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ session, revokedAt }) =>
+    execute: ({ session, revokedAt, replaceSessionId }) =>
       sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
-        WHERE subject = ${session.subject}
+        WHERE ${
+          replaceSessionId === undefined
+            ? sql`subject = ${session.subject}`
+            : sql`session_id = ${replaceSessionId}`
+        }
           AND method = ${session.method}
           AND revoked_at IS NULL
           AND expires_at > ${revokedAt}
@@ -314,20 +316,6 @@ export const make = Effect.gen(function* () {
       sql`
         UPDATE auth_sessions
         SET last_connected_at = ${lastConnectedAt}
-        WHERE session_id = ${sessionId}
-          AND revoked_at IS NULL
-      `,
-  });
-
-  // COALESCE keeps the previous value when a client reports only one field, so
-  // a partial report never nulls out data a fuller client stored earlier.
-  const setClientConnectionRow = SqlSchema.void({
-    Request: SetAuthSessionClientConnectionInput,
-    execute: ({ sessionId, surface, appVersion }) =>
-      sql`
-        UPDATE auth_sessions
-        SET client_surface = COALESCE(${surface}, client_surface),
-            client_app_version = COALESCE(${appVersion}, client_app_version)
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
       `,
@@ -393,8 +381,20 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const createIfAbsent: AuthSessionRepository["Service"]["createIfAbsent"] = (input) =>
+    createSessionRowIfAbsent(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.createIfAbsent:query",
+          "AuthSessionRepository.createIfAbsent:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
   const getById: AuthSessionRepository["Service"]["getById"] = (input) =>
     getSessionRowById(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.getById:query",
@@ -404,7 +404,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthSessionDbRow(row).pipe(
               Effect.mapError((cause) =>
@@ -422,6 +422,7 @@ export const make = Effect.gen(function* () {
 
   const listActive: AuthSessionRepository["Service"]["listActive"] = (input) =>
     listActiveSessionRows(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.listActive:query",
@@ -479,26 +480,15 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const setClientConnection: AuthSessionRepository["Service"]["setClientConnection"] = (input) =>
-    setClientConnectionRow(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "AuthSessionRepository.setClientConnection:query",
-          "AuthSessionRepository.setClientConnection:encodeRequest",
-          { sessionId: input.sessionId },
-        ),
-      ),
-    );
-
   return {
     create,
     createReplacingActive,
+    createIfAbsent,
     getById,
     listActive,
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
-    setClientConnection,
   } satisfies AuthSessionRepository["Service"];
 });
 

@@ -1,7 +1,7 @@
 # T3 Connect Relay
 
 > [!NOTE]
-> Sign in to T3 Connect from the app under Settings > Connections.
+> Sign in to T3 Connect from the app under Settings > Sharing & access.
 
 The relay is the hosted control plane for T3 Connect. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers
@@ -76,7 +76,8 @@ dependencies represented at their boundary rather than mocking internal behavior
 
 ## Deployment
 
-The relay deploys through Alchemy:
+The relay deploys with the Alchemy CLI (`vp run --filter t3code-relay deploy` is `alchemy deploy`
+in this directory):
 
 ```sh
 vp run --filter t3code-relay deploy
@@ -109,16 +110,19 @@ DNS-safe sanitization as Alchemy physical resource names, so `prod` uses
 `<stage>-<digest>.<RELAY_TUNNEL_ZONE_NAME>`. `RELAY_DOMAIN` remains available as an explicit API
 domain override.
 
-After a successful deploy, the wrapper updates the repository-root `.env` file with the derived relay
-URL. That makes subsequent source builds point at the relay that was just deployed without copying
-the URL manually.
+The stack's `PublishClientConfig` action ([`src/clientConfig.ts`](./src/clientConfig.ts)) writes the
+deployed relay URL and tracing configuration into the repository-root `.env`, so subsequent source
+builds point at the relay that was just deployed without copying values manually. It runs only when
+one of those outputs changed, and `T3CODE_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
 
 ### Deployment CI
 
 The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
 the shared Alchemy `prod` stage on every push to `main`. Stable and nightly release builds both
 resolve their static public config from the same
-`production` GitHub environment. Pull requests do not deploy relay stages. Developers can
+`production` GitHub environment. Labeling a same-repository PR `relay:preview` deploys a `pr-<number>`
+stage, and the cleanup workflow tears it down; see
+[`relay-preview.yml`](../../.github/workflows/relay-preview.yml). Developers can
 deploy personal non-production stages locally with any stage name other than `prod`.
 
 The repository must define these Actions variables shared by relay deployments:
@@ -139,6 +143,10 @@ The `production` GitHub environment must define these Actions variables:
 - `RELAY_API_ZONE_NAME`
 - `RELAY_TUNNEL_ZONE_NAME`
 - `RELAY_DOMAIN` if overriding the derived production relay domain
+- `RELAY_ALERT_NOTIFIER_ID`, the Axiom notifier that relay alerts page. Without it the deployment
+  creates no monitors or health dashboard. See
+  [Relay alerts](../../docs/operations/relay-observability.md#alerts).
+- `RELAY_WARNING_NOTIFIER_ID`, optional, the Axiom notifier for relay warnings
 - `CLERK_PUBLISHABLE_KEY`
 - `CLERK_JWT_AUDIENCE`
 - `CLERK_JWT_TEMPLATE`
@@ -152,6 +160,9 @@ The `production` GitHub environment must define these Actions secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 - `FCM_SERVICE_ACCOUNT` when Android push is enabled
+- `T3CHAT_LINK_SECRET`, optional, shared with T3 Chat's `T3CODE_LINK_SECRET`. Without it the
+  T3 Chat account link is off. Local and preview stages can set `T3CHAT_URL` to point
+  at another T3 Chat deployment; production uses `https://t3.chat`.
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,

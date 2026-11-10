@@ -1,17 +1,17 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import { cast } from "effect/Function";
-import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import assert from "node:assert";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import { cast } from "effect/Function";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import Stack, { SECRETS_STORE_VALUE } from "../alchemy.run.ts";
 import type { Message } from "../src/AsyncWorker.ts";
 import { WORKFLOW_SECRET_VALUE } from "../src/NotifyWorkflow.ts";
@@ -51,10 +51,7 @@ const stack = beforeAll(
             HttpClient.get(url).pipe(
               Effect.flatMap(HttpClientResponse.filterStatusOk),
               Effect.retry({
-                schedule: Schedule.max([
-                  Schedule.spaced("250 millis"),
-                  Schedule.recurs(40),
-                ]),
+                schedule: Schedule.max([Schedule.spaced("250 millis"), Schedule.recurs(40)]),
               }),
             ),
         );
@@ -139,33 +136,21 @@ const findEmlContaining = (needle: string) =>
     return undefined;
   }).pipe(
     Effect.flatMap((content) =>
-      content === undefined
-        ? Effect.fail(new EmlNotFound({}))
-        : Effect.succeed(content),
+      content === undefined ? Effect.fail(new EmlNotFound({})) : Effect.succeed(content),
     ),
     Effect.retry({
       while: (e) => e._tag === "EmlNotFound",
-      schedule: Schedule.max([
-        Schedule.spaced("500 millis"),
-        Schedule.recurs(20),
-      ]),
+      schedule: Schedule.max([Schedule.spaced("500 millis"), Schedule.recurs(20)]),
     }),
   );
 
 test(
   "deploys all workers with URLs",
   Effect.gen(function* () {
-    const { asyncWorker, effectWorker, mediaWorker, tailWorker, inboxWorker } =
-      yield* stack;
+    const { asyncWorker, effectWorker, mediaWorker, tailWorker, inboxWorker } = yield* stack;
 
     // Local dev proxy URLs — proof no cloud deploy ran for the workers.
-    for (const url of [
-      asyncWorker,
-      effectWorker,
-      mediaWorker,
-      tailWorker,
-      inboxWorker,
-    ]) {
+    for (const url of [asyncWorker, effectWorker, mediaWorker, tailWorker, inboxWorker]) {
       expect(url).toBeString();
       expect(url).toMatch(/^http:\/\/localhost:\d+/);
     }
@@ -303,25 +288,18 @@ test(
     yield* HttpClient.post(new URL("/queue/send", asyncWorker), {
       body: yield* HttpBody.json(body),
     }).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-    const message = yield* HttpClient.get(
-      new URL("/queue/messages", asyncWorker),
-    ).pipe(
+    const message = yield* HttpClient.get(new URL("/queue/messages", asyncWorker)).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((res) => res.json),
       Effect.map(cast<Schema.Json, Array<Message>>),
-      Effect.map((messages) =>
-        messages.find((m) => m.body.sentAt === body.sentAt),
-      ),
+      Effect.map((messages) => messages.find((m) => m.body.sentAt === body.sentAt)),
       Effect.filterOrFail(
         (message) => message !== undefined,
         () => ({ _tag: "MessageNotFound" }) as const,
       ),
       Effect.retry({
         while: (error) => error._tag === "MessageNotFound",
-        schedule: Schedule.max([
-          Schedule.spaced("250 millis"),
-          Schedule.recurs(25),
-        ]),
+        schedule: Schedule.max([Schedule.spaced("250 millis"), Schedule.recurs(25)]),
       }),
     );
     expect(message).toMatchObject({
@@ -363,25 +341,18 @@ test(
     yield* HttpClient.post(new URL("/queue/send", effectWorker), {
       body: yield* HttpBody.json(body),
     }).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-    const message = yield* HttpClient.get(
-      new URL("/queue/messages", effectWorker),
-    ).pipe(
+    const message = yield* HttpClient.get(new URL("/queue/messages", effectWorker)).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((res) => res.json),
       Effect.map(cast<Schema.Json, Array<Message>>),
-      Effect.map((messages) =>
-        messages.find((m) => m.body.sentAt === body.sentAt),
-      ),
+      Effect.map((messages) => messages.find((m) => m.body.sentAt === body.sentAt)),
       Effect.filterOrFail(
         (message) => message !== undefined,
         () => ({ _tag: "MessageNotFound" }) as const,
       ),
       Effect.retry({
         while: (error) => error._tag === "MessageNotFound",
-        schedule: Schedule.max([
-          Schedule.spaced("250 millis"),
-          Schedule.recurs(25),
-        ]),
+        schedule: Schedule.max([Schedule.spaced("250 millis"), Schedule.recurs(25)]),
       }),
     );
     expect(message).toMatchObject({
@@ -436,15 +407,13 @@ test(
     const { asyncWorker } = yield* stack;
     const key = crypto.randomUUID();
 
-    const first = (yield* (yield* HttpClient.get(
-      new URL(`/cache?key=${key}`, asyncWorker),
-    )).json) as { hit: boolean; body: string };
+    const first = (yield* (yield* HttpClient.get(new URL(`/cache?key=${key}`, asyncWorker)))
+      .json) as { hit: boolean; body: string };
     expect(first.hit).toBe(false);
     expect(first.body).toBe("cached-body");
 
-    const second = (yield* (yield* HttpClient.get(
-      new URL(`/cache?key=${key}`, asyncWorker),
-    )).json) as { hit: boolean; body: string };
+    const second = (yield* (yield* HttpClient.get(new URL(`/cache?key=${key}`, asyncWorker)))
+      .json) as { hit: boolean; body: string };
     expect(second.hit).toBe(true);
     expect(second.body).toBe("cached-body");
   }),
@@ -543,9 +512,7 @@ test(
     }[];
     expect(
       items.some((item) =>
-        item.logs?.some((log) =>
-          log.message?.includes("cloudflare-dev-tail-marker"),
-        ),
+        item.logs?.some((log) => log.message?.includes("cloudflare-dev-tail-marker")),
       ),
     ).toBe(true);
   }),
@@ -598,9 +565,7 @@ test(
   "EffectWorker signs and verifies with the secret_key binding",
   Effect.gen(function* () {
     const { effectWorker } = yield* stack;
-    const response = yield* HttpClient.get(
-      new URL("/secret-key?message=hello", effectWorker),
-    );
+    const response = yield* HttpClient.get(new URL("/secret-key?message=hello", effectWorker));
     expect(response.status).toBe(200);
     const body = (yield* response.json) as {
       verified: boolean;
@@ -644,9 +609,9 @@ test(
     expect(secretsStoreId).toMatch(/^dev:/);
     expect(secretsSecretId).toMatch(/^dev:/);
 
-    const body = (yield* (yield* HttpClient.get(
-      new URL("/secret", mediaWorker),
-    )).json) as { value: string };
+    const body = (yield* (yield* HttpClient.get(new URL("/secret", mediaWorker))).json) as {
+      value: string;
+    };
     expect(body.value).toBe(SECRETS_STORE_VALUE);
   }),
 );
@@ -662,9 +627,7 @@ test(
     const { mediaWorker } = yield* stack;
     const marker = crypto.randomUUID();
 
-    const res = yield* HttpClient.get(
-      new URL(`/email/send?marker=${marker}`, mediaWorker),
-    );
+    const res = yield* HttpClient.get(new URL(`/email/send?marker=${marker}`, mediaWorker));
     expect(res.status).toBe(200);
     const body = (yield* res.json) as { ok: boolean; messageId: string };
     expect(body.ok).toBe(true);
@@ -717,9 +680,8 @@ test(
     }
     expect(okText).toBe("Worker successfully processed email");
 
-    const received = (yield* (yield* HttpClient.get(
-      new URL("/email/received", inboxWorker),
-    )).json) as Array<{ from: string; to: string; subject: string }>;
+    const received = (yield* (yield* HttpClient.get(new URL("/email/received", inboxWorker)))
+      .json) as Array<{ from: string; to: string; subject: string }>;
     const record = received.find((r) => r.subject === `accept-me:${marker}`);
     expect(record).toMatchObject({ from, to });
 
@@ -765,29 +727,24 @@ test(
   Effect.gen(function* () {
     const { mediaWorker } = yield* stack;
 
-    const info = (yield* (yield* HttpClient.post(
-      new URL("/images/info", mediaWorker),
-      { body: HttpBody.uint8Array(PNG_RED_8X4) },
-    )).json) as { format: string; width: number; height: number };
+    const info = (yield* (yield* HttpClient.post(new URL("/images/info", mediaWorker), {
+      body: HttpBody.uint8Array(PNG_RED_8X4),
+    })).json) as { format: string; width: number; height: number };
     expect(info.format).toBe("image/png");
     expect(info.width).toBe(8);
     expect(info.height).toBe(4);
 
-    const transformRes = yield* HttpClient.post(
-      new URL("/images/transform?width=4", mediaWorker),
-      { body: HttpBody.uint8Array(PNG_RED_8X4) },
-    );
+    const transformRes = yield* HttpClient.post(new URL("/images/transform?width=4", mediaWorker), {
+      body: HttpBody.uint8Array(PNG_RED_8X4),
+    });
     expect(transformRes.status).toBe(200);
     const outputBytes = new Uint8Array(yield* transformRes.arrayBuffer);
     // PNG magic bytes.
-    expect(Array.from(outputBytes.slice(0, 4))).toEqual([
-      0x89, 0x50, 0x4e, 0x47,
-    ]);
+    expect(Array.from(outputBytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
 
-    const outputInfo = (yield* (yield* HttpClient.post(
-      new URL("/images/info", mediaWorker),
-      { body: HttpBody.uint8Array(outputBytes) },
-    )).json) as { format: string; width: number; height: number };
+    const outputInfo = (yield* (yield* HttpClient.post(new URL("/images/info", mediaWorker), {
+      body: HttpBody.uint8Array(outputBytes),
+    })).json) as { format: string; width: number; height: number };
     expect(outputInfo.width).toBe(4);
     expect(outputInfo.height).toBe(2);
   }),
@@ -805,10 +762,9 @@ test(
   Effect.gen(function* () {
     const { mediaWorker } = yield* stack;
     const info = (yield* Effect.gen(function* () {
-      const res = yield* HttpClient.post(
-        new URL("/images/info-remote", mediaWorker),
-        { body: HttpBody.uint8Array(PNG_RED_8X4) },
-      );
+      const res = yield* HttpClient.post(new URL("/images/info-remote", mediaWorker), {
+        body: HttpBody.uint8Array(PNG_RED_8X4),
+      });
       if (res.status !== 200) {
         return yield* Effect.fail(new NotYet({ status: res.status }));
       }
@@ -816,10 +772,7 @@ test(
     }).pipe(
       Effect.retry({
         while: (e) => e._tag === "NotYet",
-        schedule: Schedule.max([
-          Schedule.spaced("2 seconds"),
-          Schedule.recurs(10),
-        ]),
+        schedule: Schedule.max([Schedule.spaced("2 seconds"), Schedule.recurs(10)]),
       }),
     )) as { format: string; width: number; height: number };
     expect(info.format).toBe("image/png");
@@ -839,10 +792,9 @@ test(
     const { mediaWorker } = yield* stack;
     const videoBytes = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
 
-    const video = (yield* (yield* HttpClient.post(
-      new URL("/stream/upload", mediaWorker),
-      { body: HttpBody.uint8Array(videoBytes) },
-    )).json) as {
+    const video = (yield* (yield* HttpClient.post(new URL("/stream/upload", mediaWorker), {
+      body: HttpBody.uint8Array(videoBytes),
+    })).json) as {
       id: string;
       readyToStream: boolean;
       status: { state: string };
@@ -895,15 +847,14 @@ test(
 
     const key = crypto.randomUUID();
     const value = crypto.randomUUID();
-    const put = (yield* getJsonReady(
-      new URL(`/kv-live?key=${key}&value=${value}`, asyncWorker),
-      { times: 10, spaced: "2 seconds" },
-    )) as { value: string | null };
+    const put = (yield* getJsonReady(new URL(`/kv-live?key=${key}&value=${value}`, asyncWorker), {
+      times: 10,
+      spaced: "2 seconds",
+    })) as { value: string | null };
     expect(put.value).toBe(value);
 
-    const got = (yield* (yield* HttpClient.get(
-      new URL(`/kv-live?key=${key}`, asyncWorker),
-    )).json) as { value: string | null };
+    const got = (yield* (yield* HttpClient.get(new URL(`/kv-live?key=${key}`, asyncWorker)))
+      .json) as { value: string | null };
     expect(got.value).toBe(value);
   }),
   { timeout: 60_000 },
@@ -925,9 +876,7 @@ const exerciseWorkflow = (workerUrl: string, label: string) =>
   Effect.gen(function* () {
     const roomId = `${label}-${Math.random().toString(36).slice(2, 10)}`;
 
-    const startResponse = yield* HttpClient.post(
-      new URL(`/workflow/start/${roomId}`, workerUrl),
-    );
+    const startResponse = yield* HttpClient.post(new URL(`/workflow/start/${roomId}`, workerUrl));
     expect(startResponse.status).toBe(200);
     const { instanceId } = (yield* startResponse.json) as {
       instanceId: string;
@@ -942,8 +891,7 @@ const exerciseWorkflow = (workerUrl: string, label: string) =>
     const status = yield* fetchStatus.pipe(
       Effect.repeat({
         schedule: Schedule.spaced("2 seconds"),
-        until: (s: WorkflowStatus) =>
-          s.status === "complete" || s.status === "errored",
+        until: (s: WorkflowStatus) => s.status === "complete" || s.status === "errored",
         times: 60,
       }),
     );

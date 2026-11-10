@@ -1,9 +1,26 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
+import { fileURLToPath } from "node:url";
 import { assert, describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import cloudflare from "../plugin.ts";
+import { toPosixPath } from "../utils.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
 describe("nodejs_compat", () => {
+  it("rewrites external CommonJS requires when compatibility enables Node by date", () => {
+    const plugins = cloudflare({ compatibilityDate: "2026-08-31" });
+
+    expect(plugins[0]?.name).toBe("builtin:esm-external-require");
+  });
+
+  it("can omit the external require rewrite for single-module internal workers", () => {
+    const plugins = cloudflare({
+      compatibilityDate: "2026-08-31",
+      externalRequire: false,
+    });
+
+    expect(plugins[0]?.name).not.toBe("builtin:esm-external-require");
+  });
+
   it("runs node builtin imports with nodejs_compat enabled", async () => {
     const built = await buildFixture({
       fixture: "node-compat/index.ts",
@@ -41,14 +58,10 @@ describe("nodejs_compat", () => {
 
     virtualModulesPlugin.buildStart?.({ plugins: plugins.filter(Boolean) });
 
-    const resolved = virtualModulesPlugin.resolveId?.handler?.(
-      "\0distilled:inject:process",
-    );
+    const resolved = virtualModulesPlugin.resolveId?.handler?.("\0distilled:inject:process");
     expect(resolved).toEqual({ id: "\0distilled:inject:process" });
 
-    const loaded = virtualModulesPlugin.load?.handler?.(
-      "\0distilled:inject:process",
-    );
+    const loaded = virtualModulesPlugin.load?.handler?.("\0distilled:inject:process");
     expect(loaded).toContain("globalThis.process = process;");
 
     const transformed = virtualModulesPlugin?.load?.handler?.(
@@ -56,7 +69,7 @@ describe("nodejs_compat", () => {
     );
 
     expect(transformed).toContain(
-      'import "@cloudflare/unenv-preset/polyfill/performance";',
+      `import "${toPosixPath(fileURLToPath(import.meta.resolve("@cloudflare/unenv-preset/polyfill/performance")))}";`,
     );
     expect(transformed).toContain('import "\0distilled:inject:process";');
   });
@@ -101,17 +114,9 @@ describe("nodejs_compat", () => {
 
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("Unexpected Node.js imports.");
-    expect(warnings[0]).toContain(
-      'Do you need to enable the "nodejs_compat" compatibility flag?',
-    );
-    expect(warnings[0]).toContain(
-      "https://developers.cloudflare.com/workers/runtime-apis/nodejs/",
-    );
-    expect(warnings[0]).toContain(
-      '- "node:fs" imported from "test/fixtures/example-a.ts"',
-    );
-    expect(warnings[0]).toContain(
-      '- "node:fs" imported from "test/fixtures/example-b.ts"',
-    );
+    expect(warnings[0]).toContain('Do you need to enable the "nodejs_compat" compatibility flag?');
+    expect(warnings[0]).toContain("https://developers.cloudflare.com/workers/runtime-apis/nodejs/");
+    expect(warnings[0]).toContain('- "node:fs" imported from "test/fixtures/example-a.ts"');
+    expect(warnings[0]).toContain('- "node:fs" imported from "test/fixtures/example-b.ts"');
   });
 });

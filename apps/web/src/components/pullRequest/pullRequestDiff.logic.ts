@@ -1,14 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
 
-/**
- * Whether a conversation's line is really in this file's hunks.
- *
- * A thread naming a file is not the same as a thread the diff can show: its line may have moved
- * out of the change, or sit in a hunk the host withheld. Pinning it anyway would put the remark
- * against whatever code now occupies that line number, and silently dropping it would lose the
- * conversation, so the answer decides which of the two lists it belongs in.
- */
+/** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
   file: FileDiffMetadata,
   side: PullRequestDiffSide,
@@ -21,18 +14,9 @@ export function isLineInFileDiff(
   );
 }
 
-/** What the toolbar last asked of every file at once, null being the reader asking nothing yet. */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/**
- * Whether a file is drawn folded.
- *
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. Files start expanded so opening the Code tab immediately shows the change; the
- * reader can still fold individual files or the whole diff from the toolbar.
- */
+/** Keep fold choices relative to the toolbar so later pages inherit Fold all. */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
@@ -40,4 +24,30 @@ export function isFileDiffCollapsed(
 ): boolean {
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+}
+
+export function toggleFileDiffFoldForViewed(
+  fileKey: string,
+  viewed: boolean,
+  foldOverride: DiffFoldOverride,
+  toggledFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
+    return toggledFileKeys;
+  const next = new Set(toggledFileKeys);
+  if (next.has(fileKey)) next.delete(fileKey);
+  else next.add(fileKey);
+  return next;
+}
+
+export function getFileViewedRange<T extends { readonly fileKey: string }>(
+  files: ReadonlyArray<T>,
+  fileKey: string,
+  anchorFileKey: string | null,
+): ReadonlyArray<T> {
+  const index = files.findIndex((file) => file.fileKey === fileKey);
+  if (index === -1) return [];
+  const anchorIndex = files.findIndex((file) => file.fileKey === anchorFileKey);
+  if (anchorIndex === -1) return files.slice(index, index + 1);
+  return files.slice(Math.min(index, anchorIndex), Math.max(index, anchorIndex) + 1);
 }

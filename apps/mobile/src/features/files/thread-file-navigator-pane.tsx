@@ -1,185 +1,96 @@
-import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
-import { SymbolView } from "../../components/AppSymbol";
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
-import {
-  Screen,
-  ScreenStack,
-  ScreenStackHeaderConfig,
-  ScreenStackHeaderSearchBarView,
-  SearchBar,
-} from "react-native-screens";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { AppBar } from "../../components/ui/AppBar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { useState } from "react";
+import { View } from "react-native";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly headerInset: number;
   readonly projectName: string;
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const theme = useUniwindTheme();
-  const foregroundColor = theme["--color-foreground"];
-  const sheetColor = theme["--color-sheet"];
-  const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-  const entriesQuery = useEnvironmentQuery(
-    projectEnvironment.listEntries({
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(props.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const entriesQuery = useFileTreeEntries({
+    environmentId: props.environmentId,
+    cwd: canReadFiles ? props.cwd : null,
+    searchQuery,
+  });
+  const handlePreviewFile = (relativePath: string) => {
+    preloadWorkspaceFileContents({
+      cwd: props.cwd,
       environmentId: props.environmentId,
-      input: { cwd: props.cwd },
-    }),
-  );
-  const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
-  const handlePreviewFile = useCallback(
-    (relativePath: string) => {
-      preloadWorkspaceFileContents({
-        cwd: props.cwd,
-        environmentId: props.environmentId,
-        relativePath,
-        theme: highlightTheme,
-      });
-    },
-    [highlightTheme, props.cwd, props.environmentId],
-  );
-  const nativeHeaderRightBarButtonItems = useMemo(
-    () =>
-      [
-        {
-          accessibilityLabel: "Refresh files",
-          icon: { name: "arrow.clockwise", type: "sfSymbol" as const },
-          identifier: "thread-file-navigator-refresh",
-          onPress: entriesQuery.refresh,
-          sharesBackground: false,
-          tintColor: foregroundColor,
-          type: "button" as const,
-          width: 44,
-        },
-      ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
-  );
-
+      relativePath,
+      theme: highlightTheme,
+    });
+  };
   const fileTree = (
     <FileTreeBrowser
-      entries={entriesData?.entries ?? []}
-      error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      key={JSON.stringify([props.environmentId, props.cwd])}
+      revealSelection={entriesQuery.revealSelection}
+      expandedPaths={entriesQuery.expandedPaths}
+      setExpandedPaths={entriesQuery.setExpandedPaths}
+      entries={entriesQuery.entries}
+      loadingDirectories={entriesQuery.loadingDirectories}
+      onLoadDirectory={entriesQuery.loadDirectory}
+      error={
+        canReadFiles
+          ? entriesQuery.error
+          : fileAccess.isPending
+            ? null
+            : (fileAccess.error ?? "This connection cannot read host files.")
+      }
+      isPending={fileAccess.isPending || entriesQuery.isPending}
+      isRefreshing={entriesQuery.isRefreshing}
       searchQuery={searchQuery}
-      selectedPath={props.selectedPath}
+      searchResultPaths={entriesQuery.searchResultPaths}
+      searchTruncated={entriesQuery.searchTruncated}
+      selectedPath={props.selectedPath ?? entriesQuery.selectedPath}
       onPreviewFile={handlePreviewFile}
       onRefresh={entriesQuery.refresh}
-      onSelectFile={props.onSelectFile}
+      onSelectFile={(path) => {
+        entriesQuery.selectPath(path);
+        props.onSelectFile(path);
+      }}
     />
   );
 
-  if (Platform.OS === "ios") {
-    return (
-      <View className="flex-1 border-l border-border bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <Screen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-file-navigator-native"
-            scrollEdgeEffects={headerScrollEdgeEffects}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
-          >
-            {fileTree}
-            <ScreenStackHeaderConfig
-              backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
-              headerRightBarButtonItems={nativeHeaderRightBarButtonItems}
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              subtitle={props.projectName}
-              title="Files"
-              titleColor={foregroundColor}
-              titleFontSize={17}
-              titleFontWeight="700"
-              translucent
-            >
-              <ScreenStackHeaderSearchBarView>
-                <SearchBar
-                  allowToolbarIntegration
-                  autoCapitalize="none"
-                  barTintColor={sheetColor}
-                  hideNavigationBar={false}
-                  hideWhenScrolling={false}
-                  obscureBackground={false}
-                  onCancelButtonPress={() => {
-                    setSearchQuery("");
-                  }}
-                  onChangeText={(event: NativeSyntheticEvent<{ readonly text?: string }>) => {
-                    setSearchQuery(event.nativeEvent.text ?? "");
-                  }}
-                  placement="integratedButton"
-                  placeholder="Search files"
-                  textColor={foregroundColor}
-                  tintColor={foregroundColor}
-                />
-              </ScreenStackHeaderSearchBarView>
-            </ScreenStackHeaderConfig>
-          </Screen>
-        </ScreenStack>
-      </View>
-    );
-  }
-
   return (
-    <View className="flex-1 border-l border-border bg-sheet">
-      <View className="border-b border-border" style={{ paddingTop: props.headerInset }}>
-        <View className="h-12 flex-row items-center gap-2 px-3">
-          <View className="min-w-0 flex-1">
-            <Text className="text-sm font-t3-bold text-foreground">Files</Text>
-            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-              {props.projectName}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Refresh files"
-            hitSlop={8}
-            className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
-            onPress={entriesQuery.refresh}
-          >
-            <SymbolView
-              name="arrow.clockwise"
-              size={14}
-              tintColorClassName={"accent-icon-muted"}
-              type="monochrome"
-            />
-          </Pressable>
-        </View>
-        <View className="flex-row items-center gap-2 border-t border-border px-3 py-2">
-          <SymbolView
-            name="magnifyingglass"
-            size={15}
-            tintColorClassName={"accent-icon-muted"}
-            type="monochrome"
-          />
-          <TextInput
-            accessibilityLabel="Search files"
-            autoCapitalize="none"
-            autoCorrect={false}
-            clearButtonMode="while-editing"
-            className="min-h-10 flex-1 rounded-xl py-2 text-sm"
-            placeholder="Search files"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-      </View>
-      {fileTree}
+    // Material drags target the first scroll view, so place content before the header.
+    <View className="flex-1 ios:bg-sheet android:bg-header android:flex-col-reverse">
+      <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
+      <AppBar
+        title="Files"
+        subtitle={props.projectName}
+        search={{
+          value: searchQuery,
+          onChangeText: setSearchQuery,
+          placeholder: "Search files",
+        }}
+        refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
+      />
     </View>
   );
 }

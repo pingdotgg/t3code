@@ -1,11 +1,12 @@
-import { useId, useMemo, useState } from "react";
-import { ActivityIndicator, Image, Pressable, View } from "react-native";
+import { useId, useState } from "react";
+import { Image, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
-import { PresentationSource } from "../../components/NativePresentation";
-import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { FilePreviewLoading } from "./FilePreviewFeedback";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { PresentationSource } from "../../components/ui/NativePresentation";
+import { useMediaActions } from "../../state/mediaActions";
+import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 
 function ResolvedWorkspaceFileImagePreview(props: {
@@ -17,10 +18,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
   const mediaActions = useMediaActions(props.actionsSource);
-  const imageSource = useMemo(
-    () => ({ uri: props.uri, cache: "force-cache" as const }),
-    [props.uri],
-  );
+  const imageSource = { uri: props.uri, cache: "force-cache" as const };
 
   return (
     <View className="relative flex-1 bg-subtle">
@@ -76,14 +74,7 @@ export function WorkspaceFileImagePreview(props: {
   readonly actionsSource?: MediaActionsSource;
 }) {
   if (props.uri === null) {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">
-          Preparing image preview...
-        </Text>
-      </View>
-    );
+    return <FilePreviewLoading message="Preparing image preview..." background="card" />;
   }
 
   return (

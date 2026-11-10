@@ -7,7 +7,7 @@ import {
   normalizeProjectPathForDispatch,
 } from "@t3tools/shared/path";
 
-export { normalizeProjectPathForComparison, normalizeProjectPathForDispatch };
+export { normalizeProjectPathForComparison };
 
 export const isWindowsPlatform = (platform: string): boolean => {
   return /^win(dows)?/i.test(platform);
@@ -135,6 +135,15 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
   });
 }
 
+export function isScratchProject(
+  project: { readonly workspaceRoot: string },
+  scratchWorkspaceRoot: string | null | undefined,
+): boolean {
+  return (
+    scratchWorkspaceRoot != null && findProjectByPath([project], scratchWorkspaceRoot) !== undefined
+  );
+}
+
 export function inferProjectTitleFromPath(value: string): string {
   const normalized = normalizeProjectPathForDispatch(value);
   const absolutePath = splitAbsolutePath(normalized);
@@ -196,3 +205,4 @@ export function canNavigateUp(currentPath: string): boolean {
 
 export * from "./projectCommands.ts";
 export * from "./projectEntities.ts";
+export * from "./projectRemoval.ts";

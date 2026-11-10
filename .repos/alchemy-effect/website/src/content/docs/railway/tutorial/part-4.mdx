@@ -6,10 +6,10 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 A secret only this Service needs from `.env` is
-`Config.redacted`. See [Variables](/railway/data/variables).
+`Config.Redacted`. See [Variables](/railway/data/variables).
 
 This part is for a value Railway should own: a **Variable** Railway
 injects into services. You will read it with `Config`, then tear
@@ -22,7 +22,7 @@ Add a Variable next to the Project. Wrap the value with
 
 ```diff lang="typescript"
 // src/project.ts
-import * as Railway from "alchemy/Railway";
+import * as Railway from "@alchemy.run/railway";
 +import * as Redacted from "effect/Redacted";
 
 export const Site = Railway.Project("Site");
@@ -41,7 +41,7 @@ Omit it and Alchemy generates an ownership-stamped name instead.
 
 ## Read it from the Service
 
-Railway injects the Variable as env. Yield it in init so it is
+Railway injects the Variable as env. Yield it in the constructor so it is
 part of the graph, then read the name with `Config` — never the
 plaintext:
 
@@ -56,7 +56,7 @@ plaintext:
     const fs = yield* FileSystem.FileSystem;
 +    yield* ApiToken;
 +    const tokenName = "API_TOKEN";
-+    const token = yield* Config.string(tokenName).pipe(
++    const token = yield* Config.String(tokenName).pipe(
 +      Effect.orElseSucceed(() => ""),
 +    );
 
@@ -100,20 +100,7 @@ const file = `${mount.path}${url.pathname}`;
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
 
@@ -145,20 +132,7 @@ the private network stay on `{name}.railway.internal`; a
 You're done — tear everything down so Service and Volume billing
 stops:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy destroy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy destroy" />
 
 Alchemy deletes everything in reverse dependency order — Service,
 Variable, Volume, Project.
@@ -179,7 +153,7 @@ Over four parts you built a complete Railway deployment:
   multiple Services per Project, image-based Services.
 - [Volumes](/railway/data/volumes) — attach at create time, region
   rules.
-- [Variables](/railway/data/variables) — `Config.redacted` vs
+- [Variables](/railway/data/variables) — `Config.Redacted` vs
   `Railway.Variable`.
 - [Postgres](/railway/data/postgres) — bind `ConnectPostgres` and
   query with Drizzle.

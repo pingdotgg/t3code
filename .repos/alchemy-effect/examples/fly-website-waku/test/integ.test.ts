@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -16,7 +16,6 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Fly.providers(),
   state: Alchemy.localState(),
   profile: process.env.ALCHEMY_PROFILE,
-  stage: "test",
 });
 
 // The first deploy runs the full Waku build AND creates a Fly
@@ -54,9 +53,7 @@ test(
     // The `GREETING` env value from alchemy.run.ts, read via `getEnv` in the
     // dynamic RSC page — proves the Fly Machine rendered it at request time.
     expect(html).toContain("Hello from Waku on Fly!");
-    expect(html).toContain(
-      "This page is rendered by the server on every request.",
-    );
+    expect(html).toContain("This page is rendered by the server on every request.");
   }),
   { timeout: 180_000 },
 );

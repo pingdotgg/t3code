@@ -1,31 +1,24 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as queues from "@distilled.cloud/cloudflare/queues";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const QueueBrokerWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/queue/QueueBroker.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/queue/QueueBroker.worker"),
 };
 const QueueShimForwardWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/queue/QueueShimForward.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/queue/QueueShimForward.worker"),
 };
-import { SERVICE_USER_WORKER } from "../../internal/constants.ts";
+import { DEFAULT_COMPATIBILITY_DATE, SERVICE_USER_WORKER } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import * as PluginContext from "../../PluginContext.ts";
 import { RegistryProxy } from "../../registry/RegistryProxy.ts";
 import { ConfigError } from "../../RuntimeError.shared.ts";
 import * as WorkerdConfig from "../../workerd/Config.ts";
-import type {
-  QueueConsumer,
-  QueueProducerEntry,
-} from "./QueueOptions.shared.ts";
+import type { QueueConsumer, QueueProducerEntry } from "./QueueOptions.shared.ts";
 import {
   BINDING_QUEUE_BROKER,
   BINDING_QUEUE_CONSUMER,
@@ -34,8 +27,6 @@ import {
   BINDING_QUEUE_PRODUCERS,
   BINDING_QUEUE_USER_WORKER,
 } from "./QueueOptions.shared.ts";
-
-const BROKER_COMPATIBILITY_DATE = "2024-10-22";
 
 export class Queue extends Plugin.Service<
   Queue,
@@ -79,15 +70,14 @@ export const QueueLive = Layer.effect(
         const producers: Array<QueueProducerEntry> = [];
         const remoteProducers: Array<QueueRemoteProducerProps> = [];
 
-        const queueServiceName = (queueName: string): string =>
-          `queues:${queueName}`;
+        const queueServiceName = (queueName: string): string => `queues:${queueName}`;
 
         for (const consumer of consumers) {
           if (
             consumer.maxBatchTimeout !== undefined &&
             (consumer.maxBatchTimeout < 0 || consumer.maxBatchTimeout > 60)
           ) {
-            return yield* new ConfigError({
+            return yield* ConfigError.make({
               subtag: "Queue",
               message: `Invalid maxBatchTimeout for queue "${consumer.queueName}": must be between 0 and 60 seconds`,
               hint: "Set `maxBatchTimeout` to a value between 0 and 60 (seconds).",
@@ -101,7 +91,7 @@ export const QueueLive = Layer.effect(
             consumer.deadLetterQueue !== undefined &&
             consumer.deadLetterQueue === consumer.queueName
           ) {
-            return yield* new ConfigError({
+            return yield* ConfigError.make({
               subtag: "Queue",
               message: `Dead letter queue for queue "${consumer.queueName}" cannot be itself`,
               hint: "Point `deadLetterQueue` at a different queue name.",
@@ -132,9 +122,7 @@ export const QueueLive = Layer.effect(
         // subscriber list) not to emit the proxy service — the DLQ binding
         // would then reference `cloudflare-runtime:registry-proxy` without it
         // being defined and workerd would fail to start.
-        const dlqNames = new Set(
-          consumers.flatMap((consumer) => consumer.deadLetterQueue ?? []),
-        );
+        const dlqNames = new Set(consumers.flatMap((consumer) => consumer.deadLetterQueue ?? []));
         const dlqServices = new Map(
           yield* Effect.all(
             Array.from(dlqNames, (queueName) =>
@@ -155,20 +143,13 @@ export const QueueLive = Layer.effect(
          * splitting the entry and broker into separate services would require a direct
          * cross-service Durable Object reference, which the runtime does not support.
          */
-        const queueConsumerService = Effect.fnUntraced(function* (
-          consumer: QueueConsumer,
-        ) {
+        const queueConsumerService = Effect.fnUntraced(function* (consumer: QueueConsumer) {
           return {
             name: queueServiceName(consumer.queueName),
             worker: {
-              compatibilityDate: BROKER_COMPATIBILITY_DATE,
-              compatibilityFlags: [
-                "experimental",
-                "service_binding_extra_handlers",
-              ],
-              modules: formatInternalWorkerModules(
-                yield* Effect.promise(QueueBrokerWorker.worker),
-              ),
+              compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+              compatibilityFlags: ["experimental", "service_binding_extra_handlers"],
+              modules: formatInternalWorkerModules(yield* Effect.promise(QueueBrokerWorker.worker)),
               durableObjectNamespaces: [
                 {
                   className: "QueueBroker",
@@ -209,8 +190,7 @@ export const QueueLive = Layer.effect(
           };
         });
 
-        const remoteShimServiceName = (binding: string): string =>
-          `queue-shim:${binding}`;
+        const remoteShimServiceName = (binding: string): string => `queue-shim:${binding}`;
 
         /**
          * Build the pass-through forwarder service for one remote producer
@@ -218,13 +198,11 @@ export const QueueLive = Layer.effect(
          * global outbound (the internet), which is exactly where the shim
          * lives.
          */
-        const remoteShimService = Effect.fnUntraced(function* (
-          props: QueueRemoteProducerProps,
-        ) {
+        const remoteShimService = Effect.fnUntraced(function* (props: QueueRemoteProducerProps) {
           return {
             name: remoteShimServiceName(props.binding),
             worker: {
-              compatibilityDate: BROKER_COMPATIBILITY_DATE,
+              compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
               modules: formatInternalWorkerModules(
                 yield* Effect.promise(QueueShimForwardWorker.worker),
               ),
@@ -243,17 +221,15 @@ export const QueueLive = Layer.effect(
          * protocol into the broker, which then delivers to the user worker's
          * `queue()` handler with the usual local batching/retry semantics.
          */
-        const pullConsumers = consumers.filter(
-          (consumer) => consumer.pull !== undefined,
-        );
-        const pullSocketName = (queueName: string): string =>
-          `queue-pull:${queueName}`;
+        const pullConsumers = consumers.filter((consumer) => consumer.pull !== undefined);
+        const pullSocketName = (queueName: string): string => `queue-pull:${queueName}`;
 
         const pullLoop = (
           consumer: QueueConsumer,
           pull: { queueId: string; accountId: string },
           port: number,
         ) =>
+          // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- requirements come from the ambient context, see comment at the cast below
           Effect.gen(function* () {
             const endpoint = `http://127.0.0.1:${port}/message`;
 
@@ -291,10 +267,8 @@ export const QueueLive = Layer.effect(
               return messages.length > 0;
             });
 
-            yield* iteration.pipe(
-              Effect.flatMap((busy) =>
-                busy ? Effect.void : Effect.sleep("1 second"),
-              ),
+            return yield* iteration.pipe(
+              Effect.flatMap((busy) => (busy ? Effect.void : Effect.sleep("1 second"))),
               Effect.catchCause((cause) =>
                 Effect.logWarning(
                   `[queue-pull:${consumer.queueName}] pull iteration failed`,

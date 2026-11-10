@@ -14,6 +14,13 @@ through the same pattern: S3 notifications
 (`Lambda.StreamEventSource`), and DynamoDB Streams
 (`Lambda.TableEventSource`).
 
+:::tip
+For an API or web app, use a
+[Lambda Web Function](/aws/compute/web-functions). It serves many
+requests per environment and streams responses. Use a Lambda Function
+for event sources.
+:::
+
 This page stands up the smallest possible function — a public
 HTTP endpoint — which the [S3](/aws/data/s3),
 [DynamoDB](/aws/data/dynamodb), [SQS](/aws/messaging/sqs), and
@@ -34,7 +41,7 @@ providers wired in:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -55,8 +62,8 @@ uses when AWS asks for physical resource names.
 
 `providers: AWS.providers()` registers every AWS resource and
 IAM policy binding that ships with Alchemy, and resolves
-credentials from your Alchemy profile — SSO, environment
-variables, or stored keys, whichever you picked in
+credentials from your Alchemy profile — SSO, console login,
+or stored keys, whichever you picked in
 [Setup](/aws/setup).
 
 `state: AWS.state()` stores deploy state in an account-regional
@@ -78,7 +85,7 @@ ceremony, an entrypoint, and an empty runtime:
 
 ```typescript
 // src/api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
@@ -108,9 +115,9 @@ is wired up to handle incoming HTTP requests:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
@@ -124,16 +131,17 @@ export default class Api extends AWS.Lambda.Function<Api>()(
 ) {}
 ```
 
-`HttpServerResponse.text(...)` is the same `effect/unstable/http`
+`HttpServerResponse.text(...)` is the same `effect/http`
 API used everywhere else — Alchemy adapts it to the Lambda event
 envelope under the hood, so your handler never sees the raw
 `APIGatewayProxyEvent` shape.
 
 ## Expose a public URL
 
-`fetch` exists, but no one can call it yet. Set `functionUrl: true` on
-the props to ask AWS for a public **Function URL** — no API
-Gateway, no auth, just a public HTTPS endpoint:
+Every Lambda Function gets a public **Function URL** by default:
+`functionUrl` defaults to `true`, which creates an unauthenticated HTTPS
+endpoint (`authType: "NONE"`) and lets anyone invoke it. Spell it out
+so the access level is visible in the code:
 
 ```diff lang="typescript"
 export default class Api extends AWS.Lambda.Function<Api>()(
@@ -148,9 +156,19 @@ export default class Api extends AWS.Lambda.Function<Api>()(
 ) {}
 ```
 
-The resolved `Api` resource will now expose a `functionUrl`
+The resolved `Api` resource exposes a `functionUrl`
 field carrying that endpoint — we'll surface it from the Stack
 in a moment.
+
+`functionUrl` takes three access choices. `false` creates no URL,
+`true` creates a public one, and `{ authType: "AWS_IAM" }` requires
+SigV4-signed requests.
+
+:::caution
+Omitting `functionUrl` gives you a public URL. A Function that only
+consumes events (SQS, SNS, EventBridge, Kinesis, S3) should set
+`functionUrl: false`.
+:::
 
 ## Customize per stage
 
@@ -161,10 +179,10 @@ value in the surrounding Effect context:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 +import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
@@ -187,6 +205,13 @@ surrounding Effect context — handy for stack-level config like
 `stage`, `appName`, or anything else you'd want to vary per
 environment.
 
+Lambda creates the function's log group on its first invocation
+and keeps events forever. Set `logging: { retention: "2 weeks" }`
+to have Alchemy create the group up front with that retention (the
+duration is rounded up to the nearest value CloudWatch Logs
+supports; `"forever"` clears an existing policy). The group is
+deleted with the function.
+
 ## Wire the function into the Stack
 
 The `Api` class is just a typed identifier — yielding it inside
@@ -196,7 +221,7 @@ deploy:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 +import Api from "./src/api.ts";
 
@@ -237,11 +262,11 @@ checks the body:
 
 ```typescript
 // test/integ.test.ts
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -269,7 +294,7 @@ You now have a deployable Lambda with a public URL.
 
 ## Sandbox scope vs invocation scope
 
-The init closure runs **once per sandbox**, at cold start —
+The constructor runs **once per sandbox**, at cold start —
 everything it builds (bindings, SDK clients) is reused by every
 invocation. Each invocation then runs with a **fresh `Scope`** that
 is settled *inline* before the handler returns — so
@@ -293,7 +318,62 @@ the response, keep them cheap, and anything that must not be lost
 gets written durably (a queue, a table) inside the handler itself.
 :::
 
-Init-level finalizers run at **sandbox shutdown**. A Lambda sandbox
+### Timeouts interrupt the handler
+
+When an invocation runs past its `timeout`, the runtime interrupts the
+handler, the same way `runMain` handles `SIGTERM`. Its `acquireRelease`,
+`ensuring` and scope finalizers run, and every open span ends, so the
+trace shows the call that hung. The root span ends with an
+`AWS.Lambda.InvocationTimeoutError`.
+
+Lambda itself is configured with `timeout + timeoutMargin`, so the
+finalizers and the telemetry flush run in that margin. A handler that
+finishes inside its `timeout` is never cut short.
+
+Once cleanup is done, the runtime holds the invocation until Lambda's own
+timeout ends it. Lambda still logs `Task timed out`, counts a timeout and
+retries it like any other, and it resets the sandbox, so work that ignored
+the interruption, like a promise without an `AbortSignal`, can never resume
+in the next invocation. The unused rest of the margin is billed, but only
+on invocations that time out. If cleanup is still
+running 500 ms before Lambda's own timeout, the runtime ends the root
+span, marks it `aws.lambda.timeout.imminent`, and drains the exporters
+before Lambda kills the process.
+
+The margin defaults to one second. Size it for your finalizers plus one
+export round-trip to your telemetry backend:
+
+```typescript
+// src/api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    functionUrl: true,
+    // interrupt the handler after 30 s; Lambda kills it at 32 s
+    timeout: Duration.seconds(30),
+    timeoutMargin: Duration.seconds(2),
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+    };
+  }),
+) {}
+```
+
+`timeout + timeoutMargin` must fit in Lambda's 900-second maximum. Set
+`timeoutMargin` to `Duration.zero` to never interrupt the handler; Lambda
+then kills it at `timeout`, and the runtime only flushes telemetry 500 ms
+before that. Durable functions are never interrupted, since their
+invocations replay from checkpoints.
+
+Construction-level finalizers run at **sandbox shutdown**. A Lambda sandbox
 with no registered extensions is killed with no signal at all, so
 the generated entry registers an internal extension with the
 Extensions API — that makes Lambda send `SIGTERM` and allow 500 ms
@@ -302,7 +382,7 @@ instance scope:
 
 ```typescript
 Effect.gen(function* () {
-  // init: runs once per sandbox
+  // Construction: runs once per sandbox
   yield* Effect.addFinalizer(() =>
     // runs in the 500 ms SIGTERM window at sandbox spin-down
     flushTelemetry().pipe(Effect.ignore),
@@ -316,10 +396,15 @@ delivered on hard failures (a timeout reset kills the runtime
 without the signal). Flush caches and close connections there;
 anything that *must* happen belongs in the handler, scoped to the
 invocation. See
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope)
 for the model across all runtimes.
 
 ## Where next
+
+- [Drizzle + Aurora PostgreSQL](/aws/data/drizzle-aurora) — private database access,
+  IAM authentication, verified TLS, and deployment-time schema setup.
+- [Drizzle + Aurora DSQL](/aws/data/drizzle-dsql) — the separate serverless database,
+  with an IAM-authenticated endpoint and non-admin application role.
 
 - [S3](/aws/data/s3) — add a bucket and bind read/write operations
   into this function; IAM policies generated from the call

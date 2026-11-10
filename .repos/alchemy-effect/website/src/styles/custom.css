@@ -28,12 +28,12 @@
   color-scheme: light;
 }
 
-/* The tab row is desktop-only (mobile navigation lives in the hamburger
-   drawer's product switcher), so collapse its reserved height on mobile —
+/* The tab row only renders at ≥72rem (narrower viewports navigate with the
+   sidebar/drawer product switcher), so collapse its reserved height below —
    otherwise the header keeps a dead 2.5rem band where the row used to be.
    Everything offset by --sl-nav-height (sidebar pane, content top,
    scroll-padding, menu-button centering) follows automatically. */
-@media (max-width: 50rem) {
+@media (max-width: 72rem) {
   :root {
     --alc-tabs-height: 0rem;
   }
@@ -75,9 +75,7 @@
   /* …offset the main column to match (Starlight derives the content inset
      from this var)… */
   [data-has-sidebar] .page {
-    --sl-content-inline-start: calc(
-      var(--sl-sidebar-width) + var(--alc-shell-gutter)
-    );
+    --sl-content-inline-start: calc(var(--sl-sidebar-width) + var(--alc-shell-gutter));
   }
   /* …and mirror the gutter on the right so the TOC pulls in too. */
   .main-frame {
@@ -94,15 +92,19 @@
 /* Pin Starlight's floating mobile hamburger to the first header row — it
    centers itself against the full --sl-nav-height, which is now two rows. */
 starlight-menu-button button {
-  top: calc(
-    (var(--alc-nav-row-height) - var(--sl-menu-button-size)) / 2
-  ) !important;
+  top: calc((var(--alc-nav-row-height) - var(--sl-menu-button-size)) / 2) !important;
 }
 
-/* The tab bar already links Docs and Blog on docs pages; the nav row's own
-   Docs/Blog text links are redundant there (they stay on marketing pages). */
-.alc-nav--docs .alc-nav__link:not(.alc-nav__link--icon) {
+/* Docs pages: the tab bar owns product navigation, so the nav row drops its
+   "Docs" link and carries the meta links (Reference, Blog, Compare). On the
+   drawer breakpoint those live in the MobileTabSwitcher instead. */
+.alc-nav--docs .alc-nav__link--docs {
   display: none;
+}
+@media (max-width: 72rem) {
+  .alc-nav--docs .alc-nav__link:not(.alc-nav__link--icon) {
+    display: none;
+  }
 }
 
 /* On phones the 2rem desktop gutter is too generous: the docs header has to
@@ -147,7 +149,9 @@ starlight-menu-button button {
   --sl-color-black: var(--alc-bg-nav);
   --sl-color-gray-1: var(--alc-walnut-900);
   --sl-color-gray-2: var(--alc-walnut-700);
-  --sl-color-gray-3: var(--alc-walnut-600);
+  /* Starlight uses gray-3 for muted text (Edit page, meta); fg-3 keeps it
+     at AAA 7:1 on the parchment surfaces. */
+  --sl-color-gray-3: var(--alc-fg-3);
   --sl-color-gray-4: var(--alc-walnut-500);
   --sl-color-gray-5: var(--alc-walnut-300);
   --sl-color-gray-6: var(--alc-walnut-100);
@@ -212,6 +216,31 @@ h1.hero-title,
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--alc-fg-1);
+}
+
+/* ── Blog posts: make sections and subsections clearly different ──
+   h2 opens a section: larger serif, a rule above, room to breathe.
+   h3 is a subsection: smaller sans. */
+body:has(.sl-blog-metadata) .sl-markdown-content .sl-heading-wrapper.level-h2 {
+  margin-top: 4.5rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--alc-hairline-2);
+}
+body:has(.sl-blog-metadata) .sl-markdown-content h2 {
+  font-size: 2.4rem;
+  line-height: 1.15;
+}
+body:has(.sl-blog-metadata) .sl-markdown-content .sl-heading-wrapper.level-h3 {
+  margin-top: 2.5rem;
+}
+body:has(.sl-blog-metadata) .sl-markdown-content h3 {
+  font-size: 1.3rem;
+  line-height: 1.3;
+}
+
+/* Highlight our own row (the last row) in a comparison table. */
+.alc-ours-last tbody tr:last-child td {
+  background: color-mix(in srgb, var(--alc-accent) 12%, transparent);
 }
 
 /* ── Hero "Effects" italic-serif accent ── deep moss, the design-system
@@ -726,6 +755,44 @@ p:has(> .alc-btn) {
   font-size: 0.9rem;
   line-height: 1.5;
 }
+/* A small tab sits on the top edge of the recommended card, outside the
+   content, so it never collides with the title or description. */
+.next-card--recommended {
+  position: relative;
+  border-color: color-mix(in srgb, var(--alc-accent) 45%, var(--alc-hairline-2));
+}
+.next-card--recommended::before {
+  content: "Recommended";
+  position: absolute;
+  top: 0;
+  right: 1.25rem;
+  transform: translateY(-50%);
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--alc-accent);
+  color: var(--alc-fg-on-accent);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  pointer-events: none;
+}
+/* Provider brand marks in place of a description on the directory card. */
+.next-card .provider-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 0.9rem;
+  margin-top: 0.6rem;
+  color: var(--alc-fg-2);
+}
+.next-card .provider-icons svg {
+  flex: none;
+  transition: color var(--alc-dur) var(--alc-ease);
+}
+.next-card:hover .provider-icons {
+  color: var(--alc-fg-1);
+}
 @media (max-width: 600px) {
   .next-steps {
     grid-template-columns: 1fr;
@@ -829,42 +896,6 @@ p:has(> .alc-btn) {
 }
 
 /* ============================================================
-   Expressive Code frames (the file-name tab on docs code blocks)
-
-   The default Starlight rendering of the editor-style frame paints
-   the tab title with a very low-contrast walnut on a near-walnut
-   strip — practically unreadable on the cream page. Force the
-   active tab to use the bright sunrise palette so the file name
-   reads cleanly against the dark code surface.
-   ============================================================ */
-
-.expressive-code .frame {
-  --ec-frm-edBg: var(--alc-bg-code);
-  --ec-frm-edTabBarBg: var(--alc-bg-code);
-  --ec-frm-edTabBarBrdBtmCol: var(--alc-walnut-700);
-  --ec-frm-edActTabBg: var(--alc-bg-code);
-  --ec-frm-edActTabFg: var(--alc-walnut-100);
-  --ec-frm-edActTabBrdCol: var(--alc-walnut-700);
-  --ec-frm-edActTabIndTopCol: var(--alc-accent-warm);
-  --ec-frm-edActTabIndBtmCol: transparent;
-  --ec-frm-edTabsMargBlkStart: 0;
-  --ec-frm-edTabsMargInlStart: 0;
-  --ec-frm-trmTtbBg: var(--alc-bg-code);
-  --ec-frm-trmTtbBrdBtmCol: var(--alc-walnut-700);
-  --ec-frm-trmTtbFg: var(--alc-walnut-100);
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .title {
-  color: var(--alc-walnut-100);
-  font-family: var(--alc-font-mono);
-  font-weight: 500;
-}
-
-.expressive-code .frame.is-terminal .title {
-  color: var(--alc-walnut-100);
-}
-
-/* ============================================================
    Starlight Tabs (Code/Tabs component used on Getting Started
    for bun / npm / pnpm / yarn).
 
@@ -872,7 +903,7 @@ p:has(> .alc-btn) {
      for the active tab; the active underline is the moss accent.
    - Icons are sized larger (1.25em) and painted with each
      product's official brand color via positional selectors
-     (the package-manager tab order is bun → npm → pnpm → yarn,
+     (the package-manager tab order is pnpm → bun → npm → yarn,
      and is consistent across the docs).
    ============================================================ */
 
@@ -914,30 +945,31 @@ starlight-tabs [role="tab"] > svg {
 
 /* ── Per-package brand colors ──
    The Tabs.astro markup wraps each tab anchor in <li class="tab">,
-   so we color the SVG icon inside each LI by position. Order on
-   our docs is bun(1), npm(2), pnpm(3), yarn(4). Colors come from
-   each project's brand guidelines, tuned slightly for contrast
-   on the warm cream surface. */
+   so we color the SVG icon inside each LI by position. Package-manager
+   tabs (PackageManagers.astro, syncKey "pkgManager") are always
+   pnpm(1), bun(2), npm(3), yarn(4). Colors come from each project's
+   brand guidelines, tuned slightly for contrast on the warm cream
+   surface. */
+starlight-tabs[data-sync-key="pkgManager"] [role="tablist"] > li:nth-child(1) [role="tab"] > svg {
+  color: #f59f00; /* pnpm — orange */
+}
 
 /* Bun: Starlight's built-in `bun` icon is a single-path silhouette —
    painting it any single color loses the eyes, cheeks and mouth that
    make the mascot recognizable. We hide that path and overlay the
    official multi-color mascot from bun.com/logo.svg (saved locally as
    /bun-logo.svg) via a background image. */
-starlight-tabs [role="tablist"] > li:nth-child(1) [role="tab"] > svg {
+starlight-tabs[data-sync-key="pkgManager"] [role="tablist"] > li:nth-child(2) [role="tab"] > svg {
   color: transparent;
   background-image: url("/bun-logo.svg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
 }
-starlight-tabs [role="tablist"] > li:nth-child(2) [role="tab"] > svg {
+starlight-tabs[data-sync-key="pkgManager"] [role="tablist"] > li:nth-child(3) [role="tab"] > svg {
   color: #cb3837; /* npm — npm red */
 }
-starlight-tabs [role="tablist"] > li:nth-child(3) [role="tab"] > svg {
-  color: #f59f00; /* pnpm — orange */
-}
-starlight-tabs [role="tablist"] > li:nth-child(4) [role="tab"] > svg {
+starlight-tabs[data-sync-key="pkgManager"] [role="tablist"] > li:nth-child(4) [role="tab"] > svg {
   color: #2c8ebb; /* yarn — yarn blue */
 }
 
@@ -962,7 +994,7 @@ header.header {
 /* ── Docs sidebar: elide long entries with an ellipsis instead of wrapping
    onto a second line (the generated provider pages have long names like
    GitHubRepositoryEventSourcePolicy). ── */
-.sidebar-content a {
+.sidebar-content .top-level a {
   display: block;
   white-space: nowrap;
   overflow: hidden;
@@ -991,28 +1023,23 @@ header.header {
 #starlight__sidebar .top-level > li > details:not(:has(details)) > summary {
   pointer-events: none;
 }
-#starlight__sidebar
-  .top-level
-  > li
-  > details:not(:has(details))
-  > summary
-  .caret {
+#starlight__sidebar .top-level > li > details:not(:has(details)) > summary .caret {
   display: none;
 }
 
 /* Entries: tighter and smaller, with a reserved rail for the accent bar. */
-#starlight__sidebar .sidebar-content a {
+#starlight__sidebar .sidebar-content .top-level a {
   font-size: 13px;
   padding-block: 0.22rem;
   border-inline-start: 3px solid transparent;
   border-radius: 0;
 }
-#starlight__sidebar .sidebar-content a.large {
+#starlight__sidebar .sidebar-content .top-level a.large {
   font-size: 13px;
   font-weight: 400;
   color: var(--sl-color-gray-2);
 }
-#starlight__sidebar .sidebar-content a:hover {
+#starlight__sidebar .sidebar-content .top-level a:hover {
   color: var(--alc-accent-deep);
 }
 
@@ -1029,9 +1056,27 @@ header.header {
 }
 
 /* Active page: left accent bar + tint, mockup-style. */
-#starlight__sidebar .sidebar-content a[aria-current="page"] {
+#starlight__sidebar .sidebar-content .top-level a[aria-current="page"] {
   background: var(--alc-accent-12);
   color: var(--alc-accent-deep);
   border-inline-start-color: var(--alc-accent-deep);
   font-weight: 500;
+}
+
+/* ============================================================
+   Blog index: starlight-blog hides the title panel with
+   `display: none`, which drops the page's only <h1>. Keep it
+   visually hidden but available to assistive tech instead.
+   ============================================================ */
+.content-panel:first-of-type:has(+ .content-panel .sl-blog-posts) {
+  display: block !important;
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

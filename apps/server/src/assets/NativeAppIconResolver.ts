@@ -1,7 +1,9 @@
-import * as NodeCrypto from "node:crypto";
-import type { ToolActivityNativeAppReference } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import type { NativeAppIconReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -13,8 +15,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Hex from "effect/encoding/Hex";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -23,30 +26,28 @@ const COMMAND_TIMEOUT = "5 seconds";
 const RESOLUTION_CACHE_TTL = Duration.hours(1);
 const RESOLUTION_CACHE_MAX_ENTRIES = 256;
 
-/** Resolves and caches macOS application icons without exposing host paths to clients. */
 export class NativeAppIconResolver extends Context.Service<
   NativeAppIconResolver,
   {
-    /** Returns a cached PNG path for the application, or `null` when no icon is available. */
-    readonly resolve: (app: ToolActivityNativeAppReference) => Effect.Effect<string | null>;
+    readonly resolve: (app: NativeAppIconReference) => Effect.Effect<string | null>;
   }
 >()("t3/assets/NativeAppIconResolver") {}
 
-function appCacheKey(app: ToolActivityNativeAppReference): string {
+function appCacheKey(app: NativeAppIconReference): string {
   return JSON.stringify(app);
 }
 
-function appFromCacheKey(key: string): ToolActivityNativeAppReference {
-  return JSON.parse(key) as ToolActivityNativeAppReference;
+function appFromCacheKey(key: string): NativeAppIconReference {
+  return JSON.parse(key) as NativeAppIconReference;
 }
 
 const existingFile = Effect.fn("NativeAppIconResolver.existingFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const info = yield* fileSystem.stat(filePath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(Option.none()) : Effect.fail(error),
+        error.reason._tag === "NotFound" ? Effect.succeedNone : Effect.fail(error),
     }),
   );
   return Option.isSome(info) && info.value.type === "File" ? filePath : null;
@@ -91,9 +92,13 @@ function containsControlCharacter(value: string): boolean {
 }
 
 const resolveApplicationPath = Effect.fn("NativeAppIconResolver.resolveApplicationPath")(function* (
-  app: ToolActivityNativeAppReference,
+  app: NativeAppIconReference,
 ) {
   const path = yield* Path.Path;
+  if (app._tag === "app-path") {
+    const appPath = expandHomePath(app.path, yield* HostProcess.HomeDirectory);
+    return path.isAbsolute(appPath) && appPath.endsWith(".app") ? appPath : null;
+  }
   const query =
     app._tag === "app-id"
       ? `kMDItemCFBundleIdentifier == '${app.appId}'`
@@ -131,7 +136,7 @@ const resolveApplicationPath = Effect.fn("NativeAppIconResolver.resolveApplicati
 });
 
 const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUncached")(function* (
-  app: ToolActivityNativeAppReference,
+  app: NativeAppIconReference,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -175,9 +180,14 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   const appVersion =
     (yield* plistValue(infoPlistPath, "CFBundleVersion")) ||
     (yield* plistValue(infoPlistPath, "CFBundleShortVersionString"));
-  const cacheKey = NodeCrypto.createHash("sha256")
-    .update(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`)
-    .digest("hex");
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
+  const cacheKey = yield* digest
+    .digest(
+      Digest.sha256,
+      new TextEncoder().encode(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`),
+    )
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
   const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
   const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
   if (yield* existingFile(cachePath)) return cachePath;
@@ -185,7 +195,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${NodeCrypto.randomUUID()}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* random.uuidV4()}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",
@@ -206,10 +216,10 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   return yield* existingFile(cachePath);
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const resolutionSemaphore = yield* Semaphore.make(2);
   const resolutionCache: Cache.Cache<
     string,
@@ -237,7 +247,7 @@ export const make = Effect.gen(function* () {
     );
 
   const resolveAttempt = Effect.fn("NativeAppIconResolver.resolve")(function* (
-    app: ToolActivityNativeAppReference,
+    app: NativeAppIconReference,
   ) {
     if (
       hostPlatform !== "darwin" ||

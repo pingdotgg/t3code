@@ -1,5 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  generateSpreadPinOrderKeys,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+} from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -12,7 +16,6 @@ export type ThreadMoveDestination =
       readonly placement: "before" | "after";
     };
 
-/** Resolve against stable row identities, including rows hidden by a filter. */
 export function threadOrderAfterMove(
   orderedIds: readonly string[],
   movedId: string,
@@ -42,7 +45,7 @@ export function threadOrderAfterMove(
   return result;
 }
 
-type OrderRow = Pick<
+export type OrderRow = Pick<
   EnvironmentThreadShell,
   | "id"
   | "environmentId"
@@ -73,8 +76,6 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   };
 }
 
-/** Keep every visible row as an anchor, but only offer plans whose key writes
- * are supported. Menu availability and execution use this same planner. */
 export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
@@ -104,6 +105,118 @@ export function createThreadMovePlanner(input: {
       ? null
       : assignments;
   };
+}
+
+export interface ThreadMoveAvailability {
+  readonly canMoveUp: boolean;
+  readonly canMoveDown: boolean;
+}
+
+/** Compute per section; per-card planner probes make minute ticks quadratic. */
+export function computeThreadMoveAvailability(input: {
+  readonly ordered: readonly OrderRow[];
+  readonly allThreads?: readonly OrderRow[];
+  readonly section: PendingThreadOrder["section"];
+  readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly pendingOrder?: PendingThreadOrder | null;
+}): Map<string, ThreadMoveAvailability> {
+  const result = new Map<string, ThreadMoveAvailability>();
+  if (input.pendingOrder != null) return result;
+  const rows = input.ordered;
+  if (rows.length < 2) {
+    for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
+    return result;
+  }
+  const orderedIds: string[] = [];
+  const indexById = new Map<string, number>();
+  for (const row of rows) {
+    const id = rowId(row);
+    indexById.set(id, orderedIds.length);
+    orderedIds.push(id);
+  }
+  const keysById = new Map<string, string | null>();
+  const writableIds = new Set<string>();
+  for (const row of input.allThreads ?? input.ordered) {
+    const id = rowId(row);
+    keysById.set(id, rowOrder(row, input.section).key);
+    if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
+  }
+  const reservedKeys = new Set<string>();
+  keysById.forEach((key, id) => {
+    if (key != null && !indexById.has(id)) reservedKeys.add(key);
+  });
+  // Swaps affect at most two positions; precomputed totals allow constant-size availability checks.
+  const midpoints = new Map<string, string | null>();
+  const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
+    const memoKey = `${beforeKey ?? ""}\u0000${afterKey ?? ""}`;
+    const cached = midpoints.get(memoKey);
+    if (cached !== undefined) return cached;
+    let key = pinOrderKeyBetween(beforeKey, afterKey);
+    while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
+    midpoints.set(memoKey, key);
+    return key;
+  };
+  const spreadKeys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
+    .filter((key) => !reservedKeys.has(key))
+    .slice(0, orderedIds.length);
+  const currentKeys = orderedIds.map((id) => keysById.get(id) ?? null);
+  const writableRow = orderedIds.map((id) => writableIds.has(id));
+  let baselineWrites = 0;
+  let baselineUnwritableWrites = 0;
+  for (let position = 0; position < orderedIds.length; position += 1) {
+    if (currentKeys[position] === spreadKeys[position]) continue;
+    baselineWrites += 1;
+    if (!writableRow[position]) baselineUnwritableWrites += 1;
+  }
+  const rewriteViable = (index: number): boolean => {
+    let writes = baselineWrites;
+    let unwritableWrites = baselineUnwritableWrites;
+    for (const position of [index, index + 1]) {
+      const other = position === index ? index + 1 : index;
+      if (currentKeys[position] !== spreadKeys[position]) {
+        writes -= 1;
+        if (!writableRow[position]) unwritableWrites -= 1;
+      }
+      if (currentKeys[other] !== spreadKeys[position]) {
+        writes += 1;
+        if (!writableRow[other]) unwritableWrites += 1;
+      }
+    }
+    return writes > 0 && unwritableWrites === 0;
+  };
+  for (const row of rows) {
+    const movedId = rowId(row);
+    const denied = { canMoveUp: false, canMoveDown: false };
+    if (!writableIds.has(movedId)) {
+      result.set(movedId, denied);
+      continue;
+    }
+    const index = indexById.get(movedId);
+    if (index === undefined) {
+      result.set(movedId, denied);
+      continue;
+    }
+    const adjacentAvailable = (towardUp: boolean): boolean => {
+      const shifted = index + (towardUp ? -1 : 1);
+      if (shifted < 0 || shifted >= orderedIds.length) return false;
+      const beforeIndex = towardUp ? index - 2 : index + 1;
+      const afterIndex = towardUp ? index - 1 : index + 2;
+      const beforeId = beforeIndex < 0 ? null : (orderedIds[beforeIndex] ?? null);
+      const afterId = afterIndex >= orderedIds.length ? null : (orderedIds[afterIndex] ?? null);
+      const beforeKey = beforeId === null ? null : (keysById.get(beforeId) ?? null);
+      const afterKey = afterId === null ? null : (keysById.get(afterId) ?? null);
+      if ((beforeId === null || beforeKey != null) && (afterId === null || afterKey != null)) {
+        const key = fastPathKey(beforeKey, afterKey);
+        if (key !== null) return true;
+      }
+      return rewriteViable(Math.min(index, shifted));
+    };
+    result.set(movedId, {
+      canMoveUp: adjacentAvailable(true),
+      canMoveDown: adjacentAvailable(false),
+    });
+  }
+  return result;
 }
 
 export function createPendingThreadOrder(input: {
@@ -146,7 +259,6 @@ export function reconcilePendingThreadOrder(
   return confirmed.size === pending.confirmed.size ? pending : { ...pending, confirmed };
 }
 
-/** Apply the full section's pending order after search/environment filtering. */
 export function applyPendingThreadOrder<T extends OrderRow>(
   rows: readonly T[],
   section: PendingThreadOrder["section"],
@@ -159,8 +271,6 @@ export function applyPendingThreadOrder<T extends OrderRow>(
   );
 }
 
-/** Match desktop re-entry: a pin wakes the thread on the server; Active clears
- * each underlying parked state before assigning its destination order key. */
 export function threadDropLifecycle(
   thread: EnvironmentThreadShell,
   section: "pinned" | "active",
@@ -177,7 +287,6 @@ export function threadDropLifecycle(
 
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
-/** The action shown during hover describes the lifecycle change made on drop. */
 export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
   if (destination === "snoozed") return null;
   if (destination === "settled") return source === "settled" ? null : "Settle";

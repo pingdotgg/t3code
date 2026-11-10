@@ -84,30 +84,12 @@ A reconciler is a single observe → ensure → sync → return flow:
 
 ```typescript
 reconcile: Effect.fn(function* ({ news, output }) {
-  const stripe = yield* StripeClient;
-
-  // Observe — fetch live state if we have a cached id.
-  let product = output?.productId
-    ? yield* Effect.tryPromise(() =>
-        stripe.products.retrieve(output.productId),
-      ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-    : undefined;
-
-  // Ensure — create if missing.
-  if (!product) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.create({ name: news.name }),
-    );
+  let live = yield* observe(output);          // read live cloud state
+  if (!live) live = yield* create(news);      // ensure it exists
+  if (drifted(live, news)) {
+    live = yield* update(live.id, news);      // sync only the delta
   }
-
-  // Sync — patch any field that drifted from desired.
-  if (product.name !== news.name) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.update(product!.id, { name: news.name }),
-    );
-  }
-
-  return { productId: product.id, name: product.name };
+  return toAttributes(live);                  // fresh attributes
 }),
 ```
 
@@ -129,8 +111,9 @@ state persistence failure. Deterministic physical names plus the
 observe step ensure a retry finds the existing resource and re-syncs
 any drifted fields.
 
-See the [custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile)
-for the full walkthrough.
+For a real reconciler built up step by step — observe, ensure,
+sync, return, against the Stripe API — see the
+[custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile).
 
 ### `delete`
 
@@ -257,6 +240,47 @@ Optional. Reserves a physical name (or stub resource) before
 bindings](/infrastructure-as-effects/circular-bindings) — Worker A can know Worker B's
 URL before either is fully created.
 
+### `observe`
+
+Optional, and only useful next to `precreate`. A cycle precreates on
+raw props before they resolve, so `read` can't check ownership yet.
+`observe` gets the same raw props and reports what exists at the
+identity `precreate` would claim, without writing:
+
+```typescript
+observe: Effect.fn(function* ({ id, news }) {
+  if (!isResolved(news.name)) return Unresolved;
+  const live = yield* lookup(news.name);
+  if (!live) return undefined;
+  const attrs = { productId: live.id, name: live.name };
+  return ownsResource(id, live.tags) ? attrs : Unowned(attrs);
+}),
+```
+
+The engine refuses an `Unowned` result before `precreate` runs, unless
+adoption is allowed. Implement it whenever `precreate` can write to a
+resource that already exists.
+
+Return `Unresolved` when the identity isn't known yet. `undefined` would
+say nothing exists there. The engine checks the resolved identity before
+`reconcile` claims it. It refuses a delete-first replacement outright,
+since it can't check the target before deleting the old resource.
+`precreate` must not write to an identity it can't resolve.
+
+During a replacement, `observe` and `read` also get `previous`, the
+attributes of the generation being replaced. A provider that can't tell
+its own resource apart by tags, like an explicitly named Container
+application, reports that generation as owned:
+
+```typescript
+read: Effect.fn(function* ({ olds, previous }) {
+  const live = yield* lookup(olds.name);
+  if (!live) return undefined;
+  const attrs = { productId: live.id, name: live.name };
+  return live.id === previous?.productId ? attrs : Unowned(attrs);
+}),
+```
+
 ### `list`
 
 Enumerates every existing resource of this type in the ambient
@@ -271,7 +295,7 @@ or `nuke.skip` (the resource can never actually be deleted).
 
 ### `tail` / `logs`
 
-Optional. Power `alchemy tail` (live log streaming) and
+Optional. Powers `alchemy logs --tail` (live log streaming) and
 `alchemy logs` (historical fetch). Each returns a `Stream` or
 `Effect` of `LogLine` values respectively.
 

@@ -1,21 +1,17 @@
+import { fileURLToPath } from "node:url";
 /**
  * `@alchemy.run/frontend-frameworks/octane/aws` — the AWS Lambda deploy target
  * for the Octane integration.
  *
- * Octane's AWS story is its default (adapter-less) node server build:
- * with the marker adapter from
- * `@alchemy.run/frontend-frameworks/octane/aws-adapter` selected in
- * `octane.config.ts` (`adapter: aws()`, `serverTarget: "node"`), the
- * project's own `vite build` emits `dist/server/entry.js` — a
- * self-contained Node ESM bundle (only `node:` externals) exporting a
- * web-standard fetch `handler` that never boots a listener when imported.
- * What this target owns:
+ * `AWS.Website.Octane` selects this target, which automatically wraps
+ * Octane's default native Node output. No adapter is required in
+ * `octane.config.ts`: the project's own `vite build` emits
+ * `dist/server/entry.js`, a self-contained Node ESM bundle (only `node:`
+ * externals) exporting a web-standard fetch `handler` that never boots a
+ * listener when imported. What this target owns:
  *
- * - **`adapterName` / `adapterPackage`** — the project's `octane.config.ts`
- *   must select `adapter: aws()` from
- *   `@alchemy.run/frontend-frameworks/octane/aws-adapter`; the framework half
- *   validates this and fails actionably otherwise. The adapter is a pure
- *   marker — Octane's built-in node build IS the AWS build.
+ * - **`adapterName` / `adapterPackage`** — identify the optional legacy AWS
+ *   marker adapter, still accepted for existing projects.
  * - **`serverEntryFileName`** — `entry.js`, Octane's emitted node entry;
  *   the finishing pass wraps it.
  * - **`finish`** — emits the Lambda deployment surface next to the entry:
@@ -39,7 +35,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { fileURLToPath } from "node:url";
 import { runBuildChild } from "../core/BuildChild.ts";
 import {
   DeployTargetError,
@@ -54,9 +49,8 @@ import { make, type OctaneTarget, type OctaneTargetConfig } from "./Octane.ts";
 /** The `adapter.name` the AWS marker adapter declares. */
 export const ADAPTER_NAME = "aws";
 
-/** The module providing the AWS marker adapter for `octane.config.ts`. */
-export const ADAPTER_PACKAGE =
-  "@alchemy.run/frontend-frameworks/octane/aws-adapter";
+/** The optional legacy AWS marker adapter module for existing configs. */
+export const ADAPTER_PACKAGE = "@alchemy.run/frontend-frameworks/octane/aws-adapter";
 
 /** Octane's emitted node server entry within the server output directory. */
 export const SERVER_ENTRY_FILE_NAME = "entry.js";
@@ -101,10 +95,7 @@ export const handler = ${wrap}(fetchHandler);
  * on disk (it has no imports of its own, so a byte copy deploys as-is).
  */
 const resolveLambdaAdapterPath = Effect.try({
-  try: () =>
-    fileURLToPath(
-      import.meta.resolve("@alchemy.run/frontend-frameworks/aws-lambda"),
-    ),
+  try: () => fileURLToPath(import.meta.resolve("@alchemy.run/frontend-frameworks/aws-lambda")),
   catch: (cause) =>
     fail(
       'Failed to resolve "@alchemy.run/frontend-frameworks/aws-lambda" — is the package built (its exports map serves dist/)?',
@@ -116,28 +107,19 @@ const finish = (
   config: OctaneAwsTargetConfig,
   output: BuildOutput,
   context: DeployTargetFinishContext,
-): Effect.Effect<
-  BuildOutput,
-  DeployTargetError,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<BuildOutput, DeployTargetError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (context.entry === undefined) {
-      return yield* Effect.fail(
-        fail("The Octane build produced no on-disk server entry to finish"),
-      );
+      return yield* fail("The Octane build produced no on-disk server entry to finish");
     }
     const serverDir = path.dirname(context.entry);
 
     // The Lambda Node.js runtime classifies `.js` modules by the nearest
     // package.json, and `dist/server` ships as the deployment root without
     // one — Octane's ESM `entry.js` needs the marker to load as ESM.
-    yield* fs.writeFileString(
-      path.join(serverDir, "package.json"),
-      '{"type":"module"}\n',
-    );
+    yield* fs.writeFileString(path.join(serverDir, "package.json"), '{"type":"module"}\n');
 
     const adapterPath = yield* resolveLambdaAdapterPath;
     const adapterSource = yield* fs.readFileString(adapterPath);
@@ -161,10 +143,7 @@ const finish = (
     }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
     return {
       ...output,
-      serverModules: sortServerModules(
-        modules,
-        `server/${LAMBDA_ENTRY_FILE_NAME}`,
-      ),
+      serverModules: sortServerModules(modules, `server/${LAMBDA_ENTRY_FILE_NAME}`),
     };
   }).pipe(
     Effect.catchTag("PlatformError", (error) =>
@@ -173,14 +152,12 @@ const finish = (
   );
 
 /**
- * The adapter-driven target — the shape the framework's regular
+ * The native Node output target — the shape the framework's regular
  * build/finish pipeline consumes. Used directly in the build child (where
  * `cwd === root` holds); {@link makeAwsTarget} wraps it with the wholesale
  * `build` hook that spawns the child.
  */
-const makeAwsAdapterTarget = (
-  config: OctaneAwsTargetConfig = {},
-): OctaneTarget =>
+const makeAwsAdapterTarget = (config: OctaneAwsTargetConfig = {}): OctaneTarget =>
   makeDeployTarget({
     platform: "aws",
     config,
@@ -214,7 +191,7 @@ export const buildInChild = (config: OctaneAwsBuildChildConfig) =>
   Effect.gen(function* () {
     const framework = yield* make({
       root: config.rootDir,
-      // The adapter-only target: no wholesale `build` hook, so the child
+      // The finish-only target: no wholesale `build` hook, so the child
       // runs the regular vite build + finish pipeline (no recursion).
       target: makeAwsAdapterTarget(config.config),
       compatibilityDate: config.config.compatibilityDate,
@@ -227,14 +204,13 @@ export const buildInChild = (config: OctaneAwsBuildChildConfig) =>
  * Create the AWS Lambda {@link OctaneTarget}. See the module doc for the
  * seams.
  */
-export const makeAwsTarget = (
-  config: OctaneAwsTargetConfig = {},
-): OctaneTarget => ({
+export const makeAwsTarget = (config: OctaneAwsTargetConfig = {}): OctaneTarget => ({
   ...makeAwsAdapterTarget(config),
   build: (context) =>
     runBuildChild({
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "octane",
       config: {
         rootDir: context.root,

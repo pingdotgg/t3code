@@ -1,0 +1,24 @@
+{
+  "name": "service-binding-vocs",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "catalog:react-rsc",
+    "react-dom": "catalog:react-rsc",
+    "react-server-dom-webpack": "catalog:",
+    "vocs": "catalog:",
+    "waku": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/unenv-preset": "catalog:",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
+    "typescript": "catalog:",
+    "unenv": "catalog:",
+    "vite": "catalog:"
+  }
+}

@@ -1,5 +1,5 @@
 ---
-title: Local Providers
+title: Local Provider
 description: Build the local implementation of a resource — dual registration with ProviderLayer.dual and the LocalProvider runner for long-running processes.
 ---
 
@@ -222,10 +222,10 @@ test.provider("promotes a dev worker to a live worker", (stack) =>
 - [`Command/Dev.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Command/Dev.ts)
   — the smallest `LocalProvider.make` provider: spawn a command, extract
   its URL, restart on prop changes.
-- [`Cloudflare/Workers/LocalWorkerProvider.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Workers/LocalWorkerProvider.ts)
+- [`Cloudflare/Workers/LocalWorkerProvider.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/cloudflare/src/Workers/LocalWorkerProvider.ts)
   — the full-size one: bundler watch loop, `workerd` instances, a URL
   proxy torn down in `stop`.
-- [`Cloudflare/Queues/Queue.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Queues/Queue.ts)
+- [`Cloudflare/Queues/Queue.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/cloudflare/src/Queues/Queue.ts)
   — the registry-style counter-example: a plain local provider under
   `dual`.
 

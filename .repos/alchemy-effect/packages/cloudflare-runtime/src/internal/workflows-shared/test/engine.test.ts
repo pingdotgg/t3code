@@ -1,35 +1,55 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: uses Array<T> syntax and expects current workerd error serialization, which preserves the message without prefixing the custom class name.
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type {
+  WorkflowDelayFunction,
+  WorkflowStep,
+  WorkflowStepConfig,
+  WorkflowStepContext,
+} from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { afterEach, describe, it, vi } from "vitest";
+import type { TestContext } from "vitest";
 import workerdUnsafe from "workerd:unsafe";
+import type { DatabaseInstance, DatabaseVersion, DatabaseWorkflow, EngineLogs } from "../engine.ts";
 import { DEFAULT_STEP_LIMIT, InstanceEvent, InstanceStatus } from "../index.ts";
 import { ABORT_REASONS, isAbortError } from "../lib/errors.ts";
+import type { RollbackContext, RollbackFn, WorkflowStepRollbackOptions } from "../lib/rollback.ts";
 import { setTestWorkflowCallback } from "./test-entry.ts";
 import { runWorkflow, runWorkflowAndAwait } from "./utils.ts";
-import type {
-  DatabaseInstance,
-  DatabaseVersion,
-  DatabaseWorkflow,
-  EngineLogs,
-} from "../engine.ts";
-import type {
-  RollbackContext,
-  RollbackFn,
-  WorkflowStepRollbackOptions,
-} from "../lib/rollback.ts";
-import type { WorkflowStep, WorkflowStepConfig } from "cloudflare:workers";
 
 afterEach(async () => {
   await workerdUnsafe.abortAllDurableObjects();
 });
 
+/** Keep first-attempt failures and progress visible even when Vitest retries pass. */
+function trackTimerQuotaTest({ task, onTestFinished }: TestContext) {
+  const start = performance.now();
+  const attempt = (task.result?.retryCount ?? 0) + 1;
+  const previousErrors = task.result?.errors?.length ?? 0;
+  const progress = { completed: 0, phase: "steps", stepsMs: 0 };
+  onTestFinished(() => {
+    console.info(
+      "Workflows timer quota:",
+      JSON.stringify({
+        test: task.name,
+        attempt,
+        ...progress,
+        elapsedMs: Math.round(performance.now() - start),
+        errors: task.result?.errors?.slice(previousErrors).map(({ name, message }) => ({
+          name,
+          message,
+        })),
+      }),
+    );
+  });
+  return { attempt, start, progress };
+}
+
 describe("Engine", () => {
-  it("should not retry after NonRetryableError is thrown", async ({
-    expect,
-  }) => {
+  it("should not retry after NonRetryableError is thrown", async ({ expect }) => {
     const instanceId = "NON-RETRYABLE-ERROR";
     const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -42,12 +62,8 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         try {
-          const logs = (await env.ENGINE.get(
-            engineId,
-          ).readLogs()) as EngineLogs;
-          return logs.logs.some(
-            (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
-          );
+          const logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
+          return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
         } catch (e) {
           // DO may still be aborting — retry
           if (isAbortError(e)) {
@@ -61,9 +77,7 @@ describe("Engine", () => {
 
     const logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
 
-    expect(
-      logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START),
-    ).toHaveLength(1);
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START)).toHaveLength(1);
   });
 
   it("should preserve NonRetryableError message when compat flag is enabled", async ({
@@ -99,12 +113,8 @@ describe("Engine", () => {
       await vi.waitUntil(
         async () => {
           try {
-            const logs = (await env.ENGINE.get(
-              engineId,
-            ).readLogs()) as EngineLogs;
-            return logs.logs.some(
-              (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
-            );
+            const logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
+            return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
           } catch (e) {
             if (isAbortError(e)) {
               return false;
@@ -117,17 +127,13 @@ describe("Engine", () => {
 
       const logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
 
-      const workflowFailure = logs.logs.find(
-        (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
-      );
+      const workflowFailure = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
       expect(workflowFailure?.metadata.error).toEqual({
         name: "NonRetryableError",
         message: "my custom error message",
       });
 
-      const attemptFailure = logs.logs.find(
-        (val) => val.event === InstanceEvent.ATTEMPT_FAILURE,
-      );
+      const attemptFailure = logs.logs.find((val) => val.event === InstanceEvent.ATTEMPT_FAILURE);
       expect(attemptFailure?.metadata.error).toEqual({
         name: "NonRetryableError",
         message: "my custom error message",
@@ -137,61 +143,181 @@ describe("Engine", () => {
     }
   });
 
-  it("should not error out if step fails but is try-catched", async ({
-    expect,
-  }) => {
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-ID-TRY-CATCH",
-      async (_event, step) => {
-        try {
-          await step.do(
-            "always errors out",
-            {
-              retries: {
-                limit: 0,
-                delay: 1000,
-              },
+  it("should not error out if step fails but is try-catched", async ({ expect }) => {
+    const engineStub = await runWorkflow("MOCK-INSTANCE-ID-TRY-CATCH", async (_event, step) => {
+      try {
+        await step.do(
+          "always errors out",
+          {
+            retries: {
+              limit: 0,
+              delay: 1000,
             },
-            async () => {
-              throw new Error("Step errors out");
-            },
-          );
-        } catch {}
-        return "finished";
-      },
-    );
+          },
+          async () => {
+            throw new Error("Step errors out");
+          },
+        );
+      } catch {}
+      return "finished";
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event == InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event == InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
 
-    expect(
-      logs.logs.some((val) => val.event == InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
+    expect(logs.logs.some((val) => val.event == InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
 
-    expect(
-      logs.logs.filter((val) => val.event == InstanceEvent.ATTEMPT_FAILURE),
-    ).toHaveLength(1);
+    expect(logs.logs.filter((val) => val.event == InstanceEvent.ATTEMPT_FAILURE)).toHaveLength(1);
+  });
+
+  it("applies a dynamic delay function and succeeds after retries", async ({ expect }) => {
+    const instanceId = "DYNAMIC-DELAY-APPLIED";
+    const dynamicDelay: WorkflowDelayFunction = () => 50;
+    let attempts = 0;
+
+    const engineStub = await runWorkflow(instanceId, async (_event, step) => {
+      await step.do(
+        "dynamic-delay-step",
+        {
+          retries: { limit: 3, delay: dynamicDelay, backoff: "constant" },
+        },
+        async () => {
+          attempts++;
+          if (attempts < 2) {
+            throw new Error("transient");
+          }
+          return "ok";
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await engineStub.readLogs()) as EngineLogs;
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
+      },
+      { timeout: 5000 },
+    );
+
+    const logs = (await engineStub.readLogs()) as EngineLogs;
+    const attemptFailures = logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_FAILURE);
+
+    expect(attemptFailures.length).toBeGreaterThanOrEqual(1);
+    expect(attemptFailures[0]?.metadata).toMatchObject({ retryDelayMs: 50 });
+  });
+
+  it("fails non-retryably when the delay function throws", async ({ expect }) => {
+    const instanceId = "DYNAMIC-DELAY-BROKEN";
+    const throwingDelay: WorkflowDelayFunction = () => {
+      throw new Error("delay boom");
+    };
+
+    const engineStub = await runWorkflow(instanceId, async (_event, step) => {
+      await step.do(
+        "broken-delay-step",
+        {
+          retries: { limit: 5, delay: throwingDelay, backoff: "constant" },
+        },
+        async () => {
+          throw new Error("step failed");
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await engineStub.readLogs()) as EngineLogs;
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
+      },
+      { timeout: 5000 },
+    );
+
+    const logs = (await engineStub.readLogs()) as EngineLogs;
+
+    // The broken delay function turns the retry into a non-retryable failure,
+    // so the step is only attempted once.
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START)).toHaveLength(1);
+
+    // Current workerd preserves the error message across the RPC boundary
+    // without folding the custom class name into it.
+    const workflowFailure = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
+    expect(workflowFailure?.metadata.error.message).toContain("delay function");
+    expect(workflowFailure?.metadata.error.message).toContain("delay boom");
+  });
+
+  it("omits delay from ctx.config for a dynamic delay but includes it for a static delay", async ({
+    expect,
+  }) => {
+    const dynamicDelay: WorkflowDelayFunction = () => 10;
+    let dynamicConfig: WorkflowStepContext<WorkflowDelayFunction>["config"] | undefined;
+    let staticConfig: WorkflowStepContext<number>["config"] | undefined;
+
+    const dynamicStub = await runWorkflow("DYNAMIC-DELAY-CTX-HIDDEN", async (_event, step) => {
+      await step.do(
+        "dynamic-config-step",
+        {
+          retries: { limit: 1, delay: dynamicDelay, backoff: "constant" },
+        },
+        async (ctx) => {
+          dynamicConfig = ctx.config;
+          return "ok";
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await dynamicStub.readLogs()) as EngineLogs;
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
+      },
+      { timeout: 5000 },
+    );
+
+    const staticStub = await runWorkflow("STATIC-DELAY-CTX-VISIBLE", async (_event, step) => {
+      await step.do(
+        "static-config-step",
+        {
+          retries: { limit: 1, delay: 1234, backoff: "constant" },
+        },
+        async (ctx) => {
+          staticConfig = ctx.config;
+          return "ok";
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await staticStub.readLogs()) as EngineLogs;
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
+      },
+      { timeout: 5000 },
+    );
+
+    const dynamicRetries = dynamicConfig?.retries;
+    expect(dynamicRetries).toBeDefined();
+    expect(dynamicRetries && "delay" in dynamicRetries).toBe(false);
+    expect(staticConfig?.retries?.delay).toBe(1234);
   });
 
   it("waitForEvent should receive events while active", async ({ expect }) => {
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-ID-WAIT-FOR-EVENT",
-      async (_, step) => {
-        return await step.waitForEvent("i'm a event!", {
-          type: "event-type-1",
-          timeout: "10 seconds",
-        });
-      },
-    );
+    const engineStub = await runWorkflow("MOCK-INSTANCE-ID-WAIT-FOR-EVENT", async (_, step) => {
+      return await step.waitForEvent("i'm a event!", {
+        type: "event-type-1",
+        timeout: "10 seconds",
+      });
+    });
 
     await vi.waitUntil(
       async () => {
@@ -210,25 +336,17 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(logs.logs.some((v) => v.event === InstanceEvent.WAIT_START)).toBe(
-      true,
-    );
-    expect(
-      logs.logs.some((v) => v.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
+    expect(logs.logs.some((v) => v.event === InstanceEvent.WAIT_START)).toBe(true);
+    expect(logs.logs.some((v) => v.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
   });
 
-  it("waitForEvent should receive events even if not active", async ({
-    expect,
-  }) => {
+  it("waitForEvent should receive events even if not active", async ({ expect }) => {
     const engineStub = await runWorkflow(
       "MOCK-INSTANCE-ID-WAIT-FOR-EVENT-NOT-ACTIVE",
       async (_, step) => {
@@ -269,20 +387,14 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await newStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await newStub.readLogs()) as EngineLogs;
-    expect(logs.logs.some((v) => v.event === InstanceEvent.WAIT_START)).toBe(
-      true,
-    );
-    expect(
-      logs.logs.some((v) => v.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
+    expect(logs.logs.some((v) => v.event === InstanceEvent.WAIT_START)).toBe(true);
+    expect(logs.logs.some((v) => v.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
   });
 
   it("waitForEvent should not deliver events to timed-out events with the same type", async ({
@@ -314,10 +426,7 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return (
-          logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START)
-            .length >= 1
-        );
+        return logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START).length >= 1;
       },
       { timeout: 5000 },
     );
@@ -331,10 +440,7 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return (
-          logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START)
-            .length >= 2
-        );
+        return logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START).length >= 2;
       },
       { timeout: 5000 },
     );
@@ -343,9 +449,7 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WAIT_TIMED_OUT,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WAIT_TIMED_OUT);
       },
       { timeout: 5000 },
     );
@@ -354,10 +458,7 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return (
-          logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START)
-            .length >= 3
-        );
+        return logs.logs.filter((val) => val.event === InstanceEvent.WAIT_START).length >= 3;
       },
       { timeout: 5000 },
     );
@@ -371,26 +472,18 @@ describe("Engine", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
     // Iterations 1 and 3 received events; iteration 2 timed out
-    expect(
-      logs.logs.filter((val) => val.event === InstanceEvent.WAIT_COMPLETE),
-    ).toHaveLength(2);
-    expect(
-      logs.logs.filter((val) => val.event === InstanceEvent.WAIT_TIMED_OUT),
-    ).toHaveLength(1);
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.WAIT_COMPLETE)).toHaveLength(2);
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.WAIT_TIMED_OUT)).toHaveLength(1);
   });
 
-  it("should restore state from storage when accountId is undefined", async ({
-    expect,
-  }) => {
+  it("should restore state from storage when accountId is undefined", async ({ expect }) => {
     const instanceId = "RESTORE-TEST-INSTANCE";
     const accountId = 12345;
     const workflow: DatabaseWorkflow = {
@@ -454,9 +547,7 @@ describe("Engine", () => {
     expect(status).toBe(InstanceStatus.Running);
 
     const logs = (await restartedStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_START),
-    ).toBe(true);
+    expect(logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_START)).toBe(true);
   });
 
   it("should complete a step that returns a large Uint8Array without SQLITE_TOOBIG", async ({
@@ -476,12 +567,8 @@ describe("Engine", () => {
     });
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 
   it("should complete a step that returns an object containing a large Uint8Array without SQLITE_TOOBIG", async ({
@@ -500,12 +587,8 @@ describe("Engine", () => {
     });
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 
   describe("step limits", () => {
@@ -535,14 +618,10 @@ describe("Engine", () => {
 
       const logs = (await engineStub.readLogs()) as EngineLogs;
 
-      expect(
-        logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-      ).toBe(true);
+      expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(true);
     });
 
-    it("should succeed when steps are exactly at the limit", async ({
-      expect,
-    }) => {
+    it("should succeed when steps are exactly at the limit", async ({ expect }) => {
       const stepLimit = 3;
       const instanceId = "STEP-LIMIT-AT-LIMIT";
       const engineId = env.ENGINE.idFromName(instanceId);
@@ -569,35 +648,132 @@ describe("Engine", () => {
 
       const logs = (await engineStub.readLogs()) as EngineLogs;
 
-      expect(
-        logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-      ).toBe(true);
-      expect(
-        logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-      ).toBe(false);
+      expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+      expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
     });
 
-    it("should use DEFAULT_STEP_LIMIT when no limit is configured", async ({
-      expect,
-    }) => {
+    it("should use DEFAULT_STEP_LIMIT when no limit is configured", async ({ expect }) => {
       const engineId = env.ENGINE.idFromName("STEP-LIMIT-DEFAULT");
       const freshStub = env.ENGINE.get(engineId);
 
-      const stepLimit = await runInDurableObject(
-        freshStub,
-        (engine) => engine.stepLimit,
-      );
+      const stepLimit = await runInDurableObject(freshStub, (engine) => engine.stepLimit);
 
       expect(stepLimit).toBe(DEFAULT_STEP_LIMIT);
     });
   });
 
+  describe("step timeout timers", () => {
+    it(
+      "cancels completed step timeout timers so sequential steps stay under the active-timeout quota",
+      // Windows needs room for all 5,100 real callbacks; a timeout followed
+      // by replaying stored results previously hid incomplete attempts.
+      { timeout: 300_000 },
+      async (context) => {
+        const { expect } = context;
+        const { attempt, start, progress } = trackTimerQuotaTest(context);
+        // workerd's isolate allows 10,000 active timers. Each step.do() starts a
+        // 10-minute scheduler.wait() for the step timeout. If that wait is not
+        // cancelled when the step finishes, 5,000 sequential immediate steps hit
+        // QuotaExceededError (issue #15788).
+        // Vitest retries retain storage. A fresh ID ensures every attempt
+        // executes real callbacks instead of replaying earlier step results.
+        const steps = 5_100;
+        const engineStub = await runWorkflowAndAwait(
+          `STEP-TIMEOUT-TIMER-QUOTA-${attempt}`,
+          async (_event, step) => {
+            for (let i = 0; i < steps; i++) {
+              await step.do(
+                `n-${i}`,
+                {
+                  retries: { limit: 0, delay: "0 seconds" },
+                  timeout: "10 minutes",
+                },
+                async () => {
+                  progress.completed++;
+                  return i;
+                },
+              );
+            }
+            return { completed: steps };
+          },
+        );
+
+        progress.stepsMs = Math.round(performance.now() - start);
+        progress.phase = "terminal events";
+        // Avoid returning 25,000+ step events over RPC when only the terminal
+        // events are asserted. All real steps and storage operations still run.
+        const failure = (await engineStub.readLogsFromEvent(InstanceEvent.WORKFLOW_FAILURE))
+          .logs[0];
+        expect(failure, JSON.stringify(failure)).toBeUndefined();
+        const success = (await engineStub.readLogsFromEvent(InstanceEvent.WORKFLOW_SUCCESS))
+          .logs[0];
+        expect(success).toBeDefined();
+        expect(success?.metadata.result).toEqual({ completed: steps });
+        expect(progress.completed).toBe(steps);
+        progress.phase = "complete";
+      },
+    );
+
+    it(
+      "cancels failed step timeout timers so sequential try/caught steps stay under the active-timeout quota",
+      // Windows needs room for all 5,100 real callbacks; a timeout followed
+      // by replaying stored results previously hid incomplete attempts.
+      { timeout: 300_000 },
+      async (context) => {
+        const { expect } = context;
+        const { attempt, start, progress } = trackTimerQuotaTest(context);
+        // Same 10,000-timer quota as the success-path case. Failed steps used
+        // to leave scheduler.wait() running because the error handler never
+        // aborted stepExecutionSignal (issue #15788).
+        // Vitest retries retain storage. A fresh ID ensures every attempt
+        // executes real callbacks instead of replaying earlier step results.
+        const steps = 5_100;
+        const engineStub = await runWorkflowAndAwait(
+          `STEP-TIMEOUT-TIMER-QUOTA-FAILURES-${attempt}`,
+          async (_event, step) => {
+            for (let i = 0; i < steps; i++) {
+              try {
+                await step.do(
+                  `n-${i}`,
+                  {
+                    retries: { limit: 0, delay: "0 seconds" },
+                    timeout: "10 minutes",
+                  },
+                  async () => {
+                    progress.completed++;
+                    throw new Error("immediate step failure");
+                  },
+                );
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (!msg.includes("immediate step failure")) {
+                  throw e;
+                }
+              }
+            }
+            return { completed: steps };
+          },
+        );
+
+        progress.stepsMs = Math.round(performance.now() - start);
+        progress.phase = "terminal events";
+        // Avoid returning 25,000+ step events over RPC when only the terminal
+        // events are asserted. All real steps and storage operations still run.
+        const failure = (await engineStub.readLogsFromEvent(InstanceEvent.WORKFLOW_FAILURE))
+          .logs[0];
+        expect(failure, JSON.stringify(failure)).toBeUndefined();
+        const success = (await engineStub.readLogsFromEvent(InstanceEvent.WORKFLOW_SUCCESS))
+          .logs[0];
+        expect(success).toBeDefined();
+        expect(success?.metadata.result).toEqual({ completed: steps });
+        expect(progress.completed).toBe(steps);
+        progress.phase = "complete";
+      },
+    );
+  });
+
   describe("lifecycle methods", () => {
-    it.for([
-      InstanceStatus.Complete,
-      InstanceStatus.Errored,
-      InstanceStatus.Terminated,
-    ])(
+    it.for([InstanceStatus.Complete, InstanceStatus.Errored, InstanceStatus.Terminated])(
       "should throw when calling terminate on instance in finite state: %s",
       async (finiteStatus, { expect }) => {
         const engineStub = await runWorkflowAndAwait(
@@ -616,9 +792,7 @@ describe("Engine", () => {
           runInDurableObject(engineStub, async (engine) => {
             await engine.changeInstanceStatus("terminate");
           }),
-        ).rejects.toThrow(
-          "Cannot terminate instance since its on a finite state",
-        );
+        ).rejects.toThrow("Cannot terminate instance since its on a finite state");
       },
     );
 
@@ -628,72 +802,59 @@ describe("Engine", () => {
       InstanceStatus.Terminated,
       InstanceStatus.Running,
       InstanceStatus.Paused,
-    ])(
-      "should restart workflow from status: %s",
-      async (initialStatus, { expect }) => {
-        const instanceId = `RESTART-${initialStatus}-INSTANCE`;
-        const engineId = env.ENGINE.idFromName(instanceId);
+    ])("should restart workflow from status: %s", async (initialStatus, { expect }) => {
+      const instanceId = `RESTART-${initialStatus}-INSTANCE`;
+      const engineId = env.ENGINE.idFromName(instanceId);
 
-        const engineStub = await runWorkflowAndAwait(
-          instanceId,
-          async (_event: unknown, step: WorkflowStep) => {
-            await step.do("test-step", async () => "step-result");
-            return "done";
-          },
-        );
+      const engineStub = await runWorkflowAndAwait(
+        instanceId,
+        async (_event: unknown, step: WorkflowStep) => {
+          await step.do("test-step", async () => "step-result");
+          return "done";
+        },
+      );
 
-        // Set the status to initialStatus
-        await runInDurableObject(engineStub, async (_engine, state) => {
-          await state.storage.put("ENGINE_STATUS", initialStatus);
+      // Set the status to initialStatus
+      await runInDurableObject(engineStub, async (_engine, state) => {
+        await state.storage.put("ENGINE_STATUS", initialStatus);
+      });
+
+      try {
+        await runInDurableObject(engineStub, async (engine) => {
+          await engine.changeInstanceStatus("restart");
         });
-
-        try {
-          await runInDurableObject(engineStub, async (engine) => {
-            await engine.changeInstanceStatus("restart");
-          });
-        } catch (e) {
-          // Expected - abort throws to break the DO
-          if (!isAbortError(e)) {
-            throw e;
-          }
+      } catch (e) {
+        // Expected - abort throws to break the DO
+        if (!isAbortError(e)) {
+          throw e;
         }
+      }
 
-        const restartedStub = env.ENGINE.get(engineId);
+      const restartedStub = env.ENGINE.get(engineId);
 
-        await runInDurableObject(restartedStub, async (engine) => {
-          await engine.attemptRestart();
-        });
+      await runInDurableObject(restartedStub, async (engine) => {
+        await engine.attemptRestart();
+      });
 
-        await vi.waitUntil(
-          async () => {
-            const status = await runInDurableObject(restartedStub, (engine) =>
-              engine.getStatus(),
-            );
-            return status === InstanceStatus.Complete;
-          },
-          { timeout: 5000 },
-        );
+      await vi.waitUntil(
+        async () => {
+          const status = await runInDurableObject(restartedStub, (engine) => engine.getStatus());
+          return status === InstanceStatus.Complete;
+        },
+        { timeout: 5000 },
+      );
 
-        // Verify the workflow ran again by checking logs
-        const logs = (await restartedStub.readLogs()) as EngineLogs;
+      // Verify the workflow ran again by checking logs
+      const logs = (await restartedStub.readLogs()) as EngineLogs;
 
-        expect(
-          logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_START),
-        ).toBe(true);
+      expect(logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_START)).toBe(true);
 
-        expect(
-          logs.logs.some((log) => log.event === InstanceEvent.STEP_START),
-        ).toBe(true);
+      expect(logs.logs.some((log) => log.event === InstanceEvent.STEP_START)).toBe(true);
 
-        expect(
-          logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_SUCCESS),
-        ).toBe(true);
-      },
-    );
+      expect(logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    });
 
-    it("should restart from a specific step and preserve earlier results", async ({
-      expect,
-    }) => {
+    it("should restart from a specific step and preserve earlier results", async ({ expect }) => {
       const instanceId = "RESTART-FROM-STEP";
       const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -706,9 +867,7 @@ describe("Engine", () => {
         },
       );
 
-      const statusBefore = await runInDurableObject(engineStub, (engine) =>
-        engine.getStatus(),
-      );
+      const statusBefore = await runInDurableObject(engineStub, (engine) => engine.getStatus());
       expect(statusBefore).toBe(InstanceStatus.Complete);
 
       try {
@@ -731,9 +890,7 @@ describe("Engine", () => {
 
       await vi.waitUntil(
         async () => {
-          const status = await runInDurableObject(restartedStub, (engine) =>
-            engine.getStatus(),
-          );
+          const status = await runInDurableObject(restartedStub, (engine) => engine.getStatus());
           return status === InstanceStatus.Complete;
         },
         { timeout: 5000 },
@@ -742,19 +899,13 @@ describe("Engine", () => {
       const logs = (await restartedStub.readLogs()) as EngineLogs;
 
       // step-a should still have its cached result from the first run
-      const stepSuccessLogs = logs.logs.filter(
-        (log) => log.event === InstanceEvent.STEP_SUCCESS,
-      );
+      const stepSuccessLogs = logs.logs.filter((log) => log.event === InstanceEvent.STEP_SUCCESS);
       expect(stepSuccessLogs.length).toBeGreaterThanOrEqual(2);
 
-      expect(
-        logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_SUCCESS),
-      ).toBe(true);
+      expect(logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
     });
 
-    it("should default restart from step type to step.do", async ({
-      expect,
-    }) => {
+    it("should default restart from step type to step.do", async ({ expect }) => {
       const instanceId = "RESTART-FROM-STEP-DEFAULT-DO";
       const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -763,12 +914,8 @@ describe("Engine", () => {
         async (_event: unknown, step: WorkflowStep) => {
           const setup = await step.do("setup", async () => crypto.randomUUID());
           await step.sleep("checkpoint", 1);
-          const between = await step.do("between", async () =>
-            crypto.randomUUID(),
-          );
-          const checkpoint = await step.do("checkpoint", async () =>
-            crypto.randomUUID(),
-          );
+          const between = await step.do("between", async () => crypto.randomUUID());
+          const checkpoint = await step.do("checkpoint", async () => crypto.randomUUID());
           const after = await step.do("after", async () => crypto.randomUUID());
           return { setup, between, checkpoint, after };
         },
@@ -799,9 +946,7 @@ describe("Engine", () => {
 
       await vi.waitUntil(
         async () => {
-          const status = await runInDurableObject(restartedStub, (engine) =>
-            engine.getStatus(),
-          );
+          const status = await runInDurableObject(restartedStub, (engine) => engine.getStatus());
           return status === InstanceStatus.Complete;
         },
         { timeout: 5000 },
@@ -818,9 +963,7 @@ describe("Engine", () => {
       expect(stepResultsAfter[3]).not.toEqual(stepResultsBefore[3]);
     });
 
-    it("should throw when restarting from a non-existing step", async ({
-      expect,
-    }) => {
+    it("should throw when restarting from a non-existing step", async ({ expect }) => {
       const instanceId = "RESTART-FROM-BAD-STEP";
 
       const engineStub = await runWorkflowAndAwait(
@@ -859,9 +1002,7 @@ describe("Engine", () => {
         async () => {
           return await runInDurableObject(engineStub, (engine) => {
             const logs = engine.readLogs() as unknown as EngineLogs;
-            return logs.logs.some(
-              (log) => log.event === InstanceEvent.STEP_START,
-            );
+            return logs.logs.some((log) => log.event === InstanceEvent.STEP_START);
           });
         },
         { timeout: 5000 },
@@ -883,8 +1024,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Paused,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Paused,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -897,24 +1037,18 @@ describe("Engine", () => {
       );
 
       const freshStub = env.ENGINE.get(engineId);
-      const finalStatus = await runInDurableObject(freshStub, (engine) =>
-        engine.getStatus(),
-      );
+      const finalStatus = await runInDurableObject(freshStub, (engine) => engine.getStatus());
       expect(finalStatus).toBe(InstanceStatus.Paused);
 
       // Verify long-step completed but step-2 never ran
       const logs = await runInDurableObject(freshStub, (engine) => {
         return engine.readLogs() as unknown as EngineLogs;
       });
-      const stepSuccesses = logs.logs.filter(
-        (log) => log.event === InstanceEvent.STEP_SUCCESS,
-      );
+      const stepSuccesses = logs.logs.filter((log) => log.event === InstanceEvent.STEP_SUCCESS);
       expect(stepSuccesses).toHaveLength(1);
     });
 
-    it("should pause after multiple concurrent in-flight step.dos finish", async ({
-      expect,
-    }) => {
+    it("should pause after multiple concurrent in-flight step.dos finish", async ({ expect }) => {
       const instanceId = "PAUSE-AFTER-CONCURRENT-DOS";
       const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -939,10 +1073,7 @@ describe("Engine", () => {
         async () => {
           return await runInDurableObject(engineStub, (engine) => {
             const logs = engine.readLogs() as unknown as EngineLogs;
-            return (
-              logs.logs.filter((log) => log.event === InstanceEvent.STEP_START)
-                .length >= 2
-            );
+            return logs.logs.filter((log) => log.event === InstanceEvent.STEP_START).length >= 2;
           });
         },
         { timeout: 5000 },
@@ -964,8 +1095,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Paused,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Paused,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -978,18 +1108,14 @@ describe("Engine", () => {
       );
 
       const freshStub = env.ENGINE.get(engineId);
-      const finalStatus = await runInDurableObject(freshStub, (engine) =>
-        engine.getStatus(),
-      );
+      const finalStatus = await runInDurableObject(freshStub, (engine) => engine.getStatus());
       expect(finalStatus).toBe(InstanceStatus.Paused);
 
       // Both concurrent steps should have completed, but step-after-pause should not
       const logs = await runInDurableObject(freshStub, (engine) => {
         return engine.readLogs() as unknown as EngineLogs;
       });
-      const stepSuccesses = logs.logs.filter(
-        (log) => log.event === InstanceEvent.STEP_SUCCESS,
-      );
+      const stepSuccesses = logs.logs.filter((log) => log.event === InstanceEvent.STEP_SUCCESS);
       expect(stepSuccesses).toHaveLength(2);
     });
 
@@ -1018,9 +1144,7 @@ describe("Engine", () => {
         async () => {
           return await runInDurableObject(engineStub, (engine) => {
             const logs = engine.readLogs() as unknown as EngineLogs;
-            return logs.logs.some(
-              (log) => log.event === InstanceEvent.STEP_START,
-            );
+            return logs.logs.some((log) => log.event === InstanceEvent.STEP_START);
           });
         },
         { timeout: 5000 },
@@ -1034,8 +1158,7 @@ describe("Engine", () => {
         async () =>
           runInDurableObject(
             env.ENGINE.get(engineId),
-            async (engine) =>
-              (await engine.getStatus()) === InstanceStatus.WaitingForPause,
+            async (engine) => (await engine.getStatus()) === InstanceStatus.WaitingForPause,
           ),
         { timeout: 5000 },
       );
@@ -1046,9 +1169,8 @@ describe("Engine", () => {
       });
 
       // Verify status goes back to Running
-      const statusAfterResume = await runInDurableObject(
-        env.ENGINE.get(engineId),
-        (engine) => engine.getStatus(),
+      const statusAfterResume = await runInDurableObject(env.ENGINE.get(engineId), (engine) =>
+        engine.getStatus(),
       );
       expect(statusAfterResume).toBe(InstanceStatus.Running);
 
@@ -1056,31 +1178,24 @@ describe("Engine", () => {
         async () =>
           runInDurableObject(
             env.ENGINE.get(engineId),
-            async (engine) =>
-              (await engine.getStatus()) === InstanceStatus.Complete,
+            async (engine) => (await engine.getStatus()) === InstanceStatus.Complete,
           ),
         { timeout: 5000 },
       );
 
       const freshStub = env.ENGINE.get(engineId);
-      const finalStatus = await runInDurableObject(freshStub, (engine) =>
-        engine.getStatus(),
-      );
+      const finalStatus = await runInDurableObject(freshStub, (engine) => engine.getStatus());
       expect(finalStatus).toBe(InstanceStatus.Complete);
 
       // All three steps should have completed
       const logs = await runInDurableObject(freshStub, (engine) => {
         return engine.readLogs() as unknown as EngineLogs;
       });
-      const stepSuccesses = logs.logs.filter(
-        (log) => log.event === InstanceEvent.STEP_SUCCESS,
-      );
+      const stepSuccesses = logs.logs.filter((log) => log.event === InstanceEvent.STEP_SUCCESS);
       expect(stepSuccesses).toHaveLength(3);
     });
 
-    it("should pause during a step.sleep, then resume and complete", async ({
-      expect,
-    }) => {
+    it("should pause during a step.sleep, then resume and complete", async ({ expect }) => {
       const instanceId = "PAUSE-DURING-SLEEP-RESUME";
       const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -1099,9 +1214,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(engineStub, (engine) => {
               const logs = engine.readLogs() as unknown as EngineLogs;
-              return logs.logs.some(
-                (log) => log.event === InstanceEvent.STEP_SUCCESS,
-              );
+              return logs.logs.some((log) => log.event === InstanceEvent.STEP_SUCCESS);
             });
           } catch (e) {
             if (isAbortError(e)) {
@@ -1129,8 +1242,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Paused,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Paused,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -1143,9 +1255,7 @@ describe("Engine", () => {
       );
 
       expect(
-        await runInDurableObject(env.ENGINE.get(engineId), (engine) =>
-          engine.getStatus(),
-        ),
+        await runInDurableObject(env.ENGINE.get(engineId), (engine) => engine.getStatus()),
       ).toBe(InstanceStatus.Paused);
 
       // Only the first step should have succeeded — sleep was interrupted
@@ -1154,9 +1264,7 @@ describe("Engine", () => {
         (engine) => engine.readLogs() as unknown as EngineLogs,
       );
       expect(
-        logsBeforeResume.logs.filter(
-          (log) => log.event === InstanceEvent.STEP_SUCCESS,
-        ),
+        logsBeforeResume.logs.filter((log) => log.event === InstanceEvent.STEP_SUCCESS),
       ).toHaveLength(1);
 
       // Resume the workflow
@@ -1176,8 +1284,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Complete,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Complete,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -1200,9 +1307,7 @@ describe("Engine", () => {
       expect(stepSuccesses).toHaveLength(2);
     });
 
-    it("should pause during a waitForEvent, then resume and complete", async ({
-      expect,
-    }) => {
+    it("should pause during a waitForEvent, then resume and complete", async ({ expect }) => {
       const instanceId = "PAUSE-DURING-WAIT-FOR-EVENT";
       const engineId = env.ENGINE.idFromName(instanceId);
 
@@ -1224,9 +1329,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(engineStub, (engine) => {
               const logs = engine.readLogs() as unknown as EngineLogs;
-              return logs.logs.some(
-                (log) => log.event === InstanceEvent.WAIT_START,
-              );
+              return logs.logs.some((log) => log.event === InstanceEvent.WAIT_START);
             });
           } catch (e) {
             if (isAbortError(e)) {
@@ -1254,8 +1357,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Paused,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Paused,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -1268,9 +1370,7 @@ describe("Engine", () => {
       );
 
       expect(
-        await runInDurableObject(env.ENGINE.get(engineId), (engine) =>
-          engine.getStatus(),
-        ),
+        await runInDurableObject(env.ENGINE.get(engineId), (engine) => engine.getStatus()),
       ).toBe(InstanceStatus.Paused);
 
       // Resume the workflow
@@ -1299,8 +1399,7 @@ describe("Engine", () => {
           try {
             return await runInDurableObject(
               env.ENGINE.get(engineId),
-              async (engine) =>
-                (await engine.getStatus()) === InstanceStatus.Complete,
+              async (engine) => (await engine.getStatus()) === InstanceStatus.Complete,
             );
           } catch (e) {
             if (isAbortError(e)) {
@@ -1323,22 +1422,14 @@ describe("Engine", () => {
       expect(stepSuccesses).toHaveLength(2);
     });
 
-    it("should transition WaitingForPause to Paused on init() entry", async ({
-      expect,
-    }) => {
+    it("should transition WaitingForPause to Paused on init() entry", async ({ expect }) => {
       const instanceId = "WAITING-FOR-PAUSE-INIT";
 
-      const engineStub = await runWorkflowAndAwait(
-        instanceId,
-        async () => "done",
-      );
+      const engineStub = await runWorkflowAndAwait(instanceId, async () => "done");
 
       // Manually set status to WaitingForPause (simulating a DO restart scenario)
       await runInDurableObject(engineStub, async (_engine, state) => {
-        await state.storage.put(
-          "ENGINE_STATUS",
-          InstanceStatus.WaitingForPause,
-        );
+        await state.storage.put("ENGINE_STATUS", InstanceStatus.WaitingForPause);
       });
 
       // Now call init() — it should detect WaitingForPause and transition to Paused
@@ -1359,9 +1450,7 @@ describe("Engine", () => {
         );
       });
 
-      const status = await runInDurableObject(engineStub, (engine) =>
-        engine.getStatus(),
-      );
+      const status = await runInDurableObject(engineStub, (engine) => engine.getStatus());
       expect(status).toBe(InstanceStatus.Paused);
     });
   });
@@ -1375,17 +1464,11 @@ describe("Rollback", () => {
     predicate: (logs: EngineLogs) => boolean,
     timeout = 5000,
   ): Promise<EngineLogs> {
-    await vi.waitUntil(
-      async () => predicate((await stub.readLogs()) as EngineLogs),
-      { timeout },
-    );
+    await vi.waitUntil(async () => predicate((await stub.readLogs()) as EngineLogs), { timeout });
     return (await stub.readLogs()) as EngineLogs;
   }
 
-  function targetsOf(
-    logs: EngineLogs,
-    event: InstanceEvent,
-  ): Array<string | null> {
+  function targetsOf(logs: EngineLogs, event: InstanceEvent): Array<string | null> {
     return logs.logs.filter((l) => l.event === event).map((l) => l.target);
   }
 
@@ -1410,9 +1493,7 @@ describe("Rollback", () => {
     step: WorkflowStep,
     name: string,
     configOrCallback: WorkflowStepConfig | ((ctx: unknown) => Promise<T>),
-    callbackOrOptions:
-      | ((ctx: unknown) => Promise<T>)
-      | WorkflowStepRollbackOptions,
+    callbackOrOptions: ((ctx: unknown) => Promise<T>) | WorkflowStepRollbackOptions,
     options?: WorkflowStepRollbackOptions,
   ): Promise<unknown> {
     if (typeof configOrCallback === "function") {
@@ -1425,9 +1506,7 @@ describe("Rollback", () => {
 
   async function noopRollback(_ctx: RollbackContext): Promise<void> {}
 
-  function rollbackOptions(
-    fn: RollbackFn = noopRollback,
-  ): WorkflowStepRollbackOptions {
+  function rollbackOptions(fn: RollbackFn = noopRollback): WorkflowStepRollbackOptions {
     return { rollback: fn };
   }
 
@@ -1438,28 +1517,11 @@ describe("Rollback", () => {
     return { rollback: fn, rollbackConfig };
   }
 
-  it("runs rollback fns in LIFO order on workflow failure", async ({
-    expect,
-  }) => {
+  it("runs rollback fns in LIFO order on workflow failure", async ({ expect }) => {
     const stub = await runWorkflowAndAwait("RB-LIFO", async (_e, step) => {
-      await doWithRollback(
-        step,
-        "step-1",
-        async () => "out-1",
-        rollbackOptions(),
-      );
-      await doWithRollback(
-        step,
-        "step-2",
-        async () => "out-2",
-        rollbackOptions(),
-      );
-      await doWithRollback(
-        step,
-        "step-3",
-        async () => "out-3",
-        rollbackOptions(),
-      );
+      await doWithRollback(step, "step-1", async () => "out-1", rollbackOptions());
+      await doWithRollback(step, "step-2", async () => "out-2", rollbackOptions());
+      await doWithRollback(step, "step-3", async () => "out-3", rollbackOptions());
       throw new Error("boom");
     });
     const logs = await readLogsAfter(stub, (l) =>
@@ -1478,9 +1540,7 @@ describe("Rollback", () => {
     expect(countOf(logs, InstanceEvent.ROLLBACK_FAILED)).toBe(0);
   });
 
-  it("runs parallel rollbacks in reverse step start order", async ({
-    expect,
-  }) => {
+  it("runs parallel rollbacks in reverse step start order", async ({ expect }) => {
     let firstStarted: () => void = () => {};
     let firstMayFinish: () => void = () => {};
     const firstStartedPromise = new Promise<void>((resolve) => {
@@ -1520,10 +1580,7 @@ describe("Rollback", () => {
     const logs = await readLogsAfter(stub, (l) =>
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_COMPLETE),
     );
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
-      "second-1",
-      "first-1",
-    ]);
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["second-1", "first-1"]);
   });
 
   it("uses rollbackConfig when executing rollback", async ({ expect }) => {
@@ -1544,8 +1601,7 @@ describe("Rollback", () => {
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_COMPLETE),
     );
     expect(
-      logs.logs.find((l) => l.event === InstanceEvent.ROLLBACK_STEP_START)
-        ?.metadata,
+      logs.logs.find((l) => l.event === InstanceEvent.ROLLBACK_STEP_START)?.metadata,
     ).toMatchObject({ config: rollbackConfig });
   });
 
@@ -1562,7 +1618,7 @@ describe("Rollback", () => {
             ctx.output !== "out" ||
             ctx.ctx.step.name !== "ctx-step" ||
             ctx.ctx.step.count !== 1 ||
-            ctx.stepName !== "ctx-step-1"
+            `${ctx.ctx.step.name}-${ctx.ctx.step.count}` !== "ctx-step-1"
           ) {
             throw new Error("unexpected rollback context");
           }
@@ -1573,77 +1629,58 @@ describe("Rollback", () => {
     const logs = await readLogsAfter(stub, (l) =>
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_COMPLETE),
     );
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
-      "ctx-step-1",
-    ]);
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["ctx-step-1"]);
   });
 
   it("runs rollback for failed step", async ({ expect }) => {
-    const stub = await runWorkflowAndAwait(
-      "RB-FAILED-STEP",
-      async (_e, step) => {
-        await doWithRollback(
-          step,
-          "failed-step",
-          { retries: { limit: 0, delay: 0, backoff: "constant" } },
-          async () => {
-            throw new Error("step-boom");
-          },
-          rollbackOptions(async (ctx) => {
-            if (
-              ctx.error.message !== "step-boom" ||
-              ctx.output !== undefined ||
-              ctx.ctx.step.name !== "failed-step" ||
-              ctx.ctx.step.count !== 1 ||
-              ctx.stepName !== "failed-step-1"
-            ) {
-              throw new Error("unexpected failed-step rollback context");
-            }
-          }),
-        );
-      },
-    );
+    const stub = await runWorkflowAndAwait("RB-FAILED-STEP", async (_e, step) => {
+      await doWithRollback(
+        step,
+        "failed-step",
+        { retries: { limit: 0, delay: 0, backoff: "constant" } },
+        async () => {
+          throw new Error("step-boom");
+        },
+        rollbackOptions(async (ctx) => {
+          if (
+            ctx.error.message !== "step-boom" ||
+            ctx.output !== undefined ||
+            ctx.ctx.step.name !== "failed-step" ||
+            ctx.ctx.step.count !== 1 ||
+            `${ctx.ctx.step.name}-${ctx.ctx.step.count}` !== "failed-step-1"
+          ) {
+            throw new Error("unexpected failed-step rollback context");
+          }
+        }),
+      );
+    });
     const logs = await readLogsAfter(stub, (l) =>
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_COMPLETE),
     );
-    const rollbackStepTargets = targetsOf(
-      logs,
-      InstanceEvent.ROLLBACK_STEP_SUCCESS,
-    );
+    const rollbackStepTargets = targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS);
     const stepFailureTargets = targetsOf(logs, InstanceEvent.STEP_FAILURE);
 
     expect(rollbackStepTargets).toEqual(["failed-step-1"]);
     expect(stepFailureTargets).toContain("failed-step-1");
   });
 
-  it("only runs rollbacks for steps with a registered fn", async ({
-    expect,
-  }) => {
+  it("only runs rollbacks for steps with a registered fn", async ({ expect }) => {
     const stub = await runWorkflowAndAwait("RB-PARTIAL", async (_e, step) => {
       await step.do("plain-step", async () => "v1");
-      await doWithRollback(
-        step,
-        "step-with-rollback",
-        async () => "v2",
-        rollbackOptions(),
-      );
+      await doWithRollback(step, "step-with-rollback", async () => "v2", rollbackOptions());
       await step.do("plain-step-after", async () => "v3");
       throw new Error("boom");
     });
     const logs = await readLogsAfter(stub, (l) =>
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_COMPLETE),
     );
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
-      "step-with-rollback-1",
-    ]);
-    expect(
-      logs.logs.find((l) => l.event === InstanceEvent.ROLLBACK_START)?.metadata,
-    ).toMatchObject({ totalSteps: 1 });
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["step-with-rollback-1"]);
+    expect(logs.logs.find((l) => l.event === InstanceEvent.ROLLBACK_START)?.metadata).toMatchObject(
+      { totalSteps: 1 },
+    );
   });
 
-  it("stops at the first failing rollback and logs ROLLBACK_FAILED", async ({
-    expect,
-  }) => {
+  it("stops at the first failing rollback and logs ROLLBACK_FAILED", async ({ expect }) => {
     const stub = await runWorkflowAndAwait("RB-FAILS", async (_e, step) => {
       await doWithRollback(step, "step-1", async () => "v1", rollbackOptions());
       await doWithRollback(
@@ -1663,16 +1700,379 @@ describe("Rollback", () => {
     const logs = await readLogsAfter(stub, (l) =>
       l.logs.some((r) => r.event === InstanceEvent.ROLLBACK_FAILED),
     );
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
-      "step-3-1",
-    ]);
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_FAILURE)).toEqual([
-      "step-2-1",
-    ]);
-    expect(targetsOf(logs, InstanceEvent.ROLLBACK_ATTEMPT_FAILURE)).toEqual([
-      "step-2-1",
-    ]);
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["step-3-1"]);
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_FAILURE)).toEqual(["step-2-1"]);
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_ATTEMPT_FAILURE)).toEqual(["step-2-1"]);
     expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(0);
+  });
+
+  it("runs rollback when terminate requests it", async ({ expect }) => {
+    const instanceId = "RB-TERMINATE";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(step, "setup-resource", async () => "resource-id", rollbackOptions());
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_SUCCESS && log.target === "setup-resource-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Aborting engine:")) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["setup-resource-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("replays cached steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = "RB-TERMINATE-REPLAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(step, "setup-resource", async () => "resource-id", rollbackOptions());
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_SUCCESS && log.target === "setup-resource-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Aborting engine:")) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["setup-resource-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("replays started unfinished steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = `RB-TERMINATE-STARTED-REPLAY-${crypto.randomUUID()}`;
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "started-setup",
+        async () => {
+          await scheduler.wait(30_000);
+          return "late-resource-id";
+        },
+        rollbackOptions(),
+      );
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.ATTEMPT_START && log.target === "started-setup-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.abort("test restart before step completion");
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "test restart before step completion") {
+        throw error;
+      }
+    }
+
+    const restartedStub = env.ENGINE.get(engineId);
+    await runInDurableObject(restartedStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(restartedStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    let logs: EngineLogs | undefined;
+    await vi.waitUntil(
+      async () => {
+        try {
+          logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
+          return logs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED);
+        } catch (error) {
+          if (isAbortError(error)) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      { timeout: 5000 },
+    );
+    if (logs === undefined) {
+      throw new Error("Expected workflow logs after terminate");
+    }
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["started-setup-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("fails terminate rollback when replay cannot rebuild an eligible handler", async ({
+    expect,
+  }) => {
+    const instanceId = `RB-TERMINATE-MISSING-REPLAY-${crypto.randomUUID()}`;
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(step, "branchy-setup", async () => "resource-id", rollbackOptions());
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_SUCCESS && log.target === "branchy-setup-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.abort("test restart before replay branch changes");
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "test restart before replay branch changes"
+      ) {
+        throw error;
+      }
+    }
+
+    setTestWorkflowCallback(async () => {
+      // Simulate nondeterministic replay control flow that no longer reaches
+      // the persisted eligible step. Production treats this as rollback failure.
+    });
+
+    try {
+      await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(env.ENGINE.get(engineId), (currentLogs) =>
+      currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_FAILURE)).toEqual(["branchy-setup-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_FAILED)).toBe(1);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(0);
+  });
+
+  it("replays cached failed steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = "RB-TERMINATE-FAILED-REPLAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      try {
+        await doWithRollback(
+          step,
+          "failed-setup",
+          { retries: { limit: 0, delay: 0, backoff: "constant" } },
+          async () => {
+            throw new Error("step-boom");
+          },
+          rollbackOptions(),
+        );
+      } catch {
+        // Keep the workflow running so terminate rollback can replay the cached
+        // failed step and re-register its rollback handler.
+      }
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_FAILURE && log.target === "failed-setup-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Aborting engine:")) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["failed-setup-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("omits dynamic delay from rollback ctx.config on cached-error replay", async ({ expect }) => {
+    const dynamicDelay: WorkflowDelayFunction = () => 1000;
+    const instanceId = "RB-TERMINATE-FAILED-REPLAY-DYNAMIC-DELAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      try {
+        await doWithRollback(
+          step,
+          "failed-setup",
+          { retries: { limit: 0, delay: dynamicDelay, backoff: "constant" } },
+          async () => {
+            throw new Error("step-boom");
+          },
+          rollbackOptions(async (ctx) => {
+            // A dynamic delay must be omitted from the user-facing config,
+            // never surfaced as the internal "[dynamic]" marker string.
+            if ("delay" in ctx.ctx.config.retries) {
+              throw new Error("dynamic delay marker leaked into rollback ctx.config");
+            }
+          }),
+        );
+      } catch {
+        // Keep the workflow running so terminate rollback can replay the cached
+        // failed step and re-register its rollback handler.
+      }
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_FAILURE && log.target === "failed-setup-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("Aborting engine:")) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    // ROLLBACK_STEP_SUCCESS only fires if the rollback fn did not throw, i.e.
+    // the leaked marker was stripped by toEngineStepConfig on the replay path.
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["failed-setup-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("runs terminate rollback while paused with an empty registry", async ({ expect }) => {
+    const instanceId = "RB-TERMINATE-PAUSED";
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(step, "setup-resource", async () => "resource-id", rollbackOptions());
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.STEP_SUCCESS && log.target === "setup-resource-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("pause");
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    await vi.waitUntil(
+      async () =>
+        runInDurableObject(
+          env.ENGINE.get(engineId),
+          async (engine) => (await engine.getStatus()) === InstanceStatus.Paused,
+        ),
+      { timeout: 5000 },
+    );
+
+    await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(env.ENGINE.get(engineId), (currentLogs) =>
+      currentLogs.logs.some((log) => log.event === InstanceEvent.WORKFLOW_TERMINATED),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual(["setup-resource-1"]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
   });
 
   it("does not run rollback when workflow succeeds", async ({ expect }) => {

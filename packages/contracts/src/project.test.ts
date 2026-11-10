@@ -1,41 +1,26 @@
+import { assert, it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+
 import {
+  ProjectFaviconPath,
+  ReceivedProjectIcon,
+  StoredProjectIcon,
   ProjectReadFileError,
+  ProjectCreatePayload,
+  ProjectUpdatePayload,
+  ProjectMutation,
   ProjectSearchContentsError,
-  ProjectSearchContentsInput,
   ProjectSearchEntriesError,
-  ProjectSearchEntriesInput,
   ProjectWriteFileError,
 } from "./project.ts";
 
-const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
-const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
-
-describe("project search inputs", () => {
-  it("allows an empty entries query for bounded frecency browsing", () => {
-    const decoded = decodeSearchEntriesInput({
-      cwd: "/workspace",
-      query: "   ",
-      limit: 10,
-      kind: "file",
-    });
-    expect(decoded.query).toBe("");
-  });
-
-  it("preserves whitespace in content search queries", () => {
-    const decoded = decodeSearchContentsInput({
-      cwd: "/workspace",
-      query: " foo ",
-      limit: 10,
-      caseSensitive: false,
-      wholeWord: false,
-      useRegex: false,
-    });
-    expect(decoded.query).toBe(" foo ");
-  });
-});
+const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
+const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
+const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
@@ -107,3 +92,88 @@ describe("project RPC errors", () => {
     expect(writeError.failure).toBeUndefined();
   });
 });
+
+describe("shared project payloads", () => {
+  it("preserves omitted, false, and null values through RPC envelopes", () => {
+    const create = decodeProjectCreatePayload({
+      title: " Example ",
+      workspaceRoot: "/workspace",
+      createWorkspaceRootIfMissing: false,
+    });
+    const update = decodeProjectUpdatePayload({
+      autoPull: false,
+      defaultModelSelection: null,
+      faviconPath: null,
+    });
+    const envelope = { commandId: "command", projectId: "project" };
+    expect(decodeProjectMutation({ type: "project.create", ...envelope, ...create })).toEqual({
+      type: "project.create",
+      ...envelope,
+      title: "Example",
+      workspaceRoot: "/workspace",
+      createWorkspaceRootIfMissing: false,
+    });
+    expect(decodeProjectMutation({ type: "project.update", ...envelope, ...update })).toEqual({
+      type: "project.update",
+      ...envelope,
+      autoPull: false,
+      defaultModelSelection: null,
+      faviconPath: null,
+    });
+    expect(Object.hasOwn(create, "scripts")).toBe(false);
+    expect(Object.hasOwn(update, "title")).toBe(false);
+    expect(
+      decodeProjectMutation({ type: "project.update", ...envelope, title: undefined }),
+    ).toHaveProperty("title", undefined);
+  });
+});
+
+const decodeFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
+
+effectIt.effect("project favicon paths accept only supported image files", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* decodeFaviconPath("brand/icon.svg"), "brand/icon.svg");
+    assert.strictEqual(
+      yield* decodeFaviconPath("Resources/AppIcon.icns"),
+      "Resources/AppIcon.icns",
+    );
+    assert.strictEqual((yield* Effect.exit(decodeFaviconPath(".env")))._tag, "Failure");
+  }),
+);
+
+const decodeStoredIcon = Schema.decodeUnknownEffect(StoredProjectIcon);
+const decodeReceivedIcon = Schema.decodeUnknownEffect(ReceivedProjectIcon);
+const decodeProjectShell = Schema.decodeUnknownEffect(OrchestrationProjectShell);
+
+effectIt.effect("reads monograms stored in the pre-v2 fallback shape", () =>
+  Effect.gen(function* () {
+    const monogram = { kind: "monogram", text: "T3", color: "violet" } as const;
+    const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
+    for (const legacy of [
+      { ...fallback, monogramText: "T3" },
+      { ...fallback, monogram: "T3" },
+    ]) {
+      assert.deepEqual(yield* decodeStoredIcon(legacy), monogram);
+      assert.deepEqual(yield* decodeReceivedIcon(legacy), monogram);
+    }
+  }),
+);
+
+effectIt.effect("an icon kind from a newer server shows the default icon", () =>
+  Effect.gen(function* () {
+    assert.isNull(yield* decodeReceivedIcon({ kind: "image", url: "https://example.com/a.png" }));
+    const shell = yield* decodeProjectShell({
+      id: "project-1",
+      title: "Project",
+      workspaceRoot: "/tmp/project",
+      defaultModelSelection: null,
+      scripts: [],
+      projectIcon: { kind: "image", url: "https://example.com/a.png" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.isNull(shell.projectIcon);
+    const broken = yield* Effect.exit(decodeReceivedIcon({ kind: "emoji" }));
+    assert.strictEqual(broken._tag, "Failure");
+  }),
+);

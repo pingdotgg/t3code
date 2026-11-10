@@ -9,7 +9,7 @@
       "**/node_modules",
       "**/.git",
       "**/.claude",
-      "**/.vendor",
+      "**/submodules",
       "**/.alchemy",
       "**/dist"
     ]
@@ -34,7 +34,7 @@
     // Best practices
     "strict": true,
     "skipLibCheck": true,
-    // Resolve project references (notably every `distilled/packages/*`)
+    // Resolve project references (notably every `submodules/distilled/packages/*`)
     // through their emitted `lib/*.d.ts` instead of redirecting to their
     // sources. Without this, editors and `tsc` pull distilled's generated
     // SDK sources — hundreds of thousands of lines across 20 packages —

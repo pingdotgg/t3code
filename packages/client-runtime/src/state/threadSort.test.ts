@@ -1,14 +1,15 @@
+import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  planPinnedMove,
   planPinnedReorder,
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
-  sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
   sortThreads,
+  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "./threadSort.ts";
 
@@ -31,7 +32,7 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: "2026-03-09T10:00:00.000Z",
         latestUserMessageAt: "2026-03-09T11:00:00.000Z",
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
@@ -42,7 +43,7 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: "invalid",
         latestUserMessageAt: "2026-03-09T11:00:00.000Z",
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T11:00:00.000Z");
@@ -50,14 +51,75 @@ describe("resolveSettledThreadTimestamp", () => {
       resolveSettledThreadTimestamp({
         settledAt: null,
         latestUserMessageAt: null,
-        latestTurn: null,
+        latestRun: null,
         updatedAt: "2026-03-09T12:00:00.000Z",
       }),
     ).toBe("2026-03-09T12:00:00.000Z");
   });
 });
 
+describe("sortSettledThreads", () => {
+  const settled = (input: {
+    id: string;
+    settledAt?: string | null;
+    latestUserMessageAt?: string | null;
+    latestRun?: SettledThreadTimestampInput["latestRun"];
+    updatedAt?: string;
+  }) => ({
+    id: input.id,
+    settledAt: input.settledAt ?? null,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestRun: input.latestRun ?? null,
+    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
+  });
+
+  it("counts a turn completion as activity for auto-settled threads", () => {
+    const sorted = sortSettledThreads([
+      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
+      settled({
+        id: "completed-later",
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        latestRun: {
+          runId: RunId.make("run-1"),
+          status: "completed",
+          assistantMessageId: null,
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          startedAt: "2026-03-09T10:00:00.000Z",
+          completedAt: "2026-03-09T10:30:00.000Z",
+        },
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+  });
+
+  it("breaks timestamp ties by id so the order is stable", () => {
+    const sorted = sortSettledThreads([
+      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
 describe("sortThreads", () => {
+  it.each(["created_at", "updated_at"] as const)(
+    "preserves references, input order and descending id ties for %s",
+    (sortOrder) => {
+      const threads = Object.freeze([
+        makeThread({ id: "a" }),
+        makeThread({ id: "z" }),
+        makeThread({ id: "invalid-a", createdAt: "invalid", updatedAt: "invalid" }),
+        makeThread({ id: "invalid-z", createdAt: "invalid", updatedAt: "invalid" }),
+      ]);
+      const sorted = sortThreads(threads, sortOrder);
+      expect(sorted).toEqual([threads[1], threads[0], threads[3], threads[2]]);
+      expect(sorted[0]).toBe(threads[1]);
+      expect(threads[0]?.id).toBe("a");
+    },
+  );
+
   it("falls back to updatedAt and createdAt when latestUserMessageAt is invalid and there are no messages", () => {
     const sorted = sortThreads(
       [
@@ -150,72 +212,6 @@ describe("planPinnedReorder with hidden rows", () => {
   });
 });
 
-describe("planPinnedMove", () => {
-  it("moves a thread up with a single key write", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["a", "b", "c"],
-      keysById: new Map([
-        ["a", "f"],
-        ["b", "m"],
-        ["c", "t"],
-      ]),
-      movedId: "c",
-      direction: "up",
-    });
-    expect(assignments).toHaveLength(1);
-    expect(assignments![0]!.id).toBe("c");
-    expect(assignments![0]!.orderKey > "f" && assignments![0]!.orderKey < "m").toBe(true);
-  });
-
-  it("returns null when the move falls off the end of the list", () => {
-    const input = {
-      orderedIds: ["a", "b"],
-      keysById: new Map([
-        ["a", "f"],
-        ["b", "m"],
-      ]),
-    };
-    expect(planPinnedMove({ ...input, movedId: "a", direction: "up" })).toBeNull();
-    expect(planPinnedMove({ ...input, movedId: "b", direction: "down" })).toBeNull();
-  });
-
-  it("materializes keys for the whole section when a neighbor is keyless", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["a", "b", "c"],
-      keysById: new Map([
-        ["a", null],
-        ["b", "m"],
-        ["c", null],
-      ]),
-      movedId: "b",
-      direction: "up",
-    });
-    expect(assignments).not.toBeNull();
-    const keys = assignments!.map((entry) => entry.orderKey);
-    expect([...keys].sort()).toEqual(keys);
-  });
-});
-
-describe("sortPinnedThreadsByOrderKey", () => {
-  it("breaks equal keys by id THEN environment so merged lists are stable everywhere", () => {
-    const sorted = sortPinnedThreadsByOrderKey([
-      {
-        id: "thread-1",
-        createdAt: "2026-03-09T10:00:00.000Z",
-        pinOrderKey: "m",
-        environmentId: "env-b",
-      },
-      {
-        id: "thread-1",
-        createdAt: "2026-03-09T11:00:00.000Z",
-        pinOrderKey: "m",
-        environmentId: "env-a",
-      },
-    ]);
-    expect(sorted.map((thread) => thread.environmentId)).toEqual(["env-a", "env-b"]);
-  });
-});
-
 describe("generateSpreadPinOrderKeys", () => {
   it.each([0, 1, 650, 675, 676, 1_001, 2_000])(
     "leaves unique, insertable keys for %i threads",
@@ -287,49 +283,6 @@ describe("sortActiveThreadsByOrderKey", () => {
         ),
       ).toEqual(["thread-a:env-a", "thread-a:env-b", "thread-b:env-a"]);
     }
-  });
-
-  it("applies every move across a mixed keyless and keyed section", () => {
-    const threads = Array.from({ length: 6 }, (_, index) => ({
-      id: String(index),
-      createdAt: `2026-03-09T0${6 - index}:00:00.000Z`,
-      activeOrderKey: index < 3 ? null : ["f", "m", "t"][index - 3]!,
-    }));
-    const ids = threads.map((thread) => thread.id);
-    const keysById = new Map(threads.map((thread) => [thread.id, thread.activeOrderKey]));
-    for (const movedId of ids) {
-      for (let targetIndex = 0; targetIndex < ids.length; targetIndex += 1) {
-        const desired = ids.filter((id) => id !== movedId);
-        desired.splice(targetIndex, 0, movedId);
-        const assignments = planPinnedReorder({ orderedIds: desired, keysById, movedId });
-        const nextKeys = new Map(
-          assignments.map((assignment) => [assignment.id, assignment.orderKey]),
-        );
-        const updated = threads.map((thread) => ({
-          ...thread,
-          activeOrderKey: nextKeys.get(thread.id) ?? thread.activeOrderKey,
-        }));
-        expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(desired);
-      }
-    }
-  });
-
-  it("moves a keyless thread into the arranged run with one write", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["new", "reopened", "first", "last"],
-      keysById: new Map([
-        ["new", null],
-        ["reopened", null],
-        ["first", "f"],
-        ["last", "t"],
-      ]),
-      movedId: "reopened",
-      direction: "down",
-    });
-    expect(assignments).toHaveLength(1);
-    expect(assignments![0]!.id).toBe("reopened");
-    expect(assignments![0]!.orderKey > "f").toBe(true);
-    expect(assignments![0]!.orderKey < "t").toBe(true);
   });
 
   it("materializes a large active list without changing the requested order", () => {

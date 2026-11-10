@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Hetzner from "@alchemy.run/hetzner";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -34,10 +34,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -49,7 +46,6 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Hetzner.providers(),
   state: Alchemy.localState(),
   profile: process.env.ALCHEMY_PROFILE,
-  stage: "test",
 });
 
 // The first deploy runs the full Astro build AND creates a Hetzner
@@ -118,9 +114,7 @@ if (!hasCreds) {
       // ones as a <style> block — accept both, but the compiled rule for the
       // utility must be served either way. That rule only exists if the
       // @tailwindcss/vite plugin from the project's own astro.config.ts ran.
-      const link = html.match(
-        /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-      );
+      const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
       if (link) {
         const href = link[1]!;
         const cssUrl = href.startsWith("http")
@@ -141,10 +135,7 @@ if (!hasCreds) {
     "serves a static asset from public/",
     Effect.gen(function* () {
       const url = yield* base;
-      const body = yield* getBodyWhenReady(
-        `${url}/robots.txt`,
-        "User-agent: *",
-      );
+      const body = yield* getBodyWhenReady(`${url}/robots.txt`, "User-agent: *");
       expect(body).toContain("User-agent: *");
     }),
     { timeout: 180_000 },

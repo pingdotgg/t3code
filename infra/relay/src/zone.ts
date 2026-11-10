@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import { adopt } from "alchemy/AdoptPolicy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -21,9 +21,9 @@ function withLogicalId<Resource extends object>(resource: Resource, logicalId: s
 
 export const RelayDeploymentConfig = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-  const relayApiZoneName = yield* Config.nonEmptyString("RELAY_API_ZONE_NAME");
-  const managedEndpointZoneName = yield* Config.nonEmptyString("RELAY_TUNNEL_ZONE_NAME");
-  const relayPublicDomainOverride = yield* Config.string("RELAY_DOMAIN").pipe(
+  const relayApiZoneName = yield* Config.NonEmptyString("RELAY_API_ZONE_NAME");
+  const managedEndpointZoneName = yield* Config.NonEmptyString("RELAY_TUNNEL_ZONE_NAME");
+  const relayPublicDomainOverride = yield* Config.String("RELAY_DOMAIN").pipe(
     Config.option,
     Config.map(
       Option.flatMap((value) => {
@@ -54,8 +54,7 @@ export const ManagedEndpointZone = RelayDeploymentConfig.pipe(
       : Cloudflare.Zone.Zone.ref("ManagedEndpointZone", {
           stage: MANAGED_ENDPOINT_ZONE_OWNER_STAGE,
         }).pipe(
-          // Alchemy beta's DNS binding policy uses LogicalId to derive a
-          // stable SID, but Resource.ref returns a lazy output proxy.
+          // Alchemy DNS policies need LogicalId for stable SIDs; Resource.ref returns a lazy proxy.
           Effect.map((zone) => withLogicalId(zone, "ManagedEndpointZone")),
         ),
   ),

@@ -14,13 +14,10 @@
   "account_id": "0f1b8aa119a907021f659042f95ea9ba",
   "workers_dev": false,
   "main": "src/worker.ts",
-  "compatibility_date": "2024-07-31",
-  // nodejs_compat required when using @cloudflare/vitest-pool-workers
-  "compatibility_flags": [
-    "nodejs_compat",
-    "no_nodejs_compat_v2",
-    "enable_ctx_exports",
-  ],
+  "compatibility_date": "2026-08-31",
+  // nodejs_compat is default-on as of 2026-08-04. Keep the explicit v2 opt-out
+  // because this worker intentionally exercises the legacy Node.js mode.
+  "compatibility_flags": ["no_nodejs_compat_v2"],
   "version_metadata": {
     "binding": "VERSION_METADATA",
   },

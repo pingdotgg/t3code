@@ -2,6 +2,11 @@
   "name": "cloudflare-vue",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-vue"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -12,46 +17,28 @@
     "test": "bun test"
   },
   "dependencies": {
-    "vue": "beta",
-    "vue-router": "^5.0.4"
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "@tsconfig/node24": "^24.0.4",
-    "@types/node": "^24.12.0",
-    "@vitejs/plugin-vue": "^6.0.5",
-    "@vue/tsconfig": "^0.9.1",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "@tsconfig/node24": "catalog:",
+    "@types/node": "catalog:node24",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/tsconfig": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "npm-run-all2": "^8.0.4",
-    "oxfmt": "^0.42.0",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "^8.0.3",
-    "vite-plugin-vue-devtools": "^8.1.1",
-    "vue-tsc": "^3.2.6"
+    "effect": "catalog:",
+    "npm-run-all2": "catalog:",
+    "oxfmt": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-vue-devtools": "catalog:",
+    "vue-tsc": "catalog:"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
-  },
-  "overrides": {
-    "vue": "beta",
-    "@vue/compiler-core": "beta",
-    "@vue/compiler-dom": "beta",
-    "@vue/compiler-sfc": "beta",
-    "@vue/compiler-ssr": "beta",
-    "@vue/compiler-vapor": "beta",
-    "@vue/reactivity": "beta",
-    "@vue/runtime-core": "beta",
-    "@vue/runtime-dom": "beta",
-    "@vue/runtime-vapor": "beta",
-    "@vue/server-renderer": "beta",
-    "@vue/shared": "beta",
-    "@vue/compat": "beta"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/cloudflare-vue"
   }
 }

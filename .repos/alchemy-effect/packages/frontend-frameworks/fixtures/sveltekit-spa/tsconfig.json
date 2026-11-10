@@ -1,0 +1,22 @@
+{
+  "extends": "$app/tsconfig",
+  "include": [
+    "src/**/*.ts",
+    "src/app.d.ts",
+    "e2e.config.ts",
+    "playwright.config.ts",
+    "test/**/*.ts"
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "$app/types"],
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true
+  }
+}

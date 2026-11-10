@@ -6,7 +6,7 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 In [Part 1](/hetzner/tutorial/part-1) you deployed a Server. Now
 you'll put code on it: a `Hetzner.Service` — an Effect program that
@@ -23,7 +23,7 @@ Part 1 into it:
 
 ```typescript
 // src/server.ts
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 
 export const Key = Hetzner.SshKey("laptop", {
   publicKey: "ssh-ed25519 AAAA... you@laptop",
@@ -51,7 +51,7 @@ Import the Server and yield it from the Stack:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 +import { Box } from "./src/server.ts";
 
@@ -93,7 +93,7 @@ Create `src/api.ts` with the smallest possible declaration:
 
 ```typescript
 // src/api.ts
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 import { Box } from "./server.ts";
 
@@ -121,9 +121,9 @@ wired to an HTTP server listening on the Service's port:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Box } from "./server.ts";
 
 export default class Api extends Hetzner.Service<Api>()(
@@ -138,13 +138,13 @@ export default class Api extends Hetzner.Service<Api>()(
 ) {}
 ```
 
-`HttpServerResponse` is the same `effect/unstable/http` API used on
+`HttpServerResponse` is the same `effect/http` API used on
 every other Alchemy runtime — the handler you write here would run
 unchanged on Cloudflare Workers or AWS Lambda.
 
 :::note
 Notice the "Effect returning an Effect" pattern. The outer generator
-is the **Init phase** — it runs at deploy time and at process
+is the **Construction phase** — it runs at deploy time and at process
 startup. The inner `fetch` generator is the **Runtime phase** — it
 runs per request.
 :::
@@ -172,7 +172,7 @@ journal in the output) if it never does. Add the route:
 
 ```diff lang="typescript"
 // src/api.ts
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
 // ...
     return {
 -      fetch: Effect.succeed(HttpServerResponse.text("Hello from Hetzner!")),
@@ -180,7 +180,7 @@ journal in the output) if it never does. Add the route:
 +        const request = yield* HttpServerRequest;
 +        const url = new URL(request.url, "http://service");
 +        if (url.pathname === "/health") {
-+          return HttpServerResponse.json({ ok: true });
++          return yield* HttpServerResponse.json({ ok: true });
 +        }
 +        return HttpServerResponse.text("Hello from Hetzner!");
 +      }),
@@ -195,7 +195,7 @@ Stack's Effect is what registers the resource and starts the deploy:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 +import Api from "./src/api.ts";
 import { Box } from "./src/server.ts";
@@ -224,20 +224,7 @@ unit name, the port, and the public `url` we surface from the Stack.
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
 

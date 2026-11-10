@@ -1,24 +1,19 @@
+import { parse, type ParseError } from "jsonc-parser";
+
 import {
   createVividThemeColors,
+  getStandardThemeColors,
   getThemeModes,
+  isReservedThemeId,
   parseThemeFile,
+  readableThemeColorOn,
   themeColorToHex,
+  themeIdFromName,
   THEME_FILE_VERSION,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeDefinition,
 } from "./themePalette";
-
-/**
- * Best-effort import of a VS Code color theme (`*-color-theme.json`).
- *
- * VS Code themes describe editor chrome, not an app palette: they carry a few
- * hundred workbench keys, leave most of them unset, and freely use 8-digit
- * hex with alpha for overlays. So the conversion derives a complete, contrast
- * -solved palette from the theme's editor background and accent, then layers
- * the workbench colors it did specify on top. Anything the file omits keeps
- * the derived value instead of falling back to an unrelated palette.
- */
 
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
@@ -27,7 +22,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** sRGB transfer function, and its inverse, shared by the wide-gamut path. */
 function decodeGamma(value: number): number {
   return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
 }
@@ -37,11 +31,6 @@ function encodeGamma(value: number): number {
   return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
 }
 
-/**
- * `color(display-p3 r g b / a)` shows up in themes authored for wide-gamut
- * displays. Out-of-gamut colors clip to the sRGB edge, which is what a browser
- * on an sRGB screen shows anyway.
- */
 function parseColorFunction(value: string): VsCodeRgba | null {
   const match = /^color\(\s*(display-p3|srgb)\s+([^)]+)\)$/i.exec(value);
   if (!match) return null;
@@ -70,7 +59,6 @@ function parseColorFunction(value: string): VsCodeRgba | null {
     number,
     number,
   ];
-  // Display P3 linear -> sRGB linear.
   const srgb = [
     1.2249401762805 * linearRed - 0.2249401762805 * linearGreen,
     -0.042056961239 * linearRed + 1.042056961239 * linearGreen,
@@ -79,8 +67,6 @@ function parseColorFunction(value: string): VsCodeRgba | null {
   return { r: srgb[0], g: srgb[1], b: srgb[2], a: Math.max(0, Math.min(1, alpha)) };
 }
 
-/** VS Code accepts #RGB, #RGBA, #RRGGBB, and #RRGGBBAA; some themes also use
- *  CSS color() notation for wide-gamut palettes. */
 function parseVsCodeColor(value: unknown): VsCodeRgba | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -113,8 +99,7 @@ function toHex(color: VsCodeRgb): string {
   return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`;
 }
 
-/** Overlays are semi-transparent in VS Code; our roles are opaque, so they are
- *  composited onto whatever surface they sit on. */
+// Composite VS Code translucent overlays onto their surfaces; our roles are opaque.
 function flattenOver(color: VsCodeRgba, base: VsCodeRgb): string {
   if (color.a >= 1) return toHex(color);
   return toHex({
@@ -142,10 +127,6 @@ function hexToRgb(value: string): VsCodeRgb {
   return parseVsCodeColor(themeColorToHex(value) ?? value) ?? { r: 0, g: 0, b: 0, a: 1 };
 }
 
-/**
- * A VS Code theme is recognised by its workbench colors: the keys are dotted
- * paths (`editor.background`), which our own files never use.
- */
 export function isVsCodeThemeFile(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (value.version === THEME_FILE_VERSION) return false;
@@ -154,15 +135,22 @@ export function isVsCodeThemeFile(value: unknown): boolean {
   return hasWorkbenchColors || Array.isArray(value.tokenColors);
 }
 
+export function parseThemeImport(source: string): ThemeDefinition {
+  const errors: ParseError[] = [];
+  const value: unknown = parse(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0) throw new Error("That theme file is not valid JSON.");
+  return isVsCodeThemeFile(value)
+    ? parseVsCodeThemeFile(value)
+    : parseThemeFile(JSON.parse(source));
+}
+
 function resolveAppearance(value: Record<string, unknown>, canvas: VsCodeRgb): ThemeAppearance {
   const type = typeof value.type === "string" ? value.type.toLowerCase() : null;
   if (type === "light" || type === "hc-light") return "light";
   if (type === "dark" || type === "hc-black") return "dark";
-  // Unlabelled themes (and the odd custom `type`) follow the editor surface.
   return relativeLuminance(canvas) < 0.179 ? "dark" : "light";
 }
 
-/** Extension `name` fields are often package slugs; read them as words. */
 export function humanizeThemeName(raw: string): string {
   const trimmed = raw.trim();
   if (/\s/.test(trimmed) || !/[-_.]/.test(trimmed)) return trimmed;
@@ -174,8 +162,6 @@ export function humanizeThemeName(raw: string): string {
 }
 
 function resolveName(value: Record<string, unknown>): string {
-  // Judge candidates by their humanized form: a displayName of "---"
-  // humanizes to nothing and must fall through to the name.
   for (const candidate of [value.displayName, value.name]) {
     if (typeof candidate !== "string") continue;
     const humanized = humanizeThemeName(candidate);
@@ -188,7 +174,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) throw new Error("Theme files must contain a JSON object.");
   const colors = isRecord(value.colors) ? value.colors : {};
 
-  /** First key that carries a usable color, in priority order. */
   const pick = (...keys: ReadonlyArray<string>): VsCodeRgba | null => {
     for (const key of keys) {
       const parsed = parseVsCodeColor(colors[key]);
@@ -210,26 +195,54 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const canvas = { r: canvasColor.r, g: canvasColor.g, b: canvasColor.b };
   const appearance = resolveAppearance(value, canvas);
 
-  const accentColor = pick(
+  const canvasHex = toHex(canvas);
+  const raisedSurfaceCandidateHex = solidOver(
+    canvas,
+    "editorWidget.background",
+    "dropdown.background",
+  );
+
+  const standsApart = (first: string, second: string) =>
+    contrastRatio(hexToRgb(first), hexToRgb(second)) >= 1.1;
+
+  let accentColor: VsCodeRgba | null = null;
+  let accentHex: string | null = null;
+  for (const key of [
     "focusBorder",
     "button.background",
     "textLink.foreground",
     "activityBarBadge.background",
     "progressBar.background",
     "badge.background",
-  );
-  const canvasHex = toHex(canvas);
-  const accentHex = accentColor ? flattenOver(accentColor, canvas) : null;
+  ]) {
+    const candidate = parseVsCodeColor(colors[key]);
+    if (!candidate) continue;
+    const candidateHex = flattenOver(candidate, canvas);
+    if (
+      !standsApart(candidateHex, canvasHex) ||
+      (raisedSurfaceCandidateHex !== null && !standsApart(candidateHex, raisedSurfaceCandidateHex))
+    )
+      continue;
+    accentColor = candidate;
+    accentHex = candidateHex;
+    break;
+  }
+  if (!accentColor || !accentHex) {
+    const standardAccentHex = themeColorToHex(getStandardThemeColors(appearance).accent)!;
+    accentHex =
+      [standardAccentHex, "#ffffff", "#000000"].find(
+        (candidate) =>
+          standsApart(candidate, canvasHex) &&
+          (raisedSurfaceCandidateHex === null || standsApart(candidate, raisedSurfaceCandidateHex)),
+      ) ?? standardAccentHex;
+    accentColor = parseVsCodeColor(accentHex)!;
+  }
 
-  // The derived palette is the floor: every role starts contrast-solved, then
-  // the theme's own workbench colors replace what it actually specified. The
-  // floor derives from a muted accent -- the vivid engine carries the accent
-  // hue into every surface, which washes an imported neutral palette (a gray
-  // theme with a blue focusBorder would get blue code and text surfaces).
-  const mutedAccentHex = accentColor
-    ? flattenOver({ r: accentColor.r, g: accentColor.g, b: accentColor.b, a: 0.2 }, canvas)
-    : null;
-  const derived = createVividThemeColors(appearance, canvasHex, mutedAccentHex ?? canvasHex);
+  const mutedAccentHex = flattenOver(
+    { r: accentColor.r, g: accentColor.g, b: accentColor.b, a: 0.2 },
+    canvas,
+  );
+  const derived = createVividThemeColors(appearance, canvasHex, mutedAccentHex);
   const sidebarHex =
     solidOver(canvas, "sideBar.background", "activityBar.background") ?? derived.sidebar;
   const sidebar = hexToRgb(sidebarHex);
@@ -237,8 +250,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     solidOver(canvas, "terminal.background", "panel.background") ?? derived.terminalBackground;
   const terminal = hexToRgb(terminalHex);
 
-  /** Foregrounds only win when they stay readable on the surface they land on;
-   *  a theme tuned for its own chrome can be unreadable on ours. */
   const readableOn = (
     surface: string,
     fallback: string,
@@ -248,13 +259,49 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     const isReadable = (candidate: string) => contrastRatio(hexToRgb(candidate), surfaceRgb) >= 4.5;
     const specified = solidOver(surfaceRgb, ...keys);
     if (specified && isReadable(specified)) return specified;
-    // The derived fallback was solved against the derived surface. When the
-    // file replaced that surface (a light sideBar in a dark theme, say), the
-    // fallback has to clear the bar there too, or the text falls back to the
-    // readable end of the greyscale for the surface actually in play.
     if (isReadable(fallback)) return fallback;
     return relativeLuminance(surfaceRgb) < 0.179 ? "#ffffff" : "#000000";
   };
+  // Status colors also fill controls such as destructive buttons, which carry
+  // white text, so a dim one is lightened along its hue rather than replaced
+  // by readableOn's black or white. One hidden in the canvas has no hue to
+  // keep, so the derived color stands in.
+  const readableStatusColor = (fallback: string, ...keys: ReadonlyArray<string>): string => {
+    const specified = solidOver(canvas, ...keys);
+    const base = specified && standsApart(specified, canvasHex) ? specified : fallback;
+    return readableThemeColorOn(base, canvasHex, 4.5);
+  };
+
+  const surfaceRaisedHex = raisedSurfaceCandidateHex ?? derived.surfaceRaised;
+  // Checked tracks use messageAction; resolve it before the unchecked input role.
+  const buttonHex = solidOver(canvas, "button.background");
+  const actionHex =
+    buttonHex && standsApart(buttonHex, canvasHex) && standsApart(buttonHex, surfaceRaisedHex)
+      ? buttonHex
+      : accentHex;
+  const inputCandidates = [
+    derived.input,
+    derived.surfaceRaised,
+    getStandardThemeColors(appearance).input,
+    "#000000",
+    "#ffffff",
+    "#808080",
+  ];
+  let inputHex =
+    inputCandidates.find(
+      (candidate) => standsApart(candidate, canvasHex) && standsApart(candidate, actionHex),
+    ) ?? "#808080";
+  for (const key of ["input.background", "input.border"]) {
+    const candidate = solidOver(canvas, key);
+    if (candidate && standsApart(candidate, canvasHex) && standsApart(candidate, actionHex)) {
+      inputHex = candidate;
+      break;
+    }
+  }
+  const searchMatchBackground =
+    solidOver(canvas, "editor.findMatchHighlightBackground") ?? derived.searchMatchBackground;
+  const searchMatchActiveBackground =
+    solidOver(canvas, "editor.findMatchBackground") ?? derived.searchMatchActiveBackground;
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {
     canvas: canvasHex,
@@ -266,21 +313,36 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       "disabledForeground",
     ),
     surface: solidOver(canvas, "editorWidget.background") ?? derived.surface,
-    surfaceRaised:
-      solidOver(canvas, "editorWidget.background", "dropdown.background") ?? derived.surfaceRaised,
+    surfaceRaised: surfaceRaisedHex,
     surfaceOverlay:
       solidOver(canvas, "menu.background", "quickInput.background", "dropdown.background") ??
       derived.surfaceOverlay,
     border:
       solidOver(canvas, "panel.border", "editorGroup.border", "contrastBorder") ?? derived.border,
-    input: solidOver(canvas, "input.border", "dropdown.border") ?? derived.input,
-    placeholder: readableOn(canvasHex, derived.placeholder, "input.placeholderForeground"),
-    error: readableOn(canvasHex, derived.error, "editorError.foreground", "errorForeground"),
-    warning: readableOn(canvasHex, derived.warning, "editorWarning.foreground"),
+    input: inputHex,
+    placeholder: readableOn(surfaceRaisedHex, derived.placeholder, "input.placeholderForeground"),
+    error: readableStatusColor(derived.error, "editorError.foreground", "errorForeground"),
+    warning: readableStatusColor(derived.warning, "editorWarning.foreground"),
     accentSurface:
       solidOver(canvas, "list.activeSelectionBackground", "list.hoverBackground") ??
       derived.accentSurface,
     codeBackground: solidOver(canvas, "textCodeBlock.background") ?? derived.codeBackground,
+    searchMatchBackground,
+    searchMatchForeground: readableOn(
+      searchMatchBackground,
+      derived.searchMatchForeground,
+      "editor.findMatchHighlightForeground",
+      "editor.foreground",
+      "foreground",
+    ),
+    searchMatchActiveBackground,
+    searchMatchActiveForeground: readableOn(
+      searchMatchActiveBackground,
+      derived.searchMatchActiveForeground,
+      "editor.findMatchForeground",
+      "editor.foreground",
+      "foreground",
+    ),
     sidebar: sidebarHex,
     sidebarForeground: readableOn(sidebarHex, derived.sidebarForeground, "sideBar.foreground"),
     sidebarBorder: solidOver(sidebar, "sideBar.border") ?? derived.sidebarBorder,
@@ -301,40 +363,27 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     terminalScrollbar:
       solidOver(terminal, "scrollbarSlider.background") ?? derived.terminalScrollbar,
   };
-  if (accentHex) {
-    overrides.accent = accentHex;
-    overrides.focus = accentHex;
-    // The button pair is the closest thing VS Code has to our action color.
-    const actionHex = solidOver(canvas, "button.background") ?? accentHex;
-    overrides.messageAction = actionHex;
-    overrides.messageActionForeground = readableOn(
-      actionHex,
-      derived.messageActionForeground,
-      "button.foreground",
-    );
-    overrides.accentForeground = readableOn(
-      accentHex,
-      derived.accentForeground,
-      "button.foreground",
-    );
-  }
+  overrides.accent = accentHex;
+  overrides.focus = accentHex;
+  overrides.messageAction = actionHex;
+  overrides.messageActionForeground = readableOn(
+    actionHex,
+    derived.messageActionForeground,
+    "button.foreground",
+  );
+  overrides.accentForeground = readableOn(accentHex, derived.accentForeground, "button.foreground");
 
-  // Reuse the theme-file parser so ids, names, and color values go through the
-  // same validation as a hand-written file.
+  const name = resolveName(value);
+  const generatedId = themeIdFromName(name);
   return parseThemeFile({
     version: THEME_FILE_VERSION,
-    name: resolveName(value),
+    ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
+    name,
     appearance,
     colors: { ...derived, ...overrides },
   });
 }
 
-/**
- * Extensions ship a family of themes (GitHub: dark, light, dark-colorblind,
- * light-colorblind, dark-dimmed, ...). When several are imported together,
- * a light and a dark file whose names differ only by the appearance word
- * become one dual-mode theme; everything else stays its own theme.
- */
 export function pairVsCodeThemes(
   themes: ReadonlyArray<ThemeDefinition>,
   options?: {
@@ -351,10 +400,8 @@ export function pairVsCodeThemes(
   const groups = new Map<string, Group>();
   const passthrough: Array<{ theme: ThemeDefinition; order: number }> = [];
   themes.forEach((theme, order) => {
-    // Only single-appearance themes with an appearance word in the name can
-    // pair; anything else is already what the user asked for.
     const key = stripAppearance(theme.label);
-    if (getThemeModes(theme).length !== 1 || key === theme.label || key.length === 0) {
+    if (getThemeModes(theme).length !== 1 || key === theme.label || !/[a-z0-9]/i.test(key)) {
       passthrough.push({ theme, order });
       return;
     }
@@ -365,10 +412,6 @@ export function pairVsCodeThemes(
 
   const paired: Array<{ theme: ThemeDefinition; order: number }> = [];
   for (const [key, group] of groups) {
-    // Ambiguity (two darks for one light) is not guessed at, and a pair
-    // whose stripped name collides with a built-in id ("Grove Light" +
-    // "Grove Dark" -> the reserved "grove") stays two single themes rather
-    // than failing the whole batch.
     if (group.light.length === 1 && group.dark.length === 1) {
       try {
         paired.push({
@@ -383,9 +426,7 @@ export function pairVsCodeThemes(
           }),
         });
         continue;
-      } catch {
-        // Fall through to the individual themes below.
-      }
+      } catch {}
     }
     for (const theme of [...group.light, ...group.dark]) {
       paired.push({ theme, order: group.order });
@@ -395,17 +436,9 @@ export function pairVsCodeThemes(
   return [...passthrough, ...paired].sort((a, b) => a.order - b.order).map((entry) => entry.theme);
 }
 
-/**
- * Some extensions reuse one display name across every file: Dracula ships
- * dracula.json and dracula-soft.json that both say "Dracula". When a batch
- * carries the same id twice, the file names are the only thing that tells
- * the variants apart, so colliding entries are relabelled from their file
- * name (and numbered only when even that collides).
- */
 export function resolveThemeLabelCollisions(
   entries: ReadonlyArray<{ theme: ThemeDefinition; sourceName?: string | undefined }>,
 ): ReadonlyArray<ThemeDefinition> {
-  // Null when the new name is unusable (reserved id, invalid characters).
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
       return parseThemeFile({

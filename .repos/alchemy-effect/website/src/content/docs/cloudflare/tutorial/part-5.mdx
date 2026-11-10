@@ -57,10 +57,13 @@ Rather than hand those elevated rights to your day-to-day profile,
 create a dedicated `admin` profile:
 
 ```sh
-alchemy login --profile admin
+alchemy profile create admin
+alchemy profile edit --profile admin --add Cloudflare
 ```
 
-When prompted for a Cloudflare credential, pick one of:
+When asked for the Cloudflare authentication method, choose **API
+Token or API Key**, not the recommended OAuth: Cloudflare's OAuth
+scopes can't manage API tokens. Then pick one of:
 
 - **API Key + Email** (the Global API Key) — has full account
   access, including the ability to mint tokens.
@@ -93,8 +96,8 @@ profile) to provision the Cloudflare API token CI will use.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -215,7 +218,7 @@ treatment as the API token.
 Run it once from your laptop, under the `admin` profile:
 
 ```sh
-alchemy deploy stacks/github.ts --profile admin
+alchemy deploy --config stacks/github.ts --profile admin
 ```
 
 You'll see Alchemy plan three creates — the Cloudflare token and the
@@ -309,8 +312,8 @@ Post the live URL as a comment on every PR. Update `alchemy.run.ts`:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-+import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as GitHub from "@alchemy.run/github";
 +import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 +import * as Layer from "effect/Layer";
@@ -398,8 +401,8 @@ your environment when deploying this stack.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -415,8 +418,8 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const testAccountId = yield* Config.string("TEST_CLOUDFLARE_ACCOUNT_ID");
-    const prodAccountId = yield* Config.string("PROD_CLOUDFLARE_ACCOUNT_ID");
+    const testAccountId = yield* Config.String("TEST_CLOUDFLARE_ACCOUNT_ID");
+    const prodAccountId = yield* Config.String("PROD_CLOUDFLARE_ACCOUNT_ID");
 
     const testToken = yield* Cloudflare.ApiToken.AccountApiToken("TestApiToken", {
       accountId: testAccountId,

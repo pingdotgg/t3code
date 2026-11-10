@@ -1,18 +1,25 @@
+import { Button } from "../../components/ui/Button";
 import type {
-  ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  RuntimeRequestId,
 } from "@t3tools/contracts";
+import {
+  FULL_ACCESS_OVERRIDE_QUESTION,
+  fullAccessOverrideExplanation,
+} from "@t3tools/client-runtime/state/thread-requests";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
+  readonly canOperateThread: boolean;
   readonly approval: PendingApproval;
-  readonly respondingApprovalId: ApprovalRequestId | null;
+  readonly respondingApprovalId: RuntimeRequestId | null;
   readonly onRespond: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -27,8 +34,9 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const options: ReadonlyArray<ProviderApprovalOption> =
     props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
   const warning = options.find((option) => option.warning)?.warning;
-  // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
-  // behind this card, so a translucent surface bleeds messages through it.
+  const canRespond = props.approval.responseCapability === "live";
+  const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
+  const [explanationOpen, setExplanationOpen] = useState(false);
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
@@ -42,37 +50,59 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           {props.approval.detail}
         </Text>
       ) : null}
+      {props.approval.reason ? (
+        <Text className="font-sans text-xs leading-normal text-warning-foreground">
+          {props.approval.reason}
+        </Text>
+      ) : null}
+      {props.approval.fullAccessOverride ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: explanationOpen }}
+          onPress={() => setExplanationOpen((open) => !open)}
+        >
+          <Text className="font-t3-bold text-xs text-foreground-secondary underline">
+            {FULL_ACCESS_OVERRIDE_QUESTION}
+          </Text>
+          {explanationOpen ? (
+            <Text className="mt-1 font-sans text-xs leading-normal text-foreground-muted">
+              {fullAccessOverrideExplanation(props.approval.fullAccessOverride)}
+            </Text>
+          ) : null}
+        </Pressable>
+      ) : null}
+      {!canRespond ? (
+        <Text className="font-sans text-sm leading-5 text-foreground-muted">
+          The provider process for this request is no longer available. Interrupt or restart the run
+          to continue.
+        </Text>
+      ) : null}
       {warning ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">{warning}</Text>
       ) : null}
-      <View className="flex-row flex-wrap gap-2.5">
+      <View className="gap-2">
         {options.map((option) => (
-          <Pressable
+          <Button
             key={option.decision}
-            className={`items-center justify-center rounded-[14px] px-3.5 py-3 ${
+            label={option.label}
+            tone={
               option.decision === "accept"
-                ? "bg-primary"
+                ? "primary"
                 : option.decision === "decline"
-                  ? "bg-danger"
-                  : "bg-subtle-strong"
-            }`}
-            disabled={props.respondingApprovalId === props.approval.requestId}
+                  ? "danger"
+                  : "secondary"
+            }
+            disabled={disabled || !props.canOperateThread}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
-          >
-            <Text
-              className={`text-sm ${
-                option.decision === "accept"
-                  ? "font-t3-extrabold text-primary-foreground"
-                  : option.decision === "decline"
-                    ? "font-t3-bold text-danger-foreground"
-                    : "font-t3-bold text-foreground"
-              }`}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
+            fullWidth
+          />
         ))}
       </View>
+      {!props.canOperateThread ? (
+        <Text className="font-sans text-xs text-foreground-muted">
+          This connection cannot respond to approvals.
+        </Text>
+      ) : null}
     </View>
   );
 }

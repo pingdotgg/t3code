@@ -1,3 +1,6 @@
+import * as Dialog from "../../../components/ui/Dialog";
+import { cn } from "../../../lib/cn";
+import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -5,57 +8,83 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CommonActions,
   StackActions,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { SymbolView } from "../../../components/AppSymbol";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { use, useEffect, useState } from "react";
+import { Platform, RefreshControl, View } from "react-native";
+import { NativeScrollView } from "../../../native/NativeScrollViewMarker";
 
-import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useUniwindTheme } from "../../../lib/useUniwindTheme";
-
-import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../../components/AppText";
-import { nativeHeaderScrollEdgeEffects } from "../../../native/StackHeader";
-import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
+import { AppBar } from "../../../components/ui/AppBar";
+import { ListRow } from "../../../components/ui/ListRow";
+import { ListSection } from "../../../components/ui/ListSection";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
+import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
-import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
-import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
-
-const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+import { menuItemIconName, statusSummary } from "./gitSheetComponents";
+import {
+  LinkedPullRequestRow,
+  linkedPullRequestKey,
+  useLinkedPullRequestLines,
+} from "../LinkedPullRequestList";
+import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
 
 type GitOverviewSheetProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
 }> & {
-  readonly headerInset?: number;
   readonly presentation?: "sheet" | "inspector";
 };
 
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
+  const { environmentId, threadId } = props.route.params;
+  const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when the route link names a blank environment or thread
+  useEffect(() => {
+    if (isBlankLink) navigation.goBack();
+  }, [isBlankLink, navigation]);
+  if (isBlankLink) return null;
+  return <GitOverviewSheetContent {...props} />;
+}
+
+function GitOverviewSheetContent(props: GitOverviewSheetProps) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
+  const closeInspectorSheet = use(InspectorSheetContext);
+  const presentRoute = (present: () => void) =>
+    closeInspectorSheet ? closeInspectorSheet(present) : present();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
-  const { selectedThread } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
+  const openPullRequest = useOpenPullRequest({
+    replace: presentation === "sheet",
+    context: selectedThread ?? undefined,
+  });
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
+  const linkedPrActions = useLinkedPullRequestActions({
+    thread: selectedThread,
+    project: selectedThreadProject,
+    runtime: selectedEnvironmentRuntime,
+  });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const theme = useUniwindTheme();
-  const foregroundColor = theme["--color-foreground"];
-  const sheetColor = theme["--color-sheet"];
+  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -75,56 +104,56 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = useMemo(
-    () => (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []),
-    [busy, gitStatus.data, hasPrimaryRemote, isRepo],
-  );
+  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
 
-  const sheetMenuItems = useMemo(
-    () =>
-      menuItems.map((item) => ({
-        item,
-        disabledReason: getGitActionDisabledReason({
-          item,
-          gitStatus: gitStatus.data,
-          isBusy: busy,
-          hasOriginRemote: hasPrimaryRemote,
-        }),
-      })),
-    [busy, gitStatus.data, hasPrimaryRemote, menuItems],
-  );
+  const sheetMenuItems = menuItems.map((item) => ({
+    item: {
+      ...item,
+      disabled: item.disabled || (!canWriteSourceControl && item.kind !== "open_pr"),
+    },
+    disabledReason:
+      !canWriteSourceControl && item.kind !== "open_pr"
+        ? "This connection cannot change source control."
+        : getGitActionDisabledReason({
+            item,
+            gitStatus: gitStatus.data,
+            isBusy: busy,
+            hasOriginRemote: hasPrimaryRemote,
+          }),
+  }));
 
-  useEffect(() => {
-    void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
-  }, [gitActions]);
+  const { shortLabel, singular } = sourceControlClients.get(
+    gitStatus.data?.sourceControlProvider?.kind,
+  ).changeRequest;
 
-  const openExistingPr = useCallback(async () => {
+  const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
+      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
       return;
     }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+    if (!(await openPullRequest(prUrl))) {
+      Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
     }
-  }, [gitStatus.data]);
+  };
 
-  const runActionWithPrompt = useCallback(
-    async (input: GitActionRequestInput) => {
-      const confirmableAction =
-        input.action === "push" ||
-        input.action === "create_pr" ||
-        input.action === "commit_push" ||
-        input.action === "commit_push_pr"
-          ? input.action
-          : null;
-      const branchName = gitStatus.data?.refName;
-      if (
-        branchName &&
-        confirmableAction &&
-        !input.featureBranch &&
-        requiresDefaultBranchConfirmation(input.action, isDefaultRef)
-      ) {
+  const runActionWithPrompt = async (input: GitActionRequestInput) => {
+    if (!canWriteSourceControl) return;
+    const confirmableAction =
+      input.action === "push" ||
+      input.action === "create_pr" ||
+      input.action === "commit_push" ||
+      input.action === "commit_push_pr"
+        ? input.action
+        : null;
+    const branchName = gitStatus.data?.refName;
+    if (
+      branchName &&
+      confirmableAction &&
+      !input.featureBranch &&
+      requiresDefaultBranchConfirmation(input.action, isDefaultRef)
+    ) {
+      presentRoute(() =>
         navigation.navigate("GitConfirm", {
           environmentId: String(environmentId),
           threadId: String(threadId),
@@ -133,287 +162,200 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           includesCommit: String(
             input.action === "commit_push" || input.action === "commit_push_pr",
           ),
-        });
-        return;
-      }
+        }),
+      );
+      return;
+    }
 
-      if (!isInspector) {
-        navigation.goBack();
-      }
-      await gitActions.onRunSelectedThreadGitAction(input);
-    },
-    [environmentId, gitActions, gitStatus.data, isDefaultRef, isInspector, navigation, threadId],
-  );
+    // Close a sheet so the thread shows the action's progress.
+    if (!isInspector) navigation.goBack();
+    else closeInspectorSheet?.();
+    await gitActions.onRunSelectedThreadGitAction(input);
+  };
 
-  const onPressMenuItem = useCallback(
-    async (item: (typeof menuItems)[number]) => {
-      if (item.disabled) return;
-      if (item.kind === "open_pr") {
-        await openExistingPr();
-        return;
-      }
-      if (item.dialogAction === "commit") {
+  const onPressMenuItem = async (item: (typeof menuItems)[number]) => {
+    if (item.disabled) return;
+    if (item.kind === "open_pr") {
+      await openExistingPr();
+      return;
+    }
+    if (!canWriteSourceControl) return;
+    if (item.dialogAction === "commit") {
+      presentRoute(() =>
         navigation.navigate("GitCommit", {
           environmentId: String(environmentId),
           threadId: String(threadId),
-        });
-        return;
-      }
-      if (item.dialogAction === "push") {
-        await runActionWithPrompt({ action: "push" });
-        return;
-      }
-      if (item.dialogAction === "create_pr") {
-        await runActionWithPrompt({ action: "create_pr" });
-      }
-    },
-    [environmentId, openExistingPr, navigation, runActionWithPrompt, threadId],
-  );
+        }),
+      );
+      return;
+    }
+    if (item.dialogAction === "push") {
+      await runActionWithPrompt({ action: "push" });
+      return;
+    }
+    if (item.dialogAction === "create_pr") {
+      await runActionWithPrompt({ action: "create_pr" });
+    }
+  };
 
-  // Status facts live on the relevant rows instead of crowding the header
-  // subtitle: files changed → Commit, ahead → Push, PR → View PR, behind → Pull.
-  const rowStatusDetail = useCallback(
-    (item: (typeof menuItems)[number]): string | undefined => {
-      const status = gitStatus.data;
-      if (status == null) {
-        return undefined;
-      }
-      if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
-        const fileCount = status.workingTree?.files.length ?? 0;
-        return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
-      }
-      if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
-        const ahead = status.aheadCount ?? 0;
-        return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
-      }
-      if (item.kind === "open_pr" && status.pr?.number != null) {
-        return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
-      }
+  const rowStatusDetail = (item: (typeof menuItems)[number]): string | undefined => {
+    const status = gitStatus.data;
+    if (status == null) {
       return undefined;
-    },
-    [gitStatus.data, menuItems],
-  );
+    }
+    if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
+      const fileCount = status.workingTree?.files.length ?? 0;
+      return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+    }
+    if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
+      const ahead = status.aheadCount ?? 0;
+      return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
+    }
+    if (item.kind === "open_pr" && status.pr?.number != null) {
+      return `${shortLabel} #${status.pr.number} ${status.pr.state ?? "open"}`;
+    }
+    return undefined;
+  };
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Deterministic pull-to-refresh state. Tying RefreshControl to the query's
-  // isPending flag left the spinner stuck (the status query reports pending
-  // during quiet background refreshes too).
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullRefresh = useCallback(async () => {
-    setIsPullRefreshing(true);
-    try {
-      await gitActions.refreshSelectedThreadGitStatus();
-    } finally {
-      setIsPullRefreshing(false);
-    }
-  }, [gitActions]);
+  // Background refreshes also report pending; using that query flag would stick the RefreshControl spinner.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await gitActions.refreshSelectedThreadGitStatus();
+    setIsRefreshing(false);
+  };
 
   const content = (
-    <ScrollView
-      className="flex-1 bg-screen"
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+    <NativeScrollView
+      nestedScrollEnabled
+      alwaysBounceVertical
+      className="flex-1 android:bg-sheet-solid ios:bg-screen"
+      contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
       contentContainerStyle={{
-        paddingHorizontal: isInspector ? 12 : 20,
+        paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
         paddingTop: 8,
-        gap: 14,
+        gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
+        <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
-      <View
-        className={
-          isInspector
-            ? "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
-            : "overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1"
-        }
-      >
-        {sheetMenuItems.map(({ item, disabledReason }, index) => (
-          <View key={`${item.id}-${item.label}`}>
-            {index > 0 ? <View className="ml-12 h-px bg-border" /> : null}
-            <SheetListRow
-              icon={menuItemIconName(item.icon)}
-              title={item.label}
-              subtitle={disabledReason ?? rowStatusDetail(item)}
-              disabled={item.disabled}
-              onPress={() => void onPressMenuItem(item)}
-            />
-          </View>
+      <ListSection>
+        {sheetMenuItems.map(({ item, disabledReason }) => (
+          <ListRow
+            key={`${item.id}-${item.label}`}
+            icon={menuItemIconName(item.icon)}
+            label={item.label}
+            description={disabledReason ?? rowStatusDetail(item)}
+            disabled={item.disabled}
+            onPress={() => void onPressMenuItem(item)}
+          />
         ))}
         {behindCount > 0 ? (
-          <>
-            <View className="ml-12 h-px bg-border" />
-            <SheetListRow
-              icon="arrow.down.circle"
-              title="Pull latest"
-              subtitle={`${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`}
-              disabled={busy || !isRepo}
-              onPress={() => void gitActions.onPullSelectedThreadBranch()}
-            />
-          </>
+          <ListRow
+            icon="arrow.down.circle"
+            label="Pull latest"
+            description={
+              canWriteSourceControl
+                ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
+                : "This connection cannot change source control."
+            }
+            disabled={!canWriteSourceControl || busy || !isRepo}
+            onPress={() => void gitActions.onPullSelectedThreadBranch()}
+          />
         ) : null}
-        <View className="ml-12 h-px bg-border" />
-        <SheetListRow
+        <ListRow
           icon="text.bubble"
-          title="Review changes"
-          subtitle="Inspect turn diffs, worktree changes, and base branch diff"
+          label="Review changes"
+          description="Inspect changes, uncommitted edits, and turn diffs"
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
-            navigation.dispatch(
-              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
-                ? StackActions.replace("ThreadReview", params)
-                : CommonActions.navigate("ThreadReview", params),
-            );
+            if (presentation === "sheet") {
+              navigation.dispatch(StackActions.replace("ThreadReview", params));
+            } else {
+              presentRoute(() =>
+                navigation.dispatch(CommonActions.navigate("ThreadReview", params)),
+              );
+            }
           }}
         />
-        <View className="ml-12 h-px bg-border" />
-        <SheetListRow
+        <ListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle="Switch branch, create branch, or move to a worktree"
+          label="Branches & worktrees"
+          description={
+            canChangeThreadBranch
+              ? "Switch branch, create branch, or move to a worktree"
+              : "View branches and worktrees"
+          }
           disabled={busy || !isRepo}
           onPress={() =>
-            navigation.navigate("GitBranches", {
-              environmentId: String(environmentId),
-              threadId: String(threadId),
-            })
+            presentRoute(() =>
+              navigation.navigate("GitBranches", {
+                environmentId: String(environmentId),
+                threadId: String(threadId),
+              }),
+            )
           }
         />
-      </View>
+        {linkedPrActions.canLink ? (
+          <ListRow
+            icon="link"
+            label={`Link ${linkedPrActions.terminology.singular}`}
+            description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
+            onPress={linkedPrActions.promptLink}
+          />
+        ) : null}
+      </ListSection>
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
-    </ScrollView>
+      {linkedPrLines.length > 0 ? (
+        <ListSection title={`Linked ${linkedPrActions.terminology.plural}`}>
+          {linkedPrLines.map((line, index) => (
+            <LinkedPullRequestRow
+              key={linkedPullRequestKey(line)}
+              line={line}
+              separator={index < linkedPrLines.length - 1}
+              surfaceClassName="text-grouped-card"
+              openPullRequest={openPullRequest}
+              actions={linkedPrActions}
+            />
+          ))}
+        </ListSection>
+      ) : null}
+
+      {currentWorktreePath ? (
+        <ListSection title="Worktree">
+          <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
+            {currentWorktreePath}
+          </Text>
+        </ListSection>
+      ) : null}
+    </NativeScrollView>
   );
 
-  if (isInspector && Platform.OS === "ios") {
-    return (
-      <View collapsable={false} className="flex-1 border-l border-border bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <Screen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-git-inspector-native"
-            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
-          >
-            {content}
-            <ScreenStackHeaderConfig
-              backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              title={currentBranchLabel}
-              titleColor={foregroundColor}
-              titleFontSize={17}
-              titleFontWeight="700"
-              translucent
-            />
-          </Screen>
-        </ScreenStack>
-      </View>
-    );
-  }
-
-  if (Platform.OS === "ios") {
-    // Compact form sheet: a plain screen presented as formSheet never renders a
-    // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet. This reuses the exact structure of the
-    // inspector branch below: branch as the title, status summary as the native
-    // subtitle, refresh as a header button.
-    return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <Screen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-git-sheet-native"
-            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
-          >
-            {content}
-            <ScreenStackHeaderConfig
-              backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              title={currentBranchLabel}
-              titleColor={foregroundColor}
-              titleFontSize={18}
-              titleFontWeight="800"
-              translucent
-            />
-          </Screen>
-        </ScreenStack>
-      </View>
-    );
-  }
+  const refresh = {
+    accessibilityLabel: "Refresh repository status",
+    disabled: busy || isRefreshing,
+    onPress: () => void handleRefresh(),
+  };
 
   return (
     <View
       collapsable={false}
-      className={isInspector ? "flex-1 border-l border-border bg-sheet" : "flex-1 bg-sheet"}
+      className={cn("flex-1 android:bg-header", isInspector ? "ios:bg-screen" : "ios:bg-sheet")}
     >
-      {isInspector ? (
-        <View
-          style={{
-            minHeight: props.headerInset ?? 0,
-            paddingTop: props.headerInset ?? 0,
-          }}
-        />
-      ) : null}
-
-      {isInspector ? (
-        <View className="gap-1 border-b border-border px-4 pb-4 pt-3">
-          <Pressable
-            className={
-              busy
-                ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
-                : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
-            }
-            disabled={busy}
-            onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
-          >
-            <SymbolView
-              name="arrow.clockwise"
-              size={16}
-              tintColorClassName={"accent-icon"}
-              type="monochrome"
-              weight="medium"
-            />
-          </Pressable>
-          <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            Repository
-          </Text>
-          <Text className="pr-10 text-xl font-t3-bold">{currentBranchLabel}</Text>
-          <Text className="text-foreground-secondary text-sm font-medium leading-normal">
-            {currentStatusSummary}
-          </Text>
-        </View>
-      ) : (
-        <AndroidSheetHeader
-          title={currentBranchLabel}
-          subtitle={currentStatusSummary}
-          onBack={() => navigation.goBack()}
-          actions={[
-            {
-              accessibilityLabel: "Refresh repository status",
-              disabled: busy,
-              icon: "arrow.clockwise",
-              onPress: () => void gitActions.refreshSelectedThreadGitStatus(),
-            },
-          ]}
-        />
-      )}
-
-      {content}
+      <AppBar
+        title={currentBranchLabel}
+        subtitle={currentStatusSummary}
+        hideBottomBorder={!isInspector}
+        onClose={isInspector ? undefined : () => navigation.goBack()}
+        refresh={refresh}
+      />
+      <ScreenContent insetHorizontal={isInspector ? true : undefined}>{content}</ScreenContent>
     </View>
   );
 }

@@ -1,9 +1,9 @@
-import * as Command from "@/Command";
-import * as Test from "@/Test/Alchemy";
-import { expect } from "alchemy-test";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as pathe from "pathe";
+import * as Command from "@/Command";
 
 const { test } = Test.make({ providers: Command.providers() });
 
@@ -51,14 +51,10 @@ test.provider(
       const distExists = yield* fs.exists(fixture.outdir);
       expect(distExists).toBe(true);
 
-      const outputExists = yield* fs.exists(
-        pathe.join(fixture.outdir, "output.txt"),
-      );
+      const outputExists = yield* fs.exists(pathe.join(fixture.outdir, "output.txt"));
       expect(outputExists).toBe(true);
 
-      const firstBuildOutput = yield* fs.readFileString(
-        pathe.join(fixture.outdir, "output.txt"),
-      );
+      const firstBuildOutput = yield* fs.readFileString(pathe.join(fixture.outdir, "output.txt"));
 
       yield* Effect.sleep(1100);
 
@@ -66,9 +62,7 @@ test.provider(
 
       expect(build2.hash).toMatchObject(build1.hash);
 
-      const secondBuildOutput = yield* fs.readFileString(
-        pathe.join(fixture.outdir, "output.txt"),
-      );
+      const secondBuildOutput = yield* fs.readFileString(pathe.join(fixture.outdir, "output.txt"));
       expect(secondBuildOutput).toBe(firstBuildOutput);
 
       yield* fs.writeFileString(
@@ -80,9 +74,7 @@ test.provider(
 
       expect(build3.hash).not.toMatchObject(build1.hash);
 
-      const thirdBuildOutput = yield* fs.readFileString(
-        pathe.join(fixture.outdir, "output.txt"),
-      );
+      const thirdBuildOutput = yield* fs.readFileString(pathe.join(fixture.outdir, "output.txt"));
       expect(thirdBuildOutput).not.toBe(firstBuildOutput);
 
       yield* fs.writeFileString(
@@ -95,7 +87,7 @@ test.provider(
       const distExistsAfterDestroy = yield* fs.exists(fixture.outdir);
       expect(distExistsAfterDestroy).toBe(false);
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );
 
 test.provider(
@@ -132,38 +124,41 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );
 
-test.provider("rebuilds memoized output if outdir is missing", (stack) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
+test.provider(
+  "rebuilds memoized output if outdir is missing",
+  (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const fixture = yield* makeTemporaryFixture();
-    expect(yield* fs.exists(fixture.outdir)).toBe(false);
+      const fixture = yield* makeTemporaryFixture();
+      expect(yield* fs.exists(fixture.outdir)).toBe(false);
 
-    const deploy = () =>
-      stack.deploy(
-        Command.Build("test-build", {
-          command: "bash build.sh",
-          cwd: fixture.cwd,
-          outdir: "dist",
-        }),
-      );
+      const deploy = () =>
+        stack.deploy(
+          Command.Build("test-build", {
+            command: "bash build.sh",
+            cwd: fixture.cwd,
+            outdir: "dist",
+          }),
+        );
 
-    yield* deploy();
-    expect(yield* fs.exists(fixture.outdir)).toBe(true);
+      yield* deploy();
+      expect(yield* fs.exists(fixture.outdir)).toBe(true);
 
-    yield* fs.remove(fixture.outdir, { recursive: true });
-    expect(yield* fs.exists(fixture.outdir)).toBe(false);
+      yield* fs.remove(fixture.outdir, { recursive: true });
+      expect(yield* fs.exists(fixture.outdir)).toBe(false);
 
-    yield* deploy();
-    expect(yield* fs.exists(fixture.outdir)).toBe(true);
+      yield* deploy();
+      expect(yield* fs.exists(fixture.outdir)).toBe(true);
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -237,5 +232,59 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
+);
+
+test.provider(
+  "default memo honors .gitignore files from the repository root down",
+  (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stack.destroy();
+
+      // A repository whose root `.gitignore` anchors `/app/generated/` to the
+      // root and ignores logs except `keep.log`, and whose app ignores a
+      // `data/` folder it cannot read.
+      const repo = yield* fs.makeTempDirectoryScoped();
+      const appDir = pathe.join(repo, "app");
+      yield* fs.makeDirectory(pathe.join(repo, ".git"));
+      yield* fs.writeFileString(
+        pathe.join(repo, ".gitignore"),
+        "/app/generated/\n*.log\n!keep.log\n",
+      );
+      yield* fs.copy(FIXTURE_DIR, appDir);
+      yield* fs.writeFileString(pathe.join(appDir, ".gitignore"), "data/\n");
+      const locked = pathe.join(appDir, "data", "postgres");
+      yield* fs.makeDirectory(locked, { recursive: true });
+      yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+        fs.chmod(locked, 0o755).pipe(Effect.ignore),
+      );
+
+      const deploy = () =>
+        stack.deploy(
+          Command.Build("test-build", { command: "bash build.sh", cwd: appDir, outdir: "dist" }),
+        );
+      const outputFile = pathe.join(appDir, "dist", "output.txt");
+
+      const build1 = yield* deploy();
+      const firstOutput = yield* fs.readFileString(outputFile);
+
+      // Ignored files change: none are hashed, so the build memoizes.
+      yield* Effect.sleep(1100);
+      yield* fs.writeFileString(pathe.join(appDir, "debug.log"), "noise");
+      yield* fs.makeDirectory(pathe.join(appDir, "generated"));
+      yield* fs.writeFileString(pathe.join(appDir, "generated", "types.ts"), "noise");
+      const build2 = yield* deploy();
+      expect(build2.hash.input).toBe(build1.hash.input);
+      expect(yield* fs.readFileString(outputFile)).toBe(firstOutput);
+
+      // A re-included file is hashed: changing it rebuilds.
+      yield* fs.writeFileString(pathe.join(appDir, "keep.log"), "kept");
+      const build3 = yield* deploy();
+      expect(build3.hash.input).not.toBe(build1.hash.input);
+      expect(yield* fs.readFileString(outputFile)).not.toBe(firstOutput);
+
+      yield* stack.destroy();
+    }),
+  { tags: ["unit", "local"], timeout: 60000 },
 );

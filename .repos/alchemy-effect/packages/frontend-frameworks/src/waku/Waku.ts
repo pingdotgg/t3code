@@ -1,3 +1,13 @@
+import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
+import type * as ViteModule from "vite";
+import type { Config as WakuConfig } from "waku/config";
+import type * as WakuVitePlugins from "waku/vite-plugins";
 import * as FrameworkCore from "../core/index.ts";
 import type {
   BuildOutput,
@@ -7,23 +17,9 @@ import type {
   DeployTargetInput,
   DeployTargetServices,
 } from "../core/index.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
-import * as Semaphore from "effect/Semaphore";
-import * as NodePath from "node:path";
-import type * as ViteModule from "vite";
-import type { Config as WakuConfig } from "waku/config";
-import type * as WakuInternals from "waku/internals";
-import type * as WakuVitePlugins from "waku/vite-plugins";
 
-type WakuInternalsModule = typeof WakuInternals;
 type WakuVitePluginsModule = typeof WakuVitePlugins;
-type ResolvedWakuConfig = ReturnType<
-  WakuInternalsModule["unstable_resolveConfig"]
->;
+type ResolvedWakuConfig = ReturnType<WakuVitePluginsModule["unstable_resolveConfig"]>;
 
 /**
  * Waku's rsc-environment worker entry, relative to the installed `waku`
@@ -50,7 +46,7 @@ export const WAKU_SERVER_ENTRY_PATH = "dist/lib/vite-entries/entry.server.js";
  * (framework-core's `selectEntryByFacade`) and this module remains an
  * ordinary chunk the user entry imports.
  */
-export const WAKU_SERVER_ENTRY_MODULE = NodePath.join("server", "index.js");
+export const WAKU_SERVER_ENTRY_MODULE = "server/index.js";
 
 /**
  * The stable importable specifier for waku's server handler — the module a
@@ -77,9 +73,7 @@ export const WAKU_SERVER_ENTRY_ID = "virtual:waku/server-entry";
  * `vite.plugins`, so the id resolves for the dev module runner, the
  * production build, and the SSG preview server alike.
  */
-export const makeWakuServerEntryPlugin = (
-  wakuDirectory: string,
-): ViteModule.Plugin => ({
+export const makeWakuServerEntryPlugin = (wakuDirectory: string): ViteModule.Plugin => ({
   name: "distilled-waku:server-entry",
   resolveId(id) {
     if (id === WAKU_SERVER_ENTRY_ID) {
@@ -124,9 +118,7 @@ export interface WakuTargetContext {
  */
 export interface WakuTarget<Config = unknown> extends DeployTarget<Config> {
   /** Absolute path of the adapter module waku's config selects via `unstable_adapter`. */
-  readonly adapter: (
-    context: WakuTargetContext,
-  ) => Effect.Effect<string, DeployTargetError>;
+  readonly adapter: (context: WakuTargetContext) => Effect.Effect<string, DeployTargetError>;
   /** Vite plugins injected first inside waku's `vite.plugins` (dev + build). */
   readonly vitePlugins: (
     context: WakuTargetContext,
@@ -179,16 +171,13 @@ export interface WakuHarnessTargetOptions {
  * - omitted — the default cloudflare target module with the deprecated
  *   `vite` alias as its config
  */
-export type WakuTargetOption =
-  | DeployTargetInput<WakuTarget, unknown>
-  | WakuHarnessTargetOptions;
+export type WakuTargetOption = DeployTargetInput<WakuTarget, unknown> | WakuHarnessTargetOptions;
 
 /**
  * The module specifier of the default deploy target, loaded from the
  * *project's* `node_modules` when no explicit target is passed.
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/waku/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/waku/cloudflare";
 
 /**
  * Options for the Waku `Framework` integration.
@@ -239,18 +228,12 @@ export const WAKU_CONFIG_FILES = ["waku.config.ts", "waku.config.js"] as const;
 
 /** Strip `undefined`-valued keys so an inline options object with explicit
  * `undefined` entries cannot clobber values from the user's config file. */
-const definedConfig = (
-  config: WakuConfig | undefined,
-): WakuConfig | undefined => {
+const definedConfig = (config: WakuConfig | undefined): WakuConfig | undefined => {
   if (config === undefined) {
     return undefined;
   }
-  const entries = Object.entries(config).filter(
-    ([, value]) => value !== undefined,
-  );
-  return entries.length === 0
-    ? undefined
-    : (Object.fromEntries(entries) as WakuConfig);
+  const entries = Object.entries(config).filter(([, value]) => value !== undefined);
+  return entries.length === 0 ? undefined : (Object.fromEntries(entries) as WakuConfig);
 };
 
 /** Inputs for {@link mergeUserWakuConfig} (exported for testing). */
@@ -273,9 +256,7 @@ export interface MergeUserWakuConfigInputs {
  * fields are combined with vite's own `mergeConfig` (arrays like `plugins`
  * concatenate — file plugins first, inline plugins after).
  */
-export const mergeUserWakuConfig = (
-  inputs: MergeUserWakuConfigInputs,
-): WakuConfig | undefined => {
+export const mergeUserWakuConfig = (inputs: MergeUserWakuConfigInputs): WakuConfig | undefined => {
   const file = definedConfig(inputs.file);
   const inline = definedConfig(inputs.inline);
   if (file === undefined || inline === undefined) {
@@ -288,12 +269,8 @@ export const mergeUserWakuConfig = (
   return { ...file, ...inline, ...(vite !== undefined ? { vite } : undefined) };
 };
 
-const isDeployTargetInput = (
-  value: unknown,
-): value is DeployTargetInput<WakuTarget, unknown> =>
-  typeof value === "string" ||
-  typeof value === "function" ||
-  FrameworkCore.isDeployTarget(value);
+const isDeployTargetInput = (value: unknown): value is DeployTargetInput<WakuTarget, unknown> =>
+  typeof value === "string" || typeof value === "function" || FrameworkCore.isDeployTarget(value);
 
 /** The normalized `(input, config)` pair fed to `resolveDeployTarget`. */
 export interface WakuTargetInputSelection {
@@ -310,9 +287,7 @@ export interface WakuTargetInputSelection {
  * - the harness carriage (or no target at all) selects the default target
  *   module with `target.cloudflare.worker ?? vite` as its config
  */
-export const selectWakuTargetInput = (
-  options?: WakuFrameworkOptions,
-): WakuTargetInputSelection => {
+export const selectWakuTargetInput = (options?: WakuFrameworkOptions): WakuTargetInputSelection => {
   const raw = options?.target;
   if (raw !== undefined && isDeployTargetInput(raw)) {
     return { input: raw, config: options?.vite };
@@ -398,16 +373,12 @@ export const makeWakuConfigInput = (inputs: WakuConfigInputs): WakuConfig => {
       ...userVite,
       resolve: {
         ...userVite?.resolve,
-        dedupe: [
-          ...new Set(["waku", "hono", ...(userVite?.resolve?.dedupe ?? [])]),
-        ],
+        dedupe: [...new Set(["waku", "hono", ...(userVite?.resolve?.dedupe ?? [])])],
       },
       environments: {
         ...userVite?.environments,
         rsc: mergeWorkerEnvironment(environments.rsc, ["hono/tiny"]),
-        ssr: mergeWorkerEnvironment(environments.ssr, [
-          "waku > rsc-html-stream/server",
-        ]),
+        ssr: mergeWorkerEnvironment(environments.ssr, ["waku > rsc-html-stream/server"]),
       },
       plugins: [...(inputs.plugins ?? []), ...(userVite?.plugins ?? [])],
     },
@@ -470,9 +441,7 @@ const PREVIEW_SERVER_GLOBAL = "__WAKU_START_PREVIEW_SERVER__";
 interface WakuPreviewServer {
   readonly baseUrl: string;
   readonly middlewares: {
-    readonly use: (
-      fn: (req: unknown, res: unknown, next: (err?: unknown) => void) => void,
-    ) => void;
+    readonly use: (fn: (req: unknown, res: unknown, next: (err?: unknown) => void) => void) => void;
   };
   readonly close: () => Promise<void>;
 }
@@ -495,6 +464,7 @@ const setPreviewServerGlobal = (
   vitePlugins: WakuVitePluginsModule,
   root: string,
   previewConfig: ResolvedWakuConfig,
+  port: number,
 ): void => {
   (globalThis as Record<string, unknown>)[PREVIEW_SERVER_GLOBAL] =
     async (): Promise<WakuPreviewServer> => {
@@ -502,12 +472,12 @@ const setPreviewServerGlobal = (
         configFile: false,
         root,
         plugins: [vitePlugins.unstable_combinedPlugins(previewConfig)],
+        // localhost can resolve to another build's listener on the other IP family.
+        preview: { host: "127.0.0.1", port },
       });
       const baseUrl = server.resolvedUrls?.local[0];
       if (!baseUrl) {
-        throw new Error(
-          "Could not determine the URL of the waku SSG preview server",
-        );
+        throw new Error("Could not determine the URL of the waku SSG preview server");
       }
       return {
         baseUrl,
@@ -525,7 +495,6 @@ const clearPreviewServerGlobal = (): void => {
 
 interface ProjectModules {
   readonly vite: typeof ViteModule;
-  readonly internals: WakuInternalsModule;
   readonly vitePlugins: WakuVitePluginsModule;
   readonly wakuDirectory: string;
 }
@@ -554,11 +523,7 @@ interface ProjectModules {
  */
 export const make = (
   options?: WakuFrameworkOptions,
-): Effect.Effect<
-  FrameworkCore.Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<FrameworkCore.Framework["Service"], never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -569,18 +534,15 @@ export const make = (
     const resolveRoot = (override: string | undefined) =>
       Effect.sync(() => override ?? options?.root ?? process.cwd());
 
-    const resolveTarget: (
-      root: string,
-    ) => Effect.Effect<WakuTarget, FrameworkCore.FrameworkError> = Effect.fn(
-      function* (root: string) {
+    const resolveTarget: (root: string) => Effect.Effect<WakuTarget, FrameworkCore.FrameworkError> =
+      Effect.fn(function* (root: string) {
         const { input, config } = selectWakuTargetInput(options);
         return yield* FrameworkCore.resolveDeployTarget<WakuTarget, unknown>(
           root,
           input,
           config,
         ).pipe(Effect.mapError(fail("Failed to resolve the deploy target")));
-      },
-    );
+      });
 
     /** Run the target's waku hooks, validating they exist (a dynamically
      * loaded module may satisfy `DeployTarget` without the waku hooks). */
@@ -594,65 +556,41 @@ export const make = (
       },
       FrameworkCore.FrameworkError
     > = Effect.fn(function* (target: WakuTarget, context: WakuTargetContext) {
-      if (
-        typeof target.adapter !== "function" ||
-        typeof target.vitePlugins !== "function"
-      ) {
-        return yield* Effect.fail(
-          fail(
-            `Deploy target "${target.platform}" does not implement the waku target hooks ` +
-              "(adapter, vitePlugins) required to drive waku " +
-              context.phase,
-          )(undefined),
-        );
+      if (typeof target.adapter !== "function" || typeof target.vitePlugins !== "function") {
+        return yield* fail(
+          `Deploy target "${target.platform}" does not implement the waku target hooks ` +
+            "(adapter, vitePlugins) required to drive waku " +
+            context.phase,
+        )(undefined);
       }
       const [adapterPath, plugins] = yield* Effect.all(
         [target.adapter(context), target.vitePlugins(context)],
         { concurrency: "unbounded" },
-      ).pipe(
-        Effect.mapError(
-          fail(`The deploy target failed preparing the waku ${context.phase}`),
-        ),
-      );
+      ).pipe(Effect.mapError(fail(`The deploy target failed preparing the waku ${context.phase}`)));
       return { adapterPath, plugins };
     });
 
     const loadProject: (
       root: string,
-    ) => Effect.Effect<ProjectModules, FrameworkCore.FrameworkError> =
-      Effect.fn(function* (root: string) {
-        const [vite, internals, vitePlugins, wakuDirectory] = yield* Effect.all(
-          [
-            FrameworkCore.loadProjectModule<typeof ViteModule>(
-              root,
-              "vite",
-            ).pipe(Effect.mapError(fail("Failed to load the project's vite"))),
-            FrameworkCore.loadProjectModule<WakuInternalsModule>(
-              root,
-              "waku/internals",
-            ).pipe(
-              Effect.mapError(
-                fail("Failed to load the project's waku/internals"),
-              ),
-            ),
-            FrameworkCore.loadProjectModule<WakuVitePluginsModule>(
-              root,
-              "waku/vite-plugins",
-            ).pipe(
-              Effect.mapError(
-                fail("Failed to load the project's waku/vite-plugins"),
-              ),
-            ),
-            FrameworkCore.resolveProjectPackageDirectory(root, "waku").pipe(
-              Effect.mapError(
-                fail("Failed to resolve the project's waku package directory"),
-              ),
-            ),
-          ],
-          { concurrency: "unbounded" },
-        );
-        return { vite, internals, vitePlugins, wakuDirectory };
-      });
+    ) => Effect.Effect<ProjectModules, FrameworkCore.FrameworkError> = Effect.fn(function* (
+      root: string,
+    ) {
+      const [vite, vitePlugins, wakuDirectory] = yield* Effect.all(
+        [
+          FrameworkCore.loadProjectModule<typeof ViteModule>(root, "vite").pipe(
+            Effect.mapError(fail("Failed to load the project's vite")),
+          ),
+          FrameworkCore.loadProjectModule<WakuVitePluginsModule>(root, "waku/vite-plugins").pipe(
+            Effect.mapError(fail("Failed to load the project's waku/vite-plugins")),
+          ),
+          FrameworkCore.resolveProjectPackageDirectory(root, "waku").pipe(
+            Effect.mapError(fail("Failed to resolve the project's waku package directory")),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { vite, vitePlugins, wakuDirectory };
+    });
 
     /**
      * Load the project's `waku.config.ts`/`waku.config.js` exactly the way
@@ -675,29 +613,27 @@ export const make = (
     const loadUserConfigFile: (
       project: ProjectModules,
       root: string,
-    ) => Effect.Effect<WakuConfig | undefined, FrameworkCore.FrameworkError> =
-      Effect.fn(function* (project: ProjectModules, root: string) {
-        const exists = yield* Effect.all(
-          WAKU_CONFIG_FILES.map((file) => fs.exists(path.join(root, file))),
-          { concurrency: "unbounded" },
-        ).pipe(
-          Effect.mapError(
-            fail("Failed to probe for the project's waku.config file"),
-          ),
-        );
-        if (!exists.some(Boolean)) {
-          return undefined;
-        }
-        return yield* Effect.tryPromise({
-          try: async () => {
-            const imported = await project.vite.runnerImport<{
-              default: WakuConfig;
-            }>("/waku.config", { root });
-            return imported.module.default;
-          },
-          catch: fail("Failed to load the project's waku.config file"),
-        });
+    ) => Effect.Effect<WakuConfig | undefined, FrameworkCore.FrameworkError> = Effect.fn(function* (
+      project: ProjectModules,
+      root: string,
+    ) {
+      const exists = yield* Effect.all(
+        WAKU_CONFIG_FILES.map((file) => fs.exists(path.join(root, file))),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(fail("Failed to probe for the project's waku.config file")));
+      if (!exists.some(Boolean)) {
+        return undefined;
+      }
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const imported = await project.vite.runnerImport<{
+            default: WakuConfig;
+          }>("/waku.config", { root });
+          return imported.module.default;
+        },
+        catch: fail("Failed to load the project's waku.config file"),
       });
+    });
 
     const makeConfig: (
       project: ProjectModules,
@@ -706,48 +642,42 @@ export const make = (
         adapterPath: string;
         plugins: ReadonlyArray<ViteModule.PluginOption>;
       },
-    ) => Effect.Effect<ResolvedWakuConfig, FrameworkCore.FrameworkError> =
-      Effect.fn(function* (
-        project: ProjectModules,
-        root: string,
-        inputs: {
-          adapterPath: string;
-          plugins: ReadonlyArray<ViteModule.PluginOption>;
-        },
-      ) {
-        const fileConfig = yield* loadUserConfigFile(project, root);
-        const userConfig = mergeUserWakuConfig({
-          file: fileConfig,
-          inline: options?.waku,
-          mergeViteConfig: project.vite.mergeConfig,
-        });
-        if (userConfig?.unstable_adapter !== undefined) {
-          return yield* Effect.fail(
-            fail(
-              `The waku config sets unstable_adapter (${JSON.stringify(userConfig.unstable_adapter)}), ` +
-                "but the deploy target owns the server adapter " +
-                `(it injects ${JSON.stringify(inputs.adapterPath)}). ` +
-                "Remove unstable_adapter from waku.config.ts/waku.config.js (and from the " +
-                "integration's waku options); to change the deploy platform, pass a different " +
-                "deploy target to the integration instead.",
-            )(undefined),
-          );
-        }
-        return project.internals.unstable_resolveConfig(
-          makeWakuConfigInput({
-            adapterPath: inputs.adapterPath,
-            // The server-entry resolver goes first so
-            // `virtual:waku/server-entry` (the wrappable-handler seam a user
-            // worker entry imports) resolves in dev, build, and the SSG
-            // preview server alike.
-            plugins: [
-              makeWakuServerEntryPlugin(project.wakuDirectory),
-              ...inputs.plugins,
-            ],
-            userConfig,
-          }),
-        );
+    ) => Effect.Effect<ResolvedWakuConfig, FrameworkCore.FrameworkError> = Effect.fn(function* (
+      project: ProjectModules,
+      root: string,
+      inputs: {
+        adapterPath: string;
+        plugins: ReadonlyArray<ViteModule.PluginOption>;
+      },
+    ) {
+      const fileConfig = yield* loadUserConfigFile(project, root);
+      const userConfig = mergeUserWakuConfig({
+        file: fileConfig,
+        inline: options?.waku,
+        mergeViteConfig: project.vite.mergeConfig,
       });
+      if (userConfig?.unstable_adapter !== undefined) {
+        return yield* fail(
+          `The waku config sets unstable_adapter (${JSON.stringify(userConfig.unstable_adapter)}), ` +
+            "but the deploy target owns the server adapter " +
+            `(it injects ${JSON.stringify(inputs.adapterPath)}). ` +
+            "Remove unstable_adapter from waku.config.ts/waku.config.js (and from the " +
+            "integration's waku options); to change the deploy platform, pass a different " +
+            "deploy target to the integration instead.",
+        )(undefined);
+      }
+      return project.vitePlugins.unstable_resolveConfig(
+        makeWakuConfigInput({
+          adapterPath: inputs.adapterPath,
+          // The server-entry resolver goes first so
+          // `virtual:waku/server-entry` (the wrappable-handler seam a user
+          // worker entry imports) resolves in dev, build, and the SSG
+          // preview server alike.
+          plugins: [makeWakuServerEntryPlugin(project.wakuDirectory), ...inputs.plugins],
+          userConfig,
+        }),
+      );
+    });
 
     const inProcess = FrameworkCore.Framework.of({
       build: Effect.fn(function* (buildOptions) {
@@ -782,6 +712,7 @@ export const make = (
           process.env.NODE_ENV = INITIAL_NODE_ENV ?? "production";
         });
         const wakuConfig = yield* makeConfig(project, root, hooks);
+        const previewPort = yield* FrameworkCore.resolveViteDevPort(project.vite.version);
         // Entry selection (the user-entry seam): when the deploy target
         // carries a user worker entry, the chunk built from it must become
         // `serverModules[0]` — waku's own `server/index.js` remains an
@@ -827,6 +758,7 @@ export const make = (
                 project.vitePlugins,
                 root,
                 wakuConfig,
+                previewPort,
               );
               try {
                 await builder.buildApp();
@@ -870,10 +802,7 @@ export const make = (
         // off for allocated ports so a probe race just moves to the next
         // ephemeral port.
         const explicitPort = devOptions?.port || options?.port;
-        const port = yield* FrameworkCore.resolveViteDevPort(
-          project.vite.version,
-          explicitPort,
-        );
+        const port = yield* FrameworkCore.resolveViteDevPort(project.vite.version, explicitPort);
         const host = devOptions?.host;
         // The dev server *starts* under the project root cwd (waku
         // resolves its html shell and relative inputs from the cwd at
@@ -886,9 +815,7 @@ export const make = (
                 const server = await project.vite.createServer({
                   configFile: false,
                   root,
-                  plugins: [
-                    project.vitePlugins.unstable_combinedPlugins(wakuConfig),
-                  ],
+                  plugins: [project.vitePlugins.unstable_combinedPlugins(wakuConfig)],
                   server: {
                     port,
                     strictPort: !!explicitPort,
@@ -904,11 +831,7 @@ export const make = (
         );
         const resolved = server.resolvedUrls?.local[0];
         if (resolved === undefined) {
-          return yield* Effect.fail(
-            fail("Could not determine the URL of the waku dev server")(
-              undefined,
-            ),
-          );
+          return yield* fail("Could not determine the URL of the waku dev server")(undefined);
         }
         // Vite's `resolvedUrls.local[0]` is `http://host:port/` — strip
         // the trailing slash so callers can concatenate paths (`${url}/`)
@@ -922,9 +845,7 @@ export const make = (
             await response.arrayBuffer().catch(() => {});
           },
           catch: fail("The waku dev server did not become reachable"),
-        }).pipe(
-          Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-        );
+        }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
         return { url };
       }),
     });
@@ -938,10 +859,7 @@ export const make = (
     // (e.g. a deploy-target VALUE from the e2e harness) — the in-process
     // path runs directly.
     const dev: FrameworkCore.Framework["Service"]["dev"] = (devOptions) => {
-      if (
-        FrameworkCore.isInsideDevChild() ||
-        !FrameworkCore.isJsonSerializable(options)
-      ) {
+      if (FrameworkCore.isInsideDevChild() || !FrameworkCore.isJsonSerializable(options)) {
         return inProcess.dev(devOptions);
       }
       const root = devOptions?.root ?? options?.root ?? process.cwd();
@@ -969,8 +887,5 @@ export const make = (
  */
 export const layer = (
   options?: WakuFrameworkOptions,
-): Layer.Layer<
-  FrameworkCore.Framework,
-  never,
-  FileSystem.FileSystem | Path.Path
-> => Layer.effect(FrameworkCore.Framework, make(options));
+): Layer.Layer<FrameworkCore.Framework, never, FileSystem.FileSystem | Path.Path> =>
+  Layer.effect(FrameworkCore.Framework, make(options));

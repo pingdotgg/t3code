@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
+import { useEffectEvent, useState } from "react";
+import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { cn } from "../../lib/cn";
@@ -9,45 +9,38 @@ const ACCESSIBILITY_RESIZE_STEP = 24;
 interface WorkspacePaneDividerProps {
   readonly accessibilityLabel: string;
   readonly currentWidth: number;
-  /** 1 when dragging right grows the pane, -1 when dragging left grows it. */
   readonly resizeDirection: 1 | -1;
   readonly onResizeStart?: () => void;
   readonly onResizeBy: (delta: number) => void;
   readonly onResizeEnd?: () => void;
 }
 
-/** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
-  const latestProps = useRef(props);
-  latestProps.current = props;
-  const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const handleResizeStart = useCallback(() => {
+  const handleResizeStart = useEffectEvent(() => {
     setDragging(true);
-    latestProps.current.onResizeStart?.();
-  }, []);
-  const handleResize = useCallback((translationX: number) => {
-    latestProps.current.onResizeBy(translationX * latestProps.current.resizeDirection);
-  }, []);
-  const handleResizeEnd = useCallback(() => {
+    props.onResizeStart?.();
+  });
+  const handleResize = useEffectEvent((translationX: number) => {
+    props.onResizeBy(translationX * props.resizeDirection);
+  });
+  const handleResizeEnd = useEffectEvent(() => {
     setDragging(false);
-    latestProps.current.onResizeEnd?.();
-  }, []);
-  const resizeGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-4, 4])
-        .failOffsetY([-24, 24])
-        .onStart(() => {
-          runOnJS(handleResizeStart)();
-        })
-        .onUpdate((event) => {
-          runOnJS(handleResize)(event.translationX);
-        })
-        .onFinalize(() => {
-          runOnJS(handleResizeEnd)();
-        }),
-    [handleResize, handleResizeEnd, handleResizeStart],
+    props.onResizeEnd?.();
+  });
+  const [resizeGesture] = useState(() =>
+    Gesture.Pan()
+      .activeOffsetX([-4, 4])
+      .failOffsetY([-24, 24])
+      .onStart(() => {
+        runOnJS(handleResizeStart)();
+      })
+      .onUpdate((event) => {
+        runOnJS(handleResize)(event.translationX);
+      })
+      .onFinalize(() => {
+        runOnJS(handleResizeEnd)();
+      }),
   );
 
   const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
@@ -63,7 +56,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   return (
     <GestureDetector gesture={resizeGesture}>
       <Pressable
-        className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
+        className="relative z-[100] -mx-[22px] w-[44px] self-stretch justify-center"
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },
@@ -75,15 +68,14 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
           text: `${Math.round(props.currentWidth)} points wide`,
         }}
         onAccessibilityAction={handleAccessibilityAction}
-        onHoverIn={() => setHovered(true)}
-        onHoverOut={() => setHovered(false)}
       >
         <View
           className={cn(
             "h-full self-center bg-border opacity-70",
-            hovered || dragging ? "w-0.5 bg-primary opacity-100" : "w-px",
+            dragging ? "w-0.5 bg-primary opacity-100" : "w-px",
+            Platform.OS === "android" && !dragging && "opacity-0",
           )}
-          style={[styles.line, (hovered || dragging) && styles.activeLine]}
+          style={[styles.line, dragging && styles.activeLine]}
         />
       </Pressable>
     </GestureDetector>

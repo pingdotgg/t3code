@@ -1,7 +1,7 @@
 # T3 Code Mobile
 
-> [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> [!NOTE]
+> To install the released app from the App Store or Google Play, see [Mobile app](../../docs/user/install.md#mobile-app). This guide covers building it from source.
 
 ## Quickstart
 
@@ -22,7 +22,39 @@ repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 
 ## Development
 
-Start Metro for the dev client:
+For simulator, emulator, or Android phone development, boot or connect a device, then install the
+native client that matches this checkout before starting Metro:
+
+```bash
+vp run mobile:install ios [simulator-udid]
+# Or: vp run mobile:install android [emulator-or-phone-serial]
+vp run dev:client
+```
+
+The device argument can be omitted when exactly one device is booted or connected. The helper
+compares this checkout's Expo fingerprint and the installed binary with its last install record,
+and reuses a matching client. Otherwise it installs the build for that fingerprint from
+`~/.cache/t3code/native-clients/artifacts`, then the shared task cache, and builds only when
+neither has it. A build runs in the `Mobile Dev Client` workflow (Blacksmith runners with warm
+Gradle and ccache state, and a macOS runner for iOS) when `gh` may dispatch workflows on
+`pingdotgg/t3code` and HEAD is pushed; the helper waits for the client in the shared cache.
+Otherwise, or when HEAD lacks your native edits or `T3_NATIVE_CLIENT_BUILD=local` is set, it builds
+on this machine. Main's client is built there on every native change, so most checkouts hit. One iOS simulator build serves every iPhone and iPad simulator, and one APK per
+ABI (x86_64 or arm64-v8a) serves every emulator and phone of that ABI. Build output goes to the
+log file it prints (`T3_NATIVE_CLIENT_VERBOSE=1` streams it instead). Builds are shared back when
+your task-cache login (`bash infra/task-cache/install.sh`) can write. `T3_NATIVE_CLIENT_CACHE=read`
+skips the upload and `off` skips the shared cache. Physical iPhones still use `vp run ios:dev`.
+
+`--session <name>` installs into an agent-device session opened elsewhere, such as a device pool
+or a cloud simulator, instead of a local device: `vp run mobile:install android --session pool-1
+--metro http://<this-machine>:8081`. It uses only the cached build (x86_64 by default; `--abi`
+for ARM) and fails with the next step when no machine has built this fingerprint yet.
+
+For a read-only decision, run `node ../../scripts/mobile-native-client.ts check <ios|android>
+[device]`: exit 0 means compatible, 2 means an install is needed, and 1 means an operational error.
+An externally installed client is unverified until the helper installs it once.
+
+Start Metro for an already verified dev client:
 
 ```bash
 vp run dev:client
@@ -80,14 +112,6 @@ Build and run the local iOS preview app:
 ```bash
 vp run ios:preview
 ```
-
-Force the review diff highlighter engine:
-
-```bash
-EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
-```
-
-`javascript` is the default and recommended setting for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=native` only when you explicitly want to test the native Shiki engine.
 
 Inspect the resolved Expo config for a variant:
 

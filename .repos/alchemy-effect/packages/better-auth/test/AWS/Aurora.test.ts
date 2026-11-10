@@ -1,13 +1,11 @@
-import * as AWS from "alchemy/AWS";
-import * as Core from "alchemy/Test/Core";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
+import * as AWS from "@alchemy.run/aws";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Core from "@alchemy.run/test/Core";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import AuroraAuthFunctionLive, {
-  AuroraAuthFunction,
-} from "./fixtures/aurora-handler.ts";
 import { AuthHttpError, getJson, postJson, toCookieHeader } from "../http.ts";
+import AuroraAuthFunctionLive, { AuroraAuthFunction } from "./fixtures/aurora-handler.ts";
 
 /**
  * Aurora Serverless v2 provisioning takes ~10 minutes, so this suite is
@@ -19,7 +17,7 @@ const enabled = !process.env.FAST;
 
 const testOptions = { providers: AWS.providers() };
 const { test, beforeAll, afterAll } = Test.make(testOptions);
-const sharedStack = Core.scratchStack(testOptions, "BetterAuthAurora");
+const sharedStack = Core.scratchStack(testOptions, "BetterAuthAurora", "test/AWS/Aurora.test.ts");
 
 let baseUrl: string;
 
@@ -33,7 +31,9 @@ beforeAll(
     if (!enabled) {
       return;
     }
-    yield* sharedStack.destroy();
+    if (!process.env.NO_DESTROY) {
+      yield* sharedStack.destroy();
+    }
     const { functionUrl } = yield* sharedStack.deploy(
       Effect.gen(function* () {
         return yield* AuroraAuthFunction;
@@ -67,9 +67,7 @@ test.skipIf(!enabled)(
       name: "Aurora User",
     }).pipe(
       Effect.filterOrFail(
-        (response) =>
-          response.status === 200 ||
-          response.body.includes("USER_ALREADY_EXISTS"),
+        (response) => response.status === 200 || response.body.includes("USER_ALREADY_EXISTS"),
         (response) => new AuthHttpError({ url: baseUrl, ...response }),
       ),
     );
@@ -90,5 +88,8 @@ test.skipIf(!enabled)(
     });
     expect(me.email).toBe(email);
   }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:lambda", "provider:aws:rds", "live"],
+    timeout: 120_000,
+  },
 );

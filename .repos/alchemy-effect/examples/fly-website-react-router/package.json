@@ -2,6 +2,11 @@
   "name": "fly-website-react-router",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-react-router"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,33 +15,28 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@react-router/node": "catalog:frontend",
+    "@alchemy.run/fly": "workspace:*",
+    "@react-router/node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "isbot": "catalog:frontend",
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend",
-    "react-router": "catalog:frontend"
+    "effect": "catalog:",
+    "isbot": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@react-router/dev": "catalog:frontend",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/react": "catalog:frontend",
-    "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "@effect/platform-node": "catalog:",
+    "@react-router/dev": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/fly-website-react-router"
   }
 }

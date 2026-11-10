@@ -1,9 +1,9 @@
-import * as AWS from "alchemy/AWS";
-import * as Lambda from "alchemy/AWS/Lambda";
+import * as AWS from "@alchemy.run/aws";
+import * as Lambda from "@alchemy.run/aws/Lambda";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import { AuroraDataApi } from "../../../src/AuroraDataApi.ts";
 import { BetterAuth } from "../../../src/index.ts";
@@ -20,13 +20,10 @@ export const Db = Effect.gen(function* () {
     cidrBlock: "10.42.0.0/16",
     availabilityZones: 2,
   });
-  const securityGroup = yield* AWS.EC2.SecurityGroup(
-    "AuroraAuthDbSecurityGroup",
-    {
-      vpcId: network.vpcId,
-      description: "Better Auth Aurora Data API test cluster",
-    },
-  );
+  const securityGroup = yield* AWS.EC2.SecurityGroup("AuroraAuthDbSecurityGroup", {
+    vpcId: network.vpcId,
+    description: "Better Auth Aurora Data API test cluster",
+  });
   return yield* AWS.RDS.Aurora("AuroraAuthDb", {
     subnetIds: network.privateSubnetIds,
     securityGroupIds: [securityGroup.groupId],
@@ -64,9 +61,7 @@ export default AuroraAuthFunction.make(
         if (pathname.startsWith("/me")) {
           const session = yield* auth
             .getSession()
-            .pipe(
-              Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
-            );
+            .pipe(Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)));
           return yield* HttpServerResponse.json({
             email: session?.user.email ?? null,
           });

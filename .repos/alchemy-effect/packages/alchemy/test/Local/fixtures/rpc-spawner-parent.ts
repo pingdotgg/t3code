@@ -7,10 +7,10 @@
 // crosses composite-project boundaries.
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
 import { layerServer, RpcSpawner } from "../../../src/Local/RpcSpawner.ts";
 import { PlatformServices } from "../../../src/Util/PlatformServices.ts";
 
@@ -50,10 +50,7 @@ const program = Effect.gen(function* () {
 program
   .pipe(
     Effect.provide([
-      Layer.provide(
-        layerServer({ profile: undefined, envFile: undefined }),
-        PlatformServices,
-      ),
+      Layer.provide(layerServer({ profile: undefined, envFile: undefined }), PlatformServices),
       FetchHttpClient.layer,
     ]),
     Effect.scoped,

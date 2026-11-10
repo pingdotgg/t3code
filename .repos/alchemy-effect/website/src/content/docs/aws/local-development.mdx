@@ -179,9 +179,10 @@ If a remote resource needs credentials you don't have,
 `alchemy dev` tells you before touching anything:
 
 ```text
-CredentialsRequired: 1 resource runs against the real cloud via Alchemy.remote():
-  - ProdSecret (AWS.SecretsManager.Secret)
-Run `alchemy login --profile <name>`, or set CI=1 to use environment credentials.
+AWS credentials are required, but none are configured for profile 'default'.
+These resources require AWS credentials:
+  - ProdSecret (runs against the real cloud via Alchemy.remote())
+Run `alchemy profile edit --profile default --add AWS` to configure credentials, or set CI=1 to use environment-variable credentials.
 ```
 
 Switching a resource between local and live (or dev → deploy)

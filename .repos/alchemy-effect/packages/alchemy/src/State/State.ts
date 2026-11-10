@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import { UserFacingError } from "../UserFacingError.ts";
 import type { ActionState } from "./ActionState.ts";
 import type { ReplacedResourceState, ResourceState } from "./ResourceState.ts";
 
@@ -10,23 +11,27 @@ import type { ReplacedResourceState, ResourceState } from "./ResourceState.ts";
  */
 export type PersistedState = ResourceState | ActionState;
 
-export const isActionState = (
-  s: PersistedState | undefined,
-): s is ActionState => !!s && (s as any).kind === "action";
+export const isActionState = (s: PersistedState | undefined): s is ActionState =>
+  !!s && (s as any).kind === "action";
 
-export const isResourceState = (
-  s: PersistedState | undefined,
-): s is ResourceState => !!s && (s as any).kind !== "task";
+export const isResourceState = (s: PersistedState | undefined): s is ResourceState =>
+  !!s && (s as any).kind !== "task";
 
 export class StateStoreError extends Data.TaggedError("StateStoreError")<{
   message: string;
   cause?: Error;
-}> {}
+  /** HTTP failure metadata without the request, response body, or credentials. */
+  http?: {
+    /** Undefined when the HTTP client failed before receiving a response. */
+    status?: number;
+  };
+  /** Set when the store must be bootstrapped or upgraded first, as CI never does either. */
+  requires?: { readonly action: "bootstrap" | "upgrade"; readonly command: string };
+}> {
+  readonly [UserFacingError] = true;
+}
 
-export class State extends Context.Service<
-  State,
-  Effect.Effect<StateService>
->()("alchemy/State") {}
+export class State extends Context.Service<State, Effect.Effect<StateService>>()("alchemy/State") {}
 
 /**
  * State service interface.
@@ -55,9 +60,7 @@ export interface StateService {
    */
   getVersion(): Effect.Effect<number, StateStoreError, never>;
   listStacks(): Effect.Effect<readonly string[], StateStoreError, never>;
-  listStages(
-    stack: string,
-  ): Effect.Effect<readonly string[], StateStoreError, never>;
+  listStages(stack: string): Effect.Effect<readonly string[], StateStoreError, never>;
   /**
    * Get a resource by its FQN (namespace-qualified key).
    */
@@ -75,11 +78,7 @@ export interface StateService {
   getReplacedResources(request: {
     stack: string;
     stage: string;
-  }): Effect.Effect<
-    ReadonlyArray<ReplacedResourceState>,
-    StateStoreError,
-    never
-  >;
+  }): Effect.Effect<ReadonlyArray<ReplacedResourceState>, StateStoreError, never>;
   /**
    * Set a resource by its FQN (namespace-qualified key).
    */
@@ -132,4 +131,34 @@ export interface StateService {
     stage: string;
     value: unknown;
   }): Effect.Effect<unknown, StateStoreError, never>;
+  /**
+   * Move stages into this store from the one it replaces, or back with
+   * `rollback`, for stores that replace another. Idempotent: run it again
+   * to finish what a failure or a blocked stage left.
+   */
+  migrate?(
+    request: StateMigrationRequest,
+  ): Effect.Effect<ReadonlyArray<StateMigration>, StateStoreError, never>;
+}
+
+/** Which stages {@link StateService.migrate} moves. */
+export interface StateMigrationRequest {
+  /** Only this stack's stages. */
+  readonly stack?: string;
+  /** Only stages of this name. */
+  readonly stage?: string;
+  /** Move stages back to the store this one replaces. */
+  readonly rollback?: boolean;
+}
+
+/** What {@link StateService.migrate} did with one stage. */
+export interface StateMigration {
+  readonly stack: string;
+  readonly stage: string;
+  /** e.g. `migrated`, `already-migrated`, `rolled-back`, `blocked` or `failed`. */
+  readonly status: string;
+  /** Records moved. */
+  readonly records?: number;
+  /** Why a stage was not moved. */
+  readonly reason?: string;
 }

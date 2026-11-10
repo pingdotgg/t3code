@@ -1,26 +1,23 @@
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as MutableHashMap from "effect/MutableHashMap";
-import * as HttpServerError from "effect/unstable/http/HttpServerError";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import type * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
-import type { RuntimeError } from "../RuntimeError.shared.ts";
-import { isRuntimeError, SystemError } from "../RuntimeError.shared.ts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as HttpServerError from "effect/http/HttpServerError";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import * as MutableHashMap from "effect/MutableHashMap";
 import { getAddress } from "../internal/get-address.ts";
 import { makeErrorEnvelope } from "../internal/response.shared.ts";
+import type { RuntimeError } from "../RuntimeError.shared.ts";
+import { isRuntimeError, SystemError } from "../RuntimeError.shared.ts";
 
 export class LoopbackServer extends Context.Service<
   LoopbackServer,
   {
     readonly address: string;
     readonly secret: string;
-    readonly route: (
-      name: string,
-      handler: RouteHandler,
-    ) => Effect.Effect<void>;
+    readonly route: (name: string, handler: RouteHandler) => Effect.Effect<void>;
   }
 >()("cloudflare-runtime/LoopbackServer") {}
 
@@ -47,17 +44,13 @@ export const LoopbackServerLive = Layer.effect(
     const secret = crypto.randomUUID();
     const server = yield* Effect.sync(() =>
       NodeHttp.createServer(async (req, res) => {
-        const secretHeader = req.headers[LoopbackServerHeaders.SECRET] as
-          | string
-          | undefined;
-        const targetHeader = req.headers[LoopbackServerHeaders.TARGET] as
-          | string
-          | undefined;
+        const secretHeader = req.headers[LoopbackServerHeaders.SECRET] as string | undefined;
+        const targetHeader = req.headers[LoopbackServerHeaders.TARGET] as string | undefined;
 
         if (!secretHeader) {
           return writeErrorResponse(
             res,
-            new SystemError({
+            SystemError.make({
               subtag: "BadRequest",
               message: `The "${LoopbackServerHeaders.SECRET}" header is required.`,
             }),
@@ -66,7 +59,7 @@ export const LoopbackServerLive = Layer.effect(
         } else if (!targetHeader) {
           return writeErrorResponse(
             res,
-            new SystemError({
+            SystemError.make({
               subtag: "BadRequest",
               message: `The "${LoopbackServerHeaders.TARGET}" header is required.`,
             }),
@@ -75,7 +68,7 @@ export const LoopbackServerLive = Layer.effect(
         } else if (!timingSafeEqual(secretHeader, secret)) {
           return writeErrorResponse(
             res,
-            new SystemError({
+            SystemError.make({
               subtag: "Unauthorized",
               message: "Unauthorized",
             }),
@@ -88,7 +81,7 @@ export const LoopbackServerLive = Layer.effect(
         if (route._tag === "None") {
           return writeErrorResponse(
             res,
-            new SystemError({
+            SystemError.make({
               subtag: "NotFound",
               message: `The route "${targetHeader}" is not found.`,
             }),
@@ -103,14 +96,12 @@ export const LoopbackServerLive = Layer.effect(
             res,
             isRuntimeError(error)
               ? error
-              : new SystemError({
+              : SystemError.make({
                   subtag: "InternalServerError",
                   message: "Internal Server Error",
                   cause: error,
                 }),
-            HttpServerError.isHttpServerError(error)
-              ? (error.response?.status ?? 500)
-              : 500,
+            HttpServerError.isHttpServerError(error) ? (error.response?.status ?? 500) : 500,
           );
         }
       }),
@@ -139,10 +130,7 @@ export const LoopbackServerLive = Layer.effect(
     );
     const scope = yield* Effect.scope;
     const makeHandler = yield* Effect.promise(
-      async () =>
-        await import("@effect/platform-node/NodeHttpServer").then(
-          (m) => m.makeHandler,
-        ),
+      async () => await import("@effect/platform-node/NodeHttpServer").then((m) => m.makeHandler),
     );
     return LoopbackServer.of({
       address,
@@ -152,12 +140,10 @@ export const LoopbackServerLive = Layer.effect(
           ? makeHandler(handler, { scope }).pipe(
               Effect.map((handler) => {
                 MutableHashMap.set(routes, name, handler);
-                return Effect.void;
               }),
             )
           : Effect.sync(() => {
               MutableHashMap.set(routes, name, handler);
-              return Effect.void;
             }),
     });
   }),

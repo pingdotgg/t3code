@@ -38,136 +38,49 @@
  * so this suite pins only the cheap ones on the CLI path.
  */
 import { afterAll, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 import { WORKFLOW_SECRET_VALUE } from "../src/NotifyWorkflow.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
-// Spawn the CLI entry directly (not through `bun run` / the cli.js
-// launcher) so `proc.kill()` signals the actual CLI process, whose scope
-// teardown kills the exec child and the provider sidecars.
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.ts",
-);
-// Isolated stage so this suite never fights `integ.test.ts` (same stack
-// name) over state rows.
 const STAGE = "dev-cli-test";
-
-let proc: ReturnType<typeof spawn> | undefined;
-let output = "";
-
-const pump = (stream: NodeJS.ReadableStream) => {
-  stream.on("data", (chunk: Buffer) => {
-    const text = chunk.toString();
-    output += text;
-    if (process.env.DEBUG) process.stderr.write(text);
-  });
-};
-
-/** Bounded poll for a (possibly async) producer to yield a value. */
-const pollUntil = async <T>(
-  what: string,
-  f: () => T | undefined | Promise<T | undefined>,
-  { tries = 30, delayMs = 1000 }: { tries?: number; delayMs?: number } = {},
-): Promise<T> => {
-  for (let i = 0; i < tries; i++) {
-    const value = await f();
-    if (value !== undefined) return value;
-    await Bun.sleep(delayMs);
-  }
-  throw new Error(
-    `Timed out waiting for ${what}.\n--- alchemy dev output (tail) ---\n${output.slice(-4000)}`,
-  );
-};
-
-/** Fetch with retries — a fresh workerd takes a moment to start serving. */
-const fetchOk = async (
-  url: string | URL,
-  init?: RequestInit,
-  { tries = 20, delayMs = 500 }: { tries?: number; delayMs?: number } = {},
-) => {
-  let last: Response | undefined;
-  for (let i = 0; i < tries; i++) {
-    try {
-      last = await fetch(url, init);
-      if (last.ok) return last;
-    } catch {
-      // dev proxy not listening yet
-    }
-    await Bun.sleep(delayMs);
-  }
-  throw new Error(
-    `${init?.method ?? "GET"} ${url} never returned 2xx (last status: ${last?.status})`,
-  );
-};
-
-/** Extract a worker URL from the stack outputs the CLI prints on stdout. */
-const outputUrl = (key: string) =>
-  output.match(new RegExp(`${key}:\\s*['"]?(http[^\\s'",]+)`))?.[1];
+const cli = new DevCli({ root, stage: STAGE });
 
 afterAll(async () => {
-  if (proc?.pid) {
-    // Ctrl-C semantics: signal the whole PROCESS GROUP (the CLI, its
-    // `--watch` exec child, and the provider sidecars). Signaling only the
-    // CLI process orphans the exec child, which then keeps the stack's
-    // state locked and blocks the destroy below.
-    const killGroup = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(-proc!.pid!, signal);
-      } catch {
-        // group already gone
-      }
-    };
-    const exited = new Promise((resolve) => proc!.once("exit", resolve));
-    killGroup("SIGINT");
-    await Promise.race([exited, Bun.sleep(15_000)]);
-    if (proc.exitCode === null && proc.signalCode === null) {
-      killGroup("SIGKILL");
-      await Promise.race([exited, Bun.sleep(5_000)]);
-    }
-  }
+  await cli.stop();
   if (!process.env.NO_DESTROY) {
-    spawnSync("bun", [alchemyBin, "destroy", "--stage", STAGE, "--yes"], {
-      cwd: root,
-      stdio: "inherit",
-      timeout: 120_000,
-    });
+    cli.destroy();
   }
 }, 180_000);
 
 test(
   "alchemy dev serves every local binding end-to-end",
   async () => {
-    proc = spawn("bun", [alchemyBin, "dev", "--stage", STAGE], {
-      cwd: root,
-      // Own process group, so teardown can deliver Ctrl-C to the whole tree
-      // the way a terminal would.
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    pump(proc.stdout!);
-    pump(proc.stderr!);
+    // Start from an empty stage. The local D1 provider trusts its state row
+    // for "migrations applied", so a stage left deployed by an interrupted
+    // run (remote state store) combined with a wiped `.alchemy/local` (e.g.
+    // `git clean -fdx`) would skip the migrations and fail `/d1` with
+    // `no such table: greetings` — a stale-environment failure, not the
+    // #1007 regression this route exists to pin.
+    cli.destroy();
+    cli.start();
 
     // The first dev deploy applies D1 migrations through the sidecar,
     // prepares the sandbox image, boots workerd, and then prints the stack
     // outputs.
-    const asyncWorker = await pollUntil(
+    const asyncWorker = await cli.pollUntil(
       "asyncWorker url in stack outputs",
-      () => outputUrl("asyncWorker"),
+      () => cli.outputUrl("asyncWorker"),
       { tries: 300, delayMs: 1000 },
     );
-    const effectWorker = await pollUntil(
+    const effectWorker = await cli.pollUntil(
       "effectWorker url in stack outputs",
-      () => outputUrl("effectWorker"),
+      () => cli.outputUrl("effectWorker"),
       { tries: 30, delayMs: 1000 },
     );
-    const mediaWorker = await pollUntil(
+    const mediaWorker = await cli.pollUntil(
       "mediaWorker url in stack outputs",
-      () => outputUrl("mediaWorker"),
+      () => cli.outputUrl("mediaWorker"),
       { tries: 30, delayMs: 1000 },
     );
 
@@ -176,22 +89,18 @@ test(
     expect(index).toContain("<h1>Hello, world!</h1>");
 
     // Plain-text vars, secrets, and the self_url binding.
-    const env = (await (
-      await fetchOk(new URL("/env", asyncWorker))
-    ).json()) as Record<string, unknown>;
+    const env = (await (await fetchOk(new URL("/env", asyncWorker))).json()) as Record<
+      string,
+      unknown
+    >;
     expect(env.MY_VARIABLE).toBe("my-variable-abc123");
     expect(env.MY_SECRET).toBe("my-secret-abc123");
     expect(env.PUBLIC_URL).toBe(asyncWorker.replace(/\/$/, ""));
 
     // Durable Object: state persists across requests.
-    const count = (body: string) =>
-      Number(body.match(/^Hello, world! (\d+)$/)?.[1]);
-    const first = await (
-      await fetchOk(new URL("/counter", asyncWorker))
-    ).text();
-    const second = await (
-      await fetchOk(new URL("/counter", asyncWorker))
-    ).text();
+    const count = (body: string) => Number(body.match(/^Hello, world! (\d+)$/)?.[1]);
+    const first = await (await fetchOk(new URL("/counter", asyncWorker))).text();
+    const second = await (await fetchOk(new URL("/counter", asyncWorker))).text();
     expect(count(second)).toBe(count(first) + 1);
 
     // R2: put/get/list against the local simulator.
@@ -225,7 +134,7 @@ test(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(message),
     });
-    const received = await pollUntil(
+    const received = await cli.pollUntil(
       "queue message to be consumed",
       async () => {
         const res = await fetch(new URL("/queue/messages", asyncWorker));
@@ -242,26 +151,26 @@ test(
     // Cache API: per-run key — first miss, second hit.
     const cacheKey = crypto.randomUUID();
     const cacheOnce = async () =>
-      (await (
-        await fetchOk(new URL(`/cache?key=${cacheKey}`, asyncWorker))
-      ).json()) as { hit: boolean };
+      (await (await fetchOk(new URL(`/cache?key=${cacheKey}`, asyncWorker))).json()) as {
+        hit: boolean;
+      };
     expect((await cacheOnce()).hit).toBe(false);
     expect((await cacheOnce()).hit).toBe(true);
 
     // Rate limit: 2 per 10s per key — the third call is throttled.
     const rlKey = crypto.randomUUID();
     const limitOnce = async () =>
-      (await (
-        await fetchOk(new URL(`/ratelimit?key=${rlKey}`, asyncWorker))
-      ).json()) as { success: boolean };
+      (await (await fetchOk(new URL(`/ratelimit?key=${rlKey}`, asyncWorker))).json()) as {
+        success: boolean;
+      };
     expect((await limitOnce()).success).toBe(true);
     expect((await limitOnce()).success).toBe(true);
     expect((await limitOnce()).success).toBe(false);
 
     // Version metadata: locally stubbed with a random id.
-    const version = (await (
-      await fetchOk(new URL("/version", asyncWorker))
-    ).json()) as { id: string };
+    const version = (await (await fetchOk(new URL("/version", asyncWorker))).json()) as {
+      id: string;
+    };
     expect(typeof version.id).toBe("string");
     expect(version.id.length).toBeGreaterThan(0);
 
@@ -276,9 +185,9 @@ test(
     expect(service.url).toBe(effectWorker.replace(/\/$/, ""));
 
     // Secrets Store: the seeded value round-trips through the binding.
-    const secret = (await (
-      await fetchOk(new URL("/secret", mediaWorker))
-    ).json()) as { value: string };
+    const secret = (await (await fetchOk(new URL("/secret", mediaWorker))).json()) as {
+      value: string;
+    };
     expect(secret.value).toBe("store-secret-abc123");
 
     // KV via the Effect-style binding: EffectWorker's root route lists the
@@ -291,9 +200,7 @@ test(
     expect(typeof kv.list_complete).toBe("boolean");
 
     // self_url, Effect-style: `yield* Worker.URL` at init.
-    const self = (await (
-      await fetchOk(new URL("/url", effectWorker))
-    ).json()) as { url: string };
+    const self = (await (await fetchOk(new URL("/url", effectWorker))).json()) as { url: string };
     expect(self.url).toBe(effectWorker.replace(/\/$/, ""));
 
     // Workflow: start an instance and poll it to completion — pins the
@@ -305,21 +212,17 @@ test(
         method: "POST",
       })
     ).json()) as { instanceId: string };
-    const status = await pollUntil(
+    const status = await cli.pollUntil(
       "workflow to settle",
       async () => {
-        const res = await fetch(
-          new URL(`/workflow/status/${started.instanceId}`, effectWorker),
-        );
+        const res = await fetch(new URL(`/workflow/status/${started.instanceId}`, effectWorker));
         if (!res.ok) return undefined;
         const s = (await res.json()) as {
           status: string;
           output?: { text?: string; secret?: string };
           error?: unknown;
         };
-        return s.status === "complete" || s.status === "errored"
-          ? s
-          : undefined;
+        return s.status === "complete" || s.status === "errored" ? s : undefined;
       },
       { tries: 60, delayMs: 2000 },
     );
@@ -337,9 +240,7 @@ test(
         delayMs: 1000,
       })
     ).text();
-    expect(sandbox).toBe(
-      "Hello from Sandbox container! GREETING=hello-from-env",
-    );
+    expect(sandbox).toBe("Hello from Sandbox container! GREETING=hello-from-env");
   },
   { timeout: 600_000 },
 );

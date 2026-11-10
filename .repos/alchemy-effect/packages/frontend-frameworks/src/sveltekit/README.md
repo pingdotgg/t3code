@@ -260,10 +260,10 @@ through the platform proxy, while literal `props.env` values (strings;
 
 ## Limitations & known constraints
 
-- **Pre-release kit.** Pinned to `@sveltejs/kit` `3.0.0-next.9`
-  (`peerDependencies: >=3.0.0-next.9`). The v3 surface this package relies on
-  (`sveltekit(config)`, the `Adapter`/`Builder` API, `buildApp` ordering) is
-  new and may shift before stable; treat kit bumps as deliberate migrations.
+- **Kit 3 only.** Requires `@sveltejs/kit` `>=3.0.0`. The in-process SPA
+  fallback (`generateFallbackInProcess`) mirrors kit's internal
+  `core/postbuild/fallback.js` (`configure({ building, manifest, env })` from
+  `output/server/index.js`), so treat kit bumps as deliberate migrations.
   Note the repo's `minimumReleaseAge` install gate (3 days) when bumping.
 - **Always Workers mode.** Upstream defaults to Cloudflare _Pages_ when no
   wrangler config exists; this package intentionally has no Pages mode and
@@ -310,8 +310,12 @@ through the platform proxy, while literal `props.env` values (strings;
 - `bun run test` — unit tests (adapter output generation, shim generation,
   harness-option mapping, target contract, and the import-boundary
   enforcement test).
-- `fixtures/sveltekit` — the end-to-end fixture (Playwright against both the
+- `packages/frontend-frameworks/fixtures/sveltekit` — the end-to-end fixture (Playwright against both the
   miniflare-served production build and the kit dev server); see its README
   for the covered kit surface (form actions, cookies, binary endpoints, route
   groups, prerender + SSR mix, `platform.env` with a real KV binding and
   literal overrides, `platform.caches` round-trips, `platform.cf`).
+
+## Upstream references
+
+- SvelteKit: [`f36b3a4cd307bd8c89e03fa191becc175e7b3077`](https://github.com/sveltejs/kit/tree/f36b3a4cd307bd8c89e03fa191becc175e7b3077)

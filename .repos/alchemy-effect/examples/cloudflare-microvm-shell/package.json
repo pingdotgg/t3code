@@ -16,12 +16,14 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "typescript": "catalog:build"
+    "typescript": "catalog:"
   }
 }

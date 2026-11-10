@@ -12,60 +12,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    // Solid is the default JSX runtime in this package; React files opt in per-file.
     "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid",
-    "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "plugins": [
-      {
-        "name": "@effect/language-service",
-        // enable this to get effect diangostics in tsc
-        "diagnostics": false,
-        // Unbounded type printing on hover renders megabyte strings for
-        // Effect-scale types (base also sets noErrorTruncation); cap it.
-        "quickinfoMaximumLength": 2000,
-        "ignoreEffectErrorsInTscExitCode": true,
-        "ignoreEffectWarningsInTscExitCode": true,
-        "ignoreEffectSuggestionsInTscExitCode": true,
-        "diagnosticSeverity": {
-          "floatingEffect": "off"
-        }
-      }
-    ]
-  },
-  "references": [
-    {
-      "path": "../alchemy-test/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/aws/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/cloudflare/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/core/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/planetscale/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/axiom/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/neon/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/hetzner/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/fly-io/tsconfig.json"
-    },
-    {
-      "path": "../../distilled/packages/railway/tsconfig.json"
-    },
-    {
-      "path": "../cloudflare-runtime/tsconfig.json"
-    }
-  ]
+    "lib": ["DOM", "DOM.Iterable", "ES2023"]
+  }
 }

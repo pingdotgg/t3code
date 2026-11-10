@@ -1,11 +1,10 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import {
   completeConfirmDialogClose,
   readConfirmDialogState,
-  registerConfirmDialogHost,
   respondToConfirmDialog,
-  subscribeConfirmDialog,
+  subscribeConfirmDialogHost,
 } from "../confirmDialog";
 import {
   AlertDialog,
@@ -53,12 +52,10 @@ function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
 
 export function ConfirmDialogHost() {
   const state = useSyncExternalStore(
-    subscribeConfirmDialog,
+    subscribeConfirmDialogHost,
     readConfirmDialogState,
     readConfirmDialogState,
   );
-
-  useEffect(() => registerConfirmDialogHost(), []);
 
   const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
@@ -75,7 +72,7 @@ export function ConfirmDialogHost() {
         if (!open) completeConfirmDialogClose();
       }}
     >
-      <AlertDialogPopup className="max-w-lg">
+      <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           {copy.description ? (

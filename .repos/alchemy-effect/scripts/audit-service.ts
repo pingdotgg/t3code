@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * Spec-Driven Service Audit Script
  *
@@ -7,13 +6,31 @@
  * event sources, and helpers.
  *
  * Usage:
- *   bun scripts/audit-service.ts dynamodb
- *   bun scripts/audit-service.ts s3
- *   bun scripts/audit-service.ts --json dynamodb
+ *   node scripts/audit-service.ts dynamodb
+ *   node scripts/audit-service.ts s3
+ *   node scripts/audit-service.ts --json dynamodb
  */
 
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Argument, Command, Flag } from "effect/cli";
+import * as Console from "effect/Console";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+
+class DistilledImportError extends Data.TaggedError("DistilledImportError")<{
+  message: string;
+  cause: unknown;
+}> {}
+
+/** Reads a file, or `undefined` if it is missing or unreadable. */
+const readOptional = Effect.fn(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(file).pipe(Effect.option, Effect.map(Option.getOrUndefined));
+});
 
 // ============ Types ============
 
@@ -133,11 +150,7 @@ const EVENT_SOURCE_PATTERNS = [
 
 // Operations that are both bindings AND helper candidates (will be classified as bindings first)
 // These are data-plane operations that might benefit from higher-level wrappers
-const HELPER_CANDIDATE_PATTERNS = [
-  /^batch/i,
-  /^transact/i,
-  /^execute.*Statement/,
-];
+const HELPER_CANDIDATE_PATTERNS = [/^batch/i, /^transact/i, /^execute.*Statement/];
 
 // Core data-plane bindings (these should always be classified as bindings)
 const CORE_BINDING_PATTERNS = [
@@ -191,10 +204,6 @@ const N_ARITY_PATTERNS = [
 
 function toPascalCase(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-function toCamelCase(str: string): string {
-  return str.charAt(0).toLowerCase() + str.slice(1);
 }
 
 function matchesAnyPattern(name: string, patterns: RegExp[]): boolean {
@@ -257,10 +266,7 @@ function classifyOperation(
       return {
         category: "resource-lifecycle",
         resourceArity:
-          name === "updateAccountPasswordPolicy" ||
-          name === "deleteAccountPasswordPolicy"
-            ? 0
-            : 1,
+          name === "updateAccountPasswordPolicy" || name === "deleteAccountPasswordPolicy" ? 0 : 1,
         impliesResource: true,
         impliesEventSource: false,
       };
@@ -295,10 +301,7 @@ function classifyOperation(
   }
 
   if (serviceName === "kinesis") {
-    if (
-      name === "registerStreamConsumer" ||
-      name === "deregisterStreamConsumer"
-    ) {
+    if (name === "registerStreamConsumer" || name === "deregisterStreamConsumer") {
       return {
         category: "resource-lifecycle",
         resourceArity: 1,
@@ -509,8 +512,7 @@ function classifyOperation(
     ) {
       return {
         category: "resource-lifecycle",
-        resourceArity:
-          name === "putPermission" || name === "removePermission" ? 1 : 1,
+        resourceArity: name === "putPermission" || name === "removePermission" ? 1 : 1,
         impliesResource: true,
         impliesEventSource: name === "putRule" || name === "deleteRule",
       };
@@ -530,8 +532,7 @@ function classifyOperation(
     ) {
       return {
         category: "binding",
-        resourceArity:
-          name === "listEventBuses" || name === "testEventPattern" ? 0 : 1,
+        resourceArity: name === "listEventBuses" || name === "testEventPattern" ? 0 : 1,
         impliesResource: false,
         impliesEventSource: false,
       };
@@ -540,14 +541,9 @@ function classifyOperation(
 
   if (serviceName === "pipes") {
     if (
-      [
-        "createPipe",
-        "describePipe",
-        "updatePipe",
-        "deletePipe",
-        "startPipe",
-        "stopPipe",
-      ].includes(name)
+      ["createPipe", "describePipe", "updatePipe", "deletePipe", "startPipe", "stopPipe"].includes(
+        name,
+      )
     ) {
       return {
         category: "resource-lifecycle",
@@ -587,11 +583,7 @@ function classifyOperation(
       };
     }
 
-    if (
-      ["listSchedules", "listScheduleGroups", "listTagsForResource"].includes(
-        name,
-      )
-    ) {
+    if (["listSchedules", "listScheduleGroups", "listTagsForResource"].includes(name)) {
       return {
         category: "binding",
         resourceArity: name === "listTagsForResource" ? 1 : 0,
@@ -635,42 +627,42 @@ function classifyOperation(
   return { category, resourceArity, impliesResource, impliesEventSource };
 }
 
-async function inferImplementedResourceArity(
+const inferImplementedResourceArity = Effect.fn(function* (
   alchemyPath: string,
   pascalCase: string,
   fallback: ResourceArity,
-): Promise<ResourceArity> {
-  const file = path.join(alchemyPath, `${pascalCase}.ts`);
+) {
+  const path = yield* Path.Path;
+  const content = yield* readOptional(path.join(alchemyPath, `${pascalCase}.ts`));
+  // Fall back to heuristic classification when the file is unreadable.
+  return content === undefined ? fallback : implementedResourceArity(content, fallback);
+});
 
-  try {
-    const content = await fs.readFile(file, "utf-8");
-    const serviceSignatureMatch = content.match(
-      /Binding\.Service<[\s\S]*?,\s*(\([\s\S]*?\)\s*=>\s*Effect\.Effect<)/,
-    );
+function implementedResourceArity(content: string, fallback: ResourceArity): ResourceArity {
+  const serviceSignatureMatch = content.match(
+    /Binding\.Service<[\s\S]*?,\s*(\([\s\S]*?\)\s*=>\s*Effect\.Effect<)/,
+  );
 
-    if (!serviceSignatureMatch) {
-      return fallback;
-    }
+  if (!serviceSignatureMatch) {
+    return fallback;
+  }
 
-    const signature = serviceSignatureMatch[1];
+  const signature = serviceSignatureMatch[1];
 
-    if (/\(\s*\)\s*=>\s*Effect\.Effect</.test(signature)) {
-      return 0;
-    }
+  if (/\(\s*\)\s*=>\s*Effect\.Effect</.test(signature)) {
+    return 0;
+  }
 
-    if (/\(\s*\.\.\.[^)]+\)\s*=>\s*Effect\.Effect</.test(signature)) {
-      return "n";
-    }
+  if (/\(\s*\.\.\.[^)]+\)\s*=>\s*Effect\.Effect</.test(signature)) {
+    return "n";
+  }
 
-    if (/\([^)]*,[^)]*\)\s*=>\s*Effect\.Effect</.test(signature)) {
-      return 2;
-    }
+  if (/\([^)]*,[^)]*\)\s*=>\s*Effect\.Effect</.test(signature)) {
+    return 2;
+  }
 
-    if (/\([^)]*\)\s*=>\s*Effect\.Effect</.test(signature)) {
-      return 1;
-    }
-  } catch {
-    // Fall back to heuristic classification.
+  if (/\([^)]*\)\s*=>\s*Effect\.Effect</.test(signature)) {
+    return 1;
   }
 
   return fallback;
@@ -682,12 +674,12 @@ function formatArity(arity: ResourceArity): string {
 
 // ============ File Parsing ============
 
-async function extractDistilledOperations(
+const extractDistilledOperations = Effect.fn(function* (
   distilledPath: string,
   moduleSpecifier?: string,
-): Promise<string[]> {
-  try {
-    const content = await fs.readFile(distilledPath, "utf-8");
+) {
+  const content = yield* readOptional(distilledPath);
+  if (content !== undefined) {
     const operations: string[] = [];
     const regex = /^export const ([a-z][a-zA-Z0-9]*): API\.OperationMethod</gm;
 
@@ -697,64 +689,59 @@ async function extractDistilledOperations(
     }
 
     return operations;
-  } catch {
-    if (!moduleSpecifier) {
-      throw new Error(`Could not read distilled spec: ${distilledPath}`);
-    }
-
-    const mod = await import(moduleSpecifier);
-    return Object.keys(mod)
-      .filter((key) => /^[a-z]/.test(key))
-      .sort();
   }
-}
+  if (!moduleSpecifier) {
+    return yield* Effect.fail(new Error(`Could not read distilled spec: ${distilledPath}`));
+  }
 
-async function getAlchemyFiles(alchemyPath: string): Promise<Set<string>> {
+  const mod: Record<string, unknown> = yield* Effect.tryPromise({
+    try: () => import(moduleSpecifier),
+    catch: (cause) =>
+      new DistilledImportError({
+        message: `Could not import distilled spec: ${moduleSpecifier}`,
+        cause,
+      }),
+  });
+  return Object.keys(mod)
+    .filter((key) => /^[a-z]/.test(key))
+    .sort();
+});
+
+const getAlchemyFiles = Effect.fn(function* (alchemyPath: string) {
+  const fs = yield* FileSystem.FileSystem;
   const files = new Set<string>();
-  try {
-    const entries = await fs.readdir(alchemyPath);
-    for (const entry of entries) {
-      if (entry.endsWith(".ts") && entry !== "index.ts") {
-        files.add(entry.replace(".ts", ""));
-      }
+  // A missing directory has no files.
+  const entries = yield* fs.readDirectory(alchemyPath).pipe(Effect.orElseSucceed(() => []));
+  for (const entry of entries) {
+    if (entry.endsWith(".ts") && entry !== "index.ts") {
+      files.add(entry.replace(".ts", ""));
     }
-  } catch {
-    // Directory doesn't exist
   }
   return files;
-}
+});
 
-async function getIndexExports(indexPath: string): Promise<Set<string>> {
+const getIndexExports = Effect.fn(function* (indexPath: string) {
   const exports = new Set<string>();
-  try {
-    const content = await fs.readFile(indexPath, "utf-8");
+  const content = yield* readOptional(indexPath);
+  if (content !== undefined) {
     const regex = /export \* from ["']\.\/([^"']+)["']/g;
     let match;
     while ((match = regex.exec(content)) !== null) {
       const name = match[1].replace(".ts", "").replace(".js", "");
       exports.add(name);
     }
-  } catch {
-    // File doesn't exist
   }
   return exports;
-}
+});
 
-async function getProvidersRegistrations(
-  providersPath: string,
-  service: string,
-): Promise<{ resources: Set<string>; bindings: Set<string> }> {
+const getProvidersRegistrations = Effect.fn(function* (providersPath: string, service: string) {
   const resources = new Set<string>();
   const bindings = new Set<string>();
 
-  try {
-    const content = await fs.readFile(providersPath, "utf-8");
-
+  const content = yield* readOptional(providersPath);
+  if (content !== undefined) {
     // Match DynamoDB.TableProvider(), S3.BucketProvider(), etc.
-    const resourceRegex = new RegExp(
-      `${service}\\.([A-Z][a-zA-Z0-9]+)Provider\\(\\)`,
-      "g",
-    );
+    const resourceRegex = new RegExp(`${service}\\.([A-Z][a-zA-Z0-9]+)Provider\\(\\)`, "g");
     let match;
     while ((match = resourceRegex.exec(content)) !== null) {
       resources.add(match[1]);
@@ -762,44 +749,37 @@ async function getProvidersRegistrations(
 
     // Match DynamoDB.GetItemPolicyLive, S3.GetObjectPolicyLive, etc.
     // Note: The binding name is like "GetItem" and the export is "GetItemPolicyLive"
-    const bindingRegex = new RegExp(
-      `${service}\\.([A-Z][a-zA-Z0-9]+)PolicyLive`,
-      "g",
-    );
+    const bindingRegex = new RegExp(`${service}\\.([A-Z][a-zA-Z0-9]+)PolicyLive`, "g");
     while ((match = bindingRegex.exec(content)) !== null) {
       bindings.add(match[1]);
     }
-  } catch {
-    // File doesn't exist
   }
 
   return { resources, bindings };
-}
+});
 
-async function getBindingTestDescribes(
-  bindingTestPath: string,
-): Promise<{ exists: boolean; describes: Set<string> }> {
+const getBindingTestDescribes = Effect.fn(function* (bindingTestPath: string) {
   const describes = new Set<string>();
 
-  try {
-    const content = await fs.readFile(bindingTestPath, "utf-8");
-    const regex = /describe\(\s*["']([A-Z][A-Za-z0-9]+)["']/g;
-
-    let match;
-    while ((match = regex.exec(content)) !== null) {
-      describes.add(match[1]);
-    }
-
-    return { exists: true, describes };
-  } catch {
+  const content = yield* readOptional(bindingTestPath);
+  if (content === undefined) {
     return { exists: false, describes };
   }
-}
+  const regex = /describe\(\s*["']([A-Z][A-Za-z0-9]+)["']/g;
 
-async function getLeastPrivilegeWarnings(
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    describes.add(match[1]);
+  }
+
+  return { exists: true, describes };
+});
+
+const getLeastPrivilegeWarnings = Effect.fn(function* (
   alchemyPath: string,
   operations: Operation[],
-): Promise<LeastPrivilegeWarning[]> {
+) {
+  const path = yield* Path.Path;
   const warnings: LeastPrivilegeWarning[] = [];
   const wildcardResourcePattern = /Resource:\s*\[\s*["']\*["']\s*\]/;
 
@@ -817,24 +797,21 @@ async function getLeastPrivilegeWarnings(
     }
 
     const file = path.join(alchemyPath, `${op.pascalCase}.ts`);
-    try {
-      const content = await fs.readFile(file, "utf-8");
-      if (wildcardResourcePattern.test(content)) {
-        warnings.push({
-          binding: op.pascalCase,
-          file,
-          resourceArity: op.resourceArity,
-          message:
-            'Resource-bound binding uses `Resource: ["*"]`; bind the canonical resource(s) explicitly so the policy stays least-privilege.',
-        });
-      }
-    } catch {
-      // Ignore missing or unreadable files; other audit checks will surface those.
+    // Missing or unreadable files are surfaced by other audit checks.
+    const content = yield* readOptional(file);
+    if (content !== undefined && wildcardResourcePattern.test(content)) {
+      warnings.push({
+        binding: op.pascalCase,
+        file,
+        resourceArity: op.resourceArity,
+        message:
+          'Resource-bound binding uses `Resource: ["*"]`; bind the canonical resource(s) explicitly so the policy stays least-privilege.',
+      });
     }
   }
 
   return warnings.sort((a, b) => a.binding.localeCompare(b.binding));
-}
+});
 
 // ============ Resource Inference ============
 
@@ -842,20 +819,13 @@ function inferCanonicalResources(
   operations: Operation[],
   existingFiles: Set<string>,
 ): CanonicalResource[] {
-  const resourceMap = new Map<
-    string,
-    { operations: string[]; bindings: string[] }
-  >();
+  const resourceMap = new Map<string, { operations: string[]; bindings: string[] }>();
 
   for (const op of operations) {
     if (op.category === "resource-lifecycle") {
       let resourceName: string | undefined;
 
-      if (
-        ["registerStreamConsumer", "deregisterStreamConsumer"].includes(
-          op.camelCase,
-        )
-      ) {
+      if (["registerStreamConsumer", "deregisterStreamConsumer"].includes(op.camelCase)) {
         resourceName = "StreamConsumer";
       } else if (["putRule", "deleteRule"].includes(op.camelCase)) {
         resourceName = "Rule";
@@ -891,9 +861,7 @@ function inferCanonicalResources(
       // Extract resource name from operation like createTable -> Table
       const match =
         resourceName === undefined
-          ? op.camelCase.match(
-              /^(create|delete|update|describe)([A-Z][a-zA-Z]+)/,
-            )
+          ? op.camelCase.match(/^(create|delete|update|describe)([A-Z][a-zA-Z]+)/)
           : undefined;
       if (resourceName || match) {
         const resolvedResourceName = resourceName ?? match![2];
@@ -909,13 +877,7 @@ function inferCanonicalResources(
       // Associate binding with likely resource
       // e.g., getItem, putItem, deleteItem -> Table (DynamoDB convention)
       // This is heuristic and service-specific
-      const commonResources = [
-        "Table",
-        "Bucket",
-        "Queue",
-        "Stream",
-        "Function",
-      ];
+      const commonResources = ["Table", "Bucket", "Queue", "Stream", "Function"];
       for (const res of commonResources) {
         if (!resourceMap.has(res)) {
           resourceMap.set(res, { operations: [], bindings: [] });
@@ -942,10 +904,7 @@ function inferCanonicalResources(
 
 // ============ Helper Suggestions ============
 
-function suggestHelpers(
-  operations: Operation[],
-  service: string,
-): SuggestedHelper[] {
+function suggestHelpers(operations: Operation[], service: string): SuggestedHelper[] {
   const suggestions: SuggestedHelper[] = [];
 
   // Pattern: Stream-based helpers like notifications(bucket), messages(queue), changes(table)
@@ -966,17 +925,16 @@ function suggestHelpers(
       basedOn: streamOps.map((op) => op.camelCase),
       existingExample:
         service.toLowerCase() === "s3"
-          ? "alchemy/src/AWS/S3/BucketNotifications.ts"
+          ? "aws/src/S3/BucketNotifications.ts"
           : service.toLowerCase() === "sqs"
-            ? "alchemy/src/AWS/SQS/QueueEventSource.ts"
+            ? "aws/src/SQS/QueueEventSource.ts"
             : null,
     });
   }
 
   // Pattern: Batch operations -> typed batch helpers
   const batchOps = operations.filter(
-    (op) =>
-      op.camelCase.startsWith("batch") || op.camelCase.startsWith("transact"),
+    (op) => op.camelCase.startsWith("batch") || op.camelCase.startsWith("transact"),
   );
   if (batchOps.length > 0) {
     suggestions.push({
@@ -992,38 +950,39 @@ function suggestHelpers(
 
 // ============ Main Audit Logic ============
 
-async function auditService(serviceName: string): Promise<AuditReport> {
+const auditService = Effect.fn(function* (serviceName: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(import.meta.dirname, "..");
   const serviceNameLower = serviceName.toLowerCase();
-  const serviceNameUpper =
-    serviceName.charAt(0).toUpperCase() + serviceName.slice(1);
+  const serviceNameUpper = serviceName.charAt(0).toUpperCase() + serviceName.slice(1);
 
   // Map common service names to their distilled paths and alchemy paths
-  const serviceConfig: Record<string, { distilled: string; alchemy: string }> =
-    {
-      dynamodb: { distilled: "dynamodb", alchemy: "DynamoDB" },
-      s3: { distilled: "s3", alchemy: "S3" },
-      sqs: { distilled: "sqs", alchemy: "SQS" },
-      lambda: { distilled: "lambda", alchemy: "Lambda" },
-      kinesis: { distilled: "kinesis", alchemy: "Kinesis" },
-      ec2: { distilled: "ec2", alchemy: "EC2" },
-      ecs: { distilled: "ecs", alchemy: "ECS" },
-      cloudfront: { distilled: "cloudfront", alchemy: "CloudFront" },
-      cloudwatch: { distilled: "cloudwatch", alchemy: "CloudWatch" },
-      eventbridge: { distilled: "eventbridge", alchemy: "EventBridge" },
-      iam: { distilled: "iam", alchemy: "IAM" },
-      pipes: { distilled: "pipes", alchemy: "Pipes" },
-      sns: { distilled: "sns", alchemy: "SNS" },
-      scheduler: { distilled: "scheduler", alchemy: "Scheduler" },
-      rds: { distilled: "rds", alchemy: "RDS" },
-      "rds-data": { distilled: "rds-data", alchemy: "RDSData" },
-      "secrets-manager": {
-        distilled: "secrets-manager",
-        alchemy: "SecretsManager",
-      },
-      apigateway: { distilled: "api-gateway", alchemy: "ApiGateway" },
-      ses: { distilled: "ses", alchemy: "SES" },
-      sesv2: { distilled: "sesv2", alchemy: "SES" },
-    };
+  const serviceConfig: Record<string, { distilled: string; alchemy: string }> = {
+    dynamodb: { distilled: "dynamodb", alchemy: "DynamoDB" },
+    s3: { distilled: "s3", alchemy: "S3" },
+    sqs: { distilled: "sqs", alchemy: "SQS" },
+    lambda: { distilled: "lambda", alchemy: "Lambda" },
+    kinesis: { distilled: "kinesis", alchemy: "Kinesis" },
+    ec2: { distilled: "ec2", alchemy: "EC2" },
+    ecs: { distilled: "ecs", alchemy: "ECS" },
+    cloudfront: { distilled: "cloudfront", alchemy: "CloudFront" },
+    cloudwatch: { distilled: "cloudwatch", alchemy: "CloudWatch" },
+    eventbridge: { distilled: "eventbridge", alchemy: "EventBridge" },
+    iam: { distilled: "iam", alchemy: "IAM" },
+    pipes: { distilled: "pipes", alchemy: "Pipes" },
+    sns: { distilled: "sns", alchemy: "SNS" },
+    scheduler: { distilled: "scheduler", alchemy: "Scheduler" },
+    rds: { distilled: "rds", alchemy: "RDS" },
+    "rds-data": { distilled: "rds-data", alchemy: "RDSData" },
+    "secrets-manager": {
+      distilled: "secrets-manager",
+      alchemy: "SecretsManager",
+    },
+    apigateway: { distilled: "api-gateway", alchemy: "ApiGateway" },
+    ses: { distilled: "ses", alchemy: "SES" },
+    sesv2: { distilled: "sesv2", alchemy: "SES" },
+  };
 
   const config = serviceConfig[serviceNameLower] || {
     distilled: serviceNameLower,
@@ -1031,52 +990,40 @@ async function auditService(serviceName: string): Promise<AuditReport> {
   };
 
   const preferredDistilledPath = path.resolve(
-    `distilled/packages/aws/src/services/${config.distilled}.ts`,
+    root,
+    `submodules/distilled/packages/aws/src/services/${config.distilled}.ts`,
   );
-  const fallbackDistilledPath = path.resolve(
-    `.vendor/distilled/@distilled.cloud/aws/src/services/${config.distilled}.ts`,
-  );
-  const resolvedDistilledPath = await fs
-    .access(preferredDistilledPath)
-    .then(() => preferredDistilledPath)
-    .catch(() =>
-      fs
-        .access(fallbackDistilledPath)
-        .then(() => fallbackDistilledPath)
-        .catch(() => undefined),
-    );
-  const distilledPath =
-    resolvedDistilledPath ?? `@distilled.cloud/aws/${config.distilled}`;
-  const alchemyPath = path.resolve(
-    `packages/alchemy/src/AWS/${config.alchemy}`,
-  );
+  const resolvedDistilledPath = (yield* fs.access(preferredDistilledPath).pipe(Effect.isSuccess))
+    ? preferredDistilledPath
+    : undefined;
+  const distilledPath = resolvedDistilledPath ?? `@distilled.cloud/aws/${config.distilled}`;
+  const alchemyPath = path.resolve(root, `packages/aws/src/${config.alchemy}`);
   const bindingTestPath = path.resolve(
-    `packages/alchemy/test/AWS/${config.alchemy}/Bindings.test.ts`,
+    root,
+    `packages/integration-tests/test/AWS/${config.alchemy}/Bindings.test.ts`,
   );
   const indexPath = path.join(alchemyPath, "index.ts");
-  const providersPath = path.resolve("packages/alchemy/src/AWS/Providers.ts");
+  const providersPath = path.resolve(root, "packages/aws/src/Providers.ts");
 
   // Extract data
-  const distilledOps = await extractDistilledOperations(
+  const distilledOps = yield* extractDistilledOperations(
     resolvedDistilledPath ?? preferredDistilledPath,
     `@distilled.cloud/aws/${config.distilled}`,
   );
-  const alchemyFiles = await getAlchemyFiles(alchemyPath);
-  const indexExports = await getIndexExports(indexPath);
-  const providerRegs = await getProvidersRegistrations(
-    providersPath,
-    config.alchemy,
-  );
-  const bindingTestCoverage = await getBindingTestDescribes(bindingTestPath);
+  const alchemyFiles = yield* getAlchemyFiles(alchemyPath);
+  const indexExports = yield* getIndexExports(indexPath);
+  const providerRegs = yield* getProvidersRegistrations(providersPath, config.alchemy);
+  const bindingTestCoverage = yield* getBindingTestDescribes(bindingTestPath);
 
   // Classify operations
-  const operations: Operation[] = await Promise.all(
-    distilledOps.map(async (name) => {
+  const operations: Operation[] = yield* Effect.forEach(
+    distilledOps,
+    Effect.fnUntraced(function* (name) {
       const pascalCase = toPascalCase(name);
       const classification = classifyOperation(serviceNameLower, name);
       const implemented = alchemyFiles.has(pascalCase);
       const resourceArity = implemented
-        ? await inferImplementedResourceArity(
+        ? yield* inferImplementedResourceArity(
             alchemyPath,
             pascalCase,
             classification.resourceArity,
@@ -1100,34 +1047,21 @@ async function auditService(serviceName: string): Promise<AuditReport> {
   const implementedBindings = operations.filter(
     (op) => op.category === "binding" && op.implemented,
   );
-  const missingBindings = operations.filter(
-    (op) => op.category === "binding" && !op.implemented,
-  );
-  const resourceLifecycleOps = operations.filter(
-    (op) => op.category === "resource-lifecycle",
-  );
-  const eventSourceOps = operations.filter(
-    (op) => op.category === "event-source",
-  );
-  const helperCandidates = operations.filter(
-    (op) => op.category === "helper-candidate",
-  );
+  const missingBindings = operations.filter((op) => op.category === "binding" && !op.implemented);
+  const resourceLifecycleOps = operations.filter((op) => op.category === "resource-lifecycle");
+  const eventSourceOps = operations.filter((op) => op.category === "event-source");
+  const helperCandidates = operations.filter((op) => op.category === "helper-candidate");
   const internalOps = operations.filter((op) => op.category === "internal");
 
   // Infer resources and helpers
   const canonicalResources = inferCanonicalResources(operations, alchemyFiles);
   const suggestedHelpers = suggestHelpers(operations, serviceName);
-  const leastPrivilegeWarnings = await getLeastPrivilegeWarnings(
-    alchemyPath,
-    operations,
-  );
+  const leastPrivilegeWarnings = yield* getLeastPrivilegeWarnings(alchemyPath, operations);
 
   // Find registration gaps
   const registrationGaps: RegistrationGap[] = [];
 
-  const implementedButNotInIndex = implementedBindings.filter(
-    (op) => !op.registeredInIndex,
-  );
+  const implementedButNotInIndex = implementedBindings.filter((op) => !op.registeredInIndex);
   if (implementedButNotInIndex.length > 0) {
     registrationGaps.push({
       type: "index",
@@ -1143,9 +1077,7 @@ async function auditService(serviceName: string): Promise<AuditReport> {
     registrationGaps.push({
       type: "policy",
       file: providersPath,
-      missing: implementedButNotInProviders.map(
-        (op) => `${op.pascalCase}PolicyLive`,
-      ),
+      missing: implementedButNotInProviders.map((op) => `${op.pascalCase}PolicyLive`),
     });
   }
 
@@ -1155,7 +1087,7 @@ async function auditService(serviceName: string): Promise<AuditReport> {
         .map((op) => op.pascalCase)
     : implementedBindings.map((op) => op.pascalCase);
 
-  return {
+  const report: AuditReport = {
     service: serviceName,
     distilledPath,
     alchemyPath,
@@ -1173,7 +1105,8 @@ async function auditService(serviceName: string): Promise<AuditReport> {
     missingBindingTests,
     leastPrivilegeWarnings,
   };
-}
+  return report;
+});
 
 // ============ Report Formatting ============
 
@@ -1193,22 +1126,14 @@ function formatReport(report: AuditReport): string {
   lines.push(`${"─".repeat(80)}`);
   lines.push("SUMMARY");
   lines.push(`${"─".repeat(80)}`);
-  lines.push(
-    `  Implemented bindings:     ${report.implementedBindings.length}`,
-  );
+  lines.push(`  Implemented bindings:     ${report.implementedBindings.length}`);
   lines.push(`  Missing bindings:         ${report.missingBindings.length}`);
-  lines.push(
-    `  Resource lifecycle ops:   ${report.resourceLifecycleOps.length}`,
-  );
+  lines.push(`  Resource lifecycle ops:   ${report.resourceLifecycleOps.length}`);
   lines.push(`  Event source ops:         ${report.eventSourceOps.length}`);
   lines.push(`  Helper candidates:        ${report.helperCandidates.length}`);
   lines.push(`  Internal ops (skip):      ${report.internalOps.length}`);
-  lines.push(
-    `  Missing binding tests:    ${report.missingBindingTests.length}`,
-  );
-  lines.push(
-    `  Least-privilege warnings: ${report.leastPrivilegeWarnings.length}`,
-  );
+  lines.push(`  Missing binding tests:    ${report.missingBindingTests.length}`);
+  lines.push(`  Least-privilege warnings: ${report.leastPrivilegeWarnings.length}`);
   lines.push("");
 
   // Implemented bindings
@@ -1218,9 +1143,7 @@ function formatReport(report: AuditReport): string {
     lines.push(`${"─".repeat(80)}`);
     for (const op of report.implementedBindings) {
       const arity = `[${formatArity(op.resourceArity)}]`;
-      const regStatus = op.registeredInProviders
-        ? "✓ registered"
-        : "⚠ NOT in Providers.ts";
+      const regStatus = op.registeredInProviders ? "✓ registered" : "⚠ NOT in Providers.ts";
       lines.push(`  ✓ ${op.pascalCase}.ts ${arity} ${regStatus}`);
     }
     lines.push("");
@@ -1233,18 +1156,10 @@ function formatReport(report: AuditReport): string {
     lines.push(`${"─".repeat(80)}`);
 
     // Group by arity
-    const arity1 = report.missingBindings.filter(
-      (op) => op.resourceArity === 1,
-    );
-    const arity0 = report.missingBindings.filter(
-      (op) => op.resourceArity === 0,
-    );
-    const arity2 = report.missingBindings.filter(
-      (op) => op.resourceArity === 2,
-    );
-    const arityN = report.missingBindings.filter(
-      (op) => op.resourceArity === "n",
-    );
+    const arity1 = report.missingBindings.filter((op) => op.resourceArity === 1);
+    const arity0 = report.missingBindings.filter((op) => op.resourceArity === 0);
+    const arity2 = report.missingBindings.filter((op) => op.resourceArity === 2);
+    const arityN = report.missingBindings.filter((op) => op.resourceArity === "n");
 
     if (arity1.length > 0) {
       lines.push("  Single-resource bindings (arity=1):");
@@ -1365,9 +1280,7 @@ function formatReport(report: AuditReport): string {
     lines.push(`${"─".repeat(80)}`);
     for (const op of report.helperCandidates) {
       const impl = op.implemented ? "✓" : "○";
-      lines.push(
-        `  ${impl} ${op.camelCase} [${formatArity(op.resourceArity)}]`,
-      );
+      lines.push(`  ${impl} ${op.camelCase} [${formatArity(op.resourceArity)}]`);
     }
     lines.push("");
   }
@@ -1381,35 +1294,32 @@ function formatReport(report: AuditReport): string {
 
 // ============ CLI ============
 
-async function main() {
-  const args = process.argv.slice(2);
+const command = Command.make(
+  "audit-service",
+  {
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription("Print the report as JSON"),
+      Flag.withDefault(false),
+    ),
+    service: Argument.String("service").pipe(
+      Argument.withDescription("AWS service to audit, e.g. dynamodb, s3, sqs"),
+    ),
+  },
+  Effect.fn(function* ({ json, service }) {
+    const report = yield* auditService(service).pipe(
+      Effect.mapError(
+        (cause) => new Error(`Error auditing service ${service}: ${String(cause)}`, { cause }),
+      ),
+    );
+    yield* Console.log(json ? JSON.stringify(report, null, 2) : formatReport(report));
+  }),
+).pipe(
+  Command.withDescription(
+    "Compare a distilled AWS service spec against the alchemy implementation",
+  ),
+);
 
-  if (args.length === 0) {
-    console.log("Usage: bun scripts/audit-service.ts [--json] <service>");
-    console.log("Example: bun scripts/audit-service.ts dynamodb");
-    process.exit(1);
-  }
-
-  const jsonOutput = args.includes("--json");
-  const serviceName = args.filter((a) => !a.startsWith("--"))[0];
-
-  if (!serviceName) {
-    console.error("Error: No service name provided");
-    process.exit(1);
-  }
-
-  try {
-    const report = await auditService(serviceName);
-
-    if (jsonOutput) {
-      console.log(JSON.stringify(report, null, 2));
-    } else {
-      console.log(formatReport(report));
-    }
-  } catch (error) {
-    console.error(`Error auditing service ${serviceName}:`, error);
-    process.exit(1);
-  }
-}
-
-main();
+Command.run(command, { version: "0.0.0" }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain,
+);

@@ -11,7 +11,10 @@ const MAC_MODIFIER_PAIR_DEVICE_MASKS: Record<SnapShotModifier, readonly [number,
   meta: [0x8, 0x10],
 };
 
+// CoreGraphics registers osascript as a foreground app; go background-only first to avoid a Dock tile.
 const POLLER_SCRIPT = `
+ObjC.import("AppKit");
+$.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyProhibited);
 ObjC.import("CoreGraphics");
 ObjC.import("unistd");
 function run(argv) {

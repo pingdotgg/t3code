@@ -1,6 +1,11 @@
-import * as NodeCrypto from "node:crypto";
+import { importRelayPrivateKey, RelayJwtError, signRelayJwt } from "@t3tools/shared/relayJwt";
+import * as Context from "effect/Context";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
+import * as Jwk from "effect/jose/Jwk";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -92,12 +97,58 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
     });
   }
 
-  const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { format: "pem", type: "pkcs8" },
-    publicKeyEncoding: { format: "pem", type: "spki" },
-  });
-  return yield* persistEnvironmentKeyPair(secrets, {
-    privateKey: keyPair.privateKey,
-    publicKey: keyPair.publicKey,
-  });
+  const keyPair = yield* Jwk.generateKeyPair({ algorithm: "EdDSA" }).pipe(
+    Effect.flatMap((pair) =>
+      Effect.all({
+        privateKey: Jwk.importPrivate(pair.privateKey, "EdDSA").pipe(
+          Effect.flatMap((key) => Jwk.exportPkcs8(key, { format: "pem" })),
+          Effect.map(Redacted.value),
+        ),
+        publicKey: Jwk.importPublic(pair.publicKey, "EdDSA").pipe(
+          Effect.flatMap((key) => Jwk.exportSpki(key, { format: "pem" })),
+        ),
+      }),
+    ),
+    Effect.orDie,
+  );
+  return yield* persistEnvironmentKeyPair(secrets, keyPair);
 });
+
+/** The environment's Ed25519 relay signing key, loaded at startup and parsed on first use. */
+export class EnvironmentSigningKey extends Context.Service<
+  EnvironmentSigningKey,
+  {
+    /** SPKI PEM, as relays and linked clients receive it. */
+    readonly publicKey: string;
+    readonly sign: (input: {
+      readonly typ: string;
+      readonly payload: Readonly<Record<string, unknown>>;
+    }) => Effect.Effect<string, RelayJwtError>;
+  }
+>()("t3/cloud/environmentKeys/EnvironmentSigningKey") {}
+
+export const layer = Layer.effect(
+  EnvironmentSigningKey,
+  Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const signature = yield* Signature.Signature;
+    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+    // Parsed lazily so corrupt key material fails Connect operations, not server startup.
+    let privateKey: Jwk.PrivateKey | undefined;
+    return EnvironmentSigningKey.of({
+      publicKey: keyPair.publicKey,
+      sign: Effect.fn("EnvironmentSigningKey.sign")(function* (input) {
+        if (privateKey === undefined) {
+          privateKey = yield* importRelayPrivateKey(keyPair.privateKey).pipe(
+            Effect.mapError(
+              (cause) => new RelayJwtError({ operation: "sign", typ: input.typ, cause }),
+            ),
+          );
+        }
+        return yield* signRelayJwt({ ...input, privateKey }).pipe(
+          Effect.provideService(Signature.Signature, signature),
+        );
+      }),
+    });
+  }),
+);

@@ -1,13 +1,14 @@
 node_modules/
 dist/
-/lib/
+lib/
 /alchemy/lib/
 .out/
 .test/
 .DS_Store
 .env
 *.tsbuildinfo
-.claude/
+.claude/*
+!.claude/skills/
 .alchemy/
 # !.alchemy/github:alchemy/
 # examples/*/.alchemy
@@ -25,18 +26,24 @@ wrangler.jsonc
 smoke
 .svelte-kit
 .astro
+.vinext
 .wrangler
 
 *.tgz
 *.js
 *.d.ts
-!examples/prisma-tanstack-start/migrations/**/start-contract.d.ts
-!examples/prisma-tanstack-start/migrations/**/end-contract.d.ts
+# Emitted by `prisma contract emit` (the example's prepare script).
+examples/prisma-tanstack-start/src/prisma/contract.json
+# Emitted Prisma ORM v8 contract types: imported by the fixtures/example that
+# consume them, so a clean checkout must typecheck without running a deploy.
+!examples/cloudflare-neon-prisma/src/prisma/generated/contract.d.ts
+!packages/integration-tests/test/Cloudflare/Workers/fixtures/prisma-orm/generated/contract.d.ts
+!packages/integration-tests/test/Prisma/ORM/fixtures/client/generated/contract.d.ts
 # drizzle-kit's generated durable-sqlite migrations bundle (checked-in test fixture)
-!packages/alchemy/test/Cloudflare/Workers/fixtures/drizzle-do/drizzle/migrations.js
+!packages/integration-tests/test/Cloudflare/Workers/fixtures/drizzle-do/drizzle/migrations.js
 # Container image contexts COPY these into the image; without the negation
 # a fresh checkout has an empty build context and the container never boots.
-!packages/alchemy/test/Cloudflare/Container/fixtures/**/*.js
+!packages/integration-tests/test/Cloudflare/Container/fixtures/**/*.js
 *.map
 
 packages/cloudflare-runtime/src/rolldown/.env.test
@@ -46,15 +53,14 @@ packages/cloudflare-runtime/src/rolldown/out/
 !packages/cloudflare-runtime/src/rolldown/test/fixtures/**/*.js
 !packages/cloudflare-frameworks/src/nextjs/wrangler-stub/*.js
 !packages/cloudflare-*/src/**/*.d.ts
-!fixtures/**/*.d.ts
-!fixtures/**/*.js
+!packages/frontend-frameworks/fixtures/**/*.d.ts
+!packages/frontend-frameworks/fixtures/**/*.js
 
 .attest
 .cache
 .turbo
 coverage
 test-results
-.external
 .bundle-benchmark
 packages/alchemy/docs
 .sonda
@@ -67,13 +73,30 @@ examples/cloudflare-worker/src/scratch.ts
 /packages/alchemy/README.md
 
 !/packages/alchemy/bin/cli.js
-.vendor/*
+!/packages/alchemy/bin/alchemy.js
+!/packages/alchemy/bin/exec.js
+!/packages/alchemy/bin/register-dev-mode.js
+!/packages/alchemy/bin/register-oxc.js
 .tmp
 # the lockfile-pinning test fixture is a checked-in lockfile, not a generated one
-!packages/alchemy/test/AWS/Lambda/fixtures/lockfile-pinning/pnpm/pnpm-lock.yaml
-!.vendor/distilled
-!.vendor/floci
+!packages/integration-tests/test/AWS/Lambda/fixtures/lockfile-pinning/pnpm/pnpm-lock.yaml
 
 .ai-workspace/
 /processes/
 .probe
+!packages/cloudflare/src/Workers/worker-module.d.ts
+!packages/git/src/worker-module.d.ts
+!packages/cloudflare/src/globals.d.ts
+!packages/gcp/src/globals.d.ts
+!packages/aws/src/globals.d.ts
+!packages/kubernetes/src/globals.d.ts
+!packages/fly/src/globals.d.ts
+!packages/github/src/globals.d.ts
+!packages/stripe/src/globals.d.ts
+!packages/hetzner/src/globals.d.ts
+!packages/neon/src/globals.d.ts
+!packages/railway/src/globals.d.ts
+
+# pkg pack output (CI artifact hand-off)
+.pkg
+

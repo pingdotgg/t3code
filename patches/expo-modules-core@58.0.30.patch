@@ -1,0 +1,42 @@
+diff --git a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+index c732ab4..2e3f40e 100644
+--- a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
++++ b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+@@ -3,6 +3,7 @@ package expo.modules.kotlin.views
+ import android.content.Context
+ import android.graphics.Canvas
+ import android.widget.LinearLayout
++import androidx.core.view.OneShotPreDrawListener
+ import androidx.annotation.UiThread
+ import com.facebook.react.uimanager.BackgroundStyleApplicator
+ import com.facebook.react.uimanager.StateWrapper
+@@ -47,12 +48,27 @@ abstract class ExpoView(
+     layout(left, top, right, bottom)
+   }
+ 
++  private var isLayoutScheduled = false
++
+   override fun requestLayout() {
+     super.requestLayout()
+-    if (shouldUseAndroidLayout) {
++    if (shouldUseAndroidLayout && !isLayoutScheduled) {
+       // We need to force measure and layout, because React Native doesn't do it for us.
+-      post { measureAndLayout() }
++      // A posted layout runs after the frame being prepared is drawn, so a view that changes in a
++      // mount would show unlaid-out content for a frame. The pre-draw listener lays it out before
++      // that frame instead; the post covers a request that no frame follows.
++      isLayoutScheduled = true
++      OneShotPreDrawListener.add(this) { runScheduledLayout() }
++      post { runScheduledLayout() }
++    }
++  }
++
++  private fun runScheduledLayout() {
++    if (!isLayoutScheduled) {
++      return
+     }
++    isLayoutScheduled = false
++    measureAndLayout()
+   }
+ 
+   override fun forceLayout() {

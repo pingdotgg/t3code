@@ -1,8 +1,18 @@
-import { exportState, InMemoryService, type ResourceState } from "@/State";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
+import {
+  exportState,
+  InMemoryService,
+  State,
+  type ResourceState,
+  type StateService,
+} from "@/State";
 
-describe("exportState", () => {
+/** The store under test is provided as the `State` service for one call. */
+const withState = <A, E, R>(state: StateService, effect: Effect.Effect<A, E, R>) =>
+  Effect.provideService(effect, State, Effect.succeed(state));
+
+describe("exportState", { tags: ["unit", "local"] }, () => {
   it.effect("exports every stack/stage/resource as one document", () =>
     Effect.gen(function* () {
       const state = yield* InMemoryService({
@@ -22,12 +32,10 @@ describe("exportState", () => {
         },
       });
 
-      const exported = yield* exportState(state);
+      const exported = yield* withState(state, exportState());
 
       // Deterministic order: stack, then stage, then FQN.
-      expect(
-        exported.resources.map((r) => `${r.stack}/${r.stage}/${r.fqn}`),
-      ).toEqual([
+      expect(exported.resources.map((r) => `${r.stack}/${r.stage}/${r.fqn}`)).toEqual([
         "app-east/dev/Database",
         "app-east/dev/WebServer",
         "app-east/prod/WebServer",
@@ -36,8 +44,7 @@ describe("exportState", () => {
 
       // Records are the same values `state.get` returns — props/attr intact.
       const webServer = exported.resources.find(
-        (r) =>
-          r.stack === "app-east" && r.stage === "dev" && r.fqn === "WebServer",
+        (r) => r.stack === "app-east" && r.stage === "dev" && r.fqn === "WebServer",
       );
       expect(webServer?.state).toEqual(
         yield* state.get({ stack: "app-east", stage: "dev", fqn: "WebServer" }),
@@ -52,11 +59,9 @@ describe("exportState", () => {
         "app-west": { dev: { B: resource("B", {}) } },
       });
 
-      const exported = yield* exportState(state, { stack: "app-west" });
+      const exported = yield* withState(state, exportState({ stack: "app-west" }));
 
-      expect(exported.resources.map((r) => `${r.stack}/${r.fqn}`)).toEqual([
-        "app-west/B",
-      ]);
+      expect(exported.resources.map((r) => `${r.stack}/${r.fqn}`)).toEqual(["app-west/B"]);
     }),
   );
 
@@ -69,21 +74,24 @@ describe("exportState", () => {
         },
       });
 
-      const exported = yield* exportState(state, {
-        stack: "app",
-        stage: "prod",
-      });
+      const exported = yield* withState(
+        state,
+        exportState({
+          stack: "app",
+          stage: "prod",
+        }),
+      );
 
-      expect(
-        exported.resources.map((r) => `${r.stack}/${r.stage}/${r.fqn}`),
-      ).toEqual(["app/prod/B"]);
+      expect(exported.resources.map((r) => `${r.stack}/${r.stage}/${r.fqn}`)).toEqual([
+        "app/prod/B",
+      ]);
     }),
   );
 
   it.effect("returns an empty document for an empty store", () =>
     Effect.gen(function* () {
       const state = yield* InMemoryService({});
-      expect(yield* exportState(state)).toEqual({ resources: [] });
+      expect(yield* withState(state, exportState())).toEqual({ resources: [] });
     }),
   );
 
@@ -92,12 +100,12 @@ describe("exportState", () => {
       const state = yield* InMemoryService({
         app: { dev: { A: resource("A", {}) } },
       });
-      expect(yield* exportState(state, { stack: "nope" })).toEqual({
+      expect(yield* withState(state, exportState({ stack: "nope" }))).toEqual({
         resources: [],
       });
-      expect(
-        yield* exportState(state, { stack: "app", stage: "nope" }),
-      ).toEqual({ resources: [] });
+      expect(yield* withState(state, exportState({ stack: "app", stage: "nope" }))).toEqual({
+        resources: [],
+      });
     }),
   );
 
@@ -119,17 +127,14 @@ describe("exportState", () => {
           request.fqn === "A" ? Effect.succeed(undefined) : inner.get(request),
       };
 
-      const exported = yield* exportState(racy);
+      const exported = yield* withState(racy, exportState());
 
       expect(exported.resources.map((r) => r.fqn)).toEqual(["B"]);
     }),
   );
 });
 
-const resource = (
-  fqn: string,
-  attr: Record<string, unknown>,
-): ResourceState => ({
+const resource = (fqn: string, attr: Record<string, unknown>): ResourceState => ({
   resourceType: "test:resource",
   namespace: undefined,
   fqn,

@@ -1,15 +1,11 @@
+import type { Toucan } from "toucan-js";
+import type { PerformanceTimer } from "../../../../shared/performance.ts";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { InternalServerErrorResponse } from "../../../../shared/responses.ts";
-import type { PerformanceTimer } from "../../../../shared/performance.ts";
 import type { Analytics } from "../analytics.ts";
-import type { Toucan } from "toucan-js";
 
-export function handleError(
-  sentry: Toucan | undefined,
-  analytics: Analytics,
-  err: unknown,
-) {
+export function handleError(sentry: Toucan | undefined, analytics: Analytics, err: unknown) {
   try {
     const response = new InternalServerErrorResponse(err as Error);
 
@@ -18,6 +14,7 @@ export function handleError(
       sentry.captureException(err);
     }
 
+    analytics.setData({ servedBy: "error" });
     if (err instanceof Error) {
       analytics.setData({ error: err.message });
     }

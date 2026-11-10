@@ -25,7 +25,7 @@ configuration lives on `.make()`, not here:
 
 ```typescript
 // src/Sandbox.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Effect from "effect/Effect";
 
 export class Sandbox extends Cloudflare.Container<
@@ -49,7 +49,7 @@ implementation second:
 ```typescript
 // src/Sandbox.runtime.ts
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Sandbox } from "./Sandbox.ts";
 
 export default Sandbox.make(
@@ -73,13 +73,12 @@ through the typed handle.
 
 ## Run it from a Durable Object
 
-Yield the class inside a DO's init phase and provide
-`Cloudflare.Containers.layer` — that layer binds, starts, and
-monitors the container, then hands you a running instance:
+Yield the class inside a DO's Construction phase. That binds the
+container to the DO and hands you its handle, without starting it:
 
 ```typescript
 // src/Agent.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Sandbox } from "./Sandbox.ts";
 
@@ -89,17 +88,24 @@ export default class Agent extends Cloudflare.DurableObject<Agent>()(
     const sandbox = yield* Sandbox;
 
     return Effect.gen(function* () {
+      const start = sandbox.start({ enableInternet: true });
       return {
-        ping: () => sandbox.ping(),
+        ping: () => start.pipe(Effect.andThen(sandbox.ping())),
       };
     });
-  }).pipe(
-    Effect.provide(
-      Cloudflare.Containers.layer(Sandbox, { enableInternet: true }),
-    ),
-  ),
+  }),
 ) {}
 ```
+
+`start` is idempotent: it starts the container unless it is already
+running, and concurrent calls start it once, so call it at the top of
+each operation. RPC methods and `getTcpPort` wait until the container's
+port accepts connections, but never start it.
+
+:::note
+Stopping, sleeping, crash handling and snapshots are covered in
+[Container lifecycle](/cloudflare/compute/container-lifecycle).
+:::
 
 Importing `Sandbox` (the class) does not pull in the runtime file —
 it gets tree-shaken out of the DO's bundle. A Worker then binds
@@ -125,10 +131,11 @@ export default Alchemy.Stack(
 );
 ```
 
-On deploy, alchemy bundles the entrypoint, builds the Docker image,
-pushes it to Cloudflare's managed registry, and reconciles the
-application's scaling and runtime configuration — the first deploy
-takes a minute or two longer while the registry is provisioned.
+On deploy, alchemy bundles the entrypoint, builds and pushes the Docker
+image as needed, and reconciles the application's scaling and runtime
+configuration. The first deploy takes a minute or two longer while the
+registry is provisioned. Builds are [cached by default](#cached-builds-by-default):
+a matching image can be reused from the registry without invoking Docker.
 
 ## Proxy HTTP to a container port
 
@@ -143,6 +150,7 @@ const { fetch } = yield* sandbox.getTcpPort(3000);
 return {
   hello: () =>
     Effect.gen(function* () {
+      yield* sandbox.start({ enableInternet: true });
       const response = yield* fetch(
         HttpClientRequest.get("http://container/"),
       );
@@ -151,15 +159,16 @@ return {
 };
 ```
 
-The returned `fetch` retries with backoff while the container is
-still booting, so you don't coordinate readiness yourself.
+The returned `fetch` waits until the port accepts connections, so you
+don't coordinate readiness yourself. It never starts the container:
+call `start` first.
 
 ## Process scope vs request scope
 
 Unlike Workers, a Container is a **real process** — and that changes
 what the instance scope means. The bundled program runs under a root
 scope that closes when the process shuts down gracefully, so
-resources acquired at init (a connection kept warm across requests,
+resources acquired in the constructor (a connection kept warm across requests,
 a background consumer) are genuinely released on exit. Serverless
 runtimes only approximate this: workerd never closes its instance
 scope at all, and Lambda gets a best-effort 500 ms SIGTERM window at
@@ -169,7 +178,7 @@ process, so treat instance-level cleanup as best-effort.
 Each incoming request to the container's HTTP server still gets its
 own request `Scope`, released when the response settles — the same
 per-event contract as every other runtime. See
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope)
 for the model across all runtimes.
 
 ## Bring your own image
@@ -199,6 +208,98 @@ for example a digest reference pushed by CI, like
 `registry.cloudflare.com/<accountId>/app@sha256:...` — alchemy
 deploys the reference as-is and skips the docker pull and push
 entirely.
+
+alchemy pulls an `image` as `linux/amd64` on every deploy and every
+`alchemy dev` start, so a mutable tag like `:latest` picks up a newly
+pushed image. An image that is only in your local Docker, built on
+your machine or loaded with `docker load`, has no registry to pull
+from, so alchemy uses the local copy:
+
+```typescript
+// docker build --platform linux/amd64 -t local-only/app:dev .
+export class App extends Cloudflare.Container<App>()("App", {
+  image: "local-only/app:dev",
+}) {}
+```
+
+Build it for `linux/amd64`, the platform Cloudflare runs. When an
+image can be neither pulled nor found locally, the error names the
+image and the `docker login` or `docker build` command that fixes it.
+The tag is the image's identity, so give each build its own tag to
+redeploy it.
+
+## Cached builds by default
+
+Dockerfile builds, inline Dockerfiles, and Effect-native `main` builds use
+registry caching without extra configuration:
+
+```typescript
+export class Web extends Cloudflare.Container<Web>()("Web", {
+  context: `${import.meta.dirname}/context`,
+}) {}
+```
+
+The default repository is
+`registry.cloudflare.com/<account-id>/<application-physical-name>`.
+The generated physical name includes the stack, stage, and resource-instance
+identity. Updates to that application within the stage can reuse published
+images, including when reverting to previously built inputs. Replacement or
+destroy/recreate can change the physical name and start a new cache.
+
+This is resource-specific caching within a stage, not one shared repository
+for every container. To reuse images across stages or applications, choose
+a common `publish.repository` as shown below.
+
+:::caution[Pin external build inputs]
+Pin base images and downloaded dependencies. A changed upstream image tag or
+package download is outside the build context and cannot invalidate its
+content hash, so a matching cached image may still be reused.
+:::
+
+## Share published images across stages
+
+Set `publish.repository` to choose a destination repository shared by
+applications and stages in the same Cloudflare account:
+
+```typescript
+export class Web extends Cloudflare.Container<Web>()("Web", {
+  context: `${import.meta.dirname}/context`,
+  publish: { repository: "web" },
+}) {}
+```
+
+`"web"` is the repository name, not a source image, application name,
+registry host, or complete image reference. Alchemy lowercases it and adds
+the configured account ID. With the default registry host, a build uses:
+
+```text
+Published build: registry.cloudflare.com/<account-id>/web:<build-hash>
+Build cache:     registry.cloudflare.com/<account-id>/web:buildcache
+Deployed image:  registry.cloudflare.com/<account-id>/web@sha256:<manifest-digest>
+```
+
+The build hash identifies the inputs; the manifest digest identifies the
+published artifact. Stages using the same repository and matching build
+inputs reuse the published image without invoking Docker. Changed inputs
+produce a new hash tag in that repository and can reuse its shared inline
+build-layer cache. Each stage still has its own Container application,
+runtime settings, and running instances; only images and build layers are shared.
+
+All builds targeting a repository import reusable layers from its
+`:buildcache` tag, even when their complete input hashes differ. That tag
+points to the latest exported inline cache, not an aggregate of every image
+ever published to the repository. A finished-image cache hit leaves the
+layer-cache tag unchanged. The Container deploys the immutable digest, not
+the mutable `buildcache` tag.
+
+For an Effect-native Container, put `publish` in the props passed to
+`.make()`, alongside `main`. Omitting `publish` keeps the default cached,
+application-specific repository.
+
+For a pre-built external `image`, `publish.repository` chooses where it is
+re-published, but does not enable finished-image cache reuse. Images already
+in the target registry keep their existing repository instead of being
+copied into the requested one.
 
 ## Configure the container with `env`
 
@@ -266,7 +367,7 @@ the connection once, then bind it:
 
 ```typescript
 // src/Db.ts
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Effect from "effect/Effect";
 
 export const Connection = Effect.gen(function* () {
@@ -284,10 +385,10 @@ export const Connection = Effect.gen(function* () {
 
 ```typescript
 // src/Api.runtime.ts
-import * as Prisma from "alchemy/Prisma";
-import * as SQL from "alchemy/SQL/Postgres";
+import * as Prisma from "@alchemy.run/prisma";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Api } from "./Api.ts";
 import { Connection } from "./Db.ts";
 
@@ -316,7 +417,7 @@ Start it with outbound networking, or the container never reaches the
 database at all:
 
 ```typescript
-Effect.provide(Cloudflare.Containers.layer(Api, { enableInternet: true }))
+yield* api.start({ enableInternet: true });
 ```
 
 ## Connect an arbitrary image to a database
@@ -331,7 +432,7 @@ behalf:
 
 ```typescript
 // src/Web.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Connection } from "./Db.ts";
 
@@ -382,18 +483,18 @@ Alchemy does not go that way:
 2. A unix socket on the host forwards to that port.
 3. The workerd `<name>-proxy` sidecar bind-mounts the socket and maps
    `host.docker.localhost` to `127.0.0.1` in the shared netns.
-4. A listener in that netns accepts `127.0.0.1:<port>` and forwards
-   through the socket.
+4. A Docker-managed helper shares that network namespace, accepts
+   `127.0.0.1:<port>`, and forwards through the socket. Alchemy waits
+   for its listeners before completing container startup and removes
+   the helper when the container is deleted or the dev runtime stops.
 
 The container talks to itself. The socket crosses the boundary. UFW
 never sees a SYN to `172.17.0.1`.
 
-If the unix-socket path cannot attach (missing `nsenter`, EPERM),
-Alchemy logs this UFW hole — do not set `DEFAULT_INPUT_POLICY=ACCEPT`:
-
-```
-sudo ufw allow from 172.16.0.0/12 to any port <prisma-or-dev-ports> proto tcp
-```
+The helper uses `node:22-alpine`, which Docker downloads on first use.
+Normal Docker access is sufficient; Alchemy does not require host-side
+`nsenter` permissions. If the helper fails to start, container startup
+reports the error.
 
 Neon and PlanetScale have no local emulator: even under `alchemy
 dev` the URL is a cloud host (`*.neon.tech`, `*.psdb.cloud`) and the
@@ -462,13 +563,13 @@ The Durable Object class name defaults to the binding name (the
 differently. The type parameter (`Container<Sandbox>`) is the class
 from `worker.ts` above — it types `env.Sandbox` as
 `DurableObjectNamespace<Sandbox>` through
-[`InferEnv`](/cloudflare/compute/workers#typed-env-for-async-workers),
+[`InferEnv`](/cloudflare/compute/workers#async-workers),
 so the handler reaches the container with full types:
 
 ```typescript
 // src/worker.ts
 import { getContainer } from "@cloudflare/containers";
-import type * as Cloudflare from "alchemy/Cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type { Worker } from "../alchemy.run.ts";
 
 export default {
@@ -482,6 +583,122 @@ Only image-backed containers (`image`, or `context`/`dockerfile`)
 can be bound this way. An effectful (`main`) container's runtime is
 provided by its `.make()` Layer, which needs an Effect-native
 Durable Object host.
+
+## Several images in one Durable Object
+
+A Durable Object can choose its image at runtime. Declare one Container
+per image with `schedulingPolicy: "durable_object"`:
+
+```typescript
+export class Node extends Cloudflare.Container<Node>()("Node", {
+  schedulingPolicy: "durable_object",
+  image: "node:24-slim",
+}) {}
+
+export class Python extends Cloudflare.Container<Python>()("Python", {
+  schedulingPolicy: "durable_object",
+  dockerfile: "./python/Dockerfile",
+  context: "./python",
+}) {}
+```
+
+One Container is one image: `image` copies a registry image, and
+`context`/`dockerfile` builds one. Alchemy publishes it to Cloudflare's
+registry and prepares it before the Worker is uploaded.
+
+Bind both in the Durable Object. Each handle's `start()` starts its own
+image:
+
+```typescript
+export class Agent extends Cloudflare.DurableObject<Agent>()(
+  "Agent",
+  Effect.gen(function* () {
+    const node = yield* Node;
+    const python = yield* Python;
+    return Effect.succeed({
+      run: (cmd: string[]) =>
+        Effect.gen(function* () {
+          yield* node.start({
+            instance: "lite",
+            entrypoint: ["sleep", "infinity"],
+            enableInternet: false,
+          });
+          return yield* (yield* node.exec(cmd)).output();
+        }).pipe(Effect.scoped),
+    });
+  }),
+) {}
+```
+
+Cloudflare gives a Durable Object class one container application, and
+each object one container. Every binding adds its image to the class's
+application under the Container's id. The handles control the same
+container, so start one image at a time and `destroy()` before you
+switch.
+
+Application-wide settings — `ssh`, `authorizedKeys`, and
+`observability` — can be declared on any of the class's Containers.
+Two Containers that declare different values fail the deploy with
+`ContainerApplicationSettingsConflict`.
+
+A Container can be bound by several Durable Object classes. Each class adds
+the image to its own application.
+
+## Several images on an async Worker
+
+A plain Durable Object class lists its Containers on its binding. A
+Container can back several classes:
+
+```typescript
+// alchemy.run.ts
+const Node = Cloudflare.Container("Node", {
+  schedulingPolicy: "durable_object",
+  image: "node:24-slim",
+});
+
+const Python = Cloudflare.Container("Python", {
+  schedulingPolicy: "durable_object",
+  image: "python:3.13-slim",
+});
+
+const Rust = Cloudflare.Container("Rust", {
+  schedulingPolicy: "durable_object",
+  image: "rust:1.90-slim",
+});
+
+export const Worker = Cloudflare.Worker("App", {
+  main: "./src/worker.ts",
+  env: {
+    AGENT: Cloudflare.DurableObject("Agent", { containers: [Node, Python] }),
+    REVIEWER: Cloudflare.DurableObject("Reviewer", { containers: [Node, Rust] }),
+  },
+});
+```
+
+Each class gets its own container application. The class finds each
+image in `ctx.container.images` under its Container's id:
+
+```typescript
+// src/worker.ts
+import { DurableObject } from "cloudflare:workers";
+
+export class Agent extends DurableObject {
+  async run(cmd: string[]) {
+    const container = this.ctx.container!;
+    if (!container.running) {
+      container.start({
+        image: container.images.Node,
+        entrypoint: ["sleep", "infinity"],
+        enableInternet: false,
+      });
+    }
+    return (await container.exec(cmd)).output();
+  }
+}
+```
+
+Only fleet Containers bind directly in `env`. A Durable Object-managed
+Container placed there fails with `DurableObjectContainerBindingError`.
 
 ## ContainerApplication
 
@@ -532,6 +749,8 @@ The full walkthrough:
 
 Related:
 
+- [Container lifecycle](/cloudflare/compute/container-lifecycle) — start,
+  stop, sleep, and snapshot a container.
 - [Durable Objects](/cloudflare/compute/durable-objects) — every container
   is fronted by one.
 - [Workers](/cloudflare/compute/workers) — the entrypoint that reaches the

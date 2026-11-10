@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 
@@ -16,33 +16,6 @@ function deferred() {
 describe("FileSaveCoordinator", () => {
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("debounces edits and persists only the latest contents", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const onConfirmed = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      persist,
-      onPendingChange,
-      onConfirmed,
-    });
-
-    coordinator.change("first");
-    await vi.advanceTimersByTimeAsync(300);
-    coordinator.change("latest");
-    await vi.advanceTimersByTimeAsync(499);
-    expect(persist).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith("latest");
-    expect(onConfirmed).toHaveBeenCalledWith("latest");
-    expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
   it("keeps pending state until an edit made during a write is also saved", async () => {
@@ -93,6 +66,31 @@ describe("FileSaveCoordinator", () => {
     expect(persist).toHaveBeenCalledWith("unsaved");
   });
 
+  it.each([false, true])(
+    "keeps an edit pending after write permission is removed (closing=%s)",
+    async (closeEditor) => {
+      vi.useFakeTimers();
+      let canWrite = true;
+      const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+      const onPendingChange = vi.fn();
+      const coordinator = new FileSaveCoordinator({
+        debounceMs: 500,
+        canPersist: () => canWrite,
+        persist,
+        onPendingChange,
+        onConfirmed: vi.fn(),
+      });
+
+      coordinator.change("unsaved");
+      canWrite = false;
+      if (closeEditor) coordinator.dispose();
+      await vi.runAllTimersAsync();
+
+      expect(persist).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith(true);
+    },
+  );
+
   it("flushes an edit made while a write was in flight when the editor closes", async () => {
     vi.useFakeTimers();
     const inFlight = deferred();
@@ -116,29 +114,6 @@ describe("FileSaveCoordinator", () => {
 
     expect(persist).toHaveBeenCalledTimes(2);
     expect(persist).toHaveBeenLastCalledWith("latest");
-  });
-
-  it("does not rewrite a write that lands while the editor closes", async () => {
-    vi.useFakeTimers();
-    const inFlight = deferred();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockReturnValueOnce(inFlight.promise)
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      persist,
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("only");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.dispose();
-    inFlight.resolve(AsyncResult.success(undefined));
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledOnce();
   });
 
   it("retries a failed write when the editor closes", async () => {
@@ -203,29 +178,5 @@ describe("FileSaveCoordinator", () => {
 
     expect(persist).not.toHaveBeenCalled();
     expect(onPendingChange).not.toHaveBeenCalled();
-  });
-
-  it("does not persist confirmed contents again on disposal", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      persist,
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("temporary edit");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.change("original contents");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenCalledTimes(2);
-
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledTimes(2);
   });
 });

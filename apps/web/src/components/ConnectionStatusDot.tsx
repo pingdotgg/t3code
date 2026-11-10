@@ -3,7 +3,6 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-/** Canonical connection-phase → dot color mapping shared by every status dot. */
 export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): string {
   switch (phase) {
     case "connected":
@@ -18,7 +17,6 @@ export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): 
   }
 }
 
-/** Ping halo for transitional phases; null renders no ping. */
 export function connectionPhasePingClassName(phase: EnvironmentConnectionPhase): string | null {
   return phase === "connecting" || phase === "reconnecting" ? "bg-warning/60 duration-2000" : null;
 }
@@ -39,7 +37,7 @@ export function ConnectionStatusDot({
       {pingClassName ? (
         <span
           className={cn(
-            "absolute inline-flex h-full w-full animate-status-ping rounded-full",
+            "absolute inline-flex h-full w-full motion-safe:animate-status-ping rounded-full",
             pingClassName,
           )}
         />
@@ -69,7 +67,7 @@ export function ConnectionStatusDot({
   return (
     <Tooltip>
       <TooltipTrigger render={dot} />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {tooltipText}
       </TooltipPopup>
     </Tooltip>

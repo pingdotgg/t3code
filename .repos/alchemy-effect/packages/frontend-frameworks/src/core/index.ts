@@ -43,11 +43,7 @@ export type {
   DeployTargetServer,
   DeployTargetServices,
 } from "./DeployTarget.ts";
-export {
-  isInsideDevChild,
-  isJsonSerializable,
-  runDevChild,
-} from "./DevChild.ts";
+export { isInsideDevChild, isJsonSerializable, runDevChild } from "./DevChild.ts";
 export type { DevChildOptions, DevChildPayload } from "./DevChild.ts";
 export { findEphemeralPort, resolveViteDevPort } from "./DevPort.ts";
 export {
@@ -66,6 +62,12 @@ export type {
   NodeServeNotFoundHandling,
   WriteNodeServeEntryOptions,
 } from "./NodeServe.ts";
+export {
+  NEON_SERVE_ENTRY_FILE_NAME,
+  makeNeonServeEntrySource,
+  finishNeonOutput,
+  makeNeonTarget,
+} from "./NeonServe.ts";
 export { Framework, FrameworkError } from "./Framework.ts";
 export type {
   FrameworkBuildOptions,

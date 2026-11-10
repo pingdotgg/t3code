@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -220,7 +220,6 @@ export default Effect.gen(function* () {
       AND json_type(payload_json, '$.model') IS NOT NULL
   `;
 
-  // Backfill thread.created events that predate the model field entirely
   yield* sql`
     UPDATE orchestration_events
     SET payload_json = json_set(

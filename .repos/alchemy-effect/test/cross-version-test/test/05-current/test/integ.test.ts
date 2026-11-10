@@ -1,6 +1,6 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
 
@@ -17,8 +17,8 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 
 // NOTE: this deploys via the account-wide Cloudflare state store, which must be
 // at the version matching this folder's alchemy (v7 for current). Run
-// `bun run alc -- cloudflare bootstrap --profile <p>` in this folder first, or
-// drive everything through ../../run.ts which bootstraps per stage.
+// `bun run alc -- provider cloudflare bootstrap --profile <p>` in this folder
+// first, or drive everything through ../../run.ts which bootstraps per stage.
 const stack = beforeAll(deploy(Stack), { timeout: 300_000 });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 300_000 });
 
@@ -44,9 +44,7 @@ test(
     const res = yield* getOk(url);
     expect(res.status).toBe(200);
 
-    const body = yield* Effect.tryPromise(
-      () => res.json() as Promise<{ marker: string }>,
-    );
+    const body = yield* Effect.tryPromise(() => res.json() as Promise<{ marker: string }>);
     expect(body.marker).toBe(MARKER);
   }),
   { timeout: 120_000 },

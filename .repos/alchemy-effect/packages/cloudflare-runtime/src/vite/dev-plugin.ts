@@ -1,3 +1,9 @@
+import * as NodePath from "node:path";
+import type * as Context from "effect/Context";
+import * as vite from "vite";
+import type { RuntimeServices } from "../core/index.ts";
+import { parseStaticRouting } from "../internal/workers-shared/shared/configuration/parseStaticRouting.ts";
+import type { StaticRouting } from "../internal/workers-shared/shared/types.ts";
 import type { ExportTypes } from "../rolldown/export-types.ts";
 import {
   haveExportTypesChanged,
@@ -8,22 +14,20 @@ import { parseViteEnvironments } from "../rolldown/options.ts";
 import type { OptionsApi } from "../rolldown/plugins/index.ts";
 import { workerEntryId } from "../rolldown/plugins/index.ts";
 import { resolvePluginApi } from "../rolldown/utils.ts";
-import type { RuntimeServices } from "../core/index.ts";
-import type * as Context from "effect/Context";
-import * as NodeHttp from "node:http";
-import { URL as NodeURL } from "node:url";
-import * as vite from "vite";
+import { VITE_ASSET_REQUEST } from "./assets/ViteAssets.ts";
 import { DistilledDevEnvironment } from "./dev-environment.ts";
 import type { ServerHandle } from "./dev-server.ts";
 import { configuredExportTypes, mergeExportTypes } from "./export-types.ts";
-import { resolveForwardedHost } from "./forwarded-host.ts";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
 import { handleWebSocket } from "./websockets.ts";
+import { forwardWorkerRequest, workerRequestUrl } from "./worker-request.ts";
 
 let context: Context.Context<RuntimeServices> | undefined;
 
 export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
   const environmentNames = parseViteEnvironments(options);
+  const isWorkerEnvironment = (environment: { name: string } | undefined) =>
+    environment === undefined || environmentNames.includes(environment.name);
   const configured = configuredExportTypes(options);
   // Which exports the running Worker was generated for. Kept across dev server
   // restarts so a restart does not undo what was detected.
@@ -65,10 +69,7 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
   const plugin: vite.Plugin = {
     name: "distilled-cloudflare:dev",
     configResolved({ plugins }) {
-      optionsApi = resolvePluginApi<OptionsApi>(
-        plugins ?? [],
-        "distilled-cloudflare:options",
-      );
+      optionsApi = resolvePluginApi<OptionsApi>(plugins ?? [], "distilled-cloudflare:options");
     },
     config() {
       const environment: vite.EnvironmentOptions = {
@@ -84,23 +85,37 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
             if (!hasConfigureServerHook(plugin)) {
               return vite.createRunnableDevEnvironment(name, config);
             }
+            // With no Worker entry at all — no `main`, and nothing the app's
+            // config names for the entry environment — workerd serves assets
+            // alone and evaluates nothing, so there is no runtime for these
+            // environments to run modules in. Taking them over anyway would
+            // only strip the app's own server-side dev tooling of the runnable
+            // environment it expects (a framework's `vite dev` rendering, say).
+            if (
+              options.main === undefined &&
+              optionsApi !== undefined &&
+              Object.keys(optionsApi.input()).length === 0
+            ) {
+              return vite.createRunnableDevEnvironment(name, config);
+            }
             return new DistilledDevEnvironment(name, config);
           },
         },
       };
       return {
-        environments: Object.fromEntries(
-          environmentNames.map((name) => [name, environment]),
-        ),
+        environments: Object.fromEntries(environmentNames.map((name) => [name, environment])),
       };
     },
+    // The Worker environments' builds end when the dev server closes. Vite's
+    // bundled dev mode (`experimental.bundledDev`) also builds the client
+    // while serving, which must not take the runtime down with it.
     async buildEnd() {
-      if (!isServerRestarting) {
+      if (!isServerRestarting && isWorkerEnvironment(this.environment)) {
         await close();
       }
     },
     async closeBundle() {
-      if (!isServerRestarting) {
+      if (!isServerRestarting && isWorkerEnvironment(this.environment)) {
         await close();
       }
     },
@@ -117,18 +132,33 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
       if (!optionsApi) {
         throw new Error("Cannot resolve the cloudflare-runtime:options plugin");
       }
-      const inputs = Object.values(optionsApi.input());
+      // Frameworks can register multiple names for the same Worker entry.
+      const inputs = [...new Set(Object.values(optionsApi.input()))];
       if (inputs.length > 1) {
         throw new Error(
           `Expected exactly one entry in the input, got ${inputs.length} entries: ${JSON.stringify(inputs)}`,
         );
       }
-      const { createDefaultContext, startServer } =
-        await import("./dev-server.ts");
+      const { createDefaultContext, startServer } = await import("./dev-server.ts");
       if (!options.context) {
         context ??= await createDefaultContext();
       }
       const [input] = inputs;
+      if (input) {
+        // An entry that can't be resolved fails the dev server, as under
+        // `@cloudflare/vite-plugin`, rather than serving errors.
+        const environment = server.environments[environmentNames[0]!];
+        const resolved =
+          (await environment?.pluginContainer.resolveId(input)) ??
+          (await environment?.pluginContainer.resolveId(
+            NodePath.resolve(server.config.root, input),
+          ));
+        if (!resolved) {
+          throw new Error(
+            `Failed to resolve Worker entrypoint "${input}" for environment "${environmentNames[0]}"`,
+          );
+        }
+      }
       const entryEnvironment = {
         environmentName: environmentNames[0],
         // The module runner imports the generated Worker entry rather than the
@@ -140,9 +170,7 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
       const entryEnvironments = () =>
         environmentNames
           .map((name) => server.environments[name])
-          .filter(
-            (environment) => environment instanceof DistilledDevEnvironment,
-          );
+          .filter((environment) => environment instanceof DistilledDevEnvironment);
 
       const connect = async (address: ServerHandle["address"]) => {
         for (const environment of entryEnvironments()) {
@@ -150,20 +178,41 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
           await environment.connect(address);
         }
       };
+      // Match Cloudflare's Vite plugin: rebuild the dev server's environments,
+      // hot channels and module runners after the runtime recovers. Framework
+      // state may still refer to the crashed process even with the same ports.
+      const onRuntimeRestart = () => {
+        server.config.logger.warn(
+          "The Worker runtime recovered after a crash; restarting the Vite dev server.",
+          { timestamp: true },
+        );
+        if (!handle) return;
+        void server.restart().catch((error: unknown) => {
+          server.config.logger.error(
+            `Failed to restart the Vite dev server after Worker recovery: ${String(error)}`,
+            {
+              error: error instanceof Error ? error : undefined,
+              timestamp: true,
+            },
+          );
+        });
+      };
       handle ??= await startServer(
         options,
         entryEnvironment,
         server,
         options.context ?? context!,
         exportTypes,
+        onRuntimeRestart,
       );
       await connect(handle.address);
       let address = handle.address;
+      let proxySharedSecret = handle.proxySharedSecret;
 
       const bindWebSocket = () => {
         removeUpgradeListener?.();
         removeUpgradeListener = server.httpServer
-          ? handleWebSocket(server.httpServer, address)
+          ? handleWebSocket(server.httpServer, address, proxySharedSecret)
           : undefined;
       };
 
@@ -181,9 +230,11 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
           server,
           options.context ?? context!,
           exportTypes,
+          onRuntimeRestart,
         );
         await connect(handle.address);
         address = handle.address;
+        proxySharedSecret = handle.proxySharedSecret;
         bindWebSocket();
       };
 
@@ -203,13 +254,10 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
           .catch(() => {})
           .then(restartRuntime)
           .catch((error: unknown) => {
-            server.config.logger.error(
-              `Failed to reload the Worker runtime: ${String(error)}`,
-              {
-                error: error instanceof Error ? error : undefined,
-                timestamp: true,
-              },
-            );
+            server.config.logger.error(`Failed to reload the Worker runtime: ${String(error)}`, {
+              error: error instanceof Error ? error : undefined,
+              timestamp: true,
+            });
           });
         return true;
       };
@@ -233,62 +281,48 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
             if (!isExportTypes(data) || !applyExportTypes(data)) {
               return;
             }
-            server.config.logger.info(
-              "Worker exports changed, reloading the Worker runtime.",
-              {
-                timestamp: true,
-              },
-            );
+            server.config.logger.info("Worker exports changed, reloading the Worker runtime.", {
+              timestamp: true,
+            });
           });
         }
       }
 
-      if (!input) {
-        // If there is no input, we are in SPA mode, so we don't need to route requests to the server.
-        return;
+      // An assets-only site (no input) still routes through the runtime, whose
+      // router applies the asset rules; only a Worker takes WebSockets.
+      if (input) bindWebSocket();
+
+      // `runWorkerFirst` routes matching requests to the Worker ahead of Vite's
+      // own middleware (which would otherwise serve a file at that path), as
+      // `@cloudflare/vite-plugin`'s pre-middleware does. The Worker's router
+      // applies the same rules once the request arrives.
+      const staticRouting = input
+        ? resolveStaticRouting(options.worker?.assets?.runWorkerFirst)
+        : undefined;
+      if (staticRouting) {
+        server.middlewares.use(function distilledCloudflareRunWorkerFirst(req, res, next) {
+          if (VITE_ASSET_REQUEST in req) return next();
+          const { pathname } = workerRequestUrl(req.url, "http://localhost");
+          if (
+            matchesStaticRoutingRule(staticRouting.asset_worker ?? [], pathname) ||
+            !matchesStaticRoutingRule(staticRouting.user_worker, pathname)
+          ) {
+            return next();
+          }
+          const url = workerRequestUrl(req.originalUrl ?? req.url, address);
+          forwardWorkerRequest(req, res, url, proxySharedSecret, server.config.logger, next);
+        });
       }
-      bindWebSocket();
+
       return () => {
-        server.middlewares.use(
-          function distilledCloudflareProxyMiddleware(req, res) {
-            const url = new NodeURL(
-              req.originalUrl ?? req.url ?? "/",
-              address.toString(),
-            );
-            const request = NodeHttp.request(url, {
-              method: req.method,
-              headers: {
-                ...req.headers,
-                host: resolveForwardedHost(req.headers, url.host),
-              },
-            });
-            req.pipe(request);
-            request.on("response", (response) => {
-              res.writeHead(response.statusCode ?? 500, response.headers);
-              response.pipe(res);
-            });
-            // Without a listener a connection error is an unhandled `error`
-            // event, which takes down the dev server. Requests in flight while
-            // the Worker runtime is being replaced hit exactly that.
-            request.on("error", (error) => {
-              server.config.logger.error(
-                `Worker request failed: ${error.message}`,
-                {
-                  error,
-                  timestamp: true,
-                },
-              );
-              if (!res.headersSent) {
-                res.writeHead(502, { "content-type": "text/plain" });
-              }
-              res.end("Bad Gateway");
-            });
-          },
-        );
-        if (
-          options.dev?.middlewareOrder === "pre" &&
-          middlewareBoundary !== undefined
-        ) {
+        server.middlewares.use(function distilledCloudflareProxyMiddleware(req, res, next) {
+          // The Worker's own `ASSETS` calls run through Vite's middleware;
+          // one Vite didn't serve must not come back to the Worker.
+          if (VITE_ASSET_REQUEST in req) return next();
+          const url = workerRequestUrl(req.originalUrl ?? req.url, address);
+          forwardWorkerRequest(req, res, url, proxySharedSecret, server.config.logger, next);
+        });
+        if (options.dev?.middlewareOrder === "pre" && middlewareBoundary !== undefined) {
           // Move the proxy middleware from the end of the stack to directly
           // after Vite's internal middlewares, ahead of the post middlewares
           // other plugins registered.
@@ -304,6 +338,23 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
   plugins.push(plugin);
   return plugins;
 }
+
+const resolveStaticRouting = (
+  runWorkerFirst: boolean | ReadonlyArray<string> | undefined,
+): StaticRouting | undefined =>
+  runWorkerFirst === true
+    ? { user_worker: ["/*"] }
+    : Array.isArray(runWorkerFirst) && runWorkerFirst.length > 0
+      ? parseStaticRouting([...runWorkerFirst])
+      : undefined;
+
+/** The glob-only rule matching of the asset worker's static routing. */
+const matchesStaticRoutingRule = (rules: ReadonlyArray<string>, pathname: string) =>
+  rules.some((rule) =>
+    new RegExp(`^${rule.split("*").map(escapeRegex).join(".*")}$`).test(pathname),
+  );
+
+const escapeRegex = (value: string) => value.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 
 const hasConfigureServerHook = (plugin: vite.Plugin): boolean => {
   const hook = plugin.configureServer;

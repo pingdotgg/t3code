@@ -151,7 +151,53 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
       }
     },
   };
-  return { file, preview };
+  return {
+    file,
+    preview,
+    retainAfterHandoff: () => {
+      shared = true;
+    },
+  };
+}
+
+export function nativeViewerErrorMessage(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return /ActivityNotFound|cannot be previewed/i.test(text)
+    ? "No app on this device can show this format. Save or share it to open it elsewhere."
+    : "The file could not be opened. Check the connection and try again.";
+}
+
+export async function openAttachmentInViewer(input: {
+  readonly uri: string;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+}): Promise<void> {
+  const { File } = await import("expo-file-system");
+  const { requireNativeModule } = await import("expo");
+  if (input.signal.aborted) return;
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    if (/^(file|content):/.test(input.uri)) {
+      await new File(input.uri).copy(cached.file);
+    } else {
+      await File.downloadFileAsync(input.uri, cached.file, { signal: input.signal });
+    }
+    if (input.signal.aborted) return;
+    const endHandoff = beginForegroundHandoff();
+    try {
+      await requireNativeModule<{ openFile(uri: string, mimeType: string): Promise<void> }>(
+        "T3NativeControls",
+      ).openFile(
+        cached.file.uri,
+        input.attachment.mimeType.split(";", 1)[0]?.trim() || "application/octet-stream",
+      );
+      cached.retainAfterHandoff();
+    } finally {
+      endHandoff();
+    }
+  } finally {
+    cached.preview.dispose();
+  }
 }
 
 /** The caller owns this cached file until disposal, unless it has been shared with another app. */
@@ -184,7 +230,6 @@ export async function downloadAttachmentForPreview(input: {
   }
 }
 
-/** Downloads original bytes for the native save/share sheet, including inline video responses. */
 export async function downloadAndShareAttachment(input: {
   readonly url: string;
   readonly attachment: AttachmentFileMetadata;
@@ -201,7 +246,6 @@ export async function downloadAndShareAttachment(input: {
   }
 }
 
-/** Shares a cache copy so another app never relies on the lifetime of a composer draft. */
 export async function shareLocalAttachment(input: {
   readonly uri: string;
   readonly attachment: AttachmentFileMetadata;
@@ -222,6 +266,38 @@ export async function shareLocalAttachment(input: {
     if (!input.signal.aborted) {
       await cached.preview.share(input.signal, input.sourceIdentifier);
     }
+  } finally {
+    cached.preview.dispose();
+  }
+}
+
+export async function writeGeneratedAttachmentFile(input: {
+  readonly bytes: Uint8Array;
+  readonly attachment: AttachmentFileMetadata;
+}): Promise<AttachmentPreviewFile> {
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    await cached.file.write(input.bytes);
+    return cached.preview;
+  } catch (error) {
+    cached.preview.dispose();
+    throw error;
+  }
+}
+
+export async function shareGeneratedAttachment(input: {
+  readonly bytes: Uint8Array;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+}): Promise<boolean> {
+  const sharing = await availableSharing(input.signal).catch(() => null);
+  if (sharing === null) return false;
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    if (input.signal.aborted) return false;
+    cached.file.write(input.bytes);
+    await cached.preview.share(input.signal);
+    return true;
   } finally {
     cached.preview.dispose();
   }

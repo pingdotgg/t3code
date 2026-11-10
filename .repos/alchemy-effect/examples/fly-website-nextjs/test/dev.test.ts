@@ -22,13 +22,7 @@ const root = path.resolve(import.meta.dirname, "..");
 // Spawn the CLI entry directly (not through `bun run` / the cli.js
 // launcher) so signals hit the actual CLI process, whose scope teardown
 // kills the dev server and the provider sidecars.
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.ts",
-);
+const alchemyBin = path.join(root, "node_modules", "alchemy", "bin", "alchemy.js");
 // Isolated stage so this suite never fights integ.test.ts (same stack
 // name) over state rows.
 const STAGE = "dev-cli-test";
@@ -82,9 +76,7 @@ const fetchOk = async (
     }
     await Bun.sleep(delayMs);
   }
-  throw new Error(
-    `GET ${url} never returned 2xx (last status: ${last?.status})`,
-  );
+  throw new Error(`GET ${url} never returned 2xx (last status: ${last?.status})`);
 };
 
 /** Extract the stack-output URL the CLI prints on stdout. */
@@ -142,7 +134,8 @@ test(
     // Dev identity: the framework dev server, not Fly. The port is
     // whatever the framework bound — only the URL captured from the CLI's
     // stdout is authoritative.
-    expect(new URL(url).hostname).toBe("localhost");
+    // Next.js advertises the bind address, so accept either loopback name.
+    expect(["localhost", "127.0.0.1"]).toContain(new URL(url).hostname);
     expect(url).not.toContain("example.invalid");
 
     // SSR env parity: GREETING from alchemy.run.ts reaches the dev server.
@@ -151,9 +144,7 @@ test(
     expect(home).toContain(MARKER);
 
     // App Router API route serves through the dev server.
-    const hello = (await (
-      await fetchOk(new URL("/api/hello", url))
-    ).json()) as { hello: string };
+    const hello = (await (await fetchOk(new URL("/api/hello", url))).json()) as { hello: string };
     expect(hello).toEqual({ hello: "world" });
 
     // Static asset from public/.

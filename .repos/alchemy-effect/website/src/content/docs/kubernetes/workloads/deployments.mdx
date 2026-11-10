@@ -1,0 +1,289 @@
+---
+title: Deployments
+description: Run a replicated server on any Kubernetes cluster with Kubernetes.Deployment. Covers names, namespaces, Service types and URLs, replicas, resources, labels, the pod template escape hatch, and Effect servers.
+---
+
+[`Kubernetes.Deployment`](/providers/kubernetes/deployment) is a
+replicated server, running a container image or an HTTP server
+written in Effect. One resource applies three Kubernetes objects:
+
+- a **ServiceAccount** the pods run as,
+- a **Deployment** that keeps `replicas` copies of the container
+  running, and
+- a **Service** that gives them one stable address.
+
+```typescript
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  name: "web",
+  namespace: "apps",
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  replicas: 3,
+  serviceType: "ClusterIP",
+});
+```
+
+## Names
+
+`name` is the name of all three objects. If you omit it, Alchemy
+generates one from the stack, stage, and logical ID, lowercased and
+limited to characters Kubernetes accepts. Either way the name is
+fixed at creation. Later changes to `name` are ignored, which keeps
+the Service address stable for everything that calls it.
+
+Every object also carries the label
+`app.kubernetes.io/name: <name>`, which the Service uses to select
+the pods.
+
+## Namespaces
+
+`namespace` defaults to `default`. The namespace must already exist.
+Create it in the same Stack with a
+[Manifest](/kubernetes/objects/manifests) and pass the Manifest's
+`name` attribute so Alchemy orders the Deployment after it:
+
+```typescript
+const ns = yield* Kubernetes.Manifest("AppsNamespace", {
+  cluster,
+  manifest: { apiVersion: "v1", kind: "Namespace", metadata: { name: "apps" } },
+});
+
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  namespace: ns.name,
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+});
+```
+
+Changing the namespace moves the workload. Alchemy applies the
+objects in the new namespace and deletes them from the old one.
+
+## Ports and Services
+
+`port` (default `3000`) is the container port and the Service port.
+A Deployment exposes one port. `serviceType` picks how the Service
+is reachable:
+
+- **`"LoadBalancer"`** is the default. The Service is reachable from
+  outside the cluster through a cloud load balancer. `url` is
+  `http://<hostname or IP>[:port]`.
+- **`"NodePort"`** is reachable on each node's IP at a port
+  Kubernetes assigns. `url` is `undefined`.
+- **`"ClusterIP"`** is reachable inside the cluster only. `url` is
+  `undefined`.
+
+For a `LoadBalancer` Service, the deploy waits up to about three
+minutes for the cluster to publish the load balancer's hostname or
+IP, then sets `url`. The port is part of the URL unless it's `80`.
+If no address appears in time, the deploy still succeeds and `url`
+is `undefined`. The next update picks it up.
+
+Clusters without a load balancer controller never assign an
+address. That includes kind, minikube, and most bare-metal clusters.
+Use `ClusterIP` or `NodePort` there, or install a controller such as
+[cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind)
+or [MetalLB](https://metallb.io). Inside the cluster, a Service is
+reachable at `http://<serviceName>.<namespace>.svc.cluster.local:<port>`.
+
+Pass `serviceAnnotations` for load balancer settings such as scheme
+or target type:
+
+```typescript
+serviceAnnotations: {
+  "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
+},
+```
+
+Some platforms set their own defaults for `LoadBalancer` Services.
+On [Amazon EKS](/kubernetes/clusters/eks), the default is an
+internet-facing Network Load Balancer.
+
+## Replicas, resources, command, and args
+
+```typescript
+const api = yield* Kubernetes.Deployment("Api", {
+  cluster,
+  image: "ghcr.io/acme/api:v3",
+  port: 8080,
+  replicas: 3,
+  resources: {
+    requests: { cpu: "250m", memory: "256Mi" },
+    limits: { memory: "512Mi" },
+  },
+  command: ["/app/server"],
+  args: ["--log-level", "info"],
+});
+```
+
+`replicas` defaults to `1`. `resources` uses Kubernetes quantities.
+`command` overrides the image's entrypoint and `args` its arguments.
+
+## Environment variables
+
+`env` sets container environment variables. Values can be Outputs
+from other resources, and non-string values are JSON-encoded. Alchemy
+also sets `PORT`, `ALCHEMY_STACK_NAME`, `ALCHEMY_STAGE`, and
+`ALCHEMY_PHASE`. Your `env` wins on conflicts. See
+[Configuration & bindings](/kubernetes/workloads/bindings).
+
+## Labels
+
+`labels` are merged over the generated `app.kubernetes.io/name`
+label and applied to the Deployment, its pods, and the Service. They
+are also part of the Deployment's pod selector:
+
+```typescript
+labels: { "app.kubernetes.io/part-of": "shop", tier: "frontend" },
+```
+
+Kubernetes doesn't allow a Deployment's selector to change, so set
+`labels` before the first deploy. Changing them later fails with
+`spec.selector: … field is immutable`. To change them anyway, give
+the resource a new logical ID and a new `name`. Alchemy creates the
+new Deployment and deletes the old one. For labels that shouldn't be
+part of the selector, set them on the pod template instead, as
+described in the next section.
+
+## Tune the pod template
+
+`podTemplate` is an escape hatch for pod-level settings Alchemy
+doesn't model. It's a partial Kubernetes
+[`PodTemplateSpec`](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-template-v1/#PodTemplateSpec)
+merged over the generated one. Objects merge key by key, while
+arrays and primitive values replace what was there.
+
+```typescript
+const api = yield* Kubernetes.Deployment("Api", {
+  cluster,
+  image: "ghcr.io/acme/api:v3",
+  port: 8080,
+  podTemplate: {
+    metadata: {
+      annotations: { "prometheus.io/scrape": "true" },
+    },
+    spec: {
+      nodeSelector: { "kubernetes.io/arch": "arm64" },
+      tolerations: [{ key: "dedicated", operator: "Exists" }],
+      terminationGracePeriodSeconds: 30,
+    },
+  },
+});
+```
+
+Good fits are pod metadata, `nodeSelector`, `affinity`,
+`tolerations`, `topologySpreadConstraints`, `priorityClassName`,
+pod `securityContext`, `imagePullSecrets`, and `volumes`.
+Container-level fields live inside the `containers` array. That
+includes probes, `volumeMounts`, `envFrom`, and a sidecar. An array
+in `podTemplate` replaces the generated one wholesale, including the
+image. When a workload needs full control of its containers, write
+it as a [Manifest](/kubernetes/objects/manifests).
+
+## Effect servers
+
+With `main`, the Deployment runs an Effect program instead of an
+image. Alchemy bundles the module, builds an image, and serves the
+returned `fetch` handler on `port`:
+
+```typescript
+// src/Api.ts
+export default Kubernetes.Deployment(
+  "Api",
+  Effect.gen(function* () {
+    const cluster = yield* Cluster;
+    return {
+      cluster,
+      main: import.meta.url,
+      name: "api",
+      port: 3000,
+      replicas: 2,
+      serviceType: "ClusterIP" as const,
+    };
+  }),
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        return HttpServerResponse.text(`hello from ${request.url}`);
+      }),
+    };
+  }),
+);
+```
+
+The image is pushed to the cluster's registry.
+[`LocalCluster`](/kubernetes/clusters/local) includes one. Other
+clusters need a [`registry`](/kubernetes/clusters/registries) on the
+connection, and EKS uses ECR. See
+[Container images](/kubernetes/workloads/images).
+
+The tagged form declares the Deployment as a class, so other code
+can depend on it by type and the implementation is provided as a
+Layer:
+
+```typescript
+export class Api extends Kubernetes.Deployment<Api>()("Api") {}
+
+export default Api.make(
+  { cluster, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+);
+```
+
+In the Stack, `yield* Api` and provide the default export with
+`Effect.provide(ApiLive)`. This is the same authoring model as
+[Lambda functions](/aws/compute/lambda) and
+[Cloudflare Workers](/cloudflare/compute/workers).
+
+## What a deploy waits for
+
+A deploy finishes when the API server has accepted the objects and,
+for `LoadBalancer` Services, when the load balancer address is known.
+It doesn't wait for the rollout. Pods may still be pulling images or
+failing health checks. Check with `kubectl rollout status`, or add a
+smoke-test [Job](/kubernetes/workloads/jobs) that calls the Service.
+
+## Updates and replacement
+
+- **`image`, `env`, `replicas`, `resources`, `podTemplate`, and other
+  props.** Changing these is an update. The objects are re-applied
+  and Kubernetes rolls the pods.
+- **Files under `context`, or the `main` program.** Changing these is
+  an update, detected from the image content hash.
+- **`namespace`.** The objects move to the new namespace.
+- **`cluster`.** Moving to a different connection is a replacement.
+  See
+  [Move a resource to another cluster](/kubernetes/clusters/connecting#move-a-resource-to-another-cluster).
+- **`labels`.** Kubernetes rejects the change. See [Labels](#labels).
+- **`name`.** Changes are ignored after creation.
+
+## Attributes
+
+- `deploymentName` is the name of the Kubernetes Deployment.
+- `serviceName` is the name of the Service.
+- `serviceAccountName` is the name of the ServiceAccount the pods
+  run as.
+- `namespace` is the namespace of all three objects.
+- `port` is the container and Service port.
+- `url` is the load balancer URL for `LoadBalancer` Services, and
+  `undefined` otherwise.
+- `imageUri` is the image the pods run.
+- `connection` is the cluster connection.
+- `kubernetesObjects` holds references to the applied objects.
+
+## Where next
+
+- **[Container images](/kubernetes/workloads/images).** Covers
+  `image`, `context`, and `main` on each kind of cluster.
+- **[Jobs & CronJobs](/kubernetes/workloads/jobs).** Run-to-completion
+  work with the same props.
+- **[`Deployment` reference](/providers/kubernetes/deployment).**
+  Lists every prop and attribute.

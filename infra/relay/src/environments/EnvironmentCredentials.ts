@@ -1,8 +1,9 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -83,13 +84,14 @@ export class EnvironmentCredentials extends Context.Service<
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const hashToken = (token: string) =>
-    crypto
-      .digest("SHA-256", new TextEncoder().encode(token))
-      .pipe(Effect.map(Encoding.encodeBase64Url));
+    digest
+      .digest(Digest.sha256, new TextEncoder().encode(token))
+      .pipe(Effect.map(Base64Url.encode));
   const randomTokenPart = (segments: number) =>
-    Effect.map(Effect.all(Array.from({ length: segments }, () => crypto.randomUUIDv4)), (values) =>
+    Effect.map(Effect.all(Array.from({ length: segments }, () => random.uuidV4())), (values) =>
       values.join("").replaceAll("-", ""),
     );
   const makeCredential = Effect.fnUntraced(function* () {

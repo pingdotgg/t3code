@@ -1,5 +1,6 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: preserves the original KV failure as Error.cause after retries are exhausted.
 import type { Toucan } from "toucan-js";
 
 export type AssetMetadata = {
@@ -10,27 +11,23 @@ export async function getAssetWithMetadataFromKV(
   assetsKVNamespace: KVNamespace,
   assetKey: string,
   sentry?: Toucan,
-  retries = 1,
+  retries = 3,
 ) {
   let attempts = 0;
 
   while (attempts <= retries) {
     try {
-      const asset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(
-        assetKey,
-        {
-          type: "stream",
-          cacheTtl: 31536000, // 1 year
-        },
-      );
+      const asset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
+        type: "stream",
+        cacheTtl: 31536000, // 1 year
+      });
 
       if (asset.value === null) {
         // Don't cache a 404 for a year by re-requesting with a minimum cacheTtl
-        const retriedAsset =
-          await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
-            type: "stream",
-            cacheTtl: 60, // Minimum value allowed
-          });
+        const retriedAsset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
+          type: "stream",
+          cacheTtl: 60, // Minimum value allowed
+        });
 
         if (retriedAsset.value !== null && sentry) {
           sentry.captureException(

@@ -1,3 +1,9 @@
+import { describe, expect, test } from "@alchemy.run/test";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import {
   isPlainData,
   isPlainObject,
@@ -6,14 +12,8 @@ import {
   stripUndefinedFields,
   unwrapRedacted,
 } from "@/Util/data";
-import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
-import { describe, expect, test } from "alchemy-test";
 
-describe("data utilities", () => {
+describe("data utilities", { tags: ["unit", "local"] }, () => {
   test("isPlainObject accepts object literals", () => {
     expect(isPlainObject({})).toBe(true);
   });
@@ -58,11 +58,13 @@ describe("data utilities", () => {
       unwrapRedacted({
         value: Redacted.make("secret"),
         nested: [Redacted.make("nested")],
+        wrapped: Redacted.make({ token: Redacted.make("s3cr3t") }),
         date,
       }),
     ).toEqual({
       value: "secret",
       nested: ["nested"],
+      wrapped: { token: "s3cr3t" },
       date,
     });
   });
@@ -71,7 +73,7 @@ describe("data utilities", () => {
 // The engine's traversal rule (#1082): plain data is walked; every class
 // instance is a leaf. isPlainData is the single gate, mapPlainData the
 // single cycle-guarded rebuild — pin their exact semantics here.
-describe("isPlainData", () => {
+describe("isPlainData", { tags: ["unit", "local"] }, () => {
   test("accepts arrays, object literals, and null-prototype objects", () => {
     expect(isPlainData([])).toBe(true);
     expect(isPlainData([1, 2, 3])).toBe(true);
@@ -108,7 +110,7 @@ describe("isPlainData", () => {
   });
 });
 
-describe("mapPlainData", () => {
+describe("mapPlainData", { tags: ["unit", "local"] }, () => {
   const identity = (ancestors: WeakSet<object>) => {
     const walk = (child: unknown): unknown =>
       isPlainData(child) ? mapPlainData(child, ancestors, walk) : child;
@@ -141,11 +143,7 @@ describe("mapPlainData", () => {
     const arr: any[] = [obj];
     obj.arr = arr;
     const ancestors = new WeakSet<object>();
-    const rebuilt: any = mapPlainData(
-      { root: obj },
-      ancestors,
-      identity(ancestors),
-    );
+    const rebuilt: any = mapPlainData({ root: obj }, ancestors, identity(ancestors));
     expect(rebuilt.root.tag).toBe("obj");
     expect(rebuilt.root.arr[0]).toBeUndefined();
   });

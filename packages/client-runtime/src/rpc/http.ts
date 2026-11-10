@@ -8,63 +8,58 @@ import {
   type EnvironmentResourceNotFoundError,
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
-import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
-import * as Data from "effect/Data";
+import * as HttpObservability from "@t3tools/shared/httpObservability";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
-export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
+export class RemoteEnvironmentAuthFetchError extends Schema.TaggedError<RemoteEnvironmentAuthFetchError>()(
   "RemoteEnvironmentAuthFetchError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
 
-export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
+class RemoteEnvironmentAuthInvalidJsonError extends Schema.TaggedError<RemoteEnvironmentAuthInvalidJsonError>()(
   "RemoteEnvironmentAuthInvalidJsonError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
 
-export class RemoteEnvironmentAuthUndeclaredStatusError extends Data.TaggedError(
+export class RemoteEnvironmentAuthUndeclaredStatusError extends Schema.TaggedError<RemoteEnvironmentAuthUndeclaredStatusError>()(
   "RemoteEnvironmentAuthUndeclaredStatusError",
-)<{
-  readonly message: string;
-  readonly status: number;
-  readonly requestUrl: string;
-}> {
-  constructor(requestUrl: string, status: number) {
-    super({
-      message: `Remote environment endpoint ${requestUrl} returned undeclared status ${status}.`,
-      requestUrl,
-      status,
-    });
+  {
+    status: Schema.Number,
+    requestUrl: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Remote environment endpoint ${this.requestUrl} returned undeclared status ${this.status}.`;
   }
 }
 
-export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
+export class RemoteEnvironmentAuthTimeoutError extends Schema.TaggedError<RemoteEnvironmentAuthTimeoutError>()(
   "RemoteEnvironmentAuthTimeoutError",
-)<{
-  readonly message: string;
-  readonly requestUrl: string;
-  readonly timeoutMs: number;
-}> {
-  constructor(requestUrl: string, timeoutMs: number) {
-    super({
-      message: `Remote environment endpoint ${requestUrl} timed out after ${timeoutMs}ms.`,
-      requestUrl,
-      timeoutMs,
-    });
+  {
+    requestUrl: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Remote environment endpoint ${this.requestUrl} timed out after ${this.timeoutMs}ms.`;
   }
 }
+
+const isRemoteEnvironmentAuthTimeoutError = Schema.is(RemoteEnvironmentAuthTimeoutError);
 
 export type RemoteEnvironmentRequestError =
   | EnvironmentRequestInvalidError
@@ -78,12 +73,12 @@ export type RemoteEnvironmentRequestError =
   | RemoteEnvironmentAuthUndeclaredStatusError
   | RemoteEnvironmentAuthTimeoutError;
 
-export const remoteHttpClientLayer = (
+export const layerRemoteHttpClient = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.merge(
     FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
-    httpHeaderRedactionLayer,
+    HttpObservability.layer,
   );
 
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
@@ -99,7 +94,20 @@ export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
-/** Contract-derived request URLs for authentication proofs, tracing, and structured errors. */
+export const makeEnvironmentHttpApiGroupClient = <
+  Group extends keyof typeof EnvironmentHttpApi.groups,
+>(
+  httpBaseUrl: string,
+  group: Group,
+) =>
+  Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
+    HttpApiClient.group(EnvironmentHttpApi, {
+      httpClient,
+      group,
+      baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    }),
+  );
+
 export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
   HttpApiClient.urlBuilder(EnvironmentHttpApi, {
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
@@ -109,7 +117,7 @@ const failRemoteRequest = (
   requestUrl: string,
   cause: unknown,
 ): Effect.Effect<never, RemoteEnvironmentRequestError> => {
-  if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
+  if (isRemoteEnvironmentAuthTimeoutError(cause)) {
     return Effect.fail(cause);
   }
   if (isEnvironmentHttpCommonError(cause)) {
@@ -127,7 +135,7 @@ const failRemoteRequest = (
     const response = cause.response;
     if (response.status < 200 || response.status >= 300) {
       return Effect.fail(
-        new RemoteEnvironmentAuthUndeclaredStatusError(requestUrl, response.status),
+        new RemoteEnvironmentAuthUndeclaredStatusError({ requestUrl, status: response.status }),
       );
     }
     return Effect.fail(
@@ -154,7 +162,7 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError(requestUrl, timeoutMs)),
+        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError({ requestUrl, timeoutMs })),
         onSome: Effect.succeed,
       }),
     ),

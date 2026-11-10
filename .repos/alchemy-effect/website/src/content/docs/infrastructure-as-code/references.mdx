@@ -11,8 +11,9 @@ downstream always sees whatever was actually last deployed.
 
 ## Reference another stage
 
-`Resource.ref` takes a Logical ID; pass `stage` to read that
-Resource from a different stage of this stack:
+`Resource.ref` takes a
+[Logical ID](/infrastructure-as-code/resource#logical-id); pass
+`stage` to read that Resource from a different stage of this stack:
 
 ```typescript
 const { stage } = yield* Alchemy.Stack;
@@ -61,6 +62,19 @@ export class Backend extends Alchemy.Stack<
 const a = yield* Backend;                // current stage
 const b = yield* Backend.stage.prod;     // pinned to "prod"
 const c = yield* Backend.stage["pr-42"]; // any stage name
+```
+
+Declare the stages as a third type parameter and a misspelled
+stage becomes a type error:
+
+```typescript
+export class Backend extends Alchemy.Stack<
+  Backend,
+  { url: string },
+  "prod" | `pr-${number}`
+>()("Backend") {}
+
+const d = yield* Backend.stage[`pr-${pr}`];
 ```
 
 Every successful `apply` persists what the Stack's effect returned
@@ -112,6 +126,8 @@ attributes participate in this plan.
 
 ## Where next
 
+- [Resource Lifecycle](/infrastructure-as-code/resource-lifecycle) — how
+  the referenced state got persisted in the first place. Next page.
 - [Multiple Stacks](/project-structure/monorepo-multi-stack) — typed Stack
   handles wiring a monorepo.
 - [Shared database across stages](/cloudflare/data/shared-database) —

@@ -1,15 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import type { User } from "../src/schema.ts";
 import { MIGRATE_TOKEN } from "../src/shared.ts";
@@ -33,9 +33,7 @@ const readMigrationSql = (): string[] => {
     .readdirSync(dir)
     .filter((entry) => fs.existsSync(path.join(dir, entry, "migration.sql")))
     .sort()
-    .map((entry) =>
-      fs.readFileSync(path.join(dir, entry, "migration.sql"), "utf8"),
-    );
+    .map((entry) => fs.readFileSync(path.join(dir, entry, "migration.sql"), "utf8"));
 };
 
 /** Run a request, retrying non-200s through the fresh app's warmup. */
@@ -44,9 +42,7 @@ const executeOk = (request: HttpClientRequest.HttpClientRequest) =>
     const client = yield* HttpClient.HttpClient;
     return yield* client.execute(request).pipe(
       Effect.flatMap((res) =>
-        res.status === 200
-          ? Effect.succeed(res)
-          : Effect.fail(new Error(`HTTP ${res.status}`)),
+        res.status === 200 ? Effect.succeed(res) : Effect.fail(new Error(`HTTP ${res.status}`)),
       ),
       // Bounded (~90s): machine boot + route warmup. Never use unbounded
       // exponential growth here — a genuinely broken route should surface
@@ -90,17 +86,13 @@ test(
       expect(applied).toBeGreaterThan(0);
     }
 
-    const health = yield* executeOk(
-      HttpClientRequest.get(`${out.apiUrl}/health`),
-    );
+    const health = yield* executeOk(HttpClientRequest.get(`${out.apiUrl}/health`));
     expect(health.status).toBe(200);
     const body = (yield* health.json) as { ok: boolean; users: number };
     expect(body.ok).toBe(true);
     expect(body.users).toBeNumber();
 
-    const created = yield* HttpClient.execute(
-      HttpClientRequest.post(`${out.apiUrl}/users`),
-    );
+    const created = yield* HttpClient.execute(HttpClientRequest.post(`${out.apiUrl}/users`));
     expect(created.status).toBe(200);
     const createdBody = (yield* created.json) as { user: SerializedUser[] };
     expect(createdBody.user).toHaveLength(1);

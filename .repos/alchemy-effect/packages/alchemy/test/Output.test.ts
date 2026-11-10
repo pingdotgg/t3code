@@ -1,11 +1,4 @@
-import * as Output from "@/Output";
-import { ref as makeRef } from "@/Ref";
-import type { ResourceLike } from "@/Resource";
-import { Stack } from "@/Stack";
-import { Stage } from "@/Stage";
-import { inMemoryState } from "@/State/InMemoryState";
-import type { ResourceState } from "@/State/ResourceState";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -14,6 +7,13 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Output from "@/Output";
+import { ref as makeRef } from "@/Ref";
+import type { ResourceLike } from "@/Resource";
+import { Stack } from "@/Stack";
+import { Stage } from "@/Stage";
+import { inMemoryState } from "@/State/InMemoryState";
+import type { ResourceState } from "@/State/ResourceState";
 
 const provideState = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(inMemoryState()));
@@ -23,14 +23,9 @@ const fakeResource = <T extends string, A extends object>(
   fqn: string,
   logicalId: string = fqn,
 ): ResourceLike<T, any, A> =>
-  ({
-    Type: type,
-    FQN: fqn,
-    LogicalId: logicalId,
-    Namespace: undefined,
-  }) as any;
+  ({ Type: type, FQN: fqn, LogicalId: logicalId, Namespace: undefined }) as any;
 
-describe("Output.evaluate", () => {
+describe("Output.evaluate", { tags: ["unit", "local"] }, () => {
   describe("primitives and plain values", () => {
     it.effect("returns primitive values as-is", () =>
       provideState(
@@ -70,9 +65,7 @@ describe("Output.evaluate", () => {
           const secret = Redacted.make("hunter2");
           const result = yield* Output.evaluate(secret, {});
           expect(Redacted.isRedacted(result)).toBe(true);
-          expect(Redacted.value(result as Redacted.Redacted<string>)).toBe(
-            "hunter2",
-          );
+          expect(Redacted.value(result as Redacted.Redacted<string>)).toBe("hunter2");
         }),
       ),
     );
@@ -81,10 +74,7 @@ describe("Output.evaluate", () => {
       provideState(
         Effect.gen(function* () {
           const secret = Redacted.make("hunter2");
-          const result = yield* Output.evaluate(
-            { value: secret, name: "x" },
-            {},
-          );
+          const result = yield* Output.evaluate({ value: secret, name: "x" }, {});
           expect(result.name).toBe("x");
           expect(Redacted.isRedacted(result.value)).toBe(true);
           expect(Redacted.value(result.value)).toBe("hunter2");
@@ -139,14 +129,10 @@ describe("Output.evaluate", () => {
       provideState(
         Effect.gen(function* () {
           const result = yield* Output.evaluate(
-            { port: Config.number("PORT").pipe(Config.withDefault(1337)) },
+            { port: Config.Number("PORT").pipe(Config.withDefault(1337)) },
             {},
           ).pipe(
-            Effect.provide(
-              ConfigProvider.layer(
-                ConfigProvider.fromEnv({ env: { PORT: "8080" } }),
-              ),
-            ),
+            Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: { PORT: "8080" } }))),
           );
           expect(result).toEqual({ port: 8080 });
         }),
@@ -156,14 +142,9 @@ describe("Output.evaluate", () => {
     it.effect("a Config resolving to a Redacted keeps it wrapped", () =>
       provideState(
         Effect.gen(function* () {
-          const result = yield* Output.evaluate(
-            Config.succeed(Redacted.make("hunter2")),
-            {},
-          );
+          const result = yield* Output.evaluate(Config.succeed(Redacted.make("hunter2")), {});
           expect(Redacted.isRedacted(result)).toBe(true);
-          expect(
-            Redacted.value(result as unknown as Redacted.Redacted<string>),
-          ).toBe("hunter2");
+          expect(Redacted.value(result as unknown as Redacted.Redacted<string>)).toBe("hunter2");
         }),
       ),
     );
@@ -182,10 +163,7 @@ describe("Output.evaluate", () => {
     it.effect("evaluates a literal nested within an object", () =>
       provideState(
         Effect.gen(function* () {
-          const result = yield* Output.evaluate(
-            { greeting: Output.literal("hi") },
-            {},
-          );
+          const result = yield* Output.evaluate({ greeting: Output.literal("hi") }, {});
           expect(result).toEqual({ greeting: "hi" });
         }),
       ),
@@ -198,9 +176,7 @@ describe("Output.evaluate", () => {
         Effect.gen(function* () {
           const src = fakeResource("Test.Bucket", "MyBucket");
           const expr = Output.of(src);
-          const result = yield* Output.evaluate(expr, {
-            MyBucket: { name: "my-bucket" },
-          });
+          const result = yield* Output.evaluate(expr, { MyBucket: { name: "my-bucket" } });
           expect(result).toEqual({ name: "my-bucket" });
         }),
       ),
@@ -225,9 +201,7 @@ describe("Output.evaluate", () => {
       provideState(
         Effect.gen(function* () {
           const src = fakeResource("Test.Bucket", "RawBucket");
-          const result = yield* Output.evaluate(src as any, {
-            RawBucket: { ok: true },
-          });
+          const result = yield* Output.evaluate(src as any, { RawBucket: { ok: true } });
           expect(result).toEqual({ ok: true });
         }),
       ),
@@ -256,14 +230,9 @@ describe("Output.evaluate", () => {
     it.effect("accesses a property on a resource expression", () =>
       provideState(
         Effect.gen(function* () {
-          const src = fakeResource<"Test.Bucket", { name: string }>(
-            "Test.Bucket",
-            "B",
-          );
+          const src = fakeResource<"Test.Bucket", { name: string }>("Test.Bucket", "B");
           const expr = Output.of(src) as any;
-          const result = yield* Output.evaluate(expr.name, {
-            B: { name: "the-name" },
-          });
+          const result = yield* Output.evaluate(expr.name, { B: { name: "the-name" } });
           expect(result).toBe("the-name");
         }),
       ),
@@ -274,9 +243,7 @@ describe("Output.evaluate", () => {
         Effect.gen(function* () {
           const src = fakeResource("Test.Bucket", "B2");
           const expr = Output.of(src) as any;
-          const result = yield* Output.evaluate(expr.missing, {
-            B2: { other: 1 },
-          });
+          const result = yield* Output.evaluate(expr.missing, { B2: { other: 1 } });
           expect(result).toBeUndefined();
         }),
       ),
@@ -325,9 +292,7 @@ describe("Output.evaluate", () => {
           const expr = (Output.of(src) as any).name.pipe(
             Output.map((s: string) => s.toUpperCase()),
           );
-          const result = yield* Output.evaluate(expr, {
-            B4: { name: "abc" },
-          });
+          const result = yield* Output.evaluate(expr, { B4: { name: "abc" } });
           expect(result).toBe("ABC");
         }),
       ),
@@ -363,9 +328,7 @@ describe("Output.evaluate", () => {
     it.effect("flattens an Output returned from the function", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = Output.literal(5).pipe(
-            Output.flatMap((n: number) => Output.literal(n * 2)),
-          );
+          const expr = Output.literal(5).pipe(Output.flatMap((n: number) => Output.literal(n * 2)));
           expect(yield* Output.evaluate(expr, {})).toBe(10);
         }),
       ),
@@ -374,9 +337,7 @@ describe("Output.evaluate", () => {
     it.effect("supports the data-first form", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = Output.flatMap(Output.literal("a"), (s: string) =>
-            Output.literal(s + "b"),
-          );
+          const expr = Output.flatMap(Output.literal("a"), (s: string) => Output.literal(s + "b"));
           expect(yield* Output.evaluate(expr, {})).toBe("ab");
         }),
       ),
@@ -436,23 +397,16 @@ describe("Output.evaluate", () => {
     // `.flatMap(fn)` / `.apply(fn)` / `.effect(fn)` must be callable as
     // methods (not just via `Output.map(output, fn)` / `.pipe(...)`).
     const resourceOutput = () => {
-      const src = fakeResource<"Test.Bucket", { name: string }>(
-        "Test.Bucket",
-        "M",
-      );
+      const src = fakeResource<"Test.Bucket", { name: string }>("Test.Bucket", "M");
       return (Output.of(src) as any).name as Output.Output<string>;
     };
 
     it.effect(".map(fn) builds an ApplyExpr", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = (resourceOutput() as any).map((s: string) =>
-            s.toUpperCase(),
-          );
+          const expr = (resourceOutput() as any).map((s: string) => s.toUpperCase());
           expect(Output.isApplyExpr(expr)).toBe(true);
-          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe(
-            "ABC",
-          );
+          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe("ABC");
         }),
       ),
     );
@@ -460,13 +414,9 @@ describe("Output.evaluate", () => {
     it.effect(".apply(fn) builds an ApplyExpr", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = (resourceOutput() as any).apply((s: string) =>
-            s.toUpperCase(),
-          );
+          const expr = (resourceOutput() as any).apply((s: string) => s.toUpperCase());
           expect(Output.isApplyExpr(expr)).toBe(true);
-          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe(
-            "ABC",
-          );
+          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe("ABC");
         }),
       ),
     );
@@ -474,13 +424,9 @@ describe("Output.evaluate", () => {
     it.effect(".mapEffect(fn) builds an EffectExpr", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = (resourceOutput() as any).mapEffect((s: string) =>
-            Effect.succeed(s + "!"),
-          );
+          const expr = (resourceOutput() as any).mapEffect((s: string) => Effect.succeed(s + "!"));
           expect(Output.isEffectExpr(expr)).toBe(true);
-          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe(
-            "abc!",
-          );
+          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe("abc!");
         }),
       ),
     );
@@ -488,13 +434,9 @@ describe("Output.evaluate", () => {
     it.effect(".effect(fn) builds an EffectExpr", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = (resourceOutput() as any).effect((s: string) =>
-            Effect.succeed(s + "!"),
-          );
+          const expr = (resourceOutput() as any).effect((s: string) => Effect.succeed(s + "!"));
           expect(Output.isEffectExpr(expr)).toBe(true);
-          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe(
-            "abc!",
-          );
+          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe("abc!");
         }),
       ),
     );
@@ -502,13 +444,9 @@ describe("Output.evaluate", () => {
     it.effect(".flatMap(fn) builds a FlatMapExpr", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = (resourceOutput() as any).flatMap((s: string) =>
-            Output.literal(s + "?"),
-          );
+          const expr = (resourceOutput() as any).flatMap((s: string) => Output.literal(s + "?"));
           expect(Output.isFlatMapExpr(expr)).toBe(true);
-          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe(
-            "abc?",
-          );
+          expect(yield* Output.evaluate(expr, { M: { name: "abc" } })).toBe("abc?");
         }),
       ),
     );
@@ -518,11 +456,7 @@ describe("Output.evaluate", () => {
     it.effect("evaluates all wrapped outputs in parallel", () =>
       provideState(
         Effect.gen(function* () {
-          const expr = Output.all(
-            Output.literal(1),
-            Output.literal("two"),
-            Output.literal(true),
-          );
+          const expr = Output.all(Output.literal(1), Output.literal("two"), Output.literal(true));
           const result = yield* Output.evaluate(expr, {});
           expect(result).toEqual([1, "two", true]);
         }),
@@ -535,10 +469,7 @@ describe("Output.evaluate", () => {
           const a = fakeResource("Test.A", "A");
           const b = fakeResource("Test.B", "B");
           const expr = Output.all(Output.of(a), Output.of(b));
-          const result = yield* Output.evaluate(expr, {
-            A: { x: 1 },
-            B: { y: 2 },
-          });
+          const result = yield* Output.evaluate(expr, { A: { x: 1 }, B: { y: 2 } });
           expect(result).toEqual([{ x: 1 }, { y: 2 }]);
         }),
       ),
@@ -553,10 +484,7 @@ describe("Output.evaluate", () => {
     ) =>
       effect.pipe(
         Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(Stack, { name: stack } as any),
-            Layer.succeed(Stage, stage),
-          ),
+          Layer.mergeAll(Layer.succeed(Stack, { name: stack } as any), Layer.succeed(Stage, stage)),
         ),
       );
 
@@ -575,9 +503,7 @@ describe("Output.evaluate", () => {
         const r = makeRef<ResourceLike>("myResource");
         const expr = Output.of(r);
         const result = yield* provideStackStage(
-          Output.evaluate(expr, {}).pipe(
-            Effect.provide(inMemoryState(initial)),
-          ),
+          Output.evaluate(expr, {}).pipe(Effect.provide(inMemoryState(initial))),
         );
         expect(result).toEqual({ hello: "world" });
       }),
@@ -588,10 +514,7 @@ describe("Output.evaluate", () => {
         const initial = {
           otherStack: {
             otherStage: {
-              someResource: {
-                fqn: "someResource",
-                attr: { v: 1 },
-              } as unknown as ResourceState,
+              someResource: { fqn: "someResource", attr: { v: 1 } } as unknown as ResourceState,
             },
           },
         };
@@ -608,58 +531,45 @@ describe("Output.evaluate", () => {
       }),
     );
 
-    it.effect(
-      "fails with InvalidReferenceError when ref target is missing",
-      () =>
-        Effect.gen(function* () {
-          const r = makeRef<ResourceLike>("ghost", {
-            stack: "s",
-            stage: "t",
-          });
-          const expr = Output.of(r);
-          const exit = yield* Effect.exit(
-            Output.evaluate(expr, {}).pipe(Effect.provide(inMemoryState())),
-          );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause.toJSON())).toContain(
-              "InvalidReferenceError",
-            );
-          }
-        }),
+    it.effect("fails with InvalidReferenceError when ref target is missing", () =>
+      Effect.gen(function* () {
+        const r = makeRef<ResourceLike>("ghost", { stack: "s", stage: "t" });
+        const expr = Output.of(r);
+        const exit = yield* Effect.exit(
+          Output.evaluate(expr, {}).pipe(Effect.provide(inMemoryState())),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause.toJSON())).toContain("InvalidReferenceError");
+        }
+      }),
     );
 
-    it.effect(
-      "PropExpr on a Ref reads the attribute from persisted state",
-      () =>
-        Effect.gen(function* () {
-          const initial = {
-            myStack: {
-              myStage: {
-                shared: {
-                  fqn: "shared",
-                  attr: { url: "https://example.com", name: "shared" },
-                } as unknown as ResourceState,
-              },
+    it.effect("PropExpr on a Ref reads the attribute from persisted state", () =>
+      Effect.gen(function* () {
+        const initial = {
+          myStack: {
+            myStage: {
+              shared: {
+                fqn: "shared",
+                attr: { url: "https://example.com", name: "shared" },
+              } as unknown as ResourceState,
             },
-          };
-          const r = makeRef<ResourceLike>("shared");
-          const expr = (Output.of(r) as any).url as Output.Output<string>;
-          const result = yield* provideStackStage(
-            Output.evaluate(expr, {}).pipe(
-              Effect.provide(inMemoryState(initial)),
-            ),
-          );
-          expect(result).toBe("https://example.com");
-        }),
+          },
+        };
+        const r = makeRef<ResourceLike>("shared");
+        const expr = (Output.of(r) as any).url as Output.Output<string>;
+        const result = yield* provideStackStage(
+          Output.evaluate(expr, {}).pipe(Effect.provide(inMemoryState(initial))),
+        );
+        expect(result).toBe("https://example.com");
+      }),
     );
   });
 
   describe("StackRefExpr", () => {
-    const provideStage = <A, E, R>(
-      effect: Effect.Effect<A, E, R>,
-      stage = "myStage",
-    ) => effect.pipe(Effect.provide(Layer.succeed(Stage, stage)));
+    const provideStage = <A, E, R>(effect: Effect.Effect<A, E, R>, stage = "myStage") =>
+      effect.pipe(Effect.provide(Layer.succeed(Stage, stage)));
 
     it.effect("Output.stackRef resolves to the persisted stack output", () =>
       Effect.gen(function* () {
@@ -667,10 +577,7 @@ describe("Output.evaluate", () => {
         const result = yield* provideStage(
           Output.evaluate(expr, {}).pipe(
             Effect.provide(
-              inMemoryState(
-                {},
-                { Backend: { myStage: { url: "https://api.example.com" } } },
-              ),
+              inMemoryState({}, { Backend: { myStage: { url: "https://api.example.com" } } }),
             ),
           ),
         );
@@ -680,16 +587,11 @@ describe("Output.evaluate", () => {
 
     it.effect("explicit stage overrides the ambient Stage", () =>
       Effect.gen(function* () {
-        const expr = yield* Output.stackRef<{ url: string }>("Backend", {
-          stage: "prod",
-        });
+        const expr = yield* Output.stackRef<{ url: string }>("Backend", { stage: "prod" });
         // No Stage layer is provided — the ref carries it explicitly.
         const result = yield* Output.evaluate(expr, {}).pipe(
           Effect.provide(
-            inMemoryState(
-              {},
-              { Backend: { prod: { url: "https://prod.example.com" } } },
-            ),
+            inMemoryState({}, { Backend: { prod: { url: "https://prod.example.com" } } }),
           ),
         );
         expect(result).toEqual({ url: "https://prod.example.com" });
@@ -703,10 +605,7 @@ describe("Output.evaluate", () => {
         const result = yield* provideStage(
           Output.evaluate(expr, {}).pipe(
             Effect.provide(
-              inMemoryState(
-                {},
-                { Backend: { myStage: { url: "https://api.example.com" } } },
-              ),
+              inMemoryState({}, { Backend: { myStage: { url: "https://api.example.com" } } }),
             ),
           ),
         );
@@ -718,17 +617,13 @@ describe("Output.evaluate", () => {
       "fails with InvalidReferenceError when the target stack/stage has no persisted output",
       () =>
         Effect.gen(function* () {
-          const expr = yield* Output.stackRef<{ url: string }>("Backend", {
-            stage: "ghost",
-          });
+          const expr = yield* Output.stackRef<{ url: string }>("Backend", { stage: "ghost" });
           const exit = yield* Effect.exit(
             Output.evaluate(expr, {}).pipe(Effect.provide(inMemoryState())),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const err = Cause.squash(
-              exit.cause,
-            ) as Output.InvalidReferenceError;
+            const err = Cause.squash(exit.cause) as Output.InvalidReferenceError;
             expect(err._tag).toBe("InvalidReferenceError");
             expect(err.stack).toBe("Backend");
             expect(err.stage).toBe("ghost");
@@ -746,16 +641,11 @@ describe("Output.evaluate", () => {
           const value = {
             list: [Output.of(a), Output.literal("lit")],
             nested: {
-              prop: (Output.of(b) as any).name.pipe(
-                Output.map((s: string) => `name=${s}`),
-              ),
+              prop: (Output.of(b) as any).name.pipe(Output.map((s: string) => `name=${s}`)),
             },
             scalar: 42,
           };
-          const result = yield* Output.evaluate(value, {
-            RA: { foo: "f" },
-            RB: { name: "bee" },
-          });
+          const result = yield* Output.evaluate(value, { RA: { foo: "f" }, RB: { name: "bee" } });
           expect(result).toEqual({
             list: [{ foo: "f" }, "lit"],
             nested: { prop: "name=bee" },
@@ -767,7 +657,7 @@ describe("Output.evaluate", () => {
   });
 });
 
-describe("Output.interpolate", () => {
+describe("Output.interpolate", { tags: ["unit", "local"] }, () => {
   it.effect("interpolates literal values into a template", () =>
     provideState(
       Effect.gen(function* () {
@@ -784,9 +674,7 @@ describe("Output.interpolate", () => {
         // @ts-expect-error
         const name = Output.of(src).name;
         const expr = Output.interpolate`s3://${name}/key`;
-        const result = yield* Output.evaluate(expr, {
-          Buck: { name: "my-bucket" },
-        });
+        const result = yield* Output.evaluate(expr, { Buck: { name: "my-bucket" } });
         expect(result).toBe("s3://my-bucket/key");
       }),
     ),
@@ -795,16 +683,26 @@ describe("Output.interpolate", () => {
   it.effect("renders nullish args as empty strings", () =>
     provideState(
       Effect.gen(function* () {
-        const expr = Output.interpolate`a${Output.literal(null)}b${Output.literal(
-          undefined,
-        )}c`;
+        const expr = Output.interpolate`a${Output.literal(null)}b${Output.literal(undefined)}c`;
         expect(yield* Output.evaluate(expr, {})).toBe("abc");
       }),
     ),
   );
+
+  it("derives its binding id from the template and arguments only", () => {
+    // The runtime bundler reprints function source, so a binding id that
+    // embeds the mapper's source differs between deploy and runtime.
+    const src = fakeResource("Test.Service", "Web");
+    // @ts-expect-error
+    const service = Output.of(src).serviceName;
+    const expr = Output.interpolate`http://${service}:${Output.literal(80)}`;
+    expect(String(expr[Symbol.for("nodejs.util.inspect.custom")]())).toBe(
+      "interpolate(http://${Web.serviceName}:${80})",
+    );
+  });
 });
 
-describe("Output coercion guard", () => {
+describe("Output coercion guard", { tags: ["unit", "local"] }, () => {
   // These guard against the long-standing footgun where coercing an
   // unresolved Output silently produced a placeholder — the inspect
   // string for string-hints, or NaN for number-hints. Both let bogus
@@ -835,63 +733,57 @@ describe("Output coercion guard", () => {
     const src = fakeResource("Test.Bucket", "Buck");
     // @ts-expect-error — synthetic prop access
     const name = Output.of(src).name;
-    expect(() => (name as unknown as number) * 2).toThrow(
-      /Output\.(interpolate|map)/,
-    );
+    expect(() => (name as unknown as number) * 2).toThrow(/Output\.(interpolate|map)/);
   });
 });
 
-describe("Redacted stack-output serialization (regression #598)", () => {
-  // A resource whose attribute is a `Redacted<string>` — e.g. `Random.text`,
-  // which pr-package's AuthTokenValue exposes. When such an attribute flows
-  // into a Stack output it is JSON-serialized for persistence to state /
-  // Doppler / GH secrets. `JSON.stringify(Redacted)` returns the literal
-  // string "<redacted>", so a publisher reading the output would send
-  // `Bearer <redacted>` instead of the real token. The fix is to unwrap with
-  // `Output.map(Redacted.value)` before returning it from the stack.
-  const SECRET = "1486c434bd35732a185d1712c587ddfafd9e1c8d7a94fb15cf6ece51128";
-  const redactedResource = () => {
-    const src = fakeResource<
-      "Alchemy.Random",
-      { text: Redacted.Redacted<string> }
-    >("Alchemy.Random", "AuthTokenValue");
-    return (Output.of(src) as any).text as Output.Output<
-      Redacted.Redacted<string>
-    >;
-  };
-  const env = { AuthTokenValue: { text: Redacted.make(SECRET) } };
+describe(
+  "Redacted stack-output serialization (regression #598)",
+  { tags: ["unit", "local"] },
+  () => {
+    // A resource whose attribute is a `Redacted<string>` — e.g. `Random.text`.
+    // When such an attribute flows
+    // into a Stack output it is JSON-serialized for persistence to state /
+    // Doppler / GH secrets. `JSON.stringify(Redacted)` returns the literal
+    // string "<redacted>", so a publisher reading the output would send
+    // `Bearer <redacted>` instead of the real token. The fix is to unwrap with
+    // `Output.map(Redacted.value)` before returning it from the stack.
+    const SECRET = "1486c434bd35732a185d1712c587ddfafd9e1c8d7a94fb15cf6ece51128";
+    const redactedResource = () => {
+      const src = fakeResource<"Alchemy.Random", { text: Redacted.Redacted<string> }>(
+        "Alchemy.Random",
+        "AuthTokenValue",
+      );
+      return (Output.of(src) as any).text as Output.Output<Redacted.Redacted<string>>;
+    };
+    const env = { AuthTokenValue: { text: Redacted.make(SECRET) } };
 
-  it.effect(
-    'a raw Redacted output serializes to the literal "<redacted>" (the bug)',
-    () =>
+    it.effect('a raw Redacted output serializes to the literal "<redacted>" (the bug)', () =>
       provideState(
         Effect.gen(function* () {
           const result = yield* Output.evaluate(redactedResource(), env);
           // The evaluated value is still a Redacted, and persisting it as a
           // stack output (JSON) loses the real token.
           expect(Redacted.isRedacted(result)).toBe(true);
-          expect(JSON.stringify({ authToken: result })).toBe(
-            '{"authToken":"<redacted>"}',
-          );
+          expect(JSON.stringify({ authToken: result })).toBe('{"authToken":"<redacted>"}');
         }),
       ),
-  );
+    );
 
-  it.effect("Output.map(Redacted.value) emits the real token (the fix)", () =>
-    provideState(
-      Effect.gen(function* () {
-        const expr = redactedResource().pipe(Output.map(Redacted.value));
-        const result = yield* Output.evaluate(expr, env);
-        expect(result).toBe(SECRET);
-        expect(JSON.stringify({ authToken: result })).toBe(
-          `{"authToken":"${SECRET}"}`,
-        );
-      }),
-    ),
-  );
-});
+    it.effect("Output.map(Redacted.value) emits the real token (the fix)", () =>
+      provideState(
+        Effect.gen(function* () {
+          const expr = redactedResource().pipe(Output.map(Redacted.value));
+          const result = yield* Output.evaluate(expr, env);
+          expect(result).toBe(SECRET);
+          expect(JSON.stringify({ authToken: result })).toBe(`{"authToken":"${SECRET}"}`);
+        }),
+      ),
+    );
+  },
+);
 
-describe("Output.isOutput / isExpr", () => {
+describe("Output.isOutput / isExpr", { tags: ["unit", "local"] }, () => {
   it("identifies Output expressions", () => {
     expect(Output.isOutput(Output.literal(1))).toBe(true);
     expect(Output.isOutput(Output.all(Output.literal(1)))).toBe(true);
@@ -908,7 +800,7 @@ describe("Output.isOutput / isExpr", () => {
   });
 });
 
-describe("Output.asOutput", () => {
+describe("Output.asOutput", { tags: ["unit", "local"] }, () => {
   it.effect("wraps a plain value as a literal Output", () =>
     provideState(
       Effect.gen(function* () {
@@ -935,7 +827,7 @@ describe("Output.asOutput", () => {
   });
 });
 
-describe("Output.upstream / hasOutputs / resolveUpstream", () => {
+describe("Output.upstream / hasOutputs / resolveUpstream", { tags: ["unit", "local"] }, () => {
   it("returns upstream resources from a ResourceExpr", () => {
     const src = fakeResource("Test.A", "FQN-A");
     const expr = Output.of(src);
@@ -969,23 +861,14 @@ describe("Output.upstream / hasOutputs / resolveUpstream", () => {
     const a = fakeResource("Test.A", "FQN-A");
     const b = fakeResource("Test.B", "FQN-B");
     const props = { image: a, network: b };
-    expect(Object.keys(Output.upstreamAny(props)).sort()).toEqual([
-      "FQN-A",
-      "FQN-B",
-    ]);
+    expect(Object.keys(Output.upstreamAny(props)).sort()).toEqual(["FQN-A", "FQN-B"]);
   });
 
   it("upstreamAny detects raw Resources nested in arrays/objects", () => {
     const a = fakeResource("Test.A", "FQN-A");
     const b = fakeResource("Test.B", "FQN-B");
-    const props = {
-      volumes: [{ source: a }],
-      env: { ref: b },
-    };
-    expect(Object.keys(Output.upstreamAny(props)).sort()).toEqual([
-      "FQN-A",
-      "FQN-B",
-    ]);
+    const props = { volumes: [{ source: a }], env: { ref: b } };
+    expect(Object.keys(Output.upstreamAny(props)).sort()).toEqual(["FQN-A", "FQN-B"]);
   });
 
   it("upstreamAny detects raw Resource at the top level", () => {
@@ -996,10 +879,7 @@ describe("Output.upstream / hasOutputs / resolveUpstream", () => {
   it("resolveUpstream picks up raw Resources alongside Output expressions", () => {
     const a = fakeResource("Test.A", "A1");
     const b = fakeResource("Test.B", "B1");
-    const result = Output.resolveUpstream({
-      raw: a,
-      via: Output.of(b),
-    });
+    const result = Output.resolveUpstream({ raw: a, via: Output.of(b) });
     expect(Object.keys(result).sort()).toEqual(["A1", "B1"]);
   });
 
@@ -1032,99 +912,94 @@ describe("Output.upstream / hasOutputs / resolveUpstream", () => {
 // objects) is traversed to find them, and every other value — ANY class
 // instance, effect's or otherwise — is a leaf. Plus WeakSet cycle guards so
 // cyclic plain data terminates.
-describe("upstream walkers: cycles and non-plain leaves (#1082)", () => {
-  it("upstreamAny terminates on a cyclic plain object and still finds resources", () => {
-    const a = fakeResource("Test.A", "CY-A");
-    const cyclic: any = { name: "cycle" };
-    cyclic.self = cyclic;
-    const props = { config: cyclic, dep: Output.of(a) };
-    expect(Object.keys(Output.upstreamAny(props))).toEqual(["CY-A"]);
-  });
+describe(
+  "upstream walkers: cycles and non-plain leaves (#1082)",
+  { tags: ["unit", "local"] },
+  () => {
+    it("upstreamAny terminates on a cyclic plain object and still finds resources", () => {
+      const a = fakeResource("Test.A", "CY-A");
+      const cyclic: any = { name: "cycle" };
+      cyclic.self = cyclic;
+      const props = { config: cyclic, dep: Output.of(a) };
+      expect(Object.keys(Output.upstreamAny(props))).toEqual(["CY-A"]);
+    });
 
-  it("resolveUpstream terminates on mutually-cyclic objects and arrays", () => {
-    const x: any = { tag: "x" };
-    const y: any = { tag: "y", x };
-    x.y = y;
-    const arr: any[] = [x];
-    x.arr = arr;
-    expect(Output.resolveUpstream({ x, y, arr })).toEqual({});
-  });
+    it("resolveUpstream terminates on mutually-cyclic objects and arrays", () => {
+      const x: any = { tag: "x" };
+      const y: any = { tag: "y", x };
+      x.y = y;
+      const arr: any[] = [x];
+      x.arr = arr;
+      expect(Output.resolveUpstream({ x, y, arr })).toEqual({});
+    });
 
-  it("a shared (diamond) sub-object still contributes its resources", () => {
-    const a = fakeResource("Test.A", "DI-A");
-    const shared = { dep: Output.of(a) };
-    const result = Output.upstreamAny({ left: shared, right: shared });
-    expect(Object.keys(result)).toEqual(["DI-A"]);
-  });
+    it("a shared (diamond) sub-object still contributes its resources", () => {
+      const a = fakeResource("Test.A", "DI-A");
+      const shared = { dep: Output.of(a) };
+      const result = Output.upstreamAny({ left: shared, right: shared });
+      expect(Object.keys(result)).toEqual(["DI-A"]);
+    });
 
-  it("treats Effect, Layer, and Context values as leaves", () => {
-    const effect = Effect.succeed(1);
-    const layer = Layer.succeed(Stage, "test");
-    const context = Context.empty();
-    expect(Output.upstreamAny({ effect, layer, context })).toEqual({});
-    expect(Output.resolveUpstream({ effect, layer, context })).toEqual({});
-    expect(Output.hasOutputs({ effect, layer, context })).toBe(false);
-  });
+    it("treats Effect, Layer, and Context values as leaves", () => {
+      const effect = Effect.succeed(1);
+      const layer = Layer.succeed(Stage, "test");
+      const context = Context.empty();
+      expect(Output.upstreamAny({ effect, layer, context })).toEqual({});
+      expect(Output.resolveUpstream({ effect, layer, context })).toEqual({});
+      expect(Output.hasOutputs({ effect, layer, context })).toBe(false);
+    });
 
-  it("traverses null-prototype objects and treats functions as leaves", () => {
-    const a = fakeResource("Test.A", "NP-A");
-    const nullProto = Object.assign(Object.create(null), { dep: Output.of(a) });
-    expect(Object.keys(Output.upstreamAny({ nullProto }))).toEqual(["NP-A"]);
-    // A function in props is a leaf — a closure capturing a resource is not
-    // a declared dependency.
-    expect(Output.upstreamAny({ fn: () => a })).toEqual({});
-  });
+    it("traverses null-prototype objects and treats functions as leaves", () => {
+      const a = fakeResource("Test.A", "NP-A");
+      const nullProto = Object.assign(Object.create(null), { dep: Output.of(a) });
+      expect(Object.keys(Output.upstreamAny({ nullProto }))).toEqual(["NP-A"]);
+      // A function in props is a leaf — a closure capturing a resource is not
+      // a declared dependency.
+      expect(Output.upstreamAny({ fn: () => a })).toEqual({});
+    });
 
-  it("treats any class instance as a leaf (never walks its internals)", () => {
-    const a = fakeResource("Test.A", "CL-A");
-    class SdkConfig {
-      // A dependency smuggled inside a foreign class instance is invisible
-      // by design — the engine can't evaluate or persist through it.
-      dep = Output.of(a);
-      date = new Date(0);
-    }
-    expect(Output.upstreamAny({ config: new SdkConfig() })).toEqual({});
-    // ...but the same dependency in plain data right next to it is found.
-    expect(
-      Object.keys(
-        Output.upstreamAny({ config: new SdkConfig(), dep: Output.of(a) }),
-      ),
-    ).toEqual(["CL-A"]);
-  });
+    it("treats any class instance as a leaf (never walks its internals)", () => {
+      const a = fakeResource("Test.A", "CL-A");
+      class SdkConfig {
+        // A dependency smuggled inside a foreign class instance is invisible
+        // by design — the engine can't evaluate or persist through it.
+        dep = Output.of(a);
+        date = new Date(0);
+      }
+      expect(Output.upstreamAny({ config: new SdkConfig() })).toEqual({});
+      // ...but the same dependency in plain data right next to it is found.
+      expect(
+        Object.keys(Output.upstreamAny({ config: new SdkConfig(), dep: Output.of(a) })),
+      ).toEqual(["CL-A"]);
+    });
 
-  it("mimics a Worker `exports` entry (constructor Effect + services Context)", () => {
-    const a = fakeResource("Test.A", "EX-A");
-    const props = {
-      name: "worker",
-      exports: {
-        Store: {
-          kind: "durableObject",
-          constructor: Effect.void,
-          services: Context.empty(),
+    it("mimics a Worker `exports` entry (constructor Effect + services Context)", () => {
+      const a = fakeResource("Test.A", "EX-A");
+      const props = {
+        name: "worker",
+        exports: {
+          Store: { kind: "durableObject", constructor: Effect.void, services: Context.empty() },
         },
-      },
-      dep: Output.of(a),
-    };
-    expect(Object.keys(Output.upstreamAny(props))).toEqual(["EX-A"]);
-  });
+        dep: Output.of(a),
+      };
+      expect(Object.keys(Output.upstreamAny(props))).toEqual(["EX-A"]);
+    });
 
-  it.effect("evaluate passes Effect/Layer/Context through by identity", () =>
-    provideState(
-      Effect.gen(function* () {
-        const effect = Effect.succeed(1);
-        const layer = Layer.succeed(Stage, "test");
-        const context = Context.empty();
-        const result = yield* Output.evaluate({ effect, layer, context }, {});
-        expect(result.effect).toBe(effect);
-        expect(result.layer).toBe(layer);
-        expect(result.context).toBe(context);
-      }),
-    ),
-  );
+    it.effect("evaluate passes Effect/Layer/Context through by identity", () =>
+      provideState(
+        Effect.gen(function* () {
+          const effect = Effect.succeed(1);
+          const layer = Layer.succeed(Stage, "test");
+          const context = Context.empty();
+          const result = yield* Output.evaluate({ effect, layer, context }, {});
+          expect(result.effect).toBe(effect);
+          expect(result.layer).toBe(layer);
+          expect(result.context).toBe(context);
+        }),
+      ),
+    );
 
-  it.effect(
-    "evaluate passes Date/Redacted through by identity (prototype intact)",
-    () =>
+    it.effect("evaluate passes Date/Redacted through by identity (prototype intact)", () =>
       provideState(
         Effect.gen(function* () {
           const date = new Date(0);
@@ -1134,32 +1009,25 @@ describe("upstream walkers: cycles and non-plain leaves (#1082)", () => {
           expect(result.secret).toBe(secret);
         }),
       ),
-  );
+    );
 
-  it.effect("evaluate still resolves Config values (Configs are Effects)", () =>
-    provideState(
-      Effect.gen(function* () {
-        const result = yield* Output.evaluate(
-          { value: Config.succeed("resolved") },
-          {},
-        );
-        expect(result.value).toBe("resolved");
-      }),
-    ),
-  );
+    it.effect("evaluate still resolves Config values (Configs are Effects)", () =>
+      provideState(
+        Effect.gen(function* () {
+          const result = yield* Output.evaluate({ value: Config.succeed("resolved") }, {});
+          expect(result.value).toBe("resolved");
+        }),
+      ),
+    );
 
-  it.effect(
-    "evaluate resolves outputs at every nesting depth of plain data",
-    () =>
+    it.effect("evaluate resolves outputs at every nesting depth of plain data", () =>
       provideState(
         Effect.gen(function* () {
           const src = fakeResource("Test.A", "EV-A");
           const out = (Output.of(src) as any).name;
           const result = yield* Output.evaluate(
             {
-              layers: [
-                { config: { hosts: [{ url: out }, { url: "static" }] } },
-              ],
+              layers: [{ config: { hosts: [{ url: out }, { url: "static" }] } }],
               matrix: [[out]],
               mixed: [1, "x", { deep: [out] }, null],
               nullProto: Object.assign(Object.create(null), { ref: out }),
@@ -1169,41 +1037,34 @@ describe("upstream walkers: cycles and non-plain leaves (#1082)", () => {
           expect(result.layers[0].config.hosts[0].url).toBe("resolved-name");
           expect(result.layers[0].config.hosts[1].url).toBe("static");
           expect(result.matrix[0][0]).toBe("resolved-name");
-          expect(result.mixed).toEqual([
-            1,
-            "x",
-            { deep: ["resolved-name"] },
-            null,
-          ]);
+          expect(result.mixed).toEqual([1, "x", { deep: ["resolved-name"] }, null]);
           expect(result.nullProto.ref).toBe("resolved-name");
         }),
       ),
-  );
+    );
 
-  it.effect("evaluate cuts cyclic plain data but resolves siblings", () =>
-    provideState(
-      Effect.gen(function* () {
-        const src = fakeResource("Test.A", "CY-EV");
-        const out = (Output.of(src) as any).name;
-        const cyclic: any = { tag: "c" };
-        cyclic.self = cyclic;
-        const arr: any[] = [cyclic];
-        cyclic.arr = arr;
-        const result = yield* Output.evaluate(
-          { cyc: cyclic, url: out },
-          { "CY-EV": { name: "sibling" } },
-        );
-        expect(result.url).toBe("sibling");
-        expect(result.cyc.tag).toBe("c");
-        expect(result.cyc.self).toBeUndefined();
-        expect(result.cyc.arr[0]).toBeUndefined();
-      }),
-    ),
-  );
+    it.effect("evaluate cuts cyclic plain data but resolves siblings", () =>
+      provideState(
+        Effect.gen(function* () {
+          const src = fakeResource("Test.A", "CY-EV");
+          const out = (Output.of(src) as any).name;
+          const cyclic: any = { tag: "c" };
+          cyclic.self = cyclic;
+          const arr: any[] = [cyclic];
+          cyclic.arr = arr;
+          const result = yield* Output.evaluate(
+            { cyc: cyclic, url: out },
+            { "CY-EV": { name: "sibling" } },
+          );
+          expect(result.url).toBe("sibling");
+          expect(result.cyc.tag).toBe("c");
+          expect(result.cyc.self).toBeUndefined();
+          expect(result.cyc.arr[0]).toBeUndefined();
+        }),
+      ),
+    );
 
-  it.effect(
-    "evaluate preserves diamonds — shared objects evaluate in both positions",
-    () =>
+    it.effect("evaluate preserves diamonds — shared objects evaluate in both positions", () =>
       provideState(
         Effect.gen(function* () {
           const src = fakeResource("Test.A", "DI-EV");
@@ -1217,10 +1078,11 @@ describe("upstream walkers: cycles and non-plain leaves (#1082)", () => {
           expect(result.list[0]).toEqual({ url: "diamond" });
         }),
       ),
-  );
-});
+    );
+  },
+);
 
-describe("Output.toEnvKey / toUpper", () => {
+describe("Output.toEnvKey / toUpper", { tags: ["unit", "local"] }, () => {
   it("uppercases strings", () => {
     expect(Output.toUpper("hello")).toBe("HELLO");
   });

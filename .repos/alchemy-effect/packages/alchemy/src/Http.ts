@@ -1,23 +1,28 @@
+/**
+ * HTTP runtime bridges and platform services for Effect's HTTP APIs.
+ */
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
+import * as FileSystem from "effect/FileSystem";
+import * as Etag from "effect/http/Etag";
+import type { HttpBodyError } from "effect/http/HttpBody";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import { causeResponse, type HttpServerError } from "effect/http/HttpServerError";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type { Scope } from "effect/Scope";
-import type { HttpBodyError } from "effect/unstable/http/HttpBody";
-import {
-  causeResponse,
-  type HttpServerError,
-} from "effect/unstable/http/HttpServerError";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import { ManagedHttpShutdown } from "./Runtime/ManagedHttpShutdown.ts";
 
 export type HttpEffect<Req = never> = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   HttpServerError | HttpBodyError,
-  HttpServerRequest | Scope | Req
+  HttpServerRequest | Scope.Scope | Req
 >;
 
 /**
@@ -29,13 +34,13 @@ export type HttpEffect<Req = never> = Effect.Effect<
  */
 const scopeEjected = Symbol.for("effect/http/HttpEffect/scopeEjected");
 
-export const isScopeEjected = (scope: Scope) => scopeEjected in scope;
+export const isScopeEjected = (scope: Scope.Scope) => scopeEjected in scope;
 
 export const serve = <Req = never>(
   handler: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     HttpServerError | HttpBodyError,
-    HttpServerRequest | Scope | Req
+    HttpServerRequest | Scope.Scope | Req
   >,
 ) =>
   Effect.serviceOption(HttpServer).pipe(
@@ -63,10 +68,8 @@ export class HttpServer extends Context.Service<
         HttpServerError | HttpBodyError,
         Req
       >,
-      options?: {
-        port?: number;
-      },
-    ) => Effect.Effect<void, never, Exclude<Req, HttpServerRequest> | Scope>;
+      options?: { port?: number },
+    ) => Effect.Effect<void, never, Exclude<Req, HttpServerRequest> | Scope.Scope>;
   }
 >()("HttpServer") {}
 
@@ -75,15 +78,13 @@ export const safeHttpEffect = <Req = never>(
 ): Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   never,
-  Req | HttpServerRequest | Scope
+  Req | HttpServerRequest | Scope.Scope
 > =>
   Effect.catchCause(
     handler.pipe(
       // @ts-expect-error
       Effect.flatMap((response) =>
-        HttpServerResponse.isHttpServerResponse(response)
-          ? Effect.succeed(response)
-          : response,
+        HttpServerResponse.isHttpServerResponse(response) ? Effect.succeed(response) : response,
       ),
     ) as any as HttpEffect<Req>,
     (cause) =>
@@ -117,9 +118,7 @@ const logUnreportedCause = (cause: Cause.Cause<unknown>) => {
   const failures = cause.reasons.filter(
     (reason) =>
       reason._tag !== "Interrupt" &&
-      !ErrorReporter.isIgnored(
-        reason._tag === "Fail" ? reason.error : reason.defect,
-      ),
+      !ErrorReporter.isIgnored(reason._tag === "Fail" ? reason.error : reason.defect),
   );
   return failures.length === 0
     ? Effect.void
@@ -129,12 +128,18 @@ const logUnreportedCause = (cause: Cause.Cause<unknown>) => {
 export const resolvePort = (options: { port?: number } | undefined) =>
   options?.port !== undefined
     ? Effect.succeed(options.port)
-    : Config.number("PORT").pipe(Config.withDefault(3000));
+    : Config.Number("PORT").pipe(Config.withDefault(3000));
 
 export interface BunHttpServerOptions {
   /**
    * Network interface on which the Bun HTTP server listens.
-   * Omit to use Bun's default.
+   *
+   * Always passed explicitly to `Bun.serve` so container bootstraps bind a
+   * predictable IPv4 wildcard regardless of the platform default
+   * (`@effect/platform-bun` ≥ 4.0.0-rc.115 defaults to `::`; rc.113/114
+   * crash-looped on the omitted-hostname case).
+   *
+   * @default "0.0.0.0"
    */
   hostname?: string;
 }
@@ -152,9 +157,7 @@ export const BunHttpServer = (serverOptions?: BunHttpServerOptions) =>
             const port = yield* resolvePort(options);
             const server = yield* BunHttpServerPlatform.make({
               port,
-              ...(serverOptions?.hostname === undefined
-                ? {}
-                : { hostname: serverOptions.hostname }),
+              hostname: serverOptions?.hostname ?? "0.0.0.0",
             });
             yield* server.serve(safeHttpEffect(handler));
           }).pipe(Effect.orDie),
@@ -169,6 +172,11 @@ export interface NodeHttpServerOptions {
    * @default "0.0.0.0"
    */
   hostname?: string;
+  /**
+   * Port the Node HTTP server binds when the handler is served without an
+   * explicit port. Omit to read `PORT` (default `3000`).
+   */
+  port?: number;
 }
 
 export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
@@ -182,16 +190,76 @@ export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
       return {
         serve: (handler, options) =>
           Effect.gen(function* () {
-            const port = yield* resolvePort(options);
-            const server = yield* NodeHttpServerPlatform.make(
-              NodeHttp.createServer,
-              {
-                port,
-                host: serverOptions?.hostname ?? "0.0.0.0",
-              },
-            );
-            yield* server.serve(safeHttpEffect(handler));
+            const port = yield* resolvePort({ port: options?.port ?? serverOptions?.port });
+            const shutdown = yield* Effect.serviceOption(ManagedHttpShutdown);
+            const managed = Option.getOrUndefined(shutdown);
+            if (managed?.isStopping()) return yield* Effect.interrupt;
+            const serve = Effect.gen(function* () {
+              const server = yield* NodeHttpServerPlatform.make(
+                () => {
+                  const server = NodeHttp.createServer();
+                  managed?.servers.add(server);
+                  server.once("close", () => managed?.servers.delete(server));
+                  return server;
+                },
+                {
+                  port,
+                  host: serverOptions?.hostname ?? "0.0.0.0",
+                  gracefulShutdownTimeout: managed?.drainTimeoutMs,
+                },
+              );
+              // The Node bridge masks interruption, including streaming writes.
+              yield* managed
+                ? server.serve(safeHttpEffect(handler), (handled) =>
+                    Effect.withFiber((fiber) => {
+                      // Observe outside the adapter's request-scope finalization.
+                      managed.observeRequest(fiber);
+                      return Effect.interruptible(handled);
+                    }),
+                  )
+                : server.serve(safeHttpEffect(handler));
+            });
+            if (managed) {
+              const scope = yield* Scope.fork(managed.scope);
+              yield* serve.pipe(Scope.provide(scope));
+            } else {
+              yield* serve;
+            }
           }).pipe(Effect.orDie),
       };
     }),
   );
+
+const HttpPlatformStub: Layer.Layer<HttpPlatform.HttpPlatform> = Layer.succeed(
+  HttpPlatform.HttpPlatform,
+  {
+    platform: "web",
+    // Advertises no algorithms, so the compression middleware never engages
+    // and compressResponse is never called.
+    compression: {
+      algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
+      compressResponse: (response) => Effect.succeed(response),
+    },
+    fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
+    fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
+  },
+);
+
+/**
+ * The `HttpPlatform`, `Etag`, `Path`, and no-op `FileSystem` services `HttpApiBuilder.layer`
+ * wants, for runtimes without a filesystem: Workers, Lambda. File responses
+ * die, compression never engages.
+ *
+ * Provide it to `HttpApiBuilder.layer(api)` in a Worker or a Lambda:
+ *
+ * ```typescript
+ * HttpApiBuilder.layer(Api).pipe(
+ *   Layer.provide(handlers),
+ *   Layer.provide(Http.Platform),
+ *   HttpRouter.toHttpEffect,
+ * )
+ * ```
+ */
+export const Platform: Layer.Layer<
+  Etag.Generator | HttpPlatform.HttpPlatform | Path.Path | FileSystem.FileSystem
+> = Layer.mergeAll(Etag.layer, HttpPlatformStub, Path.layer, FileSystem.layerNoop({}));

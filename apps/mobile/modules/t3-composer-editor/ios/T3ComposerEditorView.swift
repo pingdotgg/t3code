@@ -6,11 +6,14 @@ private struct ComposerTokenPayload: Decodable {
   let source: String
   let label: String
   let iconUri: String?
+  let accent: String?
+  let tintsIcon: Bool?
+  let detail: String?
   let start: Int
   let end: Int
 }
 
-private struct ComposerSelectionPayload: Decodable {
+private struct ComposerSelectionPayload: Decodable, Equatable {
   let start: Int
   let end: Int
 }
@@ -21,32 +24,26 @@ private struct ComposerControlledDocumentPayload: Decodable {
   let tokensJson: String
   let mostRecentEventCount: Int
   let isNativeEcho: Bool
+  let resetGeneration: Int
 }
 
 private struct ComposerThemePayload: Decodable {
   let text: String
   let placeholder: String
-  let chipBackground: String
-  let chipBorder: String
-  let chipText: String
-  let skillBackground: String
-  let skillBorder: String
-  let skillText: String
-  let fileTint: String
 }
 
-private struct ComposerChipStyle {
-  let tint: UIColor
-  let backgroundColor: UIColor
-  let borderColor: UIColor
-  let textColor: UIColor
+private enum ComposerEnterBehavior: String {
+  case send
+  case newline
 }
 
 private final class ComposerTextAttachment: NSTextAttachment {
   let source: String
+  let label: String
 
-  init(source: String, image: UIImage, size: CGSize, baselineOffset: CGFloat) {
+  init(source: String, label: String, image: UIImage, size: CGSize, baselineOffset: CGFloat) {
     self.source = source
+    self.label = label
     super.init(data: nil, ofType: nil)
     self.image = image
     bounds = CGRect(x: 0, y: baselineOffset, width: size.width, height: size.height)
@@ -54,6 +51,14 @@ private final class ComposerTextAttachment: NSTextAttachment {
 
   required init?(coder: NSCoder) {
     nil
+  }
+}
+
+private final class ComposerContextAccessibilityElement: UIAccessibilityElement {
+  var activate: (() -> Bool)?
+
+  override func accessibilityActivate() -> Bool {
+    activate?() ?? false
   }
 }
 
@@ -72,28 +77,110 @@ private final class ComposerTextView: UITextView {
   ])
 
   var onPasteImages: (([String]) -> Void)?
+  var onPasteContext: (([String: String]) -> Void)?
+  var onPasteText: ((String, NSRange) -> Void)?
+  var clipboardFragment = ""
   var onAttributedMutation: (() -> Void)?
-  var onSubmit: (() -> Void)?
+  var onSubmit: ((Bool) -> Void)?
   var isReadOnly = false
+  var textPasteThresholdBytes = 0
+  var maxInputChars = Int.max
+  var enterBehavior: ComposerEnterBehavior = .send
+  /// JS supplies the actual send outcomes so the iPad Command-hold HUD names the configured actions.
+  var submitTitle = "Send Message"
+  var alternateSubmitTitle = "Send Message"
+  private var bypassTextPasteInterception = false
 
   override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
-    let submit = UIKeyCommand(
-      input: "\r",
-      modifierFlags: .command,
-      action: #selector(submitMessage(_:))
-    )
-    submit.discoverabilityTitle = "Send Message"
-    submit.wantsPriorityOverSystemBehavior = true
-    commands.append(submit)
+    guard !isReadOnly, markedTextRange == nil else { return commands }
+    if enterBehavior == .send {
+      let submitOnReturn = UIKeyCommand(
+        input: "\r",
+        modifierFlags: [],
+        action: #selector(submitMessage(_:))
+      )
+      submitOnReturn.discoverabilityTitle = submitTitle
+      submitOnReturn.wantsPriorityOverSystemBehavior = true
+      commands.append(submitOnReturn)
+
+      let submitAlternate = UIKeyCommand(
+        input: "\r",
+        modifierFlags: .command,
+        action: #selector(submitMessageAlternate(_:))
+      )
+      submitAlternate.discoverabilityTitle = alternateSubmitTitle
+      submitAlternate.wantsPriorityOverSystemBehavior = true
+      commands.append(submitAlternate)
+
+      let newline = UIKeyCommand(
+        input: "\r",
+        modifierFlags: .shift,
+        action: #selector(insertNewline(_:))
+      )
+      newline.discoverabilityTitle = "New Line"
+      newline.wantsPriorityOverSystemBehavior = true
+      commands.append(newline)
+    } else {
+      let submit = UIKeyCommand(
+        input: "\r",
+        modifierFlags: .command,
+        action: #selector(submitMessage(_:))
+      )
+      submit.discoverabilityTitle = submitTitle
+      submit.wantsPriorityOverSystemBehavior = true
+      commands.append(submit)
+
+      let submitAlternate = UIKeyCommand(
+        input: "\r",
+        modifierFlags: [.command, .shift],
+        action: #selector(submitMessageAlternate(_:))
+      )
+      submitAlternate.discoverabilityTitle = alternateSubmitTitle
+      submitAlternate.wantsPriorityOverSystemBehavior = true
+      commands.append(submitAlternate)
+    }
+    if textPasteThresholdBytes > 0 {
+      let pasteAsText = UIKeyCommand(
+        input: "v",
+        modifierFlags: [.command, .shift],
+        action: #selector(pasteInline(_:))
+      )
+      pasteAsText.discoverabilityTitle = "Paste as Text"
+      pasteAsText.wantsPriorityOverSystemBehavior = true
+      commands.append(pasteAsText)
+    }
     return commands
   }
 
   @objc private func submitMessage(_ sender: UIKeyCommand) {
-    onSubmit?()
+    guard !isReadOnly, markedTextRange == nil else { return }
+    onSubmit?(false)
+  }
+
+  @objc private func submitMessageAlternate(_ sender: UIKeyCommand) {
+    guard !isReadOnly, markedTextRange == nil else { return }
+    onSubmit?(true)
+  }
+
+  @objc private func insertNewline(_ sender: UIKeyCommand) {
+    guard !isReadOnly, markedTextRange == nil else { return }
+    insertText("\n")
+  }
+
+  @objc private func pasteInline(_ sender: UIKeyCommand) {
+    guard !isReadOnly else {
+      return
+    }
+    bypassTextPasteInterception = true
+    defer { bypassTextPasteInterception = false }
+    paste(sender)
   }
 
   override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    if action == #selector(submitMessage(_:)) || action == #selector(insertNewline(_:)) {
+      return isEditable && !isReadOnly && markedTextRange == nil
+    }
     if isReadOnly && Self.readOnlyActions.contains(NSStringFromSelector(action)) {
       return false
     }
@@ -109,11 +196,36 @@ private final class ComposerTextView: UITextView {
     return super.canPerformAction(action, withSender: sender)
   }
 
+  override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
+    guard isEditable, !isReadOnly else { return false }
+    // UIKit checks canPaste before forwarding a drag to UITextDropDelegate.
+    if !itemProviders.isEmpty,
+       itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
+      return true
+    }
+    return super.canPaste(itemProviders)
+  }
+
+  override func paste(itemProviders: [NSItemProvider]) {
+    guard isEditable, !isReadOnly else { return }
+    if !itemProviders.isEmpty,
+       itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
+      loadImages(from: itemProviders)
+      return
+    }
+    super.paste(itemProviders: itemProviders)
+  }
+
   override func paste(_ sender: Any?) {
     guard !isReadOnly else {
       return
     }
     let pasteboard = UIPasteboard.general
+    let context = T3ComposerClipboard.read()
+    if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") {
+      onPasteContext?(context)
+      return
+    }
     let imageProviders = pasteboard.itemProviders.filter {
       $0.canLoadObject(ofClass: UIImage.self)
     }
@@ -130,7 +242,32 @@ private final class ComposerTextView: UITextView {
         return
       }
     }
+    if !bypassTextPasteInterception,
+       let text = pasteboard.string, shouldInterceptTextPaste(text) {
+      onPasteText?(text, selectedRange)
+      return
+    }
+    // read() sees only the first item; native paste keeps every item of a longer pasteboard.
+    if !bypassTextPasteInterception, pasteboard.numberOfItems == 1,
+       T3ComposerClipboard.hasThreadLink(context["text", default: ""]) {
+      onPasteContext?(context)
+      return
+    }
     super.paste(sender)
+  }
+
+  private func shouldInterceptTextPaste(_ text: String) -> Bool {
+    guard textPasteThresholdBytes > 0, !text.isEmpty else { return false }
+    let pastedLength = (text as NSString).length
+    if pastedLength >= textPasteThresholdBytes || text.utf8.count >= textPasteThresholdBytes {
+      return true
+    }
+    // Chips occupy one display character but expand to their source in the
+    // submitted message. Measure that source, including the replaced selection.
+    let sourceLength = sourceOffset(forDisplayOffset: attributedText.length)
+    let selectedLength = sourceOffset(forDisplayOffset: NSMaxRange(selectedRange)) -
+      sourceOffset(forDisplayOffset: selectedRange.location)
+    return sourceLength - selectedLength + pastedLength > maxInputChars
   }
 
   override func deleteBackward() {
@@ -194,7 +331,7 @@ private final class ComposerTextView: UITextView {
     guard selectedRange.length > 0 else {
       return super.copy(sender)
     }
-    UIPasteboard.general.string = serializedText(in: selectedRange)
+    T3ComposerClipboard.write(text: serializedText(in: selectedRange), fragment: clipboardFragment)
   }
 
   override func cut(_ sender: Any?) {
@@ -308,8 +445,10 @@ private final class ComposerTextView: UITextView {
   }
 }
 
-public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate {
-  private let textView = ComposerTextView()
+public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIGestureRecognizerDelegate {
+  // This view reads `layoutManager`, which otherwise swaps a live TextKit 2 view to
+  // TextKit 1 mid-edit; that swap can leave typed text laid out but never drawn.
+  private let textView = ComposerTextView(usingTextLayoutManager: false)
   private let placeholderLabel = UILabel()
   private var value = ""
   private var tokensJson = "[]"
@@ -317,14 +456,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var requestedSelection: ComposerSelectionPayload?
   private var theme = ComposerThemePayload(
     text: "#262626",
-    placeholder: "#8e8e93",
-    chipBackground: "#f2f2f7",
-    chipBorder: "#dedee3",
-    chipText: "#262626",
-    skillBackground: "#f9e8fb",
-    skillBorder: "#e5a6eb",
-    skillText: "#a21caf",
-    fileTint: "#737373"
+    placeholder: "#8e8e93"
   )
   private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
@@ -335,10 +467,19 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var isReadOnly = false
   private var isApplyingControlledValue = false
   private var nativeEventCount = 0
+  // Count of the latest intercepted paste, so a flush can tell whether JS has received it.
+  private var lastPasteEventCount = 0
+  private var hasControlledDocument = false
+  private var resetGeneration = 0
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
   private var tokensNeedRebuild = false
+  private var chipsNeedMeasuredWidth = false
+  private var hasDeferredForcedRebuild = false
+  private var pendingContentOffset: CGPoint?
+  private var needsSelectionReveal = false
+  private var selectionBeforeFocusingTap: (selection: ComposerSelectionPayload, value: String)?
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -346,12 +487,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   let onComposerBlur = EventDispatcher()
   let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
+  let onComposerContextPress = EventDispatcher()
+  let onComposerPasteContext = EventDispatcher()
+  let onComposerPasteText = EventDispatcher()
   let onComposerContentSizeChange = EventDispatcher()
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
 
-    clipsToBounds = false
+    clipsToBounds = true
+    textView.clipsToBounds = true
     textView.delegate = self
     textView.textDropDelegate = self
     textView.backgroundColor = .clear
@@ -361,15 +506,52 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.alwaysBounceVertical = false
     textView.showsVerticalScrollIndicator = true
     textView.adjustsFontForContentSizeCategory = true
+    if #available(iOS 26.0, *) {
+      // UIKit can attach a nearby bar's scroll edge effect to this text view; its backdrop
+      // then draws over the typed text while the caret stays visible.
+      let edges = [textView.topEdgeEffect, textView.leftEdgeEffect, textView.bottomEdgeEffect, textView.rightEdgeEffect]
+      for edge in edges {
+        edge.isHidden = true
+      }
+    }
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
+    }
+    textView.onPasteContext = { [weak self] context in
+      guard let self else { return }
+      let selection = self.sourceSelection()
+      self.nativeEventCount += 1
+      self.lastPasteEventCount = self.nativeEventCount
+      var payload: [String: Any] = context
+      payload["value"] = self.textView.serializedText()
+      payload["eventCount"] = self.nativeEventCount
+      payload["resetGeneration"] = self.resetGeneration
+      payload["selection"] = ["start": selection.start, "end": selection.end]
+      self.onComposerPasteContext(payload)
+    }
+    textView.onPasteText = { [weak self] text, _ in
+      guard let self else { return }
+      let selection = self.sourceSelection()
+      self.nativeEventCount += 1
+      self.lastPasteEventCount = self.nativeEventCount
+      self.onComposerPasteText([
+        "value": self.textView.serializedText(),
+        "eventCount": self.nativeEventCount,
+        "resetGeneration": self.resetGeneration,
+        "text": text,
+        "selection": ["start": selection.start, "end": selection.end],
+      ])
     }
     textView.onAttributedMutation = { [weak self] in
       self?.emitTextChange()
     }
-    textView.onSubmit = { [weak self] in
-      self?.onComposerSubmit([:])
+    textView.onSubmit = { [weak self] alternate in
+      self?.onComposerSubmit(["alternate": alternate])
     }
+    let contextTap = UITapGestureRecognizer(target: self, action: #selector(openContext(_:)))
+    contextTap.cancelsTouchesInView = false
+    contextTap.delegate = self
+    textView.addGestureRecognizer(contextTap)
     addSubview(textView)
 
     placeholderLabel.numberOfLines = 0
@@ -379,9 +561,103 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     applyTheme()
   }
 
+  @objc private func openContext(_ recognizer: UITapGestureRecognizer) {
+    guard let (index, attachment) = contextAttachment(at: recognizer.location(in: textView)) else {
+      textView.becomeFirstResponder()
+      if selectionBeforeFocusingTap != nil {
+        // UIKit places the caret from its own tap recognizer during this same touch.
+        DispatchQueue.main.async { [weak self] in
+          self?.restoreSelectionBeforeFocusingTap()
+        }
+      }
+      return
+    }
+    openContext(index: index, attachment: attachment)
+  }
+
+  private func openContext(index: Int, attachment: ComposerTextAttachment) {
+    let start = textView.sourceOffset(forDisplayOffset: index)
+    onComposerContextPress(["source": attachment.source, "start": start, "end": start + (attachment.source as NSString).length])
+  }
+
+  public override var accessibilityElements: [Any]? {
+    get {
+      var elements: [Any] = [textView]
+      let layout = textView.layoutManager
+      textView.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textView.textStorage.length)) { value, range, _ in
+        guard let attachment = value as? ComposerTextAttachment else { return }
+        let glyphRange = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layout.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer)
+          .offsetBy(dx: textView.textContainerInset.left, dy: textView.textContainerInset.top)
+        guard rect.intersects(textView.bounds) else { return }
+        let element = ComposerContextAccessibilityElement(accessibilityContainer: self)
+        element.accessibilityLabel = attachment.label
+        element.accessibilityTraits = .button
+        element.accessibilityFrameInContainerSpace = textView.convert(rect, to: self)
+        element.activate = { [weak self] in
+          guard let self, range.location < self.textView.textStorage.length,
+                self.textView.textStorage.attribute(.attachment, at: range.location, effectiveRange: nil) as? ComposerTextAttachment === attachment else { return false }
+          self.openContext(index: range.location, attachment: attachment)
+          return true
+        }
+        elements.append(element)
+      }
+      return elements
+    }
+    set { super.accessibilityElements = newValue }
+  }
+
+  public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    // The collapsed editor only shows the draft's first line, so a tap that expands an
+    // overflowing draft returns to the caret it was left at instead of moving it there.
+    let collapsedOverflow = !textView.isFirstResponder && !textView.isScrollEnabled && draftOverflowsBounds()
+    selectionBeforeFocusingTap = collapsedOverflow ? (sourceSelection(), value) : nil
+    return true
+  }
+
+  public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    true
+  }
+
+  public func textView(_ textView: UITextView, shouldInteractWith textAttachment: NSTextAttachment, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
+    // A chip is text context, not an image to save to the camera roll.
+    !(textAttachment is ComposerTextAttachment)
+  }
+
+  private func contextAttachment(at point: CGPoint) -> (Int, ComposerTextAttachment)? {
+    let containerPoint = CGPoint(x: point.x - textView.textContainerInset.left, y: point.y - textView.textContainerInset.top)
+    let layout = textView.layoutManager
+    let index = layout.characterIndex(for: containerPoint, in: textView.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+    guard index < textView.textStorage.length,
+          let attachment = textView.textStorage.attribute(.attachment, at: index, effectiveRange: nil) as? ComposerTextAttachment else { return nil }
+    let glyphRange = layout.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+    guard layout.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer).contains(containerPoint) else { return nil }
+    return (index, attachment)
+  }
+
   public override func layoutSubviews() {
     super.layoutSubviews()
+    let previousSize = textView.bounds.size
     textView.frame = bounds
+    if chipsNeedMeasuredWidth, bounds.width > 0 {
+      chipsNeedMeasuredWidth = false
+      applyControlledDocument(force: true)
+    }
+    if textView.isScrollEnabled, bounds.width > 0, bounds.height > 0 {
+      textView.layoutIfNeeded()
+      if let offset = pendingContentOffset {
+        let minY = -textView.adjustedContentInset.top
+        let maxY = max(minY, textView.contentSize.height - bounds.height + textView.adjustedContentInset.bottom)
+        textView.setContentOffset(CGPoint(x: offset.x, y: min(maxY, max(minY, offset.y))), animated: false)
+        pendingContentOffset = nil
+      }
+      if needsSelectionReveal || (previousSize != bounds.size && textView.isFirstResponder) {
+        needsSelectionReveal = false
+        if let selection = textView.selectedTextRange {
+          textView.scrollRectToVisible(textView.caretRect(for: selection.end), animated: false)
+        }
+      }
+    }
     let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
     let placeholderY = textView.textContainerInset.top
     let placeholderWidth = max(
@@ -398,6 +674,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     emitContentSizeIfNeeded()
   }
 
+  func setClipboardFragment(_ fragment: String) {
+    textView.clipboardFragment = fragment
+  }
+
   public override func didMoveToWindow() {
     super.didMoveToWindow()
     guard window != nil, shouldAutoFocus, !didAutoFocus else {
@@ -410,22 +690,39 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setControlledDocumentJson(_ documentJson: String) {
-    guard let document = decode(ComposerControlledDocumentPayload.self, from: documentJson),
-          document.mostRecentEventCount >= nativeEventCount else {
+    guard let document = decode(ComposerControlledDocumentPayload.self, from: documentJson) else {
       return
     }
-    if document.isNativeEcho && textView.serializedText() != document.value {
+    // A parent reset (a send clear) wins over native edits it could not see; JS drops their events
+    // by generation, so the revision restarts where the parent last acknowledged.
+    let isReset = document.resetGeneration > resetGeneration
+    guard isReset || document.mostRecentEventCount >= nativeEventCount else {
       return
     }
+    if isReset {
+      resetGeneration = document.resetGeneration
+      // JS drops a paste from before the reset by generation, so the flush must not wait for it.
+      lastPasteEventCount = 0
+      endComposition()
+    }
+    // iOS destroys this view under display: none and mounts a fresh one while JS keeps its
+    // revision and draft. Continue from them, or JS drops every event the new view sends.
+    nativeEventCount = document.mostRecentEventCount
+    if document.isNativeEcho && !isReset && hasControlledDocument && textView.serializedText() != document.value {
+      return
+    }
+    hasControlledDocument = true
     if tokensJson != document.tokensJson {
       tokensJson = document.tokensJson
       tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
       tokensNeedRebuild = true
     }
+    let previousSelection = sourceSelection()
     value = document.value
     requestedSelection = document.selection
     applyControlledDocument(force: tokensNeedRebuild)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
     if tokensMatchCurrentValue() {
       tokensNeedRebuild = false
     }
@@ -484,7 +781,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setScrollEnabled(_ scrollEnabled: Bool) {
+    guard textView.isScrollEnabled != scrollEnabled else { return }
+    if !scrollEnabled {
+      // Disabling scrolling discards UITextView's offset. Restore it after
+      // expansion has laid out the text, regardless of prop update order.
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     textView.isScrollEnabled = scrollEnabled
+    if scrollEnabled {
+      revealSelectionAfterLayout()
+    }
   }
 
   func setAutoFocus(_ autoFocus: Bool) {
@@ -499,6 +805,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.spellCheckingType = spellCheck ? .yes : .no
   }
 
+  func setEnterBehavior(_ behavior: String) {
+    textView.enterBehavior = ComposerEnterBehavior(rawValue: behavior) ?? .send
+  }
+
+  func setSubmitTitle(_ title: String) {
+    textView.submitTitle = title
+  }
+
+  func setAlternateSubmitTitle(_ title: String) {
+    textView.alternateSubmitTitle = title
+  }
+
+  func setTextPasteThresholdBytes(_ threshold: Int) {
+    textView.textPasteThresholdBytes = threshold
+  }
+
+  func setMaxInputChars(_ maxInputChars: Int) {
+    textView.maxInputChars = maxInputChars
+  }
+
   func focusEditor() {
     textView.becomeFirstResponder()
   }
@@ -507,9 +833,22 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.resignFirstResponder()
   }
 
+  func readState() -> [String: Any] {
+    let selection = sourceSelection()
+    return [
+      "value": value,
+      "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
+      "resetGeneration": resetGeneration,
+      "pasteEventCount": lastPasteEventCount,
+    ]
+  }
+
   func setSelection(start: Int, end: Int) {
+    let previousSelection = sourceSelection()
     requestedSelection = ComposerSelectionPayload(start: start, end: end)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
   }
 
   public func textViewDidChange(_ textView: UITextView) {
@@ -581,6 +920,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func textViewDidBeginEditing(_ textView: UITextView) {
+    revealSelectionAfterLayout()
     onComposerFocus()
   }
 
@@ -589,13 +929,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func applyControlledDocument(force: Bool = false) {
-    let currentSource = textView.serializedText()
-    guard force || currentSource != value || !documentMatchesExpectedTokens() else {
+    // Rebuilding the attributed string tears down an active IME composition.
+    // Skip while marked text exists; committing the composition sends a new
+    // value from JS, and that update rebuilds, keeping any skipped force.
+    if textView.markedTextRange != nil {
+      hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
       updatePlaceholderVisibility()
       return
     }
+    let shouldForce = force || hasDeferredForcedRebuild
+    let currentSource = textView.serializedText()
+    guard shouldForce || currentSource != value || !documentMatchesExpectedTokens() else {
+      updatePlaceholderVisibility()
+      return
+    }
+    hasDeferredForcedRebuild = false
 
     let previousSelection = sourceSelection()
+    if textView.isScrollEnabled {
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     isApplyingControlledValue = true
     textView.attributedText = makeAttributedDocument()
     let targetSelection = requestedSelection ?? previousSelection
@@ -603,8 +956,22 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.selectedRange = displayRange(for: targetSelection)
     restoreBaseTypingAttributes()
     isApplyingControlledValue = false
+    if currentSource != value || previousSelection.start != targetSelection.start || previousSelection.end != targetSelection.end {
+      revealSelectionAfterLayout()
+    } else {
+      setNeedsLayout()
+    }
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
+  }
+
+  private func endComposition() {
+    guard textView.markedTextRange != nil else {
+      return
+    }
+    isApplyingControlledValue = true
+    textView.unmarkText()
+    isApplyingControlledValue = false
   }
 
   private func makeAttributedDocument() -> NSAttributedString {
@@ -645,34 +1012,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func makeAttachmentString(_ token: ComposerTokenPayload) -> NSAttributedString {
-    let isSkill = token.type == "skill"
-    let tint = UIColor(composerHex: isSkill ? theme.skillText : theme.fileTint) ?? .secondaryLabel
-    let iconName = isSkill ? "cube" : "doc"
-    let iconImage = token.iconUri.flatMap(iconImage(for:))
-    let style = ComposerChipStyle(
-      tint: tint,
-      backgroundColor: UIColor(
-        composerHex: isSkill ? theme.skillBackground : theme.chipBackground
-      ) ?? .secondarySystemFill,
-      borderColor: UIColor(
-        composerHex: isSkill ? theme.skillBorder : theme.chipBorder
-      ) ?? .separator,
-      textColor: UIColor(composerHex: isSkill ? theme.skillText : theme.chipText) ?? .label
-    )
+    let color = token.accent.flatMap { UIColor(composerHex: $0) }
+      ?? UIColor(composerHex: theme.text) ?? .label
+    let chipFont = UIFont(name: "DMSans-Medium", size: fontSize)
+      ?? UIFont.systemFont(ofSize: fontSize, weight: .medium)
+    let icon = token.iconUri.flatMap(iconImage(for:)).map {
+      token.tintsIcon == true ? Self.tinted($0, color: color) : $0
+    }
     let image = renderChip(
       label: token.label,
-      iconName: iconName,
-      iconImage: iconImage,
-      style: style
+      detail: token.detail,
+      icon: icon,
+      color: color,
+      font: chipFont
     )
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
-    let baselineOffset = floor((font.capHeight - image.size.height) / 2)
     let attachment = ComposerTextAttachment(
       source: token.source,
+      label: token.label,
       image: image,
       size: image.size,
-      baselineOffset: baselineOffset
+      baselineOffset: chipFont.ascender - image.size.height
     )
     let attributedAttachment = NSMutableAttributedString(attachment: attachment)
     attributedAttachment.addAttributes(
@@ -684,55 +1043,70 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   private func renderChip(
     label: String,
-    iconName: String,
-    iconImage: UIImage?,
-    style: ComposerChipStyle
+    detail: String?,
+    icon: UIImage?,
+    color: UIColor,
+    font: UIFont
   ) -> UIImage {
-    let font = UIFont(name: "DMSans-Medium", size: max(12, fontSize - 2))
-      ?? UIFont.systemFont(ofSize: max(12, fontSize - 2), weight: .medium)
-    let fallbackIcon = UIImage(
-      systemName: iconName,
-      withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .left
+    paragraph.lineBreakMode = .byTruncatingMiddle
+    let attributedLabel = NSMutableAttributedString(
+      string: label,
+      attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
     )
-    let icon = iconImage ?? fallbackIcon
-    let textSize = (label as NSString).size(withAttributes: [.font: font])
-    let iconWidth = icon == nil ? 0 : 14
-    let iconGap = icon == nil ? 0 : 5
-    let height: CGFloat = 24
-    let width = ceil(9 + CGFloat(iconWidth + iconGap) + textSize.width + 9)
+    // The size reads as metadata, not part of the name, so it renders a step down from the
+    // label the way the web chip does.
+    if let detail, !detail.isEmpty {
+      let detailFont = font.withSize(font.pointSize * 0.84)
+      attributedLabel.append(
+        NSAttributedString(
+          string: " \(detail)",
+          attributes: [.font: detailFont, .foregroundColor: color, .paragraphStyle: paragraph]
+        )
+      )
+    }
+    let iconSide = font.pointSize
+    let iconSlot: CGFloat = icon == nil ? 0 : iconSide * 1.25
+    let padding: CGFloat = 5
+    let height = ceil(font.ascender - font.descender)
+    // A long path would otherwise draw a chip wider than the composer and clip. Cap the label
+    // to the text the editor can actually show and truncate inside it, as Android's
+    // `maximumWidth` does, so the chip always fits the line it sits on.
+    let availableWidth = textView.textContainer.size.width > 0
+      ? textView.textContainer.size.width - textView.textContainer.lineFragmentPadding * 2
+      : (textView.window?.bounds.width ?? bounds.width)
+    if availableWidth <= 0 {
+      chipsNeedMeasuredWidth = true
+    }
+    let maximumLabelWidth = max(font.pointSize * 3, availableWidth - padding * 2 - iconSlot)
+    let labelWidth = min(attributedLabel.size().width, maximumLabelWidth)
+    let width = ceil(padding * 2 + iconSlot + labelWidth)
     let format = UIGraphicsImageRendererFormat.preferred()
     format.opaque = false
     let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
-    return renderer.image { context in
-      let rect = CGRect(origin: .zero, size: CGSize(width: width, height: height))
-      let path = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 7)
-      style.backgroundColor.setFill()
-      path.fill()
-      style.borderColor.setStroke()
-      path.lineWidth = 1
-      path.stroke()
-
-      var x: CGFloat = 9
+    return renderer.image { _ in
       if let icon {
-        let renderedIcon = iconImage == nil
-          ? icon.withTintColor(style.tint, renderingMode: .alwaysOriginal)
-          : icon
-        renderedIcon.draw(
-          in: CGRect(x: x, y: 5, width: 14, height: 14)
+        icon.draw(
+          in: CGRect(x: padding, y: (height - iconSide) / 2, width: iconSide, height: iconSide)
         )
-        x += 19
       }
-      let paragraph = NSMutableParagraphStyle()
-      paragraph.alignment = .left
-      (label as NSString).draw(
-        in: CGRect(x: x, y: 3, width: textSize.width + 1, height: 18),
-        withAttributes: [
-          .font: font,
-          .foregroundColor: style.textColor,
-          .paragraphStyle: paragraph,
-        ]
+      // Exactly the measured width: a spare pixel here would let a capped label draw past
+      // the cap instead of truncating inside it.
+      attributedLabel.draw(
+        in: CGRect(x: padding + iconSlot, y: 0, width: labelWidth, height: height)
       )
-      context.cgContext.setAllowsAntialiasing(true)
+    }
+  }
+
+  private static func tinted(_ image: UIImage, color: UIColor) -> UIImage {
+    let format = UIGraphicsImageRendererFormat.preferred()
+    format.scale = image.scale
+    format.opaque = false
+    return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+      color.setFill()
+      UIRectFill(CGRect(origin: .zero, size: image.size))
+      image.draw(at: .zero, blendMode: .destinationIn, alpha: 1)
     }
   }
 
@@ -806,12 +1180,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     value = textView.serializedText()
+    revealSelectionAfterLayout()
     let selection = sourceSelection()
     nativeEventCount += 1
     onComposerChange([
       "value": value,
       "selection": ["start": selection.start, "end": selection.end],
       "eventCount": nativeEventCount,
+      "resetGeneration": resetGeneration,
     ])
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
@@ -828,6 +1204,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       "value": currentValue,
       "selection": ["start": selection.start, "end": selection.end],
       "eventCount": nativeEventCount,
+      "resetGeneration": resetGeneration,
     ])
   }
 
@@ -875,6 +1252,40 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
+    revealSelectionAfterLayout()
+  }
+
+  private func restoreSelectionBeforeFocusingTap() {
+    guard let snapshot = selectionBeforeFocusingTap else {
+      return
+    }
+    selectionBeforeFocusingTap = nil
+    // A draft that changed during the touch, such as a transcript landing, owns the caret now.
+    guard textView.isFirstResponder, textView.markedTextRange == nil, value == snapshot.value else {
+      return
+    }
+    let range = displayRange(for: snapshot.selection)
+    guard !NSEqualRanges(range, textView.selectedRange) else {
+      return
+    }
+    textView.selectedRange = range
+    revealSelectionAfterLayout()
+  }
+
+  private func cancelFocusingTapRestoreIfSelectionMoved(from previousSelection: ComposerSelectionPayload) {
+    if sourceSelection() != previousSelection {
+      selectionBeforeFocusingTap = nil
+    }
+  }
+
+  private func draftOverflowsBounds() -> Bool {
+    let size = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+    return size.height > textView.bounds.height + 1
+  }
+
+  private func revealSelectionAfterLayout() {
+    needsSelectionReveal = true
+    setNeedsLayout()
   }
 
   private func updatePlaceholderVisibility() {
@@ -882,7 +1293,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func emitContentSizeIfNeeded() {
-    let nextSize = textView.contentSize
+    guard bounds.width > 0 else { return }
+    // Fit independently of the animated viewport: when scrolling is disabled,
+    // its current height can clip TextKit's laid-out line fragments.
+    let fittedHeight = textView.sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height
+      - textView.textContainerInset.top - textView.textContainerInset.bottom
+    let measuredHeight = min(lineHeight * 4, fittedHeight)
+    let width = fittedHeight <= lineHeight + 0.5
+      ? textView.layoutManager.usedRect(for: textView.textContainer).width
+      : 0
+    let nextSize = CGSize(width: ceil(width), height: ceil(measuredHeight))
     guard abs(nextSize.width - lastContentSize.width) > 0.5 ||
       abs(nextSize.height - lastContentSize.height) > 0.5 else {
       return

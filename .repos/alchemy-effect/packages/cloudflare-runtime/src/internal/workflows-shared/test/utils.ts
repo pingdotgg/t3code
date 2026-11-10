@@ -1,14 +1,10 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
-import { env } from "cloudflare:test";
-import { setTestWorkflowCallback } from "./test-entry.ts";
-import type {
-  DatabaseInstance,
-  DatabaseVersion,
-  DatabaseWorkflow,
-  Engine,
-} from "../engine.ts";
+// Alchemy modifications: uses Array<T> syntax for non-tuple array types to match the repository convention.
+import { env } from "cloudflare:workers";
 import type { WorkflowStep } from "cloudflare:workers";
+import type { DatabaseInstance, DatabaseVersion, DatabaseWorkflow, Engine } from "../engine.ts";
+import { setTestWorkflowCallback } from "./test-entry.ts";
 
 // Track fire-and-forget init() RPC promises so they can be settled
 // in afterAll hooks before vitest tears down miniflare

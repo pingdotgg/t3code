@@ -16,9 +16,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as Docker from "../Docker.ts";
 import * as Globals from "../globals/Globals.ts";
 import * as Internet from "../globals/Internet.ts";
@@ -77,9 +77,7 @@ const baseWorker = {
 const consumerWorker = (name: string) => ({
   ...baseWorker,
   name,
-  modules: [
-    { name: "main.js", type: "ESModule", content: CONSUMER_SCRIPT } as const,
-  ],
+  modules: [{ name: "main.js", type: "ESModule", content: CONSUMER_SCRIPT } as const],
 });
 
 const producerWorker = (name: string, consumer: string, marker: string) => ({
@@ -95,100 +93,75 @@ const producerWorker = (name: string, consumer: string, marker: string) => ({
   ],
 });
 
-layer(localRuntimeLayer, { excludeTestServices: true })(
-  "Tail workers",
-  (it) => {
-    it.effect(
-      "delivers trace events from a producer to its tail consumer",
-      () =>
-        Effect.gen(function* () {
-          const consumer = yield* startTestWorker(
-            consumerWorker("tails-consumer"),
-          );
-          yield* waitForRegistryEntry({
-            kind: "worker",
-            scriptName: "tails-consumer",
-          });
+layer(localRuntimeLayer, { excludeTestServices: true })("Tail workers", (it) => {
+  it.effect(
+    "delivers trace events from a producer to its tail consumer",
+    () =>
+      Effect.gen(function* () {
+        const consumer = yield* startTestWorker(consumerWorker("tails-consumer"));
+        yield* waitForRegistryEntry({
+          kind: "worker",
+          scriptName: "tails-consumer",
+        });
 
-          const producer = yield* startTestWorker(
-            producerWorker(
-              "tails-producer",
-              "tails-consumer",
-              "tails-basic-marker",
-            ),
-          );
-          expect(yield* producer.fetchText("/hello")).toBe(
-            "hello from producer",
-          );
+        const producer = yield* startTestWorker(
+          producerWorker("tails-producer", "tails-consumer", "tails-basic-marker"),
+        );
+        expect(yield* producer.fetchText("/hello")).toBe("hello from producer");
 
-          // Tail events are delivered after the response completes; poll until
-          // the consumer has recorded the batch.
-          const events = yield* poll<Array<RecordedTraceItem>>(
-            consumer,
-            "/events",
-            (items) => items.length > 0,
-            20_000,
-          );
-          const item = events[0];
-          expect(item.outcome).toBe("ok");
-          expect(item.logs?.map((log) => log.message)).toContainEqual([
-            "tails-basic-marker",
-          ]);
-          expect(item.event?.request?.url).toContain("/hello");
-        }),
-      { timeout: 60_000 },
-    );
+        // Tail events are delivered after the response completes; poll until
+        // the consumer has recorded the batch.
+        const events = yield* poll<Array<RecordedTraceItem>>(
+          consumer,
+          "/events",
+          (items) => items.length > 0,
+          20_000,
+        );
+        const item = events[0];
+        expect(item.outcome).toBe("ok");
+        expect(item.logs?.map((log) => log.message)).toContainEqual(["tails-basic-marker"]);
+        expect(item.event?.request?.url).toContain("/hello");
+      }),
+    { timeout: 60_000 },
+  );
 
-    it.effect(
-      "drops events while the consumer is down and delivers once it starts",
-      () =>
-        Effect.gen(function* () {
-          // The consumer is not running yet: starting the producer and serving
-          // requests must both succeed — events are dropped with a warning.
-          const producer = yield* startTestWorker(
-            producerWorker(
-              "tails-late-producer",
-              "tails-late-consumer",
-              "tails-late-marker",
-            ),
-          );
-          expect(yield* producer.fetchText("/hello")).toBe(
-            "hello from producer",
-          );
+  it.effect(
+    "drops events while the consumer is down and delivers once it starts",
+    () =>
+      Effect.gen(function* () {
+        // The consumer is not running yet: starting the producer and serving
+        // requests must both succeed — events are dropped with a warning.
+        const producer = yield* startTestWorker(
+          producerWorker("tails-late-producer", "tails-late-consumer", "tails-late-marker"),
+        );
+        expect(yield* producer.fetchText("/hello")).toBe("hello from producer");
 
-          const consumer = yield* startTestWorker(
-            consumerWorker("tails-late-consumer"),
-          );
-          yield* waitForRegistryEntry({
-            kind: "worker",
-            scriptName: "tails-late-consumer",
-          });
+        const consumer = yield* startTestWorker(consumerWorker("tails-late-consumer"));
+        yield* waitForRegistryEntry({
+          kind: "worker",
+          scriptName: "tails-late-consumer",
+        });
 
-          // The producer's registry proxy picks the consumer up asynchronously;
-          // keep producing until an event lands.
-          const events = yield* producer.fetch("/hello").pipe(
-            Effect.andThen(
-              consumer.fetchJson<Array<RecordedTraceItem>>("/events"),
-            ),
-            Effect.flatMap((items) =>
-              items.length > 0
-                ? Effect.succeed(items)
-                : Effect.fail(new PredicateFailed({ value: items })),
-            ),
-            Effect.retry({
-              while: (error) => error._tag === "PredicateFailed",
-              schedule: Schedule.spaced("250 millis"),
-              times: 120,
-            }),
-          );
-          expect(events[0].logs?.map((log) => log.message)).toContainEqual([
-            "tails-late-marker",
-          ]);
-        }),
-      { timeout: 90_000 },
-    );
-  },
-);
+        // The producer's registry proxy picks the consumer up asynchronously;
+        // keep producing until an event lands.
+        const events = yield* producer.fetch("/hello").pipe(
+          Effect.andThen(consumer.fetchJson<Array<RecordedTraceItem>>("/events")),
+          Effect.flatMap((items) =>
+            items.length > 0
+              ? Effect.succeed(items)
+              : Effect.fail(new PredicateFailed({ value: items })),
+          ),
+          Effect.retry({
+            while: (error) => error._tag === "PredicateFailed",
+            schedule: Schedule.spaced("250 millis"),
+            times: 120,
+          }),
+        );
+        expect(events[0].logs?.map((log) => log.message)).toContainEqual(["tails-late-marker"]);
+      }),
+    { timeout: 90_000 },
+  );
+});
 
 // A runtime composed without the registry proxy plugin (`tails` has nothing
 // to resolve through) must fail fast with a typed `ConfigError` instead of
@@ -202,9 +175,7 @@ describe("Tail workers without a registry proxy", () => {
     Layer.provide(
       Layer.effect(
         Storage.Storage,
-        Effect.suspend(() => makeTempDirectory()).pipe(
-          Effect.map(Storage.make),
-        ),
+        Effect.suspend(() => makeTempDirectory()).pipe(Effect.map(Storage.make)),
       ),
     ),
     Layer.provide(Internet.InternetLive),
@@ -212,9 +183,7 @@ describe("Tail workers without a registry proxy", () => {
     Layer.provideMerge(Docker.DockerLive),
     Layer.provide(Workerd.WorkerdLive),
     Layer.provide(configProvider()),
-    Layer.provideMerge(
-      Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-    ),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
   );
 
   it.effect(

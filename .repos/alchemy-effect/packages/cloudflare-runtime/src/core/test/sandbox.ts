@@ -3,8 +3,8 @@
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { KvNamespace } from "../../../dist/core/node/bindings/index.mjs";
 import * as WorkerProxy from "../../../dist/core/node/proxy/WorkerProxy.mjs";
 import * as Runtime from "../../../dist/core/node/Runtime.mjs";
@@ -46,13 +46,7 @@ const main = Effect.gen(function* () {
 const services = RuntimeServices.layerRuntime({
   api: { accountId: process.env.CLOUDFLARE_ACCOUNT_ID! },
 }).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      Credentials.fromEnv(),
-      NodeServices.layer,
-      FetchHttpClient.layer,
-    ),
-  ),
+  Layer.provide(Layer.mergeAll(Credentials.fromEnv(), NodeServices.layer, FetchHttpClient.layer)),
 );
 
 await main.pipe(Effect.provide(services), Effect.scoped, Effect.runPromise);

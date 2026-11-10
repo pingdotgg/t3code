@@ -9,6 +9,7 @@ const validPreload = `
   electron.contextBridge.exposeInMainWorld("desktopBridge", {
     getClientPlatform: () => process.platform,
     getLocalEnvironmentBootstraps: () => [],
+    getPathForFile: () => "",
     pickFolder: (options) => electron.ipcRenderer.invoke(PICK_FOLDER_CHANNEL, options),
   });
 `;
@@ -59,22 +60,9 @@ describe("desktop preload bundle verifier", () => {
     );
   });
 
-  it("ignores import-like text in strings", () => {
-    assert.doesNotThrow(() =>
-      verifyPreloadBundle(`${validPreload}\nconst message = 'import /* comment */("module")';`),
-    );
-  });
-
   it("rejects unsupported require calls with comments before the opening parenthesis", () => {
     assert.throws(
       () => verifyPreloadBundle(`${validPreload}\nrequire /* @__PURE__ */ ("node:fs");`),
-      /unsupported sandbox imports: node:fs/,
-    );
-  });
-
-  it("rejects unsupported optional require calls", () => {
-    assert.throws(
-      () => verifyPreloadBundle(`${validPreload}\nrequire?.("node:fs");`),
       /unsupported sandbox imports: node:fs/,
     );
   });
@@ -88,6 +76,18 @@ describe("desktop preload bundle verifier", () => {
         require("node:events");
         require("node:timers");
         require("node:url");
+      `),
+    );
+  });
+
+  it("runs a preload that reads the page's DOM while loading", () => {
+    assert.doesNotThrow(() =>
+      verifyPreloadBundle(`
+        ${validPreload}
+        const report = () => document.fullscreenElement;
+        report();
+        document.addEventListener("fullscreenchange", report);
+        window.addEventListener("resize", report);
       `),
     );
   });

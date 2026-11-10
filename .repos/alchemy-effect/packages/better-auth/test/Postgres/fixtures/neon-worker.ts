@@ -1,9 +1,9 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { BetterAuth } from "../../../src/index.ts";
 import { Neon as NeonDatabase } from "../../../src/Neon.ts";
 
@@ -40,9 +40,7 @@ export default class NeonAuthWorker extends Cloudflare.Worker<NeonAuthWorker>()(
         if (request.url.startsWith("/me")) {
           const session = yield* auth
             .getSession()
-            .pipe(
-              Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
-            );
+            .pipe(Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)));
           return yield* HttpServerResponse.json({
             email: session?.user.email ?? null,
           });

@@ -78,7 +78,7 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
     expect(result.stderr.length).toBe(0);
   });
 
-  for (const [scenario, code] of [
+  it.each([
     ["missing", 2],
     ["empty", 2],
     ["locked", 3],
@@ -86,13 +86,11 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
     ["denied", 3],
     ["unavailable", 4],
     ["unloaded", 4],
-  ]) {
-    it(`reports ${scenario} without emitting a secret`, () => {
-      const result = run([scenario]);
-      expect(result.status).toBe(code);
-      expect(result.stdout.length).toBe(0);
-    });
-  }
+  ])("reports %s without emitting a secret", (scenario, code) => {
+    const result = run([scenario]);
+    expect(result.status).toBe(code);
+    expect(result.stdout.length).toBe(0);
+  });
   it("rejects invalid arguments before accessing the keyring", () => {
     for (const args of [[], [""], ["chrome", "extra"]]) {
       const result = run(args);

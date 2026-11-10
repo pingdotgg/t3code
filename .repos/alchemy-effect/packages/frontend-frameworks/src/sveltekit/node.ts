@@ -1,3 +1,5 @@
+import * as NodeFs from "node:fs";
+import * as NodePath from "node:path";
 /**
  * `@alchemy.run/frontend-frameworks/sveltekit/node` — the Node container
  * deploy target for `@alchemy.run/frontend-frameworks/sveltekit`.
@@ -19,8 +21,6 @@ import type { Builder } from "@sveltejs/kit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as NodeFs from "node:fs";
-import * as NodePath from "node:path";
 import { rolldown } from "rolldown";
 import { runBuildChild } from "../core/BuildChild.ts";
 import * as FrameworkCore from "../core/index.ts";
@@ -45,19 +45,12 @@ const fail = (message: string, cause?: unknown) =>
 export interface SvelteKitNodeTargetConfig extends SvelteKitTargetConfig {}
 
 /** The bundled fetch-handler module the finishing pass writes. */
-export const SERVER_ENTRY_NAME = NodePath.join("server", "index.mjs");
+export const SERVER_ENTRY_NAME = "server/index.mjs";
 
-const posixify = (str: string): string => str.replace(/\\/g, "/");
-
-const generateFetchEntry = (options: {
-  readonly serverImport: string;
-  readonly manifestImport: string;
-}): string =>
+const generateFetchEntry = (options: { readonly serverImport: string }): string =>
   /* js */ `
-import { Server } from ${JSON.stringify(options.serverImport)};
-import { manifest } from ${JSON.stringify(options.manifestImport)};
+import { server } from ${JSON.stringify(options.serverImport)};
 
-const server = new Server(manifest);
 const initialized = server.init({ env: process.env });
 
 export const handler = async (request) => {
@@ -83,39 +76,40 @@ export const makeNodeAdapter = (): SvelteKitAdapter => {
       builder.mkdirp(dest);
       builder.mkdirp(tmp);
 
-      const assetsDest = dest + builder.config.kit.paths.base;
+      const assetsDest = dest + builder.config.paths.base;
       builder.mkdirp(assetsDest);
       builder.writeClient(assetsDest);
       builder.writePrerendered(assetsDest);
 
-      NodeFs.writeFileSync(
-        NodePath.join(tmp, "manifest.js"),
-        `export const manifest = ${builder.generateManifest({
-          relativePath: posixify(
-            NodePath.relative(tmp, builder.getServerDirectory()),
-          ),
-        })};\n\n` +
-          `export const prerendered = new Set(${JSON.stringify(builder.prerendered.paths)});\n`,
-      );
+      // pre-built server instance: kit 3.0 no longer exposes the internal
+      // SSR manifest (`generateManifest` throws), so `generateServerInstance`
+      // writes `export const server = new Server(manifest)` straight to
+      // disk itself instead of returning a manifest string to embed. The
+      // Node serve entry checks the filesystem for static assets, so unlike
+      // the Cloudflare worker shim there's no route manifest to build.
+      builder.generateServerInstance(NodePath.join(tmp, "server.js"));
 
-      const workerEntry = NodePath.join(tmp, "server.js");
+      const workerEntry = NodePath.join(tmp, "entry.js");
       NodeFs.writeFileSync(
         workerEntry,
         generateFetchEntry({
-          serverImport: `./${posixify(NodePath.relative(tmp, builder.getServerDirectory()))}/index.js`,
-          manifestImport: "./manifest.js",
+          serverImport: "./server.js",
         }),
       );
       if (
         typeof builder.hasServerInstrumentationFile === "function" &&
         builder.hasServerInstrumentationFile()
       ) {
+        // kit 3.0 requires an explicit initializer module that populates
+        // `$env/dynamic/private` before instrumentation runs; the default
+        // (`process.env`) is correct for the Node runtime.
+        const initializer = builder.createInstrumentationInitializer({
+          outputDirectory: tmp,
+        });
         builder.instrument({
           entrypoint: workerEntry,
-          instrumentation: NodePath.join(
-            builder.getServerDirectory(),
-            "instrumentation.server.js",
-          ),
+          instrumentation: NodePath.join(builder.getServerDirectory(), "instrumentation.server.js"),
+          initializer,
         });
       }
 
@@ -125,9 +119,7 @@ export const makeNodeAdapter = (): SvelteKitAdapter => {
   };
 };
 
-const makeNodeAdapterTarget = (
-  config: SvelteKitNodeTargetConfig = {},
-): SvelteKitTarget =>
+const makeNodeAdapterTarget = (config: SvelteKitNodeTargetConfig = {}): SvelteKitTarget =>
   makeDeployTarget({
     platform: "node",
     config,
@@ -141,24 +133,29 @@ const makeNodeAdapterTarget = (
         const path = yield* Path.Path;
         const entry = context.entry;
         if (entry === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The SvelteKit build produced no on-disk server entry for the finishing pass " +
-                "(context.entry is missing)",
-            ),
+          return yield* fail(
+            "The SvelteKit build produced no on-disk server entry for the finishing pass " +
+              "(context.entry is missing)",
           );
         }
         const root = context.root;
-        const distDirectory =
-          output.distDirectory ?? path.resolve(root, "dist");
+        const distDirectory = output.distDirectory ?? path.resolve(root, "dist");
+        if (output.clientDirectory === undefined) {
+          return yield* fail(
+            "The SvelteKit build produced no client directory for the Node serve entry",
+          );
+        }
+        // Container hosts package only distDirectory. Keep the assets beside
+        // the server so the output remains runnable after it is relocated.
+        const clientDirectory = path.join(distDirectory, "client");
+        yield* fs.remove(clientDirectory, { recursive: true, force: true }).pipe(
+          Effect.andThen(fs.copy(output.clientDirectory, clientDirectory)),
+          Effect.mapError((error) => fail("Failed to package the SvelteKit client assets", error)),
+        );
         const serverOutDir = path.join(distDirectory, "server");
         yield* fs
           .remove(serverOutDir, { recursive: true, force: true })
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to clean dist/server", error),
-            ),
-          );
+          .pipe(Effect.mapError((error) => fail("Failed to clean dist/server", error)));
 
         yield* Effect.tryPromise({
           try: async () => {
@@ -193,29 +190,16 @@ const makeNodeAdapterTarget = (
         const bundled: FrameworkCore.BuildOutput = {
           ...output,
           distDirectory,
-          serverModules: FrameworkCore.sortServerModules(
-            modules,
-            SERVER_ENTRY_NAME,
-          ),
+          clientDirectory,
+          serverModules: FrameworkCore.sortServerModules(modules, SERVER_ENTRY_NAME),
         };
-        if (bundled.clientDirectory === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The SvelteKit build produced no client directory for the Node serve entry",
-            ),
-          );
-        }
         const servePath = path.join(serverOutDir, NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output: bundled,
           servePath,
-          serveModuleName: path
-            .join("server", NODE_SERVE_ENTRY_FILE_NAME)
-            .replaceAll("\\", "/"),
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            bundled.clientDirectory,
-          ),
+          serveModuleName: path.join("server", NODE_SERVE_ENTRY_FILE_NAME).replaceAll("\\", "/"),
+          clientDirExpression: relativeClientDirExpression(servePath, clientDirectory),
+          htmlHandling: "drop-trailing-slash",
           handler: {
             kind: "fetch",
             imports: `import { handler } from "./index.mjs";`,
@@ -253,9 +237,7 @@ export const buildInChild = (config: SvelteKitNodeBuildChildConfig) =>
     return yield* framework.build({ root: config.rootDir });
   });
 
-export const makeNodeTarget = (
-  config: SvelteKitNodeTargetConfig = {},
-): SvelteKitTarget => ({
+export const makeNodeTarget = (config: SvelteKitNodeTargetConfig = {}): SvelteKitTarget => ({
   ...makeNodeAdapterTarget(config),
   build: (context) =>
     runBuildChild({

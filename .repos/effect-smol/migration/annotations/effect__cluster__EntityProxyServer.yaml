@@ -1,9 +1,0 @@
-"@effect/cluster/EntityProxyServer#layerHttpApi":
-  replacement: "effect/unstable/cluster/EntityProxyServer#layerHttpApi"
-  note: "Moved into core Effect. Use v4 HttpApi identifiers and Rpc.ServicesServer requirements."
-"@effect/cluster/EntityProxyServer#layerRpcHandlers":
-  replacement: "effect/unstable/cluster/EntityProxyServer#layerRpcHandlers"
-  note: "Moved into core Effect; the service requirement is now Rpc.ServicesServer rather than Rpc.Context."
-"@effect/cluster/EntityProxyServer#RpcHandlers":
-  replacement: "effect/unstable/cluster/EntityProxyServer#RpcHandlers"
-  note: "Moved into core Effect and updated for the additional v4 Rpc requirements type parameter."

@@ -1,3 +1,5 @@
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
+import { COMPUTER_USE_TOOL_SOURCE, dynamicToolSurface } from "@t3tools/shared/toolActivity";
 import type {
   ToolActivityIcon,
   ToolActivityNativeAppReference,
@@ -6,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 
 export interface ExtractedToolActivityPresentation {
+  readonly viewedImagePath?: string;
   readonly toolSurface?: ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
   readonly toolSource?: ToolActivitySource;
@@ -109,15 +112,32 @@ export function extractToolActivityPresentation(
   payloadValue: unknown,
 ): ExtractedToolActivityPresentation {
   const payload = asRecord(payloadValue);
+  const retainedSource = activitySource(payload?.toolSource);
   const toolSurface =
     payload?.toolSurface === "browser" || payload?.toolSurface === "computer"
       ? payload.toolSurface
-      : undefined;
+      : retainedSource?.kind === "computer" || retainedSource?.kind === "browser"
+        ? retainedSource.kind
+        : payload?.type === "dynamic_tool"
+          ? dynamicToolSurface(
+              typeof payload.toolName === "string" ? payload.toolName : undefined,
+              payload.input,
+            )
+          : undefined;
+  const toolSource =
+    toolSurface === "computer" && retainedSource?.kind !== "computer"
+      ? COMPUTER_USE_TOOL_SOURCE
+      : retainedSource;
   const toolIcon = activityIcon(payload?.toolIcon);
-  const toolSource = activitySource(payload?.toolSource);
+  const viewedImagePath = trimmedString(payload?.viewedImagePath, 4096);
   return {
     ...(toolSurface ? { toolSurface } : {}),
     ...(toolIcon ? { toolIcon } : {}),
     ...(toolSource ? { toolSource } : {}),
+    ...(viewedImagePath &&
+    !/[\r\n]/.test(viewedImagePath) &&
+    isWorkspaceImagePreviewPath(viewedImagePath)
+      ? { viewedImagePath }
+      : {}),
   };
 }

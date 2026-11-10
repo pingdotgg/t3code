@@ -1,13 +1,13 @@
-import * as DynamoDB from "alchemy/AWS/DynamoDB";
-import * as Lambda from "alchemy/AWS/Lambda";
-import * as S3 from "alchemy/AWS/S3";
-import * as SQS from "alchemy/AWS/SQS";
+import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
+import * as Lambda from "@alchemy.run/aws/Lambda";
+import * as S3 from "@alchemy.run/aws/S3";
+import * as SQS from "@alchemy.run/aws/SQS";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { LAMBDA_MARKER } from "./lambda/marker.ts";
 
 /**
@@ -56,17 +56,16 @@ export default class ApiFunction extends Lambda.Function<ApiFunction>()(
 
     // Produce → deliver → consume, so the suite can prove the event-source
     // glue survives every reload it inflicts on the stack.
-    yield* SQS.consumeQueueMessages(queue, (records) =>
-      records.pipe(
-        Stream.mapEffect((record) => {
+    yield* SQS.consumeQueueMessages(
+      queue,
+      Effect.fn(function* (event) {
+        for (const record of event.Records) {
           const parsed = JSON.parse(record.body) as { id: string };
-          return putItem({
+          yield* putItem({
             Item: { id: { S: `msg:${parsed.id}` }, body: { S: record.body } },
           });
-        }),
-        Stream.runDrain,
-        Effect.orDie,
-      ),
+        }
+      }),
     );
 
     return {
@@ -75,7 +74,7 @@ export default class ApiFunction extends Lambda.Function<ApiFunction>()(
         const url = new URL(request.originalUrl);
 
         if (url.pathname === "/") {
-          const variable = yield* Config.string("LAMBDA_VARIABLE");
+          const variable = yield* Config.String("LAMBDA_VARIABLE");
           return yield* HttpServerResponse.json({
             marker: LAMBDA_MARKER,
             variable,
@@ -86,8 +85,7 @@ export default class ApiFunction extends Lambda.Function<ApiFunction>()(
           yield* putObject({ Key: "hello.txt", Body: "hello from s3" });
           const object = yield* getObject({ Key: "hello.txt" });
           const text = yield* (
-            object.Body?.pipe(Stream.decodeText, Stream.mkString) ??
-              Effect.succeed("")
+            object.Body?.pipe(Stream.decodeText, Stream.mkString) ?? Effect.succeed("")
           );
           return yield* HttpServerResponse.json({ text });
         }

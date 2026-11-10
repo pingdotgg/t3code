@@ -21,7 +21,7 @@ Stack's `Effect.gen` body:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -135,7 +135,7 @@ send time:
 
 ```typescript
 // src/email.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Email = Cloudflare.Email.SendEmail("Email", {
   allowedSenderAddresses: ["bot@example.com"],
@@ -174,16 +174,16 @@ attempt.
 
 ## Send from the Worker
 
-Bind the descriptor with `Email.Send` in the Worker's init phase and
+Bind the descriptor with `Email.Send` in the Worker's Construction phase and
 provide `Email.SendBinding` as the implementation layer. The client's
 `send` method takes the familiar `{ from, to, subject, text }` shape
 (plus `html`, `cc`, `bcc`, `replyTo`, `headers`, and `attachments`):
 
 ```typescript
 // src/notifier.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Email } from "./email.ts";
 
 export default Cloudflare.Worker(

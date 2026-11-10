@@ -13,19 +13,22 @@
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "bench": "bun test test/bench.test.ts"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/containers": "catalog:cloudflare",
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@types/bun": "catalog:tooling"
+    "@alchemy.run/test": "workspace:*",
+    "@cloudflare/containers": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "catalog:"
   }
 }

@@ -5,6 +5,30 @@ enable it in **Settings > Providers**. See [provider setup](./install.md#provide
 T3 Code requires OpenCode 1.14.19 or newer, including when you connect an existing
 OpenCode server.
 
+## OpenCode 2
+
+T3 Code supports OpenCode 2.0.18 and newer. It detects the version on its own, so
+the same provider settings work for OpenCode 1.x and 2.x. OpenCode 1.x shows
+**Limited support** in its provider settings.
+
+OpenCode 2 is a separate package, `@opencode/cli`. To move from 1.x, install it
+yourself, for example `npm install -g @opencode/cli`. Then refresh provider status.
+T3 Code's update button updates whichever package you have installed. It never
+switches a 1.x install to 2.x.
+
+OpenCode 2 converts the shared OpenCode database to its own format the first time it
+runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
+started on 1.x continue on 2.x.
+
+## Compaction
+
+OpenCode compacts long conversations itself, and T3 Code has no setting for it. On
+OpenCode 2, change it under `compaction` in an OpenCode configuration file, such as
+`opencode.json`: `auto` turns
+automatic compaction on or off, `buffer` sets the token headroom, and `keep.tokens`
+sets how much recent context stays. OpenCode 1.x configures compaction differently.
+Send `/compact` to compact a thread yourself.
+
 ## Local or external server
 
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in

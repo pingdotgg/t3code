@@ -3,33 +3,37 @@
  * Starlight `Head` override that wraps the default head and appends our
  * per-page Open Graph image and Twitter card metadata. The image URL is
  * derived from the Starlight route slug and points at the static
- * `/og/<slug>.png` artifact emitted at build time by
- * `src/pages/og/[...slug].png.ts`.
+ * `/og/<slug>.webp` artifact emitted at build time by
+ * `src/pages/og/[...slug].webp.ts`.
  *
  * We intentionally append (rather than replace) so all of Starlight's
  * default `<title>`, description, canonical, RSS, and theme-color tags
  * still ship.
  */
 import Default from "@astrojs/starlight/components/Head.astro";
+import FontPreloads from "../FontPreloads.astro";
 import PostHog from "../analytics/PostHog.astro";
 import BrandIcons from "../../brand/Icons.astro";
+import StructuredData from "../StructuredData.astro";
+import { socialOrigin } from "../../social-origin";
 
 // Starlight injects route data via Astro.locals at runtime; the public
 // types aren't ambient-declared in this project, so we cast through any.
 // Starlight ≥0.39 exposes the slug as `id` (the old `slug` field is gone
-// — reading it yields undefined and produced `/og/undefined.png`).
+// — reading it yields undefined and produced `/og/undefined.webp`).
 const { id } = (Astro.locals as { starlightRoute: { id: string } })
   .starlightRoute;
 // Starlight normalizes the index entry's id to an empty string.
 const ogSlug = id === "" ? "index" : id;
-const ogImage = new URL(`/og/${ogSlug}.png`, Astro.site);
+const ogImage = new URL(`/og/${ogSlug}.webp`, socialOrigin(Astro.site, Astro.url));
 ---
 
 <Default><slot /></Default>
 
-{/* Brand mark. Starlight already emits the SVG from its own `favicon`
-    config, so skip it here and add only the raster/apple-touch candidates. */}
-<BrandIcons svg={false} />
+<FontPreloads />
+
+{/* Brand mark. `src/favicon.ts` strips Starlight's own favicon link. */}
+<BrandIcons />
 
 {/* Open Graph image (Starlight's default Head emits og:title/description). */}
 <meta property="og:image" content={ogImage.href} />
@@ -38,7 +42,11 @@ const ogImage = new URL(`/og/${ogSlug}.png`, Astro.site);
 
 {/* Twitter / X */}
 <meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:site" content="@alchemy_run" />
 <meta name="twitter:image" content={ogImage.href} />
+
+{/* Organization (sameAs → social profiles) + WebSite JSON-LD. */}
+<StructuredData />
 
 <PostHog />
 

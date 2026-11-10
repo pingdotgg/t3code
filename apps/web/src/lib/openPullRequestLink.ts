@@ -1,244 +1,49 @@
-import type {
-  EnvironmentId,
-  RepositoryIdentity,
-  ScopedThreadRef,
-  ThreadLinkedPullRequest,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import { type MouseEvent, useCallback } from "react";
+import { type MouseEvent } from "react";
 
-import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  resolveChangeRequestLinkTarget,
+  resolvePullRequestPreviewTarget,
+} from "@t3tools/client-runtime/change-request-links";
 
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+
+import { canOpenLinksInApp } from "../browser/browserLinkTarget";
 import { useOpenLink } from "../browser/useOpenLink";
+import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectThreadBranchBaseRef,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 
-import { useProjects, useServerConfigs } from "../state/entities";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readProject, readProjects, readThreadShell, useProjects } from "../state/entities";
+import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { reviewEnvironment } from "../state/review";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
-/** Builds a GitHub URL that remains available when the pull request API cannot be read. */
-export function gitHubPullRequestBrowserUrl(
-  identity: RepositoryIdentity | null | undefined,
-  repository: string,
-  number: number,
-): string | null {
-  if (identity?.provider !== "github" || !Number.isSafeInteger(number) || number < 1) return null;
-  const repositoryPath = repository.split("/");
-  if (
-    repositoryPath.length !== 2 ||
-    repositoryPath.some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    return null;
-  }
-
-  let origin: string | null = null;
-  try {
-    const remoteUrl = new URL(identity.locator.remoteUrl.trim());
-    if (remoteUrl.protocol === "http:" || remoteUrl.protocol === "https:") {
-      origin = remoteUrl.origin;
-    }
-  } catch {
-    // SCP-style remotes are read from their normalized identity below.
-  }
-  const hostname = identity.canonicalKey.split("/")[0];
-  if (origin === null && !hostname) return null;
-
-  try {
-    const url = new URL(origin ?? `https://${hostname}`);
-    url.pathname = `/${repositoryPath.join("/")}/pull/${number}`;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A change request the page can open, named the way the page names one: the host below which the
- * repository is addressed, the repository path as that host writes it, and the number.
- *
- * The two strings are what `pullRequestHostOf` and the project's `repositoryIdentity` produce
- * from a git remote — lower case, no port, the full path below the host — because the page matches
- * a link against those. Anything else opens nothing.
- */
-export interface ChangeRequestLink {
-  readonly host: string;
-  readonly repository: string;
-  readonly number: number;
-}
-
-/** The host itself, one of its subdomains, or an install named after the provider. */
-function isHostOf(hostname: string, apex: string, label?: string): boolean {
-  if (hostname === apex || hostname.endsWith(`.${apex}`)) return true;
-  return label !== undefined && hostname.startsWith(`${label}.`);
-}
-
-/**
- * The repository and number behind a change request URL on a host the page can read, or null for
- * anything else — an issue, a commit, a repository root, a host this cannot tell apart from an
- * ordinary link. Null means the system browser, so a doubtful match is worse than no match: it
- * takes the reader out of their browser and into a page that cannot find the change request.
- *
- * Each host is recognised by the path shape it alone uses, guarded by a hostname it could
- * plausibly be served from, since self-hosted installs are named whatever their admin chose:
- * GitLab's `/-/` marker is unique enough to trust on any hostname, while `/pull/` is generic
- * enough that it is only believed from a GitHub-ish host.
- */
-export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
-  let url: URL;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    return null;
-  }
-  // `javascript:`, `mailto:` and friends have no host to speak of and nothing to open.
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  // Nothing here tries to tell a lookalike hostname from a real one — `github.com.evil.test`,
-  // `github.com-evil.test` and the rest are an open set, and blocking spellings of it costs real
-  // hosts (`gitlab.com.br` is a registrable domain, not a disguise). What a claim is worth is
-  // decided where it is used: only a link matching a repository this workspace has checked out
-  // opens the page, and everything else stays the ordinary link it was.
-  const host = url.hostname.toLowerCase();
-
-  // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
-  if (isHostOf(host, "github.com", "github")) {
-    const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match);
-  }
-  // GitLab, self-hosted included: /{group}/[{subgroup}/...]{repo}/-/merge_requests/{n}. The `/-/`
-  // separator is GitLab's own, so the hostname is not asked about.
-  const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (gitlab) return claim(host, gitlab);
-  // Bitbucket Cloud: /{workspace}/{repo}/pull-requests/{n}
-  if (isHostOf(host, "bitbucket.org", "bitbucket")) {
-    const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match);
-  }
-  // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
-  // of the repository path there, as it is in the remote URL the identity is read from.
-  if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
-    const match = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match);
-  }
-  return null;
-}
-
-/**
- * The pull-request URL a GitHub-style `#123` autolink might name. GitHub writes every bare
- * reference through `/issues/`, including pull requests, so this only builds a candidate: the
- * caller must successfully read it as a pull request before treating it as one.
- */
-export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    return null;
-  }
-  if (
-    (url.protocol !== "https:" && url.protocol !== "http:") ||
-    !isHostOf(url.hostname.toLowerCase(), "github.com", "github")
-  ) {
-    return null;
-  }
-  const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (match?.[1] === undefined || match[2] === undefined) return null;
-  url.pathname = `/${match[1]}/pull/${match[2]}`;
-  return url.toString();
-}
-
-/** Match a stored PR without requiring its project to remain available. */
-export function matchesLinkedPullRequestUrl(
-  linkedPullRequest: ThreadLinkedPullRequest,
-  targetUrl: string,
-): boolean {
-  const linked = parseChangeRequestUrl(linkedPullRequest.url);
-  const target = parseChangeRequestUrl(targetUrl);
-  return (
-    linked !== null &&
-    target !== null &&
-    linked.host === target.host &&
-    linked.repository === target.repository &&
-    linked.number === target.number
-  );
-}
-
-/** The repository root behind a recognised change-request URL, without PR-specific state. */
-export function changeRequestRepositoryUrl(targetUrl: string): string | null {
-  const changeRequest = parseChangeRequestUrl(targetUrl);
-  if (changeRequest === null) return null;
-  const url = new URL(targetUrl);
-  const repositoryPath =
-    /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
-    /^(.*?)(?:\/pull\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
-      url.pathname,
-    )?.[1];
-  if (!repositoryPath) return null;
-  url.pathname = repositoryPath;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-}
-
-function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
-  const repository = match?.[1];
-  const number = Number(match?.[2]);
-  return repository && Number.isSafeInteger(number) && number > 0
-    ? { host, repository: repository.toLowerCase(), number }
-    : null;
-}
-
-/**
- * Returns a click handler that opens a pull request URL in the system browser.
- *
- * Stops event propagation/default so activating the link does not also trigger
- * an enclosing row or trigger (e.g. opening the branch dropdown), and surfaces a
- * toast when the local API is unavailable or the open fails.
- */
-/**
- * The project a link belongs to, or nothing. Matched the way the server matches: the repository
- * identity is the full path below the host where one was recorded — which is what nested GitLab
- * groups and Azure project paths need — and the host is the first segment of the canonical
- * remote, so github.com and an Enterprise install stay apart.
- */
-export function findProjectForChangeRequest(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: ChangeRequestLink,
-): EnvironmentProject | undefined {
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    if (!identity) return false;
-    const kind = identity.provider as SourceControlProviderKind | undefined;
-    if (kind === undefined) return false;
-    const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
-    return (
-      repository !== null &&
-      repository.toLowerCase() === link.repository.toLowerCase() &&
-      pullRequestHostOf(identity, kind) === link.host.toLowerCase()
-    );
+export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
+  const projects = useProjects();
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return resolvePullRequestPreviewTarget({
+    environmentId,
+    projects,
+    pullRequestsEnabled: serverConfig !== null,
+    url,
   });
 }
 
-/**
- * Opens a change request link on the page, and says whether it did. Anything else — another
- * organisation's repository, a host nothing here is checked out from, a link that merely looks
- * like one — is left alone for the caller to handle as the ordinary link it is.
- *
- * Resolving the project here rather than on the page is what makes recognising a URL safe: a
- * lookalike hostname matches no project and stays a link, and the page is handed the project
- * rather than a host to narrow its whole list by.
- *
- * Given a thread, the link opens beside it in the right panel instead of taking the whole app to
- * the pull requests page: a reader following a link the agent wrote is reading the thread, and
- * should still be reading it afterwards. Any change request opens there, not only the thread's
- * own, since the panel is told which one to show.
- */
-export function shouldOpenPullRequestExternally(
-  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+function shouldOpenPullRequestExternally(
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey"> &
+    Partial<Pick<MouseEvent<HTMLElement>, "button">>,
 ): boolean {
-  return event.metaKey || event.ctrlKey;
+  return event.metaKey || event.ctrlKey || event.button === 1;
 }
 
 export function useOpenChangeRequestLink(
@@ -248,46 +53,49 @@ export function useOpenChangeRequestLink(
   event: Pick<
     MouseEvent<HTMLElement>,
     "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
-  >,
+  > &
+    Partial<Pick<MouseEvent<HTMLElement>, "button" | "shiftKey" | "altKey">>,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
   targetEnvironmentId?: EnvironmentId,
+  onCommitUnavailable?: () => void,
 ) => boolean {
   const navigate = useNavigate();
-  const allProjects = useProjects();
-  const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  return useCallback(
-    (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
-      const resolvedThreadRef = targetThreadRef ?? threadRef;
-      const resolvedPanelRef = panelRef ?? resolvedThreadRef;
-      const parsed = parseChangeRequestUrl(targetUrl);
-      if (parsed === null) return false;
-      const reads = (environmentId: string) =>
-        serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
-        true;
-      // Beside a thread the panel reads on that thread's environment, so a project from another
-      // one could not be read there whatever its remote says: two environments can hold the same
-      // repository, and handing the panel the wrong one's id opens a surface that never loads.
-      //
-      // The page has no such tie — it lists every server at once — so the link is resolved
-      // against all of them, the primary first where two hold the same repository.
-      const projects = resolvedThreadRef
-        ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-        : targetEnvironmentId
-          ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
-          : allProjects
-              .filter((project) => reads(project.environmentId))
-              .toSorted(
-                (left, right) =>
-                  Number(right.environmentId === primaryEnvironmentId) -
-                  Number(left.environmentId === primaryEnvironmentId),
-              );
-      const project = findProjectForChangeRequest(projects, parsed);
-      if (project === undefined || !reads(project.environmentId)) return false;
-      event.preventDefault();
-      event.stopPropagation();
+  const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
+  const ignoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
+  const browserLinkTarget = useClientSettings((settings) => settings.browserLinkTarget);
+  const readDiffPreview = useAtomQueryRunner(reviewEnvironment.diffPreview, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const openLink = useOpenLink(threadRef);
+  return (event, targetUrl, targetThreadRef, targetEnvironmentId, onCommitUnavailable) => {
+    if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
+    const resolvedThreadRef = targetThreadRef ?? threadRef;
+    const resolvedPanelRef = panelRef ?? resolvedThreadRef;
+    const openPullRequest = () => {
+      // Read at click time: every provider status push replaces the config map, and
+      // subscribing would hand every rendered link a new handler. Projects likewise, so a
+      // link can resolve against a snapshot that arrived after this handler was built.
+      const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+      const target = resolveChangeRequestLinkTarget({
+        url: targetUrl,
+        projects: readProjects(),
+        configLoaded: (environmentId) => serverConfigs.has(environmentId),
+        environmentId: resolvedThreadRef?.environmentId ?? targetEnvironmentId,
+        primaryEnvironmentId,
+        lendHostProject: resolvedPanelRef !== undefined,
+      });
+      if (target === null) return false;
+      const { project, repository, number, host } = target;
+      const pullRequestsSearch = {
+        repository,
+        number,
+        ...(host === undefined ? {} : { selectedHost: host }),
+        selectedProjectId: project.id,
+        selectedEnvironmentId: project.environmentId,
+      };
       if (resolvedPanelRef) {
         useRightPanelStore.getState().openPullRequest(resolvedPanelRef, {
           // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
@@ -295,10 +103,10 @@ export function useOpenChangeRequestLink(
             ? {}
             : { environmentId: project.environmentId }),
           projectId: project.id,
-          // The identity's own spelling, not the one read out of the URL: the panel asks the
-          // provider for this repository, while matching a link only ever compares lower case.
-          repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-          number: parsed.number,
+          ...(host === undefined ? {} : { host }),
+          repository,
+          url: targetUrl,
+          number,
         });
         if (!resolvedThreadRef) {
           void navigate({
@@ -307,10 +115,7 @@ export function useOpenChangeRequestLink(
               ...previous,
               involvement: previous.involvement ?? "all",
               state: previous.state ?? "all",
-              repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-              number: parsed.number,
-              selectedProjectId: project.id,
-              selectedEnvironmentId: project.environmentId,
+              ...pullRequestsSearch,
             }),
             replace: true,
           });
@@ -319,55 +124,136 @@ export function useOpenChangeRequestLink(
       }
       void navigate({
         to: "/pull-requests",
-        search: {
-          involvement: "all",
-          // Every state, so the pull request being opened is also in the list behind it whether
-          // it is open, merged or closed.
-          state: "all",
-          repository: parsed.repository,
-          number: parsed.number,
-          selectedProjectId: project.id,
-          // Named so the page opens the right one of two servers holding this project.
-          selectedEnvironmentId: project.environmentId,
-        },
+        search: { involvement: "all", state: "all", ...pullRequestsSearch },
       });
       return true;
-    },
-    [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
-  );
+    };
+    const commitThread = resolvedThreadRef ? readThreadShell(resolvedThreadRef) : null;
+    const commitProject =
+      commitThread && resolvedThreadRef
+        ? readProject({
+            environmentId: resolvedThreadRef.environmentId,
+            projectId: commitThread.projectId,
+          })
+        : null;
+    const identity = commitProject?.repositoryIdentity;
+    const parsedCommit = sourceControlClients.parseCommitUrl(targetUrl, identity?.provider);
+    // Shift and Alt keep their browser meaning (new window, download) on commit links.
+    if (parsedCommit !== null && (event.shiftKey || event.altKey)) return false;
+    if (
+      parsedCommit !== null &&
+      commitThread &&
+      resolvedThreadRef &&
+      commitProject?.environmentId === resolvedThreadRef.environmentId &&
+      identity &&
+      identity.provider === parsedCommit.definition.kind &&
+      parsedCommit.definition.isChangeRequestInRepository(identity, parsedCommit.link)
+    ) {
+      const commit = parsedCommit.link;
+      event.preventDefault();
+      event.stopPropagation();
+      const userActionRevision = useRightPanelStore.getState().markUserAction(resolvedThreadRef);
+      const baseRef = selectThreadBranchBaseRef(useDiffPanelStore.getState(), resolvedThreadRef);
+      const selection = selectThreadDiffPanelSelection(
+        useDiffPanelStore.getState().byThreadKey,
+        resolvedThreadRef,
+      );
+      void readDiffPreview({
+        environmentId: resolvedThreadRef.environmentId,
+        input: {
+          cwd: commitThread.worktreePath ?? commitProject.workspaceRoot,
+          ...(baseRef ? { baseRef } : {}),
+          commitSha: commit.sha,
+          ignoreWhitespace,
+        },
+      })
+        .then((result) => {
+          if (
+            useRightPanelStore.getState().getUserActionRevision(resolvedThreadRef) !==
+              userActionRevision ||
+            selectThreadDiffPanelSelection(
+              useDiffPanelStore.getState().byThreadKey,
+              resolvedThreadRef,
+            ) !== selection
+          )
+            return;
+          if (
+            result._tag === "Success" &&
+            result.value.sources.some(
+              (source) => source.kind === "commit" && source.headRef === commit.sha,
+            )
+          ) {
+            const diffOpen =
+              selectActiveRightPanel(
+                useRightPanelStore.getState().byThreadKey,
+                resolvedThreadRef,
+              ) === "diff";
+            useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha, !diffOpen);
+            useRightPanelStore.getState().open(resolvedThreadRef, "diff");
+            return;
+          }
+          if (openPullRequest()) return;
+          if (onCommitUnavailable) return onCommitUnavailable();
+          // A popup opened after the lookup has lost the click's activation, so browsers block it.
+          if (
+            window.desktopBridge === undefined &&
+            (browserLinkTarget !== "app" || !canOpenLinksInApp(resolvedThreadRef))
+          ) {
+            const toastId = toastManager.add(
+              stackedThreadToast({
+                type: "info",
+                title: "This commit is not in the thread's workspace",
+                actionProps: {
+                  children: "Open link",
+                  onClick: () => {
+                    toastManager.close(toastId);
+                    window.open(targetUrl, "_blank", "noopener,noreferrer");
+                  },
+                },
+              }),
+            );
+            return;
+          }
+          return openLink(targetUrl, {
+            event: { metaKey: event.metaKey, ctrlKey: event.ctrlKey, button: event.button },
+            threadRef: resolvedThreadRef,
+          });
+        })
+        .catch((error: unknown) => console.error(error));
+      return true;
+    }
+    if (!openPullRequest()) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  };
 }
 
 export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   const openLink = useOpenLink(threadRef);
-  return useCallback(
-    (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
-      event.stopPropagation();
-      const openInBrowser = shouldOpenPullRequestExternally(event);
-      const isAnchor =
-        event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-      // A real link already knows how to cmd/ctrl+click. Leave its default
-      // action alone so the browser (or Electron's window-open handler) opens
-      // the host. Buttons have no href, so they still go through openExternal.
-      if (openInBrowser && isAnchor) return false;
+  return (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
+    if (event.button > 1) return false;
+    event.stopPropagation();
+    const openInBrowser = shouldOpenPullRequestExternally(event);
+    const isAnchor =
+      event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
+    // Native links handle modified clicks; buttons still need openExternal.
+    if (openInBrowser && isAnchor) return false;
 
-      event.preventDefault();
-      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
+    event.preventDefault();
+    if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
-      // No project to show it in, so it is an ordinary link and follows the
-      // "Open links in" setting; the modifier still forces the system browser.
-      void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
-        console.error(error);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to open pull request link",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      });
-      return false;
-    },
-    [openChangeRequest, openLink],
-  );
+    void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
+      console.error(error);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open pull request link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
+    return false;
+  };
 }

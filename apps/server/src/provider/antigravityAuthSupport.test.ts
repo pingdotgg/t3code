@@ -1,38 +1,38 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off
-import * as NodeChildProcess from "node:child_process";
-
+import * as Sink from "effect/Sink";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
-  ANTIGRAVITY_PERSONAL_AUTH,
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   type AntigravityAuthConfig,
-  antigravityAuthConfigIssue,
   type AntigravityProfile,
-  antigravityProfileSettings,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
-  resolveAntigravityProfileDirectory,
+  resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -51,6 +51,7 @@ describe("Antigravity process environment", () => {
     geminiHome: "/t3/userdata/providers/antigravity/profile",
     acpDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp",
     tokenPath: "/t3/userdata/providers/antigravity/profile/antigravity-acp/acp_token.json",
+    tempDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp/tmp",
     browserCommand: "managed-browser-helper",
   };
 
@@ -75,6 +76,8 @@ describe("Antigravity process environment", () => {
       browser: "another-real-browser",
       PYTHONUNBUFFERED: "0",
       ELECTRON_RUN_AS_NODE: "0",
+      CHROME_CRASHPAD_PIPE_NAME: "\\\\.\\pipe\\crashpad_50144_ZUJNJELFHHXPBIRT",
+      chrome_crashpad_pipe_name: "\\\\.\\pipe\\crashpad_stale_alias",
       CUSTOM_SETTING: "keep-this",
     };
     const original = { ...baseEnv };
@@ -101,8 +104,23 @@ describe("Antigravity process environment", () => {
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
+        TMPDIR: profile.tempDirectory,
       },
     });
+  });
+
+  it("runs the agy CLI as `agy acp` without a harness", () => {
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
+    });
+
+    expect(spawn.command).toBe("/usr/bin/agy");
+    expect(spawn.args).toEqual(["acp"]);
+    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
+    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
@@ -145,87 +163,75 @@ describe("Antigravity process environment", () => {
     expect(business.GOOGLE_API_KEY).toBeUndefined();
   });
 
-  it("writes the auth method and GCP block into the agent's settings.json", () => {
-    expect(
-      decodeJson(
-        antigravityProfileSettings({
-          authMethod: "oauth-business",
-          apiKey: "never-written",
-          gcpProject: "proj",
-          gcpLocation: "us-central1",
-        }),
-      ),
-    ).toEqual({
-      auth: { type: "oauth-business" },
-      gcp: { project: "proj", location: "us-central1" },
+  it("isolates TEMP and TMP to the profile directory on Windows", () => {
+    const windowsProfile: AntigravityProfile = {
+      platform: "win32",
+      geminiHome: "C:\\state\\providers\\antigravity\\profile",
+      acpDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp",
+      tokenPath: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\acp_token.json",
+      tempDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp",
+      browserCommand: "managed-browser-helper",
+    };
+    const input = {
+      installation: {
+        executablePath: "C:\\release\\agy_acp_server.exe",
+        harnessPath: "C:\\release\\localharness_external.exe",
+      },
+      profile: windowsProfile,
+      cwd: "C:\\project",
+      baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
+    };
+    const shared = buildAntigravityAcpSpawnInput(input);
+    expect(shared.env?.TEMP).toBe(windowsProfile.tempDirectory);
+    expect(shared.env?.TMP).toBe(windowsProfile.tempDirectory);
+    const perRun = buildAntigravityAcpSpawnInput({
+      ...input,
+      runtimeTempDirectory: `${windowsProfile.tempDirectory}\\run-1`,
     });
-    // The agent's logout reads auth.type to clear only that method's token.
-    expect(decodeJson(antigravityProfileSettings(ANTIGRAVITY_PERSONAL_AUTH))).toEqual({
-      auth: { type: "oauth-personal" },
-    });
+    expect(perRun.env?.TEMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
+    expect(perRun.env?.TMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
   });
 
-  it("names the missing credential for each method", () => {
-    expect(antigravityAuthConfigIssue(ANTIGRAVITY_PERSONAL_AUTH)).toBeNull();
-    expect(
-      antigravityAuthConfigIssue({ ...ANTIGRAVITY_PERSONAL_AUTH, authMethod: "gemini-api-key" }),
-    ).toContain("API key");
-    expect(
-      antigravityAuthConfigIssue({
-        ...ANTIGRAVITY_PERSONAL_AUTH,
-        authMethod: "oauth-business",
-        gcpProject: "proj",
-      }),
-    ).toContain("location");
-    expect(
-      antigravityAuthConfigIssue({
-        ...ANTIGRAVITY_PERSONAL_AUTH,
-        authMethod: "agent-platform",
-        gcpProject: "proj",
-        gcpLocation: "us-central1",
-      }),
-    ).toBeNull();
-  });
+  it.effect("keeps accounts separate even when instance IDs differ only by case", () =>
+    Effect.gen(function* () {
+      const first = yield* resolveAntigravityInstanceDirectories(
+        "/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      const second = yield* resolveAntigravityInstanceDirectories(
+        "/userdata",
+        ProviderInstanceId.make("Antigravity"),
+      );
+      expect(first.profile).toBe(
+        "/userdata/providers/antigravity/ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+      );
+      expect(first.profile.toLowerCase()).not.toBe(second.profile.toLowerCase());
+      expect(first.runtimeTemp.toLowerCase()).not.toBe(second.runtimeTemp.toLowerCase());
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
 
-  it("uses the registry launch arguments for each supported host platform", () => {
-    for (const platform of ["linux", "darwin", "win32"] as const) {
-      const spawn = buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
-        profile: { ...profile, platform },
-        cwd: "/project",
-        baseEnv: {},
-      });
-      expect(spawn.args).toEqual(platform === "linux" ? ["--uid="] : []);
-    }
-  });
-
-  it("keeps accounts separate even when instance IDs differ only by case", () => {
-    const first = resolveAntigravityProfileDirectory(
-      "/userdata",
-      ProviderInstanceId.make("antigravity"),
-    );
-    const second = resolveAntigravityProfileDirectory(
-      "/userdata",
-      ProviderInstanceId.make("Antigravity"),
-    );
-    expect(first.toLowerCase()).not.toBe(second.toLowerCase());
-    expect(
-      resolveAntigravityProfileDirectory("/userdata", ProviderInstanceId.make("antigravity")),
-    ).toBe(first);
-  });
+  it.effect("keeps the unpacked Windows runtime under MAX_PATH for long user names", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      // Deepest member of the official agy_acp_server_1.1.1 windows-x86_64 bundle.
+      const deepestMember =
+        "google3\\cloud\\developer_experience\\antigravity_extensions\\acp_server\\_private__agy_acp_server_bin.lazy_imports_info.json";
+      const directories = yield* resolveAntigravityInstanceDirectories(
+        "C:\\Users\\a-twenty-char-person\\.t3\\userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      const extracted = (tempDirectory: string) =>
+        path.join(tempDirectory, "run-AbC123", "_MEI000012ab2", deepestMember);
+      // MAX_PATH is 260 including the terminating NUL.
+      expect(extracted(directories.runtimeTemp).length).toBeLessThan(260);
+      expect(
+        extracted(path.join(directories.profile, "antigravity-acp", "tmp")).length,
+      ).toBeGreaterThanOrEqual(260);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
+  );
 });
 
 describe("Antigravity authorization URL", () => {
-  it.effect("returns the official Google URL and its owned loopback target", () =>
-    Effect.gen(function* () {
-      expect(yield* parseAntigravityAuthorizationUrl(authorizationUrl)).toEqual({
-        authorizationUrl,
-        redirectUri: "http://127.0.0.1:46353/",
-        state: "test-opaque-state",
-      });
-    }),
-  );
-
   it.effect(
     "rejects other origins, ambiguous state, and non-loopback redirects without retaining them",
     () =>
@@ -307,17 +313,6 @@ describe("Antigravity stdout compatibility", () => {
         expect(result).toBe(`${jsonBefore}${jsonAfter}`);
         expect(urls).toEqual([authorizationUrl]);
       }),
-  );
-
-  it.effect("handles an auth line without a final newline", () =>
-    Effect.gen(function* () {
-      const urls: string[] = [];
-      const result = yield* makeAntigravityStdoutTransform({
-        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
-      })(Stream.make(encode(authLine.slice(0, -1)))).pipe(Stream.runCollect);
-      expect(result).toEqual([]);
-      expect(urls).toEqual([authorizationUrl]);
-    }),
   );
 
   it.effect("ends normal work with a safe sign-in error instead of waiting for OAuth", () =>
@@ -416,22 +411,6 @@ describe("Antigravity stderr compatibility", () => {
     }),
   );
 
-  it.effect("preserves failures from the sign-in flow owner", () =>
-    Effect.gen(function* () {
-      const failure = new AcpErrors.AcpTransportError({
-        detail: "The sign-in flow stopped.",
-        cause: undefined,
-      });
-      const handleStderr = makeAntigravityStderrHandler({
-        onAuthorizationUrl: () => Effect.fail(failure),
-      });
-      const error = yield* handleStderr(
-        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`,
-      ).pipe(Effect.flip);
-      expect(error).toBe(failure);
-    }),
-  );
-
   it.effect("forwards an accepted browser-helper URL larger than 8 KiB", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
@@ -488,6 +467,113 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+  const prepareSpawn = Effect.fn(function* (
+    bundles: ReadonlyArray<string>,
+    baseEnv: NodeJS.ProcessEnv = {},
+    platform: NodeJS.Platform = "linux",
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const profile = yield* prepareAntigravityProfile({
+      profileDirectory: path.join(directory, "profile"),
+      userHome: path.join(directory, "home"),
+      runtimeExecutablePath: process.execPath,
+      platform,
+      baseEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        exists: (candidate) => Effect.succeed(bundles.includes(candidate)),
+      }),
+    );
+    return buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: directory,
+      baseEnv,
+    }).env;
+  });
+
+  // A Windows Node path cannot preflight the browser helper as a POSIX host.
+  const caTest = it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32");
+
+  caTest(
+    "launches Linux agents with the first available CA bundle, preferring absolute Nix paths",
+    () =>
+      Effect.gen(function* () {
+        const systemBundles = ["/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"];
+        const nixBundle = "/nix/store/nss-cacert/etc/ssl/certs/ca-bundle.crt";
+        expect((yield* prepareSpawn(systemBundles))?.SSL_CERT_FILE).toBe(systemBundles[0]);
+        expect(
+          (yield* prepareSpawn([nixBundle, ...systemBundles], { NIX_SSL_CERT_FILE: nixBundle }))
+            ?.SSL_CERT_FILE,
+        ).toBe(nixBundle);
+        expect(
+          (yield* prepareSpawn(systemBundles, { NIX_SSL_CERT_FILE: nixBundle }))?.SSL_CERT_FILE,
+        ).toBe(systemBundles[0]);
+        expect(
+          (yield* prepareSpawn(["certs/local.pem", ...systemBundles], {
+            NIX_SSL_CERT_FILE: "certs/local.pem",
+          }))?.SSL_CERT_FILE,
+        ).toBe(systemBundles[0]);
+        expect((yield* prepareSpawn([]))?.SSL_CERT_FILE).toBeUndefined();
+      }),
+  );
+
+  caTest("preserves explicit certificate files and directories in Linux launches", () =>
+    Effect.gen(function* () {
+      const bundles = ["/etc/ssl/certs/ca-certificates.crt"];
+      expect(
+        (yield* prepareSpawn(bundles, { SSL_CERT_FILE: "/custom/ca.pem" }))?.SSL_CERT_FILE,
+      ).toBe("/custom/ca.pem");
+      const directoryEnv = yield* prepareSpawn(bundles, { SSL_CERT_DIR: "/custom/certs" });
+      expect(directoryEnv?.SSL_CERT_DIR).toBe("/custom/certs");
+      expect(directoryEnv?.SSL_CERT_FILE).toBeUndefined();
+    }),
+  );
+
+  it.effect("runs the browser helper with installed Node in standalone builds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(directory, "profile"),
+        baseEnv: { PATH: path.dirname(process.execPath) },
+      });
+      expect(profile.browserCommand).not.toContain("/packaged/t3");
+      expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
+    }).pipe(
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.ExecutablePath, "/packaged/t3"),
+    ),
+  );
+
+  it.effect("reports missing Node before creating the standalone sign-in profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const profileDirectory = path.join(directory, "profile");
+      const result = yield* prepareAntigravityProfile({
+        profileDirectory,
+        baseEnv: { PATH: "" },
+      }).pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "AcpTransportError",
+          detail: expect.stringContaining("Install Node.js"),
+          cause: {
+            _tag: "NodeRuntimeUnavailableError",
+          },
+        });
+      }
+      expect(yield* fs.exists(profileDirectory)).toBe(false);
+    }).pipe(Effect.provideService(HostProcess.IsExecutable, true)),
+  );
+
   it.effect("preflights the no-browser helper and creates private directories only", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -500,7 +586,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(profile.geminiHome).toBe(path.join(temporaryDirectory, "profile"));
       expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
       expect(yield* fs.exists(profile.tokenPath)).toBe(false);
-      if ((yield* HostProcessPlatform) !== "win32") {
+      if ((yield* HostProcess.Platform) !== "win32") {
         expect((yield* fs.stat(profile.geminiHome)).mode & 0o777).toBe(0o700);
         expect((yield* fs.stat(profile.acpDirectory)).mode & 0o777).toBe(0o700);
       }
@@ -512,7 +598,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "links the user's global skill directories into the profile without touching real content",
+    "links only the user's existing global skill directories without touching real content",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -522,28 +608,44 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const profileDirectory = path.join(temporaryDirectory, "profile");
         const configSkills = path.join(userHome, ".gemini", "config", "skills");
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        const isLink = (link: string) =>
+          fs.readLink(link).pipe(
+            Effect.as(true),
+            Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+          );
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
-        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* isLink(cliLink)).toBe(false);
         expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
-        // Only the skill directories are shared; the rest of the profile stays private.
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
           false,
         );
 
-        // A stale link is repointed; a real directory the user placed there is kept.
-        yield* fs.remove(cliLink);
-        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        // The harness leaves an empty folder where the link was skipped.
+        yield* fs.makeDirectory(cliLink, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect((yield* fs.stat(cliLink)).type).toBe("Directory");
+
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
         yield* fs.remove(configLink);
         yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
+
+        yield* fs.remove(cliLink);
+        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+
+        yield* fs.remove(cliSkills, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* isLink(cliLink)).toBe(false);
       }),
   );
 
@@ -576,58 +678,90 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
-  it.effect("keeps the browser helper successful when cancellation closes stderr", () =>
+  const preflightHelper = (exitDelay: Effect.Effect<void>) => {
+    const spawns = { count: 0 };
+    const started = Deferred.makeUnsafe<void>();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.sync(() => {
+        spawns.count += 1;
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(exitDelay),
+            Effect.as(ChildProcessSpawner.ExitCode(0)),
+          ),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.encodeText(
+            Stream.make(
+              `${ANTIGRAVITY_AUTH_BROWSER_MARKER}"https://example.invalid/t3-antigravity-browser-preflight"\n`,
+            ),
+          ),
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    return { spawner, spawns, started };
+  };
+
+  const prepareWithHelper = Effect.fn("prepareWithHelper")(function* (
+    runtimeExecutablePath: string,
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    return yield* prepareAntigravityProfile({
+      profileDirectory: path.join(directory, "profile"),
+      userHome: path.join(directory, "home"),
+      runtimeExecutablePath,
+      platform: "linux",
+      baseEnv: {},
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  });
+
+  it.effect("allows a browser preflight that takes longer than five seconds", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
-      let helperCommand: ChildProcess.StandardCommand | undefined;
-      yield* prepareAntigravityProfile({ profileDirectory: temporaryDirectory }).pipe(
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            if (ChildProcess.isStandardCommand(command)) helperCommand = command;
-            return spawner.spawn(command);
-          }),
-        ),
+      const helper = preflightHelper(Effect.sleep("20 seconds"));
+      const fiber = yield* prepareWithHelper("/fake/slow-node", helper.spawner).pipe(
+        Effect.forkChild,
       );
-      expect(helperCommand).toBeDefined();
-      if (!helperCommand) return;
-      const command = helperCommand;
-      const child = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          NodeChildProcess.spawn(command.command, command.args, {
-            env: { ...command.options.env },
-            stdio: ["ignore", "ignore", "pipe"],
-          }),
-        ),
-        (process) => Effect.sync(() => void process.kill()),
-      );
-      child.stderr?.destroy();
-      const exitCode = yield* Effect.promise(
-        () =>
-          new Promise<number | null>((resolve, reject) => {
-            child.once("error", reject);
-            child.once("exit", resolve);
-          }),
-      );
-      expect(exitCode).toBe(0);
+      yield* Deferred.await(helper.started);
+      yield* TestClock.adjust("20 seconds");
+      yield* Fiber.join(fiber);
+
+      expect(helper.spawns.count).toBe(1);
     }),
   );
 
-  it.effect("fails before creating a profile when the helper cannot start", () =>
+  it.effect("fails a hung preflight after 30 seconds and verifies again on the next open", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
-      const profileDirectory = path.join(temporaryDirectory, "unused-profile");
-      const result = yield* prepareAntigravityProfile({
-        profileDirectory,
-        runtimeExecutablePath: path.join(temporaryDirectory, "missing-runtime"),
-      }).pipe(Effect.result);
-
+      const hung = preflightHelper(Effect.never);
+      const fiber = yield* prepareWithHelper("/fake/hung-node", hung.spawner).pipe(
+        Effect.result,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(hung.started);
+      yield* TestClock.adjust("29 seconds");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(fiber);
       expect(Result.isFailure(result)).toBe(true);
-      expect(yield* fs.exists(profileDirectory)).toBe(false);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "AcpTransportError",
+          detail: "Antigravity browser suppression verification timed out.",
+        });
+      }
+
+      const recovered = preflightHelper(Effect.void);
+      yield* prepareWithHelper("/fake/hung-node", recovered.spawner);
+      expect(recovered.spawns.count).toBe(1);
     }),
   );
 

@@ -32,15 +32,45 @@ For the full walkthrough, see [Testing a Stack](/testing/testing-a-stack).
 
 For every option, hook, and variant, see the [Test harness](/testing/test-harness) reference.
 
+## Pick a runner
+
+`Test.make` ships in `@alchemy.run/test` and runs on three test runners with the same API:
+
+```sh
+bun add -d @alchemy.run/test
+```
+
+Import it from the adapter for your runner:
+
+```typescript
+import * as Test from "@alchemy.run/test/Alchemy"; // alchemy-test
+import * as Test from "@alchemy.run/test/Bun";     // bun test
+import * as Test from "@alchemy.run/test/Vitest";  // Vitest
+```
+
+`alchemy-test` runs every file in one bun process with tests in flight concurrently, built for slow tests against real clouds. Install and run each one as shown in [Test harness → Runners](/testing/test-harness#runners).
+
 ## Stage isolation
 
-Tests default to the `test` stage, so they never touch your dev or prod deployments. A unique stage per PR lets multiple suites run in parallel against the same account without colliding:
+Tests default to `test_$USER` (e.g. `test_sam`), matching how
+`alchemy deploy` uses `live_$USER` and `alchemy dev` uses
+`dev_$USER` — so they never touch your live or local-dev
+deployments, and two people running the same suite don't collide. A
+unique stage per PR lets CI suites run in parallel against the same
+account:
 
 ```typescript
 Test.make({ providers, stage: "ci-pr-42" });
 ```
 
-The per-call form is covered in [Test harness → stage](/testing/test-harness#stage).
+Or set it for the whole run from the command line:
+
+```sh
+bunx alchemy-test --stage ci-pr-42
+ALCHEMY_TEST_STAGE=ci-pr-42 bun test
+```
+
+Running several git worktrees at once? See [Worktrees](/environments/worktrees). The per-call form is covered in [Test harness → stage](/testing/test-harness#stage).
 
 ## Local mode (`dev: true`)
 

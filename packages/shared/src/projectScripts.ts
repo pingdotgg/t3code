@@ -1,23 +1,23 @@
 import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
 
-/** Missing entries preserve existing actions; null explicitly resets a checkout to machine defaults. */
+type ProjectScriptSettings = Pick<
+  ServerSettings,
+  | "defaultProjectScripts"
+  | "projectScriptOverrides"
+  | "projectSettingsOverrides"
+  | "projectSettingsFolded"
+>;
+
 export function resolveProjectScripts(
-  settings: Pick<ServerSettings, "defaultProjectScripts" | "projectScriptOverrides">,
+  settings: ProjectScriptSettings,
   project: { id: ProjectId; scripts: readonly ProjectScript[] },
 ): readonly ProjectScript[] {
-  const override = settings.projectScriptOverrides[project.id];
-  if (override === null) return settings.defaultProjectScripts;
-  return (
-    override ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts)
-  );
-}
-
-export function projectScriptsInheritDefaults(
-  settings: Pick<ServerSettings, "projectScriptOverrides">,
-  project: { id: ProjectId; scripts: readonly ProjectScript[] },
-): boolean {
-  const override = settings.projectScriptOverrides[project.id];
-  return override === null || (override === undefined && project.scripts.length === 0);
+  const override = settings.projectSettingsOverrides[project.id]?.defaultProjectScripts;
+  if (override !== undefined) return override;
+  if (settings.projectSettingsFolded) return settings.defaultProjectScripts;
+  const legacy = settings.projectScriptOverrides[project.id];
+  if (legacy === null) return settings.defaultProjectScripts;
+  return legacy ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts);
 }
 
 interface ProjectScriptRuntimeEnvInput {
@@ -54,4 +54,25 @@ export function projectScriptRuntimeEnv(
 
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
+}
+
+export function projectScriptMenuLabel(script: ProjectScript): string {
+  const roles = [
+    ...(script.runOnWorktreeCreate ? ["setup"] : []),
+    ...(script.runOnSettle ? ["on settle"] : []),
+  ];
+  return roles.length === 0 ? script.name : `${script.name} (${roles.join(", ")})`;
+}
+
+export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
+  return scripts.find((script) => script.runOnSettle === true) ?? null;
+}
+
+/**
+ * Leading spaces omit scripts from Bash history with ignorespace/ignoreboth,
+ * zsh with HIST_IGNORE_SPACE, and fish. Only the first line is prefixed, so later
+ * entries from multiline input may still enter history. PowerShell/PSReadLine history is not suppressed.
+ */
+export function projectScriptTerminalInput(command: string): string {
+  return ` ${command}\r`;
 }

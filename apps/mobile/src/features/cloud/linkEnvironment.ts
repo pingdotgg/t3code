@@ -1,63 +1,38 @@
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
-  EnvironmentAuthInvalidError,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
-import { stripPairingTokenFromUrl } from "@t3tools/shared/remote";
 import {
-  type RelayEnvironmentConnectResponse as RelayEnvironmentConnectResponseType,
   type RelayEnvironmentLinkResponse as RelayEnvironmentLinkResponseType,
-  RelayEnvironmentConnectScope,
-  RelayEnvironmentStatusScope,
-  type RelayDpopAccessTokenScope,
-  type RelayClientEnvironmentRecord,
-  type RelayEnvironmentStatusResponse as RelayEnvironmentStatusResponseType,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
-import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
-import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import {
-  dpopFailureMessage,
-  ManagedRelay,
-  relayProtectedErrorMessage,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
-import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import * as MobilePreferences from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
-
-const RELAY_STATUS_AND_CONNECT_SCOPES = [
-  RelayEnvironmentStatusScope,
-  RelayEnvironmentConnectScope,
-] satisfies ReadonlyArray<RelayDpopAccessTokenScope>;
 
 function readRelayUrl(): string | null {
   return resolveCloudPublicConfig().relay.url;
 }
 
-export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly traceId?: string;
-}> {}
-
-export interface CloudEnvironmentRecordWithStatus {
-  readonly environment: RelayClientEnvironmentRecord;
-  readonly status: RelayEnvironmentStatusResponseType | null;
-  readonly statusError: string | null;
-}
+export class CloudEnvironmentLinkError extends Schema.TaggedError<CloudEnvironmentLinkError>()(
+  "CloudEnvironmentLinkError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    traceId: Schema.optional(Schema.String),
+  },
+) {}
 
 const isEnvironmentCloudApiError = Schema.is(
   Schema.Union([
@@ -69,24 +44,19 @@ const isEnvironmentCloudApiError = Schema.is(
     EnvironmentCloudEndpointUnavailableError,
   ]),
 );
-const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
 
-function cloudEnvironmentLinkError(message: string, options?: { readonly dpop?: boolean }) {
+function cloudEnvironmentLinkError(message: string) {
   return (cause: unknown) => {
     const environmentError = findEnvironmentCloudApiError(cause);
     const traceId = findErrorTraceId(cause);
-    const dpopAuthError = options?.dpop ? findEnvironmentAuthInvalidError(cause) : null;
     const detail = environmentError
       ? `${message.replace(/[.:]$/, "")}: ${environmentError.message}`
       : withDevCause(message, cause);
     return new CloudEnvironmentLinkError({
-      message:
-        dpopAuthError?.reason === "invalid_credential"
-          ? dpopFailureMessage(detail, dpopAuthError.dpopFailureReason)
-          : detail,
+      message: detail,
       cause,
       ...(traceId === null ? {} : { traceId }),
     });
@@ -121,10 +91,9 @@ function withDevCause(message: string, cause: unknown): string {
 
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
-    const relayError =
-      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
-    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
-    const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
+    const failed = cause._tag === "ManagedRelayRequestFailedError" ? cause : undefined;
+    const traceId = failed?.traceId;
+    const detail = failed ? relayRequestFailureDetail(failed) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
@@ -141,16 +110,6 @@ function findEnvironmentCloudApiError(cause: unknown): { readonly message: strin
     return null;
   }
   return "cause" in cause ? findEnvironmentCloudApiError(cause.cause) : null;
-}
-
-function findEnvironmentAuthInvalidError(cause: unknown): EnvironmentAuthInvalidError | null {
-  if (isEnvironmentAuthInvalidError(cause)) {
-    return cause;
-  }
-  if (typeof cause !== "object" || cause === null) {
-    return null;
-  }
-  return "cause" in cause ? findEnvironmentAuthInvalidError(cause.cause) : null;
 }
 
 function requireRelayUrl(): Effect.Effect<string, CloudEnvironmentLinkError> {
@@ -186,54 +145,6 @@ function ensureLinkedEnvironmentMatches(input: {
   return Effect.void;
 }
 
-function endpointMatches(
-  left: RelayClientEnvironmentRecord["endpoint"],
-  right: RelayClientEnvironmentRecord["endpoint"],
-): boolean {
-  return (
-    left.httpBaseUrl === right.httpBaseUrl &&
-    left.wsBaseUrl === right.wsBaseUrl &&
-    left.providerKind === right.providerKind
-  );
-}
-
-function ensureStatusMatchesEnvironment(input: {
-  readonly environment: RelayClientEnvironmentRecord;
-  readonly status: RelayEnvironmentStatusResponseType;
-}): Effect.Effect<void, CloudEnvironmentLinkError> {
-  if (input.status.environmentId !== input.environment.environmentId) {
-    return new CloudEnvironmentLinkError({
-      message: "Relay returned status for a different environment.",
-    });
-  }
-  if (!endpointMatches(input.status.endpoint, input.environment.endpoint)) {
-    return new CloudEnvironmentLinkError({
-      message: "Relay returned status for a different endpoint.",
-    });
-  }
-  if (
-    input.status.descriptor &&
-    input.status.descriptor.environmentId !== input.environment.environmentId
-  ) {
-    return new CloudEnvironmentLinkError({
-      message: "Relay returned status descriptor for a different environment.",
-    });
-  }
-  return Effect.void;
-}
-
-function ensureConnectEndpointMatchesEnvironment(input: {
-  readonly environment: RelayClientEnvironmentRecord;
-  readonly connect: RelayEnvironmentConnectResponseType;
-}): Effect.Effect<void, CloudEnvironmentLinkError> {
-  if (!endpointMatches(input.connect.endpoint, input.environment.endpoint)) {
-    return new CloudEnvironmentLinkError({
-      message: "Relay returned credentials for a different endpoint.",
-    });
-  }
-  return Effect.void;
-}
-
 interface LinkEnvironmentToCloudInput {
   readonly connection: SavedRemoteConnection;
   readonly clerkToken: string;
@@ -244,334 +155,87 @@ type LinkEnvironmentToCloudRequirements =
   | ManagedRelay.ManagedRelayClient
   | MobileStorage.MobileStorage;
 
-export function linkEnvironmentToCloudWithPreference(
+export const linkEnvironmentToCloudWithPreference = Effect.fn(
+  "linkEnvironment.linkEnvironmentToCloudWithPreference",
+)(function* (
   input: LinkEnvironmentToCloudInput & { readonly liveActivitiesEnabled: boolean },
-): Effect.Effect<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
-  return Effect.gen(function* () {
-    if (!input.connection.bearerToken) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "Only a locally paired bearer connection can be linked to the cloud.",
-      });
-    }
-    const localBearerToken = input.connection.bearerToken;
-    const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    const storage = yield* MobileStorage.MobileStorage;
-    const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
-      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
-    );
-    const liveActivitiesEnabled = input.liveActivitiesEnabled;
-    const challenge = yield* relayClient
-      .createEnvironmentLinkChallenge({
-        clerkToken: input.clerkToken,
-        payload: {
-          notificationsEnabled: true,
-          liveActivitiesEnabled,
-          managedTunnelsEnabled: true,
-        },
-      })
-      .pipe(
-        Effect.mapError(
-          decodedRelayClientError(`${relayUrl}/v1/client/environment-link-challenges failed`),
-        ),
-      );
-    const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
-    const proof = yield* environmentClient.connect
-      .linkProof({
-        headers: { authorization: `Bearer ${localBearerToken}` },
-        payload: {
-          challenge: challenge.challenge,
-          relayIssuer: relayUrl,
-          endpoint: {
-            httpBaseUrl: input.connection.httpBaseUrl,
-            wsBaseUrl: input.connection.wsBaseUrl,
-            providerKind: MANAGED_ENDPOINT_PROVIDER_KIND,
-          },
-          origin: endpointOrigin(input.connection.httpBaseUrl),
-        },
-      })
-      .pipe(Effect.mapError(cloudEnvironmentLinkError("Could not obtain environment link proof.")));
-    const link = yield* relayClient
-      .linkEnvironment({
-        clerkToken: input.clerkToken,
-        payload: {
-          deviceId,
-          proof,
-          notificationsEnabled: true,
-          liveActivitiesEnabled,
-          managedTunnelsEnabled: true,
-        },
-      })
-      .pipe(
-        Effect.mapError(decodedRelayClientError(`${relayUrl}/v1/client/environment-links failed`)),
-      );
-    yield* ensureLinkedEnvironmentMatches({
-      expectedEnvironmentId: input.connection.environmentId,
-      expectedProviderKind: MANAGED_ENDPOINT_PROVIDER_KIND,
-      link,
+): Effect.fn.Return<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
+  if (!input.connection.bearerToken) {
+    return yield* new CloudEnvironmentLinkError({
+      message: "Only a locally paired bearer connection can be linked to the cloud.",
     });
-
-    yield* environmentClient.connect
-      .relayConfig({
-        headers: { authorization: `Bearer ${localBearerToken}` },
-        payload: {
-          relayUrl,
-          relayIssuer: link.relayIssuer,
-          cloudUserId: link.cloudUserId,
-          environmentCredential: link.environmentCredential,
-          cloudMintPublicKey: link.cloudMintPublicKey,
-          endpointRuntime: link.endpointRuntime,
-        },
-      })
-      .pipe(
-        Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
-      );
-  });
-}
-
-export function linkEnvironmentToCloud(
-  input: LinkEnvironmentToCloudInput,
-): Effect.Effect<
-  void,
-  CloudEnvironmentLinkError,
-  LinkEnvironmentToCloudRequirements | MobilePreferences.MobilePreferencesStore
-> {
-  return MobilePreferences.MobilePreferencesStore.pipe(
-    Effect.flatMap((preferencesStore) => preferencesStore.load),
-    Effect.mapError(cloudEnvironmentLinkError("Could not load mobile notification preferences.")),
-    Effect.flatMap((preferences) =>
-      linkEnvironmentToCloudWithPreference({
-        ...input,
-        liveActivitiesEnabled: preferences.liveActivitiesEnabled !== false,
-      }),
-    ),
+  }
+  const localBearerToken = input.connection.bearerToken;
+  const relayUrl = yield* requireRelayUrl();
+  const relayClient = yield* ManagedRelay.ManagedRelayClient;
+  const storage = yield* MobileStorage.MobileStorage;
+  const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
+    Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
   );
-}
-
-export function listCloudEnvironments(input: {
-  readonly clerkToken: string;
-}): Effect.Effect<
-  ReadonlyArray<RelayClientEnvironmentRecord>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-
-    return yield* relayClient
-      .listEnvironments({
-        clerkToken: input.clerkToken,
-      })
-      .pipe(Effect.mapError(decodedRelayClientError(`${relayUrl}/v1/environments failed`)));
-  });
-}
-
-export function getCloudEnvironmentStatus(input: {
-  readonly clerkToken: string;
-  readonly environment: RelayClientEnvironmentRecord;
-  readonly relayScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
-}): Effect.Effect<
-  RelayEnvironmentStatusResponseType,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    const status = yield* relayClient
-      .getEnvironmentStatus({
-        clerkToken: input.clerkToken,
-        scopes: input.relayScopes ?? [RelayEnvironmentStatusScope],
-        environmentId: input.environment.environmentId,
-      })
-      .pipe(
-        Effect.mapError(
-          decodedRelayClientError(
-            `${relayUrl}/v1/environments/${encodeURIComponent(input.environment.environmentId)}/status failed`,
-          ),
-        ),
-      );
-    yield* ensureStatusMatchesEnvironment({ environment: input.environment, status });
-    return status;
-  });
-}
-
-export function loadCloudEnvironmentStatuses(input: {
-  readonly clerkToken: string;
-  readonly environments: ReadonlyArray<RelayClientEnvironmentRecord>;
-}): Effect.Effect<
-  ReadonlyArray<CloudEnvironmentRecordWithStatus>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.forEach(
-    input.environments,
-    (environment) =>
-      getCloudEnvironmentStatus({
-        clerkToken: input.clerkToken,
-        environment,
-        relayScopes: RELAY_STATUS_AND_CONNECT_SCOPES,
-      }).pipe(
-        Effect.match({
-          onFailure: (error) => ({
-            environment,
-            status: null,
-            statusError: error.message,
-          }),
-          onSuccess: (status) => ({
-            environment,
-            status,
-            statusError: null,
-          }),
-        }),
-      ),
-    { concurrency: "unbounded" },
-  );
-}
-
-export function listCloudEnvironmentsWithStatus(input: {
-  readonly clerkToken: string;
-}): Effect.Effect<
-  ReadonlyArray<CloudEnvironmentRecordWithStatus>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const environments = yield* listCloudEnvironments(input);
-    return yield* loadCloudEnvironmentStatuses({
+  const liveActivitiesEnabled = input.liveActivitiesEnabled;
+  const challenge = yield* relayClient
+    .createEnvironmentLinkChallenge({
       clerkToken: input.clerkToken,
-      environments,
-    });
-  });
-}
-
-const loadAgentAwarenessDeviceId = Effect.fn("mobile.cloud.loadAgentAwarenessDeviceId")(
-  function* () {
-    const storage = yield* MobileStorage.MobileStorage;
-    return yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
-      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
+      payload: {
+        notificationsEnabled: true,
+        liveActivitiesEnabled,
+        managedTunnelsEnabled: true,
+      },
+    })
+    .pipe(
+      Effect.mapError(
+        decodedRelayClientError(`${relayUrl}/v1/client/environment-link-challenges failed`),
+      ),
     );
-  },
-);
-
-const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManagedEnvironment")(
-  function* (input: {
-    readonly clerkToken: string;
-    readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
-    readonly expectedEnvironment?: RelayClientEnvironmentRecord;
-  }) {
-    yield* Effect.annotateCurrentSpan({ "environment.id": input.environmentId });
-    const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-
-    const deviceId = yield* loadAgentAwarenessDeviceId();
-    const connect = yield* relayClient
-      .connectEnvironment({
-        clerkToken: input.clerkToken,
-        scopes: [RelayEnvironmentConnectScope],
-        environmentId: input.environmentId,
+  const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
+  const proof = yield* environmentClient.connect
+    .linkProof({
+      headers: { authorization: `Bearer ${localBearerToken}` },
+      payload: {
+        challenge: challenge.challenge,
+        relayIssuer: relayUrl,
+        endpoint: {
+          httpBaseUrl: input.connection.httpBaseUrl,
+          wsBaseUrl: input.connection.wsBaseUrl,
+          providerKind: MANAGED_ENDPOINT_PROVIDER_KIND,
+        },
+        origin: endpointOrigin(input.connection.httpBaseUrl),
+      },
+    })
+    .pipe(Effect.mapError(cloudEnvironmentLinkError("Could not obtain environment link proof.")));
+  const link = yield* relayClient
+    .linkEnvironment({
+      clerkToken: input.clerkToken,
+      payload: {
         deviceId,
-      })
-      .pipe(
-        Effect.mapError(
-          decodedRelayClientError(
-            `${relayUrl}/v1/environments/${encodeURIComponent(input.environmentId)}/connect failed`,
-          ),
-        ),
-      );
-    if (connect.environmentId !== input.environmentId) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "Relay returned credentials for a different environment.",
-      });
-    }
-    if (input.expectedEnvironment) {
-      yield* ensureConnectEndpointMatchesEnvironment({
-        environment: input.expectedEnvironment,
-        connect,
-      });
-    }
-
-    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
-    }).pipe(
-      Effect.mapError(
-        cloudEnvironmentLinkError("Could not fetch the connected environment descriptor."),
-      ),
+        proof,
+        notificationsEnabled: true,
+        liveActivitiesEnabled,
+        managedTunnelsEnabled: true,
+      },
+    })
+    .pipe(
+      Effect.mapError(decodedRelayClientError(`${relayUrl}/v1/client/environment-links failed`)),
     );
-    if (descriptor.environmentId !== connect.environmentId) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "Connected endpoint descriptor does not match the selected environment.",
-      });
-    }
-    const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
-    const bootstrapDpop = yield* signer
-      .createProof({
-        method: "POST",
-        url: new URL("/oauth/token", connect.endpoint.httpBaseUrl).toString(),
-      })
-      .pipe(Effect.mapError(cloudEnvironmentLinkError("Could not create bootstrap DPoP proof.")));
-    const bootstrap = yield* exchangeRemoteDpopAccessToken({
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
-      credential: connect.credential,
-      dpopProof: bootstrapDpop,
-      clientMetadata: authClientMetadata(),
-    }).pipe(
-      Effect.mapError(
-        cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token.", {
-          dpop: true,
-        }),
-      ),
+  yield* ensureLinkedEnvironmentMatches({
+    expectedEnvironmentId: input.connection.environmentId,
+    expectedProviderKind: MANAGED_ENDPOINT_PROVIDER_KIND,
+    link,
+  });
+
+  yield* environmentClient.connect
+    .relayConfig({
+      headers: { authorization: `Bearer ${localBearerToken}` },
+      payload: {
+        relayUrl,
+        relayIssuer: link.relayIssuer,
+        cloudUserId: link.cloudUserId,
+        environmentCredential: link.environmentCredential,
+        cloudMintPublicKey: link.cloudMintPublicKey,
+        endpointRuntime: link.endpointRuntime,
+      },
+    })
+    .pipe(
+      Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
     );
-    const pairingUrl = new URL(connect.endpoint.httpBaseUrl);
-    pairingUrl.hash = new URLSearchParams([["token", connect.credential]]).toString();
-
-    return {
-      environmentId: descriptor.environmentId,
-      environmentLabel: descriptor.label,
-      pairingUrl: stripPairingTokenFromUrl(pairingUrl).toString(),
-      displayUrl: connect.endpoint.httpBaseUrl,
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
-      wsBaseUrl: connect.endpoint.wsBaseUrl,
-      bearerToken: null,
-      authenticationMethod: "dpop",
-      dpopAccessToken: bootstrap.access_token,
-      relayManaged: true,
-    } satisfies SavedRemoteConnection;
-  },
-);
-
-export function connectCloudEnvironment(input: {
-  readonly clerkToken: string;
-  readonly environment: RelayClientEnvironmentRecord;
-}): Effect.Effect<
-  SavedRemoteConnection,
-  CloudEnvironmentLinkError,
-  | HttpClient.HttpClient
-  | ManagedRelay.ManagedRelayClient
-  | ManagedRelay.ManagedRelayDpopSigner
-  | MobileStorage.MobileStorage
-> {
-  return connectRelayManagedEnvironment({
-    clerkToken: input.clerkToken,
-    environmentId: input.environment.environmentId,
-    expectedEnvironment: input.environment,
-  });
-}
-
-export function refreshCloudEnvironmentConnection(input: {
-  readonly clerkToken: string;
-  readonly connection: SavedRemoteConnection;
-}): Effect.Effect<
-  SavedRemoteConnection,
-  CloudEnvironmentLinkError,
-  | HttpClient.HttpClient
-  | ManagedRelay.ManagedRelayClient
-  | ManagedRelay.ManagedRelayDpopSigner
-  | MobileStorage.MobileStorage
-> {
-  return connectRelayManagedEnvironment({
-    clerkToken: input.clerkToken,
-    environmentId: input.connection.environmentId,
-  });
-}
+});

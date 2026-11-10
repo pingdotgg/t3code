@@ -2,11 +2,11 @@ import type { InstanceStatus } from "@cloudflare/workers-types/experimental";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as Workflows from "../../bindings/workflows/Workflows.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -36,7 +36,14 @@ export class MyWorkflow extends WorkflowEntrypoint {
 }
 export default {
   async fetch(request, env) {
-    const workflow = await env.MY_WORKFLOW.create({ id: "an-id" });
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/delete") {
+      await (await env.MY_WORKFLOW.get("an-id")).delete();
+      return new Response("deleted");
+    }
+    const workflow = pathname === "/create"
+      ? await env.MY_WORKFLOW.create({ id: "an-id" })
+      : await env.MY_WORKFLOW.get("an-id");
     return new Response(JSON.stringify(await workflow.status()));
   },
 };
@@ -69,33 +76,29 @@ describe("Workflows binding", () => {
           Layer.provide(Paths.PathsLive),
           Layer.provide(Docker.DockerLive),
           Layer.provide(Workerd.WorkerdLive),
-          Layer.provideMerge(
-            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         );
 
-        const runStorageExit = Effect.fn(
-          function* () {
-            const worker = yield* startTestWorker({
-              name: "workflows-persist-test",
-              compatibilityDate: "2024-11-20",
-              compatibilityFlags: [],
-              modules: [
-                { name: "main.js", type: "ESModule", content: WORKFLOW_SCRIPT },
-              ],
-              workflows: [
-                { workflowName: "MY_WORKFLOW", className: "MyWorkflow" },
-              ],
-              bindings: [
-                Workflows.local({
-                  binding: "MY_WORKFLOW",
-                  workflowName: "MY_WORKFLOW",
-                  className: "MyWorkflow",
-                }),
-              ],
-            });
+        const startWorkflowWorker = startTestWorker({
+          name: "workflows-persist-test",
+          compatibilityDate: "2024-11-20",
+          compatibilityFlags: [],
+          modules: [{ name: "main.js", type: "ESModule", content: WORKFLOW_SCRIPT }],
+          workflows: [{ workflowName: "MY_WORKFLOW", className: "MyWorkflow" }],
+          bindings: [
+            Workflows.local({
+              binding: "MY_WORKFLOW",
+              workflowName: "MY_WORKFLOW",
+              className: "MyWorkflow",
+            }),
+          ],
+        });
 
-            const res = yield* worker.fetch("/");
+        const runStorageExit = Effect.fn(
+          function* (create: boolean) {
+            const worker = yield* startWorkflowWorker;
+
+            const res = yield* worker.fetch(create ? "/create" : "/");
             expect(res.status).toBe(200);
 
             return yield* worker.fetchText("/").pipe(
@@ -111,19 +114,34 @@ describe("Workflows binding", () => {
               }),
             );
           },
-          (self) =>
-            self.pipe(Effect.provide(rumtimeLayerTempDir), Effect.scoped),
+          (self) => self.pipe(Effect.provide(rumtimeLayerTempDir), Effect.scoped),
         );
 
-        const first = yield* runStorageExit();
+        const deleteInstance = Effect.gen(function* () {
+          const worker = yield* startWorkflowWorker;
+          expect(yield* worker.fetchText("/delete")).toBe("deleted");
+        }).pipe(Effect.provide(rumtimeLayerTempDir), Effect.scoped);
+
+        const first = yield* runStorageExit(true);
         expect(first).toBe(COMPLETE_STATUS);
 
         const persistDir = path.join(tmp, "workflows");
         const names = yield* fs.readDirectory(persistDir);
         expect(names).toContain(encodeURIComponent("MY_WORKFLOW"));
 
-        const second = yield* runStorageExit();
+        const second = yield* runStorageExit(false);
         expect(second).toBe(COMPLETE_STATUS);
+
+        // Deleting an instance removes its SQLite files through the engine's
+        // `WORKFLOW_STORAGE` disk binding.
+        const instanceDir = path.join(persistDir, encodeURIComponent("MY_WORKFLOW"));
+        // One `<hex id>.sqlite` per instance, beside the namespace's `metadata.sqlite`.
+        const instanceFiles = fs
+          .readDirectory(instanceDir)
+          .pipe(Effect.map((files) => files.filter((file) => /^[a-f0-9]{64}\.sqlite$/.test(file))));
+        expect(yield* instanceFiles).toHaveLength(1);
+        yield* deleteInstance;
+        expect(yield* instanceFiles).toHaveLength(0);
       }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 30_000 },
   );
@@ -156,6 +174,11 @@ export default {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
       return Response.json(await instance.status());
     }
+    if (url.pathname === "/subscribe") {
+      const instance = await env.LIFECYCLE_WORKFLOW.get(id);
+      using subscription = await instance.subscribe({ filter: ["workflow_queued"] });
+      return Response.json(await subscription.next());
+    }
     if (url.pathname === "/pause") {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
       await instance.pause();
@@ -170,6 +193,16 @@ export default {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
       await instance.restart();
       return Response.json(await instance.status());
+    }
+    if (url.pathname === "/delete-twice") {
+      const instance = await env.LIFECYCLE_WORKFLOW.get(id);
+      await instance.delete();
+      try {
+        await instance.delete();
+        return Response.json({ error: null });
+      } catch (error) {
+        return Response.json({ error: String(error) });
+      }
     }
     if (url.pathname === "/terminate") {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
@@ -187,9 +220,7 @@ const startLifecycleWorker = () =>
     compatibilityDate: "2026-03-09",
     compatibilityFlags: [],
     modules: [{ name: "main.js", type: "ESModule", content: LIFECYCLE_SCRIPT }],
-    workflows: [
-      { workflowName: "LIFECYCLE_WORKFLOW", className: "LifecycleWorkflow" },
-    ],
+    workflows: [{ workflowName: "LIFECYCLE_WORKFLOW", className: "LifecycleWorkflow" }],
     bindings: [
       Workflows.local({
         binding: "LIFECYCLE_WORKFLOW",
@@ -240,134 +271,181 @@ export default {
 // nothing advances the virtual clock). The workflow engine's `pause`/`restart`
 // flow relies on a real timer firing in `workerd` for the in-flight step, and
 // we observe it from Node by polling on the real clock.
-layer(localRuntimeLayer, { excludeTestServices: true })(
-  "Workflows binding lifecycle",
-  (it) => {
-    it.effect(
-      "pause and resume a running workflow",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startLifecycleWorker();
-          const id = "pause-resume-test";
+layer(localRuntimeLayer, { excludeTestServices: true })("Workflows binding lifecycle", (it) => {
+  it.effect("subscribes through the local workflow wrapper", () =>
+    Effect.gen(function* () {
+      const worker = yield* startLifecycleWorker();
+      const id = "subscription-test";
+      yield* worker.fetchJson(`/create?id=${id}`);
+      expect(yield* worker.fetchJson(`/subscribe?id=${id}`)).toMatchObject({
+        done: false,
+        value: { type: "workflow_queued", instanceId: id },
+      });
+    }),
+  );
 
-          const createData = yield* worker.fetchJson<{ id: string }>(
-            `/create?id=${id}`,
-          );
-          expect(createData.id).toBe(id);
+  // The engine runs on its own compatibility date with the Worker's flags.
+  // `nodejs_compat` is on by default as of the runtime's internal date, where
+  // workerd rejects setting it.
+  it.effect(
+    "runs a Workflow for a Worker that sets nodejs_compat",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startTestWorker({
+          name: "workflows-nodejs-compat-test",
+          compatibilityDate: "2026-03-17",
+          compatibilityFlags: ["nodejs_compat"],
+          modules: [{ name: "main.js", type: "ESModule", content: LIFECYCLE_SCRIPT }],
+          workflows: [{ workflowName: "LIFECYCLE_WORKFLOW", className: "LifecycleWorkflow" }],
+          bindings: [
+            Workflows.local({
+              binding: "LIFECYCLE_WORKFLOW",
+              workflowName: "LIFECYCLE_WORKFLOW",
+              className: "LifecycleWorkflow",
+            }),
+          ],
+        });
+        const created = yield* worker.fetchJson<{ id: string }>("/create?id=nodejs-compat");
+        expect(created.id).toBe("nodejs-compat");
+      }),
+    { timeout: 30_000 },
+  );
 
-          yield* pollStepOutput(worker, id, "step-1-done");
+  it.effect(
+    "pause and resume a running workflow",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startLifecycleWorker();
+        const id = "pause-resume-test";
 
-          const pauseData = yield* worker.fetchJson<InstanceStatus>(
-            `/pause?id=${id}`,
-          );
-          expect(pauseData).toHaveProperty("status");
+        const createData = yield* worker.fetchJson<{ id: string }>(`/create?id=${id}`);
+        expect(createData.id).toBe(id);
 
-          yield* pollStatus(worker, id, "paused");
+        yield* pollStepOutput(worker, id, "step-1-done");
 
-          const resumeData = yield* worker.fetchJson<InstanceStatus>(
-            `/resume?id=${id}`,
-          );
-          expect(resumeData).toHaveProperty("status");
+        const pauseData = yield* worker.fetchJson<InstanceStatus>(`/pause?id=${id}`);
+        expect(pauseData).toHaveProperty("status");
 
-          const final = yield* pollStatus(worker, id, "complete");
-          expect(final.output).toBe("workflow-complete");
-        }),
-      { timeout: 30_000 },
-    );
+        yield* pollStatus(worker, id, "paused");
 
-    it.effect(
-      "terminate a running workflow",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startLifecycleWorker();
-          const id = "terminate-test";
+        const resumeData = yield* worker.fetchJson<InstanceStatus>(`/resume?id=${id}`);
+        expect(resumeData).toHaveProperty("status");
 
-          const createRes = yield* worker.fetch(`/create?id=${id}`);
-          expect(createRes.status).toBe(200);
+        const final = yield* pollStatus(worker, id, "complete");
+        expect(final.output).toBe("workflow-complete");
+      }),
+    { timeout: 30_000 },
+  );
 
-          yield* pollStepOutput(worker, id, "step-1-done");
+  it.effect(
+    "terminate a running workflow",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startLifecycleWorker();
+        const id = "terminate-test";
 
-          const terminateData = yield* worker.fetchJson<InstanceStatus>(
-            `/terminate?id=${id}`,
-          );
-          expect(terminateData).toHaveProperty("status");
+        const createRes = yield* worker.fetch(`/create?id=${id}`);
+        expect(createRes.status).toBe(200);
 
-          yield* pollStatus(worker, id, "terminated");
-        }),
-      { timeout: 30_000 },
-    );
+        yield* pollStepOutput(worker, id, "step-1-done");
 
-    it.effect(
-      "restart a running workflow",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startLifecycleWorker();
-          const id = "restart-test";
+        const terminateData = yield* worker.fetchJson<InstanceStatus>(`/terminate?id=${id}`);
+        expect(terminateData).toHaveProperty("status");
 
-          yield* worker.fetch(`/create?id=${id}`);
+        yield* pollStatus(worker, id, "terminated");
+      }),
+    { timeout: 30_000 },
+  );
 
-          yield* pollStepOutput(worker, id, "step-1-done");
+  it.effect(
+    "recreates an instance after a rejected repeated deletion",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startLifecycleWorker();
+        const id = "repeated-delete-test";
 
-          const restartData = yield* worker.fetchJson<InstanceStatus>(
-            `/restart?id=${id}`,
-          );
-          expect(restartData).toHaveProperty("status");
+        yield* worker.fetch(`/create?id=${id}`);
+        yield* pollStatus(worker, id, "complete");
 
-          const final = yield* pollStatus(worker, id, "complete");
-          expect(final.output).toBe("workflow-complete");
-        }),
-      { timeout: 30_000 },
-    );
+        const deleted = yield* worker.fetchJson<{ error: string | null }>(`/delete-twice?id=${id}`);
+        expect(deleted.error).toContain("instance.not_found");
 
-    // Regression: a worker that owns more than one workflow must start. Each
-    // owned workflow contributes a `workflows:<name>` Engine service plus a
-    // *shared* `workflows:storage` service that must be created only once.
-    it.effect(
-      "a worker can own two workflows without duplicating workflows:storage",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startTestWorker({
-            name: "workflows-multi-test",
-            compatibilityDate: "2026-03-09",
-            compatibilityFlags: [],
-            modules: [
-              {
-                name: "main.js",
-                type: "ESModule",
-                content: TWO_WORKFLOWS_SCRIPT,
-              },
-            ],
-            workflows: [
-              { workflowName: "ALPHA_WORKFLOW", className: "AlphaWorkflow" },
-              { workflowName: "BETA_WORKFLOW", className: "BetaWorkflow" },
-            ],
-            bindings: [
-              Workflows.local({
-                binding: "ALPHA_WORKFLOW",
-                workflowName: "ALPHA_WORKFLOW",
-                className: "AlphaWorkflow",
-              }),
-              Workflows.local({
-                binding: "BETA_WORKFLOW",
-                workflowName: "BETA_WORKFLOW",
-                className: "BetaWorkflow",
-              }),
-            ],
-          });
+        const recreated = yield* worker.fetchJson<{ id: string }>(`/create?id=${id}`);
+        expect(recreated.id).toBe(id);
+        const final = yield* pollStatus(worker, id, "complete");
+        expect(final.output).toBe("workflow-complete");
+      }),
+    { timeout: 30_000 },
+  );
 
-          const createRes = yield* worker.fetch(`/create`);
-          expect(createRes.status).toBe(200);
+  it.effect(
+    "restart a running workflow",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startLifecycleWorker();
+        const id = "restart-test";
 
-          const alpha = yield* pollStatus(worker, "alpha", "complete");
-          expect(alpha.output).toBe("alpha-output");
+        yield* worker.fetch(`/create?id=${id}`);
 
-          const beta = yield* pollStatus(worker, "beta", "complete");
-          expect(beta.output).toBe("beta-output");
-        }),
-      { timeout: 30_000 },
-    );
-  },
-);
+        yield* pollStepOutput(worker, id, "step-1-done");
+
+        const restartData = yield* worker.fetchJson<InstanceStatus>(`/restart?id=${id}`);
+        expect(restartData).toHaveProperty("status");
+
+        const final = yield* pollStatus(worker, id, "complete");
+        expect(final.output).toBe("workflow-complete");
+      }),
+    { timeout: 30_000 },
+  );
+
+  // Regression: a worker that owns more than one workflow must start. Each
+  // owned workflow contributes a `workflows:<name>` Engine service plus a
+  // *shared* `workflows:storage` service that must be created only once.
+  it.effect(
+    "a worker can own two workflows without duplicating workflows:storage",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startTestWorker({
+          name: "workflows-multi-test",
+          compatibilityDate: "2026-03-09",
+          compatibilityFlags: [],
+          modules: [
+            {
+              name: "main.js",
+              type: "ESModule",
+              content: TWO_WORKFLOWS_SCRIPT,
+            },
+          ],
+          workflows: [
+            { workflowName: "ALPHA_WORKFLOW", className: "AlphaWorkflow" },
+            { workflowName: "BETA_WORKFLOW", className: "BetaWorkflow" },
+          ],
+          bindings: [
+            Workflows.local({
+              binding: "ALPHA_WORKFLOW",
+              workflowName: "ALPHA_WORKFLOW",
+              className: "AlphaWorkflow",
+            }),
+            Workflows.local({
+              binding: "BETA_WORKFLOW",
+              workflowName: "BETA_WORKFLOW",
+              className: "BetaWorkflow",
+            }),
+          ],
+        });
+
+        const createRes = yield* worker.fetch(`/create`);
+        expect(createRes.status).toBe(200);
+
+        const alpha = yield* pollStatus(worker, "alpha", "complete");
+        expect(alpha.output).toBe("alpha-output");
+
+        const beta = yield* pollStatus(worker, "beta", "complete");
+        expect(beta.output).toBe("beta-output");
+      }),
+    { timeout: 30_000 },
+  );
+});
 
 // Cross-instance test: a workflow defined by one `Runtime` (the owner) is
 // invoked from a workflow binding declared in a *different* `Runtime` (the
@@ -432,9 +510,7 @@ layer(localRuntimeLayer, { excludeTestServices: true })(
                 content: CROSS_INSTANCE_OWNER_SCRIPT,
               },
             ],
-            workflows: [
-              { workflowName: "CROSS_WORKFLOW", className: "CrossWorkflow" },
-            ],
+            workflows: [{ workflowName: "CROSS_WORKFLOW", className: "CrossWorkflow" }],
             bindings: [],
           });
 
@@ -483,16 +559,8 @@ layer(localRuntimeLayer, { excludeTestServices: true })(
   },
 );
 
-const pollStatus = (
-  worker: TestWorker,
-  id: string,
-  expected: InstanceStatus["status"],
-) =>
-  poll<InstanceStatus>(
-    worker,
-    `/status?id=${id}`,
-    (json) => json.status === expected,
-  );
+const pollStatus = (worker: TestWorker, id: string, expected: InstanceStatus["status"]) =>
+  poll<InstanceStatus>(worker, `/status?id=${id}`, (json) => json.status === expected);
 
 const pollStepOutput = (worker: TestWorker, id: string, expected: string) =>
   poll<{ __LOCAL_DEV_STEP_OUTPUTS?: ReadonlyArray<string> }>(

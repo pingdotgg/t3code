@@ -1,6 +1,6 @@
 import * as NodeHttp from "node:http";
-import path from "node:path";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import * as vite from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
@@ -16,6 +16,7 @@ vi.mock("../dev-server.ts", () => ({
   createDefaultContext: async () => ({}),
   startServer: async () => ({
     address: runtimeAddress,
+    proxySharedSecret: "dev-secret",
     close: async () => {},
   }),
 }));
@@ -52,9 +53,11 @@ describe("dev plugin", () => {
     await new Promise((resolve) => runtimeServer.close(resolve));
   });
 
-  const createDevServer = (plugins: vite.PluginOption) =>
+  const createDevServer = (plugins: vite.PluginOption, config: vite.UserConfig = {}) =>
     vite.createServer({
+      ...config,
       configFile: false,
+      cacheDir: path.resolve(import.meta.dirname, "../.cache/dev-plugin-vite"),
       root,
       logLevel: "silent",
       plugins: [plugins],
@@ -112,17 +115,76 @@ describe("dev plugin", () => {
     }
   });
 
-  it("creates the Distilled environment when configureServer is intact", async () => {
-    const server = await createDevServer(
-      cloudflareVitePlugin({ main: "./worker-entry.ts" }),
-    );
+  it("leaves the environment runnable when there is no Worker entry", async () => {
+    // An assets-only dev run boots workerd for the asset layer but evaluates
+    // no modules, so the `ssr` environment stays Vite's own: a framework
+    // plugin that renders through `ssrLoadModule` in dev keeps working.
+    const server = await createDevServer(cloudflareVitePlugin({}));
     try {
-      expect(server.environments["ssr"]).toBeInstanceOf(
-        DistilledDevEnvironment,
-      );
+      const environment = server.environments["ssr"];
+      expect(environment).toBeDefined();
+      expect(environment).not.toBeInstanceOf(DistilledDevEnvironment);
+      expect(vite.isRunnableDevEnvironment(environment!)).toBe(true);
     } finally {
       await server.close();
     }
+  });
+
+  it("creates the Distilled environment when configureServer is intact", async () => {
+    const server = await createDevServer(cloudflareVitePlugin({ main: "./worker-entry.ts" }));
+    try {
+      expect(server.environments["ssr"]).toBeInstanceOf(DistilledDevEnvironment);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("accepts multiple aliases for the same Worker entry", async () => {
+    const server = await createDevServer([
+      {
+        name: "framework-entry-aliases",
+        config: () => ({
+          environments: {
+            ssr: {
+              build: {
+                rollupOptions: {
+                  input: {
+                    worker: "./worker-entry.ts",
+                    "entry.worker": path.join(root, "worker-entry.ts"),
+                  },
+                },
+              },
+            },
+          },
+        }),
+      },
+      cloudflareVitePlugin({}),
+    ]);
+    try {
+      expect(server.environments["ssr"]).toBeInstanceOf(DistilledDevEnvironment);
+      expect((await request(server, "/")).text).toBe("worker");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects distinct Worker entries", async () => {
+    await expect(
+      createDevServer(cloudflareVitePlugin({}), {
+        environments: {
+          ssr: {
+            build: {
+              rollupOptions: {
+                input: {
+                  first: "./worker-entry.ts",
+                  second: "./other-entry.ts",
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("Expected exactly one entry in the input, got 2 entries");
   });
 
   it("registers the proxy middleware after other plugins' post middlewares by default", async () => {
@@ -156,6 +218,27 @@ describe("dev plugin", () => {
       expect(viteClient.status).toBe(200);
       expect(viteClient.text).not.toBe("worker");
       expect(viteClient.text).not.toBe("framework");
+    } finally {
+      await server.close();
+    }
+  });
+
+  // `@cloudflare/vite-plugin` warns in dev, once imports go quiet, when a
+  // Worker without `nodejs_compat` imports Node.js built-ins.
+  it("warns about Node.js imports without nodejs_compat in dev", async () => {
+    const warnings: Array<string> = [];
+    const logger = vite.createLogger("silent");
+    logger.warn = (message) => void warnings.push(message);
+    const server = await createDevServer(
+      cloudflareVitePlugin({ main: "./node-import-entry.ts", compatibilityDate: "2024-01-01" }),
+      { customLogger: logger },
+    );
+    try {
+      await server.environments.ssr!.transformRequest("/node-import-entry.ts");
+      await vi.waitFor(() => expect(warnings.join("\n")).toContain("Unexpected Node.js imports"), {
+        timeout: 5_000,
+      });
+      expect(warnings.join("\n")).toContain(`"node:fs" imported from "node-import-entry.ts"`);
     } finally {
       await server.close();
     }

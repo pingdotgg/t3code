@@ -33,8 +33,8 @@ provider layers in `alchemy.run.ts`:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-+import * as Axiom from "alchemy/Axiom";
-import * as Cloudflare from "alchemy/Cloudflare";
++import * as Axiom from "@alchemy.run/axiom";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Layer from "effect/Layer";
 
@@ -50,7 +50,7 @@ export default Alchemy.Stack(
 ```
 
 If you haven't connected an Axiom account yet, run through
-[Axiom setup](/axiom/setup) first — `alchemy login` picks up
+[Axiom setup](/axiom/setup) first. The Axiom provider reads
 `AXIOM_TOKEN` or a stored credential.
 
 ## Create a dataset for traces
@@ -61,7 +61,7 @@ one-resource-per-file pattern as the Bucket, create
 
 ```typescript
 // src/observability.ts
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 export const Traces = Axiom.Dataset("Traces", {
   name: "myapp-traces",
@@ -78,7 +78,7 @@ Each OTel signal gets its own dataset:
 
 ```diff lang="typescript"
 // src/observability.ts
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 export const Traces = Axiom.Dataset("Traces", {
   name: "myapp-traces",
@@ -125,12 +125,12 @@ binding from Part 2. Merge it into the Worker's `Effect.provide`:
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-+import * as Axiom from "alchemy/Axiom";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as Axiom from "@alchemy.run/axiom";
 import * as Effect from "effect/Effect";
 +import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Bucket } from "./bucket.ts";
 +import { Ingest, Logs, Traces } from "./observability.ts";
 
@@ -263,6 +263,9 @@ You've completed the tutorial. You now know how to:
 
 ## What's next
 
+- [What is Alchemy?](/what-is-alchemy) — the model
+  behind everything you just built: Runtimes, Bindings, Layers, and
+  the two phases
 - [Telemetry](/infrastructure-as-effects/telemetry) — how the
   built-in telemetry works across every runtime (Workers, Durable
   Objects, Workflows, Lambda, containers)

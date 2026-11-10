@@ -4,20 +4,41 @@ Wrangler-free [OctaneJS](https://octanejs.dev) integration implementing the
 framework-core `Framework` service, with the deploy target passed as a value
 (Cloudflare Workers built in at `./cloudflare`).
 
-Octane wraps Vite, so this integration is deliberately thin: the project's own
-`vite build` — with `@octanejs/vite-plugin` in `vite.config.ts` and
-`adapter: cloudflare()` (from `@octanejs/adapter-cloudflare`) in
-`octane.config.ts` — already produces the deployable output:
+Keep the native `octane()` plugin in `vite.config.ts` and application routes
+in `octane.config.ts`. Cloudflare builds no longer require
+`@octanejs/adapter-cloudflare` or an `adapter` declaration:
+
+```diff
+-import { cloudflare } from "@octanejs/adapter-cloudflare";
+ import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+ export default defineConfig({
+-  adapter: cloudflare(),
+   router: {
+     routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+   },
+ });
+```
+
+Existing Cloudflare adapter declarations remain supported. The native config
+is never rewritten, and other native Vite plugins remain active.
+
+Alchemy keeps Octane's client compilation, hydration, and asset metadata,
+but replaces its automatic server build with a Worker-targeted Vite build.
+Octane's public server-manifest generator supplies the routes and runtime;
+Alchemy generates the small `fetch(request, env, ctx)` entry and embeds the
+HTML template. The existing source provider isolates builds in a child process
+and collects the output:
 
 - `dist/client` — static assets, served asset-first
-- `dist/server/worker.js` — the module Worker entry the adapter emits
-  (self-contained ESM; only `node:` externals, so the deployed Worker needs
-  the `nodejs_compat` compatibility flag)
+- `dist/server/worker.js` — the Worker entry; custom Octane `build.outDir`
+  values are also supported
 
-`build` drives that pipeline programmatically through the **project's** Vite
-install and maps the on-disk `dist` onto the `BuildOutput` contract
-(`serverModules` entry-first, `clientDirectory`, sha256 hashes). No adapter
-forks, no bundler-plugin injection, no `wrangler.json`.
+The Worker needs `nodejs_compat` for Octane's hashing and asynchronous request
+context. No Wrangler configuration is required. The build integration uses
+the installed Octane Vite plugin's client-asset helper and production config
+facade alongside its public code-generation API; compatibility is covered by
+a real adapter-free build regression.
 
 `dev` runs Octane's own Vite dev server (the plugin's dev SSR middleware —
 rendering, server routes, and RPC in-process with full HMR).

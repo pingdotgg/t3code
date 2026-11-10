@@ -1,5 +1,5 @@
+import * as Docker from "@alchemy.run/docker";
 import * as Alchemy from "alchemy";
-import * as Docker from "alchemy/Docker";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,9 +15,7 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const configuredPassword = yield* Config.redacted("POSTGRES_PASSWORD").pipe(
-      Config.option,
-    );
+    const configuredPassword = yield* Config.Redacted("POSTGRES_PASSWORD").pipe(Config.option);
     const password = yield* Option.match(configuredPassword, {
       onSome: Effect.succeed,
       onNone: () => Alchemy.makeRandom("PostgresPassword", { bytes: 16 }),

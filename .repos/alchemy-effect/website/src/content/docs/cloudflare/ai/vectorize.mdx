@@ -18,7 +18,7 @@ Worker can reference it:
 
 ```typescript
 // src/embeddings.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Embeddings = Cloudflare.Vectorize.Index("Embeddings", {
   dimensions: 768,
@@ -61,16 +61,16 @@ immutable, and replacing the parent index replaces it too.
 
 ## Bind the index to a Worker
 
-`Cloudflare.Vectorize.SearchIndex(index)` in the Worker's init phase
+`Cloudflare.Vectorize.SearchIndex(index)` in the Worker's Construction phase
 attaches the native `vectorize` binding at deploy time and resolves
 to an Effect-native client at runtime:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Embeddings } from "./embeddings.ts";
 
 export default Cloudflare.Worker(
@@ -159,7 +159,7 @@ that binds them:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Embeddings } from "./src/embeddings.ts";
 import Worker from "./src/worker.ts";

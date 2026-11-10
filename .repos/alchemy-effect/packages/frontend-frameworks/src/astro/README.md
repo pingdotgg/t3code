@@ -131,7 +131,7 @@ export default Options.make({
   framework: "@alchemy.run/frontend-frameworks/astro",
 });
 
-// e2e.config.ts — typed target value (recommended; see fixtures/astro)
+// e2e.config.ts — typed target value (recommended; see packages/frontend-frameworks/fixtures/astro)
 framework: (options) =>
   Astro.make({
     target: cloudflare({ worker: Options.resolveCloudflareOptions(options).worker }),
@@ -244,7 +244,7 @@ generated `_redirects` and `_headers` files). No `wrangler.json`, no
   cloudflare-runtime).
 - **Version pinning.** Astro's JS API is `@experimental`, and the integration
   internals (virtual module names, adapter features) are versioned with Astro
-  majors. The fork tracks `astro` 7.x / adapter v14.1.3; treat version bumps
+  majors. The fork tracks `astro` >=7.4 / adapter v14.4.2 (the vendored runtime; `integration.ts` is still based on v14.1.3); treat version bumps
   as deliberate migrations backed by the fixture e2e suite.
 
 ## Testing
@@ -255,7 +255,7 @@ generated `_redirects` and `_headers` files). No `wrangler.json`, no
   `base !== "/"` handling, `injectTypes`, the unsupported-option guard, env
   feeding; `test/decoupling.test.ts`: the framework half's cloudflare-free
   guarantee and runtime purity).
-- `fixtures/astro` — the playwright e2e suite driving a real app through the
+- `packages/frontend-frameworks/fixtures/astro` — the playwright e2e suite driving a real app through the
   harness in both `dev` (workerd module runner) and `live` (miniflare over the
   built output) modes: SSR + bindings, middleware locals/headers, config
   redirects (served from the generated `_redirects` in live mode),
@@ -263,3 +263,7 @@ generated `_redirects` and `_headers` files). No `wrangler.json`, no
   endpoints, content collections, prerendered pages, public assets, ASSETS
   404 fallback. (A `base !== "/"` fixture app is not yet part of the suite —
   the behavior is unit-tested in `test/parity.test.ts`.)
+
+## Upstream references
+
+- Astro: [`a2240c43830e29c1d85667f4c610655d6b10253f`](https://github.com/withastro/astro/tree/a2240c43830e29c1d85667f4c610655d6b10253f)

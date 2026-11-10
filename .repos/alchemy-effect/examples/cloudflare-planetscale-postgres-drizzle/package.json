@@ -16,17 +16,19 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/sql-pg": "catalog:effect",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/drizzle": "workspace:*",
+    "@alchemy.run/planetscale": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:database",
-    "effect": "catalog:effect",
-    "pg": "catalog:database"
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "catalog:database",
-    "drizzle-kit": "catalog:database"
+    "@alchemy.run/test": "workspace:*",
+    "drizzle-kit": "catalog:"
   }
 }

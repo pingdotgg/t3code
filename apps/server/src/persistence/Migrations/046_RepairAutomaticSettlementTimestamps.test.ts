@@ -1,12 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const MODEL_SELECTION = '{"instanceId":"codex","model":"gpt-5.6-sol"}';
 
@@ -111,7 +111,6 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
         automatic("thread-auto"),
         sweptAt,
       );
-      // A later manual settle re-emits the bad stamp; only the projection matters.
       yield* settledEvent(
         "event-auto-repeat",
         "thread-auto",
@@ -179,19 +178,16 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
         ORDER BY thread_id
       `;
       assert.deepStrictEqual(threads, [
-        // Latest activity at or before the sweep: the turn completion.
         {
           threadId: "thread-auto",
           settledAt: "2026-06-03T00:00:00.000Z",
           updatedAt: "2026-09-01T00:00:00.000Z",
         },
-        // Activity after the sweep is ignored; the older message wins.
         {
           threadId: "thread-auto-later-activity",
           settledAt: "2026-06-20T00:00:00.000Z",
           updatedAt: "2026-09-03T00:00:00.000Z",
         },
-        // No messages or turns: fall back to creation, matching the reactor.
         {
           threadId: "thread-auto-no-activity",
           settledAt: "2026-05-02T00:00:00.000Z",
@@ -202,7 +198,6 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
           settledAt: "2026-08-10T00:00:00.000Z",
           updatedAt: "2026-08-10T00:00:00.000Z",
         },
-        // Manually re-settled after the sweep keeps the manual stamp.
         {
           threadId: "thread-resettled",
           settledAt: "2026-09-02T00:00:00.000Z",

@@ -1,10 +1,11 @@
-import * as Alchemy from "@/index.ts";
-import { Stack } from "@/Stack";
-import { InMemoryService, State, type ResourceState } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Alchemy from "@/index.ts";
+import { Stack } from "@/Stack";
+import { Stage } from "@/Stage";
+import { InMemoryService, State, type ResourceState } from "@/State";
 import { TestLayers, TestResource } from "./test.resources.ts";
 
 // Regression coverage for https://github.com/alchemy-run/alchemy/issues/961:
@@ -16,7 +17,7 @@ import { TestLayers, TestResource } from "./test.resources.ts";
 
 const { test } = Test.make({ providers: TestLayers() });
 
-describe("destroy clears the persisted stack output", () => {
+describe("destroy clears the persisted stack output", { tags: ["unit", "local"] }, () => {
   test.provider("scratch stack destroy removes the output record", (stack) =>
     Effect.gen(function* () {
       const state = yield* yield* State;
@@ -28,16 +29,14 @@ describe("destroy clears the persisted stack output", () => {
       }).pipe(stack.deploy);
       expect(deployed).toEqual({ url: "test-string" });
 
-      expect(
-        yield* state.getOutput({ stack: stk.name, stage: stk.stage }),
-      ).toEqual({ url: "test-string" });
+      expect(yield* state.getOutput({ stack: stk.name, stage: stk.stage })).toEqual({
+        url: "test-string",
+      });
 
       yield* stack.destroy();
 
       // The output record must be removed, not overwritten with `{}`.
-      expect(
-        yield* state.getOutput({ stack: stk.name, stage: stk.stage }),
-      ).toBeUndefined();
+      expect(yield* state.getOutput({ stack: stk.name, stage: stk.stage })).toBeUndefined();
       // ... and `listStages` must agree the stage is gone.
       expect(yield* state.listStages(stk.name)).not.toContain(stk.stage);
     }),
@@ -58,18 +57,19 @@ const DestroyOutputStack = Alchemy.Stack(
   { providers: TestLayers(), state: stateLayer },
   Effect.gen(function* () {
     const A = yield* TestResource("A", { string: "test-string" });
-    return { url: A.string };
+    return { url: A.string, stage: yield* Stage };
   }),
 );
 
 harness.test(
   "stack destroy removes the persisted stack output",
   Effect.gen(function* () {
-    yield* harness.deploy(DestroyOutputStack);
-    expect(outputs.DestroyOutputStack?.test).toEqual({ url: "test-string" });
+    const { stage } = yield* harness.deploy(DestroyOutputStack);
+    expect(outputs.DestroyOutputStack?.[stage]).toEqual({ url: "test-string", stage });
 
     yield* harness.destroy(DestroyOutputStack);
-    expect(outputs.DestroyOutputStack?.test).toBeUndefined();
-    expect(store.DestroyOutputStack?.test).toBeUndefined();
+    expect(outputs.DestroyOutputStack?.[stage]).toBeUndefined();
+    expect(store.DestroyOutputStack?.[stage]).toBeUndefined();
   }),
+  { tags: ["unit", "local"] },
 );

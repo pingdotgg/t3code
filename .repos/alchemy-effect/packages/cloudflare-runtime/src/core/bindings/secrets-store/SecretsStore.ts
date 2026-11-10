@@ -1,8 +1,8 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const SecretsStoreStoreWorker = {
   worker: () =>
     loadInternalWorker(
@@ -16,6 +16,7 @@ const SecretsStoreSecretWorker = {
     ),
 };
 import * as Storage from "../../globals/Storage.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook } from "../../PluginContext.ts";
@@ -75,10 +76,9 @@ export const SecretsStoreLive = Layer.effect(
     const enableControlEndpoints = yield* Plugin.UnsafeEnableControlEndpoints;
 
     const makeStorageService = Effect.gen(function* () {
-      const storageDiskPath =
-        "disk" in storage ? storage.disk?.path : undefined;
+      const storageDiskPath = "disk" in storage ? storage.disk?.path : undefined;
       if (!storageDiskPath) {
-        return yield* new ConfigError({
+        return yield* ConfigError.make({
           subtag: "SecretsStore",
           message:
             "Cannot configure Secrets Store persistence: the Storage service has no disk path.",
@@ -87,15 +87,14 @@ export const SecretsStoreLive = Layer.effect(
       }
       const persistPath = path.join(storageDiskPath, "secrets-store");
       yield* fs.makeDirectory(persistPath, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigError({
-              subtag: "SecretsStore",
-              message: `Failed to create Secrets Store persistence directory "${persistPath}": ${cause.message}`,
-              hint: "Ensure the storage directory is writable.",
-              detail: { persistPath },
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          ConfigError.make({
+            subtag: "SecretsStore",
+            message: `Failed to create Secrets Store persistence directory "${persistPath}": ${cause.message}`,
+            hint: "Ensure the storage directory is writable.",
+            detail: { persistPath },
+            cause,
+          }),
         ),
       );
       return {
@@ -134,7 +133,7 @@ export const SecretsStoreLive = Layer.effect(
             const storeService: WorkerdConfig.Service = {
               name: SERVICE_SECRETS_STORE,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules: formatInternalWorkerModules(
                   yield* Effect.promise(SecretsStoreStoreWorker.worker),
                 ),
@@ -174,7 +173,7 @@ export const SecretsStoreLive = Layer.effect(
             const secretService: WorkerdConfig.Service = {
               name: SERVICE_SECRETS_STORE_SECRET,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules: formatInternalWorkerModules(
                   yield* Effect.promise(SecretsStoreSecretWorker.worker),
                 ),
@@ -203,9 +202,7 @@ export const SecretsStoreLive = Layer.effect(
  * `Secret "<secretName>" not found` (matching Miniflare) until a value is
  * seeded through the {@link admin} surface.
  */
-export const local = (
-  props: SecretsStoreSecretProps,
-): BindingHook<SecretsStore> =>
+export const local = (props: SecretsStoreSecretProps): BindingHook<SecretsStore> =>
   Plugin.use(SecretsStore, (secretsStore) =>
     Effect.map(
       secretsStore.api.register({
@@ -228,10 +225,7 @@ export const local = (
  * Secret provider, through the platform proxy) uses it to write secret
  * values into the same store the `secrets_store_secret` bindings read.
  */
-export const admin = (props: {
-  binding: string;
-  storeId: string;
-}): BindingHook<SecretsStore> =>
+export const admin = (props: { binding: string; storeId: string }): BindingHook<SecretsStore> =>
   Plugin.use(SecretsStore, (secretsStore) =>
     Effect.map(
       secretsStore.api.registerStore({ storeId: props.storeId }),

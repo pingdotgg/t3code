@@ -1,117 +1,55 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  isProviderAvailable,
+  isProviderTextGenerationCapable,
+  resolveProjectProviderInstanceEnabled,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import {
+  defaultTextGenerationModel,
+  fallbackTextGenerationModelSelection,
+} from "@t3tools/shared/serverSettings";
+import * as ServerSettings from "../serverSettings.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
+import * as TextGenerators from "./TextGenerators.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
-export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
+export type {
+  BranchNameGenerationInput,
+  BranchNameGenerationResult,
+  CommitMessageGenerationInput,
+  CommitMessageGenerationResult,
+  PrContentGenerationInput,
+  PrContentGenerationResult,
+  ReviewGuideGenerationInput,
+  ReviewGuideGenerationResult,
+  ThreadTitleGenerationInput,
+  ThreadTitleGenerationResult,
+  TranscriptionPostProcessingInput,
+  TranscriptionPostProcessingResult,
+} from "@t3tools/provider-core/server/textGeneration";
 
-export interface CommitMessageGenerationInput {
-  cwd: string;
-  branch: string | null;
-  stagedSummary: string;
-  stagedPatch: string;
-  /** When true, the model also returns a semantic branch name for the change. */
-  includeBranch?: boolean;
-  policy?: TextGenerationPolicy | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface CommitMessageGenerationResult {
-  subject: string;
-  body: string;
-  /** Only present when `includeBranch` was set on the input. */
-  branch?: string | undefined;
-}
-
-export interface PrContentGenerationInput {
-  cwd: string;
-  baseBranch: string;
-  headBranch: string;
-  commitSummary: string;
-  diffSummary: string;
-  diffPatch: string;
-  changeRequestTemplate?: string | undefined;
-  policy?: TextGenerationPolicy | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface PrContentGenerationResult {
-  title: string;
-  body: string;
-}
-
-export interface BranchNameGenerationInput {
-  cwd: string;
-  message: string;
-  attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface BranchNameGenerationResult {
-  branch: string;
-}
-
-export interface ThreadTitleGenerationInput {
-  cwd: string;
-  message: string;
-  /** Present when replacing an existing title from the current thread history. */
-  previousTitle?: string | undefined;
-  attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface ThreadTitleGenerationResult {
-  title: string;
-}
-
-/**
- * TextGeneration - Service tag for commit and change request text generation.
- */
-export class TextGeneration extends Context.Service<
-  TextGeneration,
-  {
-    /**
-     * Generate a commit message from staged change context.
-     */
-    readonly generateCommitMessage: (
-      input: CommitMessageGenerationInput,
-    ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
-
-    /**
-     * Generate change request title/body from branch and diff context.
-     */
-    readonly generatePrContent: (
-      input: PrContentGenerationInput,
-    ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
-
-    /**
-     * Generate a concise branch name from a user message.
-     */
-    readonly generateBranchName: (
-      input: BranchNameGenerationInput,
-    ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
-
-    /** Generate a concise thread title from a first message or thread history. */
-    readonly generateThreadTitle: (
-      input: ThreadTitleGenerationInput,
-    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
-  }
->()("t3/textGeneration/TextGeneration") {}
+export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
+  "t3/textGeneration/TextGeneration",
+) {}
 
 type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateReviewGuide"
+  | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -131,32 +69,161 @@ const resolveInstance = (
     ),
   );
 
-export const makeTextGenerationFromRegistry = (
-  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
-): TextGeneration["Service"] =>
-  TextGeneration.of({
-    generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
-      ),
-    generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
-      ),
-    generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
-      ),
-    generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
-      ),
-  });
+// Review guides investigate the checkout read-only; the other drivers reject that request.
+const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-  return makeTextGenerationFromRegistry(registry);
+  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const textGenerators = yield* TextGenerators.TextGenerators;
+  const generate = Effect.fn("TextGeneration.generate")(function* <A>(
+    operation: TextGenerationOp,
+    selection: ModelSelection,
+    projectId: ProjectId | null | undefined,
+    invoke: (
+      service: ProviderTextGeneration,
+      modelSelection: ModelSelection,
+    ) => Effect.Effect<A, TextGenerationError>,
+  ) {
+    const textGenerator = yield* textGenerators.runner(selection.instanceId);
+    // A review guide reaches a text generator only through a fallback; it needs an agent instead.
+    const textGeneratorId = selection.instanceId;
+    const textGeneratorCannotRun =
+      textGenerator !== undefined && operation === "generateReviewGuide";
+    if (textGenerator !== undefined && !textGeneratorCannotRun) {
+      return yield* invoke(
+        TextGenerationOperations.fromRunner("TextGenerator", textGenerator),
+        selection,
+      );
+    }
+    const snapshots = yield* registry.listInstances.pipe(
+      Effect.flatMap((instances) =>
+        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
+      ),
+    );
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    // Only a failed probe counts: a pending one is also not installed yet.
+    const unusable =
+      textGeneratorCannotRun ||
+      (selected?.enabled === true &&
+        selected.status === "error" &&
+        (!selected.installed || selected.auth.status === "unauthenticated"));
+    if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Could not read fallback model settings.",
+              cause,
+            }),
+        ),
+      );
+      selection =
+        fallbackTextGenerationModelSelection(
+          settings.providerInstances,
+          (instanceId, driver) => {
+            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+            return (
+              instanceId !== selection.instanceId &&
+              provider?.enabled === true &&
+              resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
+              provider.installed &&
+              provider.auth.status !== "unauthenticated" &&
+              provider.status !== "error" &&
+              isProviderAvailable(provider) &&
+              isProviderTextGenerationCapable(provider) &&
+              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
+            );
+          },
+          { includeConfiguredInstances: true },
+        ) ?? selection;
+    }
+    if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
+      return yield* new TextGenerationError({
+        operation,
+        detail:
+          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
+      });
+    }
+    return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
+      Effect.flatMap((service) => invoke(service, selection)),
+    );
+  });
+  return TextGeneration.of({
+    generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
+      return generate(
+        "generateCommitMessage",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generateCommitMessage({ ...input, modelSelection }),
+      );
+    }),
+    generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function (input) {
+      return generate(
+        "generatePrContent",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generatePrContent({ ...input, modelSelection }),
+      );
+    }),
+    generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function (input) {
+      return generate(
+        "generateBranchName",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generateBranchName({ ...input, modelSelection }),
+      );
+    }),
+    generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
+      return generate(
+        "generateReviewGuide",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generateReviewGuide({ ...input, modelSelection }),
+      );
+    }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function (input) {
+      return generate(
+        "generateTranscriptionPostProcessing",
+        input.modelSelection,
+        null,
+        (service, modelSelection) =>
+          service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+      );
+    }),
+    generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
+      return generate(
+        "generateThreadTitle",
+        input.modelSelection,
+        input.projectId,
+        (textGeneration, modelSelection) =>
+          Effect.gen(function* () {
+            const linkedContext =
+              input.linkedContext ??
+              (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+                Effect.provideService(
+                  SourceControlProviderRegistry.SourceControlProviderRegistry,
+                  sourceControl,
+                ),
+              ));
+            return yield* textGeneration.generateThreadTitle({
+              ...input,
+              linkedContext,
+              modelSelection,
+            });
+          }),
+      );
+    }),
+  });
 });
 
-export const layer = Layer.effect(TextGeneration, make);
+export const layer = Layer.effect(TextGeneration, make).pipe(
+  Layer.provideMerge(TextGenerators.layer),
+);

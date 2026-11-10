@@ -1,25 +1,21 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const KvNamespaceWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/kv-namespace/KvNamespace.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/kv-namespace/KvNamespace.worker"),
 };
 import * as Storage from "../../globals/Storage.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook } from "../../PluginContext.ts";
 import { makeRemoteBinding } from "../../remote-bindings/RemoteBindings.ts";
 import { ConfigError } from "../../RuntimeError.shared.ts";
 import type * as WorkerdConfig from "../../workerd/Config.ts";
-import type {
-  KvNamespaceProps,
-  KvServiceProps,
-} from "./KvNamespaceOptions.shared.ts";
+import type { KvNamespaceProps, KvServiceProps } from "./KvNamespaceOptions.shared.ts";
 import {
   BINDING_KV_BLOBS,
   BINDING_KV_ENABLE_CONTROL_ENDPOINTS,
@@ -38,9 +34,7 @@ export class KvNamespace extends Plugin.Service<
      * the binding should target: the shared `kv` service, with the namespace
      * id carried via designator props.
      */
-    readonly register: (
-      props: KvServiceProps,
-    ) => Effect.Effect<WorkerdConfig.ServiceDesignator>;
+    readonly register: (props: KvServiceProps) => Effect.Effect<WorkerdConfig.ServiceDesignator>;
   }
 >()("cloudflare-runtime/plugin/KvNamespace") {}
 
@@ -53,27 +47,24 @@ export const KvNamespaceLive = Layer.effect(
     const enableControlEndpoints = yield* Plugin.UnsafeEnableControlEndpoints;
 
     const makeStorageService = Effect.gen(function* () {
-      const storageDiskPath =
-        "disk" in storage ? storage.disk?.path : undefined;
+      const storageDiskPath = "disk" in storage ? storage.disk?.path : undefined;
       if (!storageDiskPath) {
-        return yield* new ConfigError({
+        return yield* ConfigError.make({
           subtag: "KvNamespace",
-          message:
-            "Cannot configure KV persistence: the Storage service has no disk path.",
+          message: "Cannot configure KV persistence: the Storage service has no disk path.",
           hint: "Configure a disk-backed storage layer (`Storage.layerDisk` or `Storage.layerTemp`).",
         });
       }
       const persistPath = path.join(storageDiskPath, "kv");
       yield* fs.makeDirectory(persistPath, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigError({
-              subtag: "KvNamespace",
-              message: `Failed to create KV persistence directory "${persistPath}": ${cause.message}`,
-              hint: "Ensure the storage directory is writable.",
-              detail: { persistPath },
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          ConfigError.make({
+            subtag: "KvNamespace",
+            message: `Failed to create KV persistence directory "${persistPath}": ${cause.message}`,
+            hint: "Ensure the storage directory is writable.",
+            detail: { persistPath },
+            cause,
+          }),
         ),
       );
       return {
@@ -103,7 +94,7 @@ export const KvNamespaceLive = Layer.effect(
             const kvService: WorkerdConfig.Service = {
               name: SERVICE_KV,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules: formatInternalWorkerModules(
                   yield* Effect.promise(KvNamespaceWorker.worker),
                 ),
@@ -155,7 +146,7 @@ export const KvNamespaceLive = Layer.effect(
 export const local = (props: KvNamespaceProps): BindingHook<KvNamespace> =>
   Plugin.use(KvNamespace, (kv) =>
     Effect.map(
-      kv.api.register({ namespaceId: props.id ?? props.binding }),
+      kv.api.register({ namespaceId: props.id ?? props.binding, mode: props.mode }),
       (service): WorkerdConfig.Worker_Binding => ({
         name: props.binding,
         kvNamespace: service,
@@ -164,10 +155,7 @@ export const local = (props: KvNamespaceProps): BindingHook<KvNamespace> =>
   );
 
 export const remote = (binding: string, namespaceId: string) =>
-  makeRemoteBinding(
-    { name: binding, type: "kv_namespace", namespaceId, raw: true },
-    (service) => ({
-      name: binding,
-      kvNamespace: service,
-    }),
-  );
+  makeRemoteBinding({ name: binding, type: "kv_namespace", namespaceId, raw: true }, (service) => ({
+    name: binding,
+    kvNamespace: service,
+  }));

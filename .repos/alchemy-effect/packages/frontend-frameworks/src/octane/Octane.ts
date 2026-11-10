@@ -1,3 +1,8 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as FrameworkCore from "../core/index.ts";
 import {
   Framework,
@@ -5,11 +10,6 @@ import {
   type DeployTarget,
   type DeployTargetInput,
 } from "../core/index.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 
 /**
  * The structural slice of the project's `@octanejs/vite-plugin` module this
@@ -44,19 +44,14 @@ export interface ResolvedOctaneConfigSlice {
 export interface OctaneViteModule {
   readonly version?: string;
   readonly build: (config: Record<string, unknown>) => Promise<unknown>;
-  readonly createServer: (
-    config: Record<string, unknown>,
-  ) => Promise<OctaneViteDevServer>;
+  readonly createServer: (config: Record<string, unknown>) => Promise<OctaneViteDevServer>;
 }
 
 /** The structural slice of a Vite dev server this package reads. */
 export interface OctaneViteDevServer {
   readonly listen: () => Promise<unknown>;
   readonly close: () => Promise<void>;
-  readonly resolvedUrls?:
-    | { readonly local: ReadonlyArray<string> }
-    | null
-    | undefined;
+  readonly resolvedUrls?: { readonly local: ReadonlyArray<string> } | null | undefined;
 }
 
 /**
@@ -74,11 +69,9 @@ export interface OctaneTargetConfig {
 
 /**
  * A deploy target for Octane: the generic `DeployTarget` seams plus the one
- * framework-specific hook an Octane build needs — which Octane deploy adapter
- * the project's `octane.config.ts` must select. Octane's own build pipeline
- * (`vite build` with `@octanejs/vite-plugin`) already produces the final
- * platform output through that adapter, so the target neither injects
- * bundler plugins nor post-processes the build.
+ * framework-specific requirements for native output and legacy adapters.
+ * Node and AWS targets wrap Octane's default Node output. Cloudflare still
+ * requires its native adapter in the project's `octane.config.ts`.
  */
 export interface OctaneTarget extends DeployTarget<OctaneTargetConfig> {
   /**
@@ -92,6 +85,8 @@ export interface OctaneTarget extends DeployTarget<OctaneTargetConfig> {
    * when the project's config selects no (or a foreign) adapter.
    */
   readonly adapterPackage: string;
+  /** Whether this target needs an application-selected adapter rather than native Node output. */
+  readonly requiresAdapter?: boolean;
   /**
    * The Worker entry module the adapter emits, relative to the build's
    * server output directory (Cloudflare: `worker.js`).
@@ -105,17 +100,13 @@ export interface OctaneTarget extends DeployTarget<OctaneTargetConfig> {
  * *project's* `node_modules` (default-export — or named export `target` — a
  * value or factory).
  */
-export type OctaneTargetInput = DeployTargetInput<
-  OctaneTarget,
-  OctaneTargetConfig
->;
+export type OctaneTargetInput = DeployTargetInput<OctaneTarget, OctaneTargetConfig>;
 
 /**
  * The default deploy target: this package's own Cloudflare Workers target
  * module (`src/cloudflare.ts`), loaded from the project's dependency tree.
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/octane/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/octane/cloudflare";
 
 /** The specifier the project's Octane Vite integration is loaded from. */
 export const OCTANE_VITE_PLUGIN_SPECIFIER = "@octanejs/vite-plugin";
@@ -163,10 +154,9 @@ const fail = (message: string, cause?: unknown) =>
  *   `dist/server/worker.js`, self-contained ESM with only `node:`
  *   externals). The `BuildOutput` is then read from disk: `serverModules`
  *   entry-first from `<outDir>/server`, `clientDirectory` =
- *   `<outDir>/client`. The project's `octane.config.ts` must select the
- *   target's adapter (`adapter: cloudflare()`), mirroring Octane's own
- *   deployment story — a missing or foreign adapter fails with an
- *   actionable error.
+ *   `<outDir>/client`. Node and AWS accept adapterless native output;
+ *   Cloudflare requires `adapter: cloudflare()`. Explicit incompatible
+ *   adapters fail with an actionable error.
  * - `dev` runs Octane's own Vite dev server programmatically (the plugin's
  *   dev SSR middleware serves rendering, server routes, and RPC in-process),
  *   scoped — closing the Scope closes the server. NOTE: Octane's dev
@@ -179,50 +169,44 @@ const fail = (message: string, cause?: unknown) =>
  */
 export const make: (
   options?: OctaneOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: OctaneOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: OctaneOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: OctaneTargetConfig = {
-    compatibilityDate: options?.compatibilityDate,
-    compatibilityFlags: options?.compatibilityFlags,
-  };
+    const targetConfig: OctaneTargetConfig = {
+      compatibilityDate: options?.compatibilityDate,
+      compatibilityFlags: options?.compatibilityFlags,
+    };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<OctaneTarget, OctaneTargetConfig>(
-      root,
-      options?.target ?? DEFAULT_TARGET_SPECIFIER,
-      targetConfig,
-    ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<OctaneTarget, OctaneTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
 
-  const loadVite = (root: string) =>
-    FrameworkCore.loadProjectModule<OctaneViteModule>(root, "vite").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Vite install", error.cause),
-      ),
-    );
+    const loadVite = (root: string) =>
+      FrameworkCore.loadProjectModule<OctaneViteModule>(root, "vite").pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Vite install", error.cause)),
+      );
 
-  const loadOctanePlugin = (root: string) =>
-    FrameworkCore.loadProjectModule<OctaneVitePluginModule>(
-      root,
-      OCTANE_VITE_PLUGIN_SPECIFIER,
-    ).pipe(
-      Effect.mapError((error) =>
-        fail(
-          `Failed to load the project's "${OCTANE_VITE_PLUGIN_SPECIFIER}" install — ` +
-            "is it added to the project's dependencies?",
-          error.cause,
+    const loadOctanePlugin = (root: string) =>
+      FrameworkCore.loadProjectModule<OctaneVitePluginModule>(
+        root,
+        OCTANE_VITE_PLUGIN_SPECIFIER,
+      ).pipe(
+        Effect.mapError((error) =>
+          fail(
+            `Failed to load the project's "${OCTANE_VITE_PLUGIN_SPECIFIER}" install — ` +
+              "is it added to the project's dependencies?",
+            error.cause,
+          ),
         ),
-      ),
-    );
+      );
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = {
@@ -243,30 +227,28 @@ export const make: (
       const octanePlugin = yield* loadOctanePlugin(root);
       const config = yield* Effect.tryPromise({
         try: async () => await octanePlugin.loadOctaneConfig(root),
-        catch: (error) =>
-          fail("Failed to load the project's octane.config.ts", error),
+        catch: (error) => fail("Failed to load the project's octane.config.ts", error),
       });
       if (config === null || config.router.routes.length === 0) {
-        return yield* Effect.fail(
-          fail(
-            "The project has no octane.config.ts routes. A fullstack Octane app " +
-              "(routes + SSR) is required here; a client-only Octane SPA deploys " +
-              "through the plain Vite integration instead.",
-          ),
+        return yield* fail(
+          "The project has no octane.config.ts routes. A fullstack Octane app " +
+            "(routes + SSR) is required here; a client-only Octane SPA deploys " +
+            "through the plain Vite integration instead.",
         );
       }
-      if (config.adapter?.name !== target.adapterName) {
-        return yield* Effect.fail(
-          fail(
-            config.adapter?.name === undefined
-              ? `octane.config.ts selects no deploy adapter. Add the "${target.platform}" ` +
-                  `adapter from ${target.adapterPackage}, e.g. ` +
-                  `\`import { ${target.adapterName} } from "${target.adapterPackage}"\` ` +
-                  `and \`adapter: ${target.adapterName}()\`.`
-              : `octane.config.ts selects the "${config.adapter.name}" deploy adapter, but ` +
-                  `this build targets "${target.platform}" — use the "${target.adapterName}" ` +
-                  `adapter from ${target.adapterPackage} instead.`,
-          ),
+      if (
+        (config.adapter !== undefined || target.requiresAdapter) &&
+        config.adapter?.name !== target.adapterName
+      ) {
+        return yield* fail(
+          config.adapter?.name === undefined
+            ? `octane.config.ts selects no deploy adapter. Add the "${target.platform}" ` +
+                `adapter from ${target.adapterPackage}, e.g. ` +
+                `\`import { ${target.adapterName} } from "${target.adapterPackage}"\` ` +
+                `and \`adapter: ${target.adapterName}()\`.`
+            : `octane.config.ts selects the "${config.adapter.name}" deploy adapter, but ` +
+                `this build targets "${target.platform}" — use the "${target.adapterName}" ` +
+                `adapter from ${target.adapterPackage} instead.`,
         );
       }
 
@@ -298,67 +280,64 @@ export const make: (
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const vite = yield* loadVite(root);
-    // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
-    // on older Vite — see `resolveViteDevPort`.
-    const port = yield* FrameworkCore.resolveViteDevPort(
-      vite.version,
-      devOptions?.port ?? options?.dev?.port,
-    );
-    const host = devOptions?.host;
+    const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const vite = yield* loadVite(root);
+      // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
+      // on older Vite — see `resolveViteDevPort`.
+      const port = yield* FrameworkCore.resolveViteDevPort(
+        vite.version,
+        devOptions?.port ?? options?.dev?.port,
+      );
+      const host = devOptions?.host;
 
-    const server = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          const server = await vite.createServer({
-            root,
-            server: {
-              port,
-              ...(host !== undefined ? { host } : undefined),
-            },
-          });
-          await server.listen();
-          return server;
-        },
-        catch: (error) => fail("Failed to start the Octane dev server", error),
-      }),
-      (server) =>
-        Effect.promise(async () => {
-          try {
-            await server.close();
-          } catch {
-            // teardown is best-effort
-          }
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            const server = await vite.createServer({
+              root,
+              server: {
+                port,
+                ...(host !== undefined ? { host } : undefined),
+              },
+            });
+            await server.listen();
+            return server;
+          },
+          catch: (error) => fail("Failed to start the Octane dev server", error),
         }),
-    );
+        (server) =>
+          Effect.promise(async () => {
+            try {
+              await server.close();
+            } catch {
+              // teardown is best-effort
+            }
+          }),
+      );
 
-    const url = server.resolvedUrls?.local[0];
-    if (url === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
-    }
+      const url = server.resolvedUrls?.local[0];
+      if (url === undefined) {
+        return yield* fail("Could not determine the dev server URL");
+      }
 
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
-      },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
+        },
+        catch: (error) => fail("The dev server did not become reachable", error),
+      }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
 
-    return { url };
+      return { url };
+    });
+
+    return Framework.of({ build, dev });
   });
-
-  return Framework.of({ build, dev });
-});
 
 /**
  * Build-output files under `<outDir>/server` that are inputs to the
@@ -367,10 +346,7 @@ export const make: (
  * generated `worker.js`, so uploading them as Worker modules would be
  * redundant (and `.html` is not a valid Worker module type).
  */
-const NON_MODULE_SERVER_FILES = new Set([
-  "index.html",
-  "octane-client-assets.json",
-]);
+const NON_MODULE_SERVER_FILES = new Set(["index.html", "octane-client-assets.json"]);
 
 /** The resolved Octane build output directories. */
 export interface OctaneOutputDirs {
@@ -398,11 +374,7 @@ export interface OctaneOutputDirs {
  */
 export const readOctaneOutput = (
   dirs: OctaneOutputDirs,
-): Effect.Effect<
-  FrameworkCore.BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem
-> =>
+): Effect.Effect<FrameworkCore.BuildOutput, FrameworkError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const entryFileName = dirs.serverEntryFileName ?? "worker.js";
     const entryName = `server/${entryFileName}`;
@@ -411,25 +383,16 @@ export const readOctaneOutput = (
       prefix: "server",
     }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
     const serverModules = FrameworkCore.sortServerModules(
-      modules.filter(
-        (module) =>
-          !NON_MODULE_SERVER_FILES.has(module.name.slice("server/".length)),
-      ),
+      modules.filter((module) => !NON_MODULE_SERVER_FILES.has(module.name.slice("server/".length))),
       entryName,
     );
     if (serverModules.length === 0) {
-      return yield* Effect.fail(
-        fail(
-          `The Octane build produced no server modules in ${dirs.serverDir}`,
-        ),
-      );
+      return yield* fail(`The Octane build produced no server modules in ${dirs.serverDir}`);
     }
     if (serverModules[0]?.name !== entryName) {
-      return yield* Effect.fail(
-        fail(
-          `The Octane build produced no "${entryName}" entry in ${dirs.serverDir} — ` +
-            "did the deploy adapter's adapt() pass run?",
-        ),
+      return yield* fail(
+        `The Octane build produced no "${entryName}" entry in ${dirs.serverDir} — ` +
+          "did the deploy adapter's adapt() pass run?",
       );
     }
     return {

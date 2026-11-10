@@ -13,13 +13,13 @@ Layer, configured like everything else in Alchemy.
 
 ## Provide an exporter layer
 
-Telemetry is configured by providing a Layer on the Function/Worker
-init Effect, merged into the single `Effect.provide` alongside the
+Telemetry is configured by providing a Layer on the Runtime's
+constructor Effect, merged into the single `Effect.provide` alongside the
 other binding layers:
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 export default Cloudflare.Worker(
   "Worker",
@@ -39,6 +39,11 @@ export default Cloudflare.Worker(
 
 Without a telemetry layer, nothing exports — Effect's default tracer
 is a no-op, so all instrumentation stays free.
+
+On Cloudflare, [`Cloudflare.Telemetry()`](/cloudflare/observability/workers-tracing)
+is the platform-native alternative: it mirrors Effect spans into
+Workers Observability (fetch/KV/R2/D1 auto-spans included) instead of
+shipping OTLP from the Worker. Cloudflare owns sampling and export.
 
 ## Binding layers
 
@@ -68,19 +73,20 @@ Alchemy.Telemetry.layerOtlp({
 
 Vendor layers wrap this. [`Axiom.Telemetry`](/axiom) takes an ingest
 `ApiToken` and a `Dataset` per signal, and composes the endpoints and
-`Authorization`/`X-Axiom-Dataset` headers for you — see
+`Authorization` and dataset (`X-Axiom-Dataset`, or `X-Axiom-Metrics-Dataset`
+for metrics) headers for you — see
 [Tutorial Part 6](/cloudflare/tutorial/part-6) for the end-to-end
 walkthrough.
 
 For a manually-configured backend — a url and an API key — resolve
-the secret with `Config` in the layer's init and pass it as a header.
+the secret with `Config` in the layer's constructor and pass it as a header.
 The `Config` read binds the value at deploy time, and because it is
 `Redacted` it travels as a secret binding:
 
 ```typescript
 const Honeycomb = Layer.unwrap(
   Effect.gen(function* () {
-    const key = yield* Config.redacted("HONEYCOMB_API_KEY");
+    const key = yield* Config.Redacted("HONEYCOMB_API_KEY");
     return Alchemy.Telemetry.layerOtlp({
       url: "https://api.honeycomb.io",
       headers: { "x-honeycomb-team": key },
@@ -132,7 +138,12 @@ flushed when that scope closes:
 - On Cloudflare, the flush is registered with `ctx.waitUntil`, so it
   happens after the response is sent and never adds latency.
 - On Lambda, the flush settles inline before the invocation returns —
-  the response isn't released until the invoke completes anyway.
+  the response isn't released until the invoke completes anyway. An
+  invocation that runs past its `timeout` is interrupted, so its
+  finalizers run and its spans end, and Lambda's extra `timeoutMargin`
+  gives the flush time to finish. If cleanup is still running 500 ms
+  before Lambda kills the invocation, the root span is ended and the
+  exporters drained early, so the trace arrives anyway.
 
 This per-event lifecycle is what makes export work on workerd, where
 timers and fetches are pinned to the request that created them: a
@@ -164,7 +175,7 @@ const object = yield* bucket
 
 `Alchemy.Telemetry.layer` installs any Layer that provides a
 `Tracer`, loggers, or metric exporters — Effect's
-`effect/unstable/observability` modules (`OtlpTracer`, `OtlpLogger`,
+`effect/observability` modules (`OtlpTracer`, `OtlpLogger`,
 `OtlpMetrics`, protobuf serialization) compose here directly. The
 Layer is built per event into the event's request scope, so a custom
 exporter gets the same flush-on-close behavior as the built-in one.
@@ -198,6 +209,8 @@ settings for you.
   telemetry to Axiom end to end
 - [Observability](/testing/observability) — provision the receiving
   end (datasets, tokens, monitors, alarms) as resources
+- [Native Workers tracing](/cloudflare/observability/workers-tracing) —
+  `Cloudflare.Telemetry()`, Effect spans in the Cloudflare waterfall
 - [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) —
   the Cloudflare-specific reference, including the platform-push
   alternative

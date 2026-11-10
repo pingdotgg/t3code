@@ -1,14 +1,21 @@
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import {
+  DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PreviewCaptureFailure,
+} from "@t3tools/contracts";
 import type { DesktopPreviewRecordingArtifact, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
+import { createRecordingCompositor } from "./recordingCompositor";
+
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
+
+const isPreviewCaptureFailure = Schema.is(PreviewCaptureFailure);
 
 export class BrowserRecordingUnavailableError extends Schema.TaggedError<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
@@ -84,6 +91,22 @@ export class BrowserRecordingOperationError extends Schema.TaggedError<BrowserRe
   },
 ) {
   override get message(): string {
+    if (isPreviewCaptureFailure(this.cause)) {
+      return this.cause.message;
+    }
+    // Stream acquisition stores its primary failure on the aggregate when cleanup also fails.
+    const captureCause = this.cause instanceof AggregateError ? this.cause.cause : this.cause;
+    if (
+      this.operation === "capture-media-stream" &&
+      captureCause instanceof DOMException &&
+      captureCause.name === "NotReadableError"
+    ) {
+      return (
+        "Unable to start the preview video source. Make sure the capture host is unlocked " +
+        "and its display is on, then retry. " +
+        `${captureCause.name}: ${captureCause.message}`
+      );
+    }
     return `Browser recording operation ${this.operation} failed for tab ${this.tabId}.`;
   }
 }
@@ -112,9 +135,7 @@ type BrowserRecordingLifecycle =
     };
 
 interface ActiveRecording {
-  /** Desktop-scoped identity used by the native capture lease. */
   readonly tabId: string;
-  /** Server-local identity returned by preview automation tools. */
   readonly serverTabId: string;
   readonly threadRef: ScopedThreadRef | null;
   readonly chunks: Blob[];
@@ -123,8 +144,7 @@ interface ActiveRecording {
   releaseSurfaceActivity: (() => void) | null;
   stream: MediaStream | null;
   recorder: MediaRecorder | null;
-  savedBlob?: Blob;
-  uploadPromise?: Promise<string>;
+  compositor: Awaited<ReturnType<typeof createRecordingCompositor>>;
   lifecycle: BrowserRecordingLifecycle;
 }
 
@@ -162,8 +182,6 @@ const makeStartingBrowserRecordingLifecycle = (): StartingBrowserRecordingLifecy
     cancelledBeforeGrant: false,
     cancelledBeforeGrantSignal,
     cancelBeforeGrant: () => {
-      // Queue position is unknown during paint/settings warmup. Keep the stop request so a start
-      // that later turns out to be contended can still be cancelled before native capture.
       lifecycle.stopRequestedBeforeGrant = true;
       if (lifecycle.queuedForGrant && !lifecycle.grantStarted && !lifecycle.cancelledBeforeGrant) {
         lifecycle.cancelledBeforeGrant = true;
@@ -200,8 +218,8 @@ const publishActiveRecordingTabIds = (): void => {
   });
 };
 
-export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
-export const BROWSER_RECORDING_PAINT_SETTLE_TIMEOUT_MS = 250;
+const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
+const BROWSER_RECORDING_PAINT_SETTLE_TIMEOUT_MS = 250;
 
 export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): ReadonlySet<string> {
   const tabIds = new Set<string>();
@@ -251,8 +269,6 @@ const preferredMimeTypes = [
 const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
   const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
   const settings = stream.getVideoTracks()[0]?.getSettings();
-  // Browser defaults under-budget native-resolution text and motion. Scale with captured pixels
-  // and frames, while bounding storage and encoder load for very large displays.
   const videoBitsPerSecond = Math.round(
     Math.min(
       50_000_000,
@@ -266,8 +282,7 @@ const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
 };
 
 const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
-  // The desktop main process routes this request to the tab that `startScreencast` armed, so the
-  // stream already arrives at that tab's native size and needs no source or dimension constraints.
+  // The armed tab supplies native-size frames without source or dimension constraints.
   navigator.mediaDevices.getDisplayMedia({
     audio: false,
     video: { frameRate: { ideal: frameRate, max: frameRate } },
@@ -311,8 +326,7 @@ const prepareTabMediaCapture = (tabId: string, frameRate: number) => {
   const pending: PendingTabMediaCapture = {
     start: () => {
       try {
-        // Electron invokes this callback through executeJavaScript(..., true), so even automated
-        // and delayed queued starts satisfy getDisplayMedia's transient-activation requirement.
+        // executeJavaScript(..., true) supplies transient activation for automated or delayed capture.
         resolveCapture(captureTabMediaStream(frameRate));
       } catch (cause) {
         rejectCapture(cause);
@@ -381,6 +395,8 @@ const captureTabMediaStreamWithTimeout = async (
 };
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
+  recording.compositor?.dispose();
+  recording.compositor = null;
   recording.releaseSurfaceActivity?.();
   recording.releaseSurfaceActivity = null;
   if (activeRecordings.get(recording.tabId) !== recording) return;
@@ -525,6 +541,7 @@ export async function startBrowserRecording(
     releaseSurfaceActivity,
     stream: null,
     recorder: null,
+    compositor: null,
     lifecycle: startingLifecycle,
   };
   activeRecordings.set(tabId, recording);
@@ -534,11 +551,10 @@ export async function startBrowserRecording(
       clearActiveRecording(recording);
       throw cause;
     });
-    const frameRate = getClientSettings().browserRecordingFrameRate;
+    const settings = getClientSettings();
+    const frameRate = settings.browserRecordingFrameRate;
     await waitForBrowserRecordingPaint();
     const throwIfStartupCancelled = async (): Promise<void> => {
-      // Once a grant starts, a stop lets startup finish so the caller receives an artifact.
-      // Only a contended start can be cancelled before it reaches native capture.
       if (activeRecordings.get(tabId) === recording) return;
       try {
         await bridge.recording.stopScreencast(tabId);
@@ -554,8 +570,7 @@ export async function startBrowserRecording(
       }
       throw recordingStartupCancelledError(recording);
     };
-    // The desktop process exposes one display-media grant at a time. Keep only the
-    // arm-to-capture handoff exclusive; acquired streams can record concurrently.
+    // Electron grants one display-media request at a time; serialize handoff, not recording.
     const grant = queueDisplayMediaGrant(async () => {
       if (startingLifecycle.cancelledBeforeGrant) {
         throw new BrowserRecordingStartCancelledError({ tabId });
@@ -614,7 +629,19 @@ export async function startBrowserRecording(
 
     let recorder: MediaRecorder;
     try {
-      recorder = createMediaRecorder(stream);
+      recording.compositor = await createRecordingCompositor(
+        stream,
+        {
+          showKeyPresses: settings.browserRecordingShowKeyPresses,
+          showMousePresses: settings.browserRecordingShowMousePresses,
+          frameRate,
+        },
+        (listener) =>
+          bridge.recording.onInput((event) => {
+            if (event.tabId === tabId) listener(event.input);
+          }),
+      );
+      recorder = createMediaRecorder(recording.compositor?.stream ?? stream);
       recording.recorder = recorder;
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) chunks.push(event.data);
@@ -694,7 +721,8 @@ const finalizeBrowserRecording = async (
           cause,
         });
       }
-      // Encoding has flushed; release native capture before materializing and saving the file.
+      recording.compositor?.dispose();
+      recording.compositor = null;
       stopMediaStream(recording.stream);
       recording.stream = null;
       const mimeType =
@@ -710,7 +738,6 @@ const finalizeBrowserRecording = async (
           mimeType,
           new Uint8Array(await blob.arrayBuffer()),
         );
-        recording.savedBlob = blob;
         result = { _tag: "Success", artifact };
       } catch (cause) {
         throw new BrowserRecordingOperationError({
@@ -725,10 +752,7 @@ const finalizeBrowserRecording = async (
   }
 
   if (result._tag === "Failure" && isStartupWaitTimeout(result.error)) {
-    // Do not clear `active` yet. The renderer-side start promise can still
-    // resolve later, and its cancellation path will call `stopScreencast`.
-    // Keeping the slot reserved prevents a newer recording for this tab from
-    // being started and then accidentally stopped by the older late cleanup.
+    // Reserve the slot until late-start cancellation finishes, or it could stop a newer recording.
     throw result.error;
   }
 
@@ -816,17 +840,4 @@ export function stopBrowserRecording(
     });
   recording.lifecycle = { phase: "stopping", stopPromise };
   return stopPromise;
-}
-
-/** Joins local stops and shares one upload among concurrent automation requests. */
-export async function stopBrowserRecordingForUpload(
-  tabId: string,
-  upload: (artifact: DesktopPreviewRecordingArtifact, blob: Blob) => Promise<string>,
-): Promise<(DesktopPreviewRecordingArtifact & { uploadedAttachmentId: string }) | null> {
-  const recording = activeRecordings.get(tabId);
-  if (!recording) return null;
-  const artifact = await stopBrowserRecording(tabId);
-  if (!artifact || !recording.savedBlob) return null;
-  recording.uploadPromise ??= upload(artifact, recording.savedBlob);
-  return { ...artifact, uploadedAttachmentId: await recording.uploadPromise };
 }

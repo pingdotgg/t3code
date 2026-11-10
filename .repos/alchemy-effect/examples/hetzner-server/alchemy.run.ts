@@ -1,5 +1,5 @@
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 
@@ -13,7 +13,7 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const publicKey = yield* Config.string("SSH_PUBLIC_KEY").pipe(
+    const publicKey = yield* Config.String("SSH_PUBLIC_KEY").pipe(
       Config.withDefault(DEFAULT_PUBLIC_KEY),
     );
     const key = yield* Hetzner.SshKey("deploy", { publicKey });

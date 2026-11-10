@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
 import * as Plugin from "../Plugin.ts";
 import type * as WorkerdConfig from "../workerd/Config.ts";
 import { HEADER_CF_BLOB } from "./CfOptions.shared.ts";
@@ -34,7 +35,7 @@ export const LoopbackLive = Layer.effect(
         {
           name: "loopback:fetcher",
           worker: {
-            compatibilityDate: "2025-01-01",
+            compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
             modules: [
               {
                 name: "loopback/fetcher.worker.js",

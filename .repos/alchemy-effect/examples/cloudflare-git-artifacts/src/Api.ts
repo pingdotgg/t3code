@@ -1,8 +1,8 @@
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 // ─── Domain types ────────────────────────────────────────────────────
 
@@ -27,9 +27,7 @@ export class RepoInfo extends Schema.Class<RepoInfo>("RepoInfo")({
   metadata: Schema.NullOr(Metadata),
 }) {}
 
-export class CreateRepoResponse extends Schema.Class<CreateRepoResponse>(
-  "CreateRepoResponse",
-)({
+export class CreateRepoResponse extends Schema.Class<CreateRepoResponse>("CreateRepoResponse")({
   name: Schema.String,
   remote: Schema.String,
   token: Schema.String,
@@ -45,15 +43,13 @@ export class CloneToken extends Schema.Class<CloneToken>("CloneToken")({
 
 // ─── Errors ─────────────────────────────────────────────────────────
 
-export class RepoNotFound extends Schema.TaggedErrorClass<RepoNotFound>()(
-  "RepoNotFound",
-  { name: Schema.String },
-) {}
+export class RepoNotFound extends Schema.TaggedErrorClass<RepoNotFound>()("RepoNotFound", {
+  name: Schema.String,
+}) {}
 
-export class RepoConflict extends Schema.TaggedErrorClass<RepoConflict>()(
-  "RepoConflict",
-  { message: Schema.String },
-) {}
+export class RepoConflict extends Schema.TaggedErrorClass<RepoConflict>()("RepoConflict", {
+  message: Schema.String,
+}) {}
 
 // ─── Path / payload schemas ──────────────────────────────────────────
 
@@ -107,16 +103,12 @@ export const starRepo = HttpApiEndpoint.post("starRepo", "/repos/:name/star", {
   error: RepoNotFound,
 });
 
-export const cloneToken = HttpApiEndpoint.post(
-  "cloneToken",
-  "/repos/:name/clone-token",
-  {
-    params: RepoNameParam,
-    payload: CloneTokenPayload,
-    success: CloneToken,
-    error: RepoNotFound,
-  },
-);
+export const cloneToken = HttpApiEndpoint.post("cloneToken", "/repos/:name/clone-token", {
+  params: RepoNameParam,
+  payload: CloneTokenPayload,
+  success: CloneToken,
+  error: RepoNotFound,
+});
 
 export class ReposGroup extends HttpApiGroup.make("repos")
   .add(createRepo)

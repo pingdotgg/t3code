@@ -3,7 +3,7 @@ title: D1
 description: SQL.D1 wraps a bound D1 database in an @effect/sql-d1 client — tagged-template queries with typed errors over the native binding.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const deps = `@effect/sql-d1`;
 
@@ -12,22 +12,9 @@ binding. Queries are Effects: they carry `SqlError` in the error
 channel, participate in interruption, and trace like everything else
 in your program.
 
-Install the driver — an optional peer of alchemy:
+Install the driver:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} />
 
 ## Connect
 
@@ -36,17 +23,17 @@ Declare the database, bind it with
 
 ```typescript
 // src/db.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Database = Cloudflare.D1.Database("Database");
 ```
 
 ```typescript
 // src/api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as SQL from "alchemy/SQL/D1";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as SQL from "@alchemy.run/cloudflare/D1/SQL";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./db.ts";
 
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -121,7 +108,7 @@ on the generic `SqlClient` tag and provide the database with
 `SQL.D1Layer`:
 
 ```typescript
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const makeUsers = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -133,13 +120,7 @@ const makeUsers = Effect.gen(function* () {
 const users = yield* makeUsers.pipe(Effect.provide(SQL.D1Layer(d1)));
 ```
 
-The layer provides two tags from one per-execution client: the
-generic `SqlClient.SqlClient`, and `@effect/sql-d1`'s `D1Client` for
-code that needs it — including drizzle's `effect-d1` driver.
-Swapping `SQL.D1Layer` for
-[`SQL.PostgresLayer`](/sql/effect-sql/postgres#provide-as-a-service)
-or [`SQL.MySQLLayer`](/sql/effect-sql/mysql#provide-as-a-service)
-moves the same service graph to another database unchanged.
+The layer provides `SqlClient.SqlClient` and `@effect/sql-d1`'s `D1Client` from one per-execution client. Other drivers can satisfy the generic service, but changing engines still requires compatible SQL and transaction semantics.
 
 ## Local dev
 
@@ -149,11 +130,4 @@ miniflare — `SQL.D1` works unchanged because it resolves whatever
 
 ## Where next
 
-- [Migrations](/sql/effect-sql/migrations) — apply `.sql` files as
-  part of deploy.
-- [Connection lifecycle](/sql/effect-sql/lifecycle) — when the
-  client is built and torn down.
-- [Drizzle on D1](/sql/drizzle/d1) — the same driver behind a typed
-  schema.
-- [D1](/cloudflare/data/d1) — the database resource: replication,
-  jurisdictions, imports, cloning.
+[Cloudflare setup](/cloudflare/setup) and [D1](/cloudflare/data/d1) cover deployment and database behavior; [SQL databases](/sql/databases) compares D1 with other engines. Read [Migrations](/sql/effect-sql/migrations) for committed SQL application, [Connection lifecycle](/sql/effect-sql/lifecycle) for cleanup, or [Drizzle on D1](/sql/drizzle/d1) for typed schemas.

@@ -1,102 +1,32 @@
 {
   "name": "@alchemy.run/cloudflare-runtime",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.85",
   "description": "Cloudflare Workers local runtime and build plugins for Alchemy.",
-  "homepage": "https://alchemy.run",
-  "license": "Apache-2.0",
-  "author": "Sam Goodwin <sam@alchemy.run>",
   "keywords": [
     "alchemy",
     "cloudflare",
     "effect",
     "infrastructure-as-code"
   ],
+  "homepage": "https://alchemy.run",
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/cloudflare-runtime"
   },
-  "bugs": {
-    "url": "https://github.com/alchemy-run/alchemy/issues"
-  },
-  "type": "module",
-  "sideEffects": false,
   "files": [
     "src",
     "dist",
     "NOTICE",
     "THIRD_PARTY_LICENSES.md"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
-  "scripts": {
-    "build": "tsdown && bun ../../scripts/copy-package-files.ts cloudflare-runtime",
-    "clean": "rm -rf dist",
-    "test": "vitest run",
-    "test:rolldown": "vitest run --project rolldown",
-    "test:core": "vitest run --project core",
-    "test:vite": "vitest run --project vite",
-    "test:workers-shared": "vitest run --project 'workers-shared-*'",
-    "test:workflows-shared": "vitest run --project workflows-shared",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@alchemy.run/node-utils": "workspace:*",
-    "@cloudflare/unenv-preset": "catalog:cloudflare-runtime",
-    "@puppeteer/browsers": "catalog:cloudflare-runtime",
-    "capnp-es": "catalog:cloudflare-runtime",
-    "magic-string": "catalog:cloudflare-runtime",
-    "sharp": "catalog:cloudflare-runtime",
-    "unenv": "catalog:cloudflare-runtime",
-    "workerd": "catalog:cloudflare-runtime",
-    "yauzl": "catalog:cloudflare-runtime"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@cloudflare/vitest-pool-workers": "catalog:cloudflare-runtime",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/vitest": "catalog:effect",
-    "@types/http-cache-semantics": "catalog:cloudflare-runtime",
-    "@types/node": "catalog:tooling",
-    "@types/ws": "catalog:cloudflare-runtime",
-    "capnweb": "catalog:cloudflare-runtime",
-    "http-cache-semantics": "catalog:cloudflare-runtime",
-    "heap-js": "catalog:cloudflare-runtime",
-    "itty-time": "catalog:cloudflare-runtime",
-    "mime": "catalog:cloudflare-runtime",
-    "mysql2": "catalog:cloudflare-runtime",
-    "postal-mime": "catalog:cloudflare-runtime",
-    "rolldown": "catalog:build",
-    "tsdown": "catalog:build",
-    "toucan-js": "catalog:cloudflare-runtime",
-    "vite": "catalog:build",
-    "vitest": "catalog:testing",
-    "ws": "catalog:cloudflare-runtime"
-  },
-  "peerDependencies": {
-    "@distilled.cloud/cloudflare": "workspace:*",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "effect": "catalog:effect",
-    "rolldown": "catalog:build",
-    "vite": "catalog:cloudflare-runtime"
-  },
-  "peerDependenciesMeta": {
-    "@effect/platform-bun": {
-      "optional": true
-    },
-    "@effect/platform-node": {
-      "optional": true
-    },
-    "rolldown": {
-      "optional": true
-    },
-    "vite": {
-      "optional": true
-    }
-  },
+  "type": "module",
+  "sideEffects": false,
   "imports": {
     "#cloudflare-runtime-core-worker/*": "./dist/core/workers/*.mjs",
     "#cloudflare-runtime-vite-worker/*": "./dist/vite/workers/*.mjs"
@@ -234,11 +164,29 @@
       "worker": "./src/core/bindings/DurableObjectNamespace.ts",
       "import": "./dist/core/node/bindings/DurableObjectNamespace.mjs"
     },
-    "./core/bindings/Flagship": {
-      "types": "./dist/core/node/bindings/Flagship.d.mts",
-      "bun": "./src/core/bindings/Flagship.ts",
-      "worker": "./src/core/bindings/Flagship.ts",
-      "import": "./dist/core/node/bindings/Flagship.mjs"
+    "./core/bindings/flagship": {
+      "types": "./dist/core/node/bindings/flagship/index.d.mts",
+      "bun": "./src/core/bindings/flagship/index.ts",
+      "worker": "./src/core/bindings/flagship/index.ts",
+      "import": "./dist/core/node/bindings/flagship/index.mjs"
+    },
+    "./core/bindings/flagship/Flagship": {
+      "types": "./dist/core/node/bindings/flagship/Flagship.d.mts",
+      "bun": "./src/core/bindings/flagship/Flagship.ts",
+      "worker": "./src/core/bindings/flagship/Flagship.ts",
+      "import": "./dist/core/node/bindings/flagship/Flagship.mjs"
+    },
+    "./core/bindings/flagship/FlagshipEvaluate": {
+      "types": "./dist/core/node/bindings/flagship/FlagshipEvaluate.shared.d.mts",
+      "bun": "./src/core/bindings/flagship/FlagshipEvaluate.shared.ts",
+      "worker": "./src/core/bindings/flagship/FlagshipEvaluate.shared.ts",
+      "import": "./dist/core/node/bindings/flagship/FlagshipEvaluate.shared.mjs"
+    },
+    "./core/bindings/flagship/FlagshipOptions": {
+      "types": "./dist/core/node/bindings/flagship/FlagshipOptions.shared.d.mts",
+      "bun": "./src/core/bindings/flagship/FlagshipOptions.shared.ts",
+      "worker": "./src/core/bindings/flagship/FlagshipOptions.shared.ts",
+      "import": "./dist/core/node/bindings/flagship/FlagshipOptions.shared.mjs"
     },
     "./core/bindings/hyperdrive": {
       "types": "./dist/core/node/bindings/hyperdrive/index.d.mts",
@@ -576,6 +524,12 @@
       "worker": "./src/core/globals/Storage.ts",
       "import": "./dist/core/node/globals/Storage.mjs"
     },
+    "./core/internal/constants": {
+      "types": "./dist/core/node/internal/constants.d.mts",
+      "bun": "./src/core/internal/constants.ts",
+      "worker": "./src/core/internal/constants.ts",
+      "import": "./dist/core/node/internal/constants.mjs"
+    },
     "./core/internal/internal-worker": {
       "types": "./dist/core/node/internal/internal-worker.d.mts",
       "bun": "./src/core/internal/internal-worker.ts",
@@ -775,6 +729,82 @@
       "import": "./dist/vite/node/plugin.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:rolldown": "vitest run --project rolldown",
+    "test:core": "vitest run --project core",
+    "test:vite": "vitest run --project vite",
+    "test:workers-shared": "vitest run --project 'workers-shared-*'",
+    "test:workflows-shared": "vitest run --project workflows-shared",
+    "typecheck": "tsrs --noEmit"
+  },
+  "dependencies": {
+    "@alchemy.run/node-utils": "workspace:*",
+    "@cloudflare/unenv-preset": "catalog:",
+    "@puppeteer/browsers": "catalog:",
+    "capnp-es": "catalog:",
+    "magic-string": "catalog:",
+    "mime": "catalog:",
+    "sharp": "catalog:",
+    "unenv": "catalog:",
+    "workerd": "catalog:",
+    "yauzl": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "catalog:",
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/http-cache-semantics": "catalog:",
+    "@types/node": "catalog:",
+    "@types/ws": "catalog:",
+    "aws4fetch": "catalog:",
+    "capnweb": "catalog:",
+    "fast-xml-parser": "catalog:",
+    "heap-js": "catalog:",
+    "http-cache-semantics": "catalog:",
+    "itty-time": "catalog:",
+    "mysql2": "catalog:",
+    "postal-mime": "catalog:",
+    "rolldown": "catalog:",
+    "toucan-js": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:cloudflare-test-compat",
+    "ws": "catalog:"
+  },
+  "peerDependencies": {
+    "@distilled.cloud/cloudflare": "workspace:*",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "rolldown": "catalog:",
+    "vite": "catalog:frontend-peer"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "rolldown": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   },
   "inlinedDependencies": {
     "capnp-es": "0.0.14",

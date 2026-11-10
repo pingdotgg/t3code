@@ -1,6 +1,11 @@
 {
   "name": "cloudflare-website-solidstart",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-solidstart"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -12,25 +17,22 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@solidjs/meta": "catalog:frontend",
-    "@solidjs/router": "^0.15.0",
-    "@solidjs/start": "2.0.0-alpha.2",
-    "solid-js": "^1.9.5",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@solidjs/meta": "catalog:",
+    "@solidjs/router": "catalog:solid-v1",
+    "@solidjs/start": "catalog:solid-v1",
+    "@solidjs/vite-plugin-nitro-2": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "vite": "^7.0.0",
-    "@solidjs/vite-plugin-nitro-2": "catalog:frontend"
+    "effect": "catalog:",
+    "solid-js": "catalog:",
+    "vite": "catalog:solid-v1"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "tailwindcss": "catalog:"
   },
   "engines": {
     "node": ">=22"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "tailwindcss": "catalog:frontend"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/cloudflare-website-solidstart"
   }
 }

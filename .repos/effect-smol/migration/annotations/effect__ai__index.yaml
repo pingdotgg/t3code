@@ -1,3 +1,0 @@
-"@effect/ai/index":
-  replacement: "effect/unstable/ai"
-  note: "The package barrel was removed; import the same namespaces from the effect/unstable/ai barrel or import specific modules directly."

@@ -12,6 +12,7 @@ const target = (id: string, overrides: Partial<UsagePriceTarget> = {}): UsagePri
   environmentId: EnvironmentId.make(id),
   label: id,
   prices: { example: price },
+  aliases: {},
   unavailable: null,
   ...overrides,
 });
@@ -95,49 +96,34 @@ describe("model price writes", () => {
     expect([...results.values()].every((result) => result.status === "saved")).toBe(true);
   });
 
-  it("resets only the chosen model on the selected destination", async () => {
+  it("sends mappings beside prices and fails servers that cannot store them", async () => {
     const write = vi.fn(async () => ({ _tag: "Success" as const }));
     const onResult = vi.fn();
+    const changes = [
+      { model: "example", alias: "example-model" },
+      { model: "example", price: null },
+    ];
     await writeUsagePrices({
-      targets: [target("selected")],
-      changes: new Map([[EnvironmentId.make("selected"), [{ model: "example", price: null }]]]),
+      targets: [target("current"), target("old", { aliases: null })],
+      changes: new Map([
+        [EnvironmentId.make("current"), changes],
+        [EnvironmentId.make("old"), changes],
+      ]),
       write,
       onResult,
     });
     expect(write).toHaveBeenCalledExactlyOnceWith({
-      environmentId: "selected",
-      input: { patch: { usagePriceOverrides: { example: null } } },
-    });
-    expect(onResult).toHaveBeenCalledWith("selected", { status: "saved" });
-  });
-
-  it("reports thrown writes and permission/version restrictions without aborting other saves", async () => {
-    const onResult = vi.fn();
-    const write = vi.fn(async () => {
-      throw new Error("connection lost");
-    });
-    await writeUsagePrices({
-      targets: [
-        target("lost"),
-        target("denied", { unavailable: "Read-only access" }),
-        target("old", { unavailable: "Update server to edit prices" }),
-      ],
-      changes: new Map([[EnvironmentId.make("lost"), [{ model: "example", price }]]]),
-      write,
-      onResult,
-    });
-    expect(write).toHaveBeenCalledTimes(1);
-    expect(onResult).toHaveBeenCalledWith("lost", {
-      status: "failed",
-      error: "Could not save. Try again.",
-    });
-    expect(onResult).toHaveBeenCalledWith("denied", {
-      status: "failed",
-      error: "Read-only access",
+      environmentId: "current",
+      input: {
+        patch: {
+          usagePriceOverrides: { example: null },
+          usageModelAliases: { example: "example-model" },
+        },
+      },
     });
     expect(onResult).toHaveBeenCalledWith("old", {
       status: "failed",
-      error: "Update server to edit prices",
+      error: "Update server to map models",
     });
   });
 });

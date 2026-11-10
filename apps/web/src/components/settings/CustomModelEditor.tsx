@@ -1,7 +1,5 @@
-"use client";
-
 import { PlusIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
 import type { CustomModelDefinition } from "@t3tools/shared/model";
 
@@ -32,17 +30,11 @@ interface CustomModelEditorProps {
   readonly instanceId: string;
   readonly driverKind: ProviderDriverKind | null;
   readonly entry: CustomModelDefinition;
-  /** Built-in models whose descriptors can be copied as a starting point. */
   readonly builtInModels: ReadonlyArray<ServerProviderModel>;
   readonly onSave: (next: CustomModelDefinition) => void;
   readonly onCancel: () => void;
 }
 
-/**
- * Inline editor for one custom model: display name plus the option
- * descriptors the composer should offer for it (Reasoning effort, Fast
- * mode, ...). Draft state is local; nothing is persisted until Save.
- */
 export function CustomModelEditor({
   instanceId,
   driverKind,
@@ -53,13 +45,9 @@ export function CustomModelEditor({
 }: CustomModelEditorProps) {
   const [draft, setDraft] = useState<CustomModelDraft>(() => draftFromDefinition(entry));
   const [error, setError] = useState<string | null>(null);
-  const presets = useMemo(
-    () => (driverKind ? (DESCRIPTOR_PRESETS_BY_KIND[driverKind] ?? []) : []),
-    [driverKind],
-  );
-  const startFromCandidates = useMemo(
-    () => builtInModels.filter((model) => (model.capabilities?.optionDescriptors?.length ?? 0) > 0),
-    [builtInModels],
+  const presets = driverKind ? (DESCRIPTOR_PRESETS_BY_KIND[driverKind] ?? []) : [];
+  const startFromCandidates = builtInModels.filter(
+    (model) => (model.capabilities?.optionDescriptors?.length ?? 0) > 0,
   );
   const domId = (suffix: string) => `provider-instance-${instanceId}-custom-model-${suffix}`;
 
@@ -83,7 +71,6 @@ export function CustomModelEditor({
           ...descriptor,
           choices: descriptor.choices.map((choice) => {
             if (choice.key === choiceKey) return { ...choice, ...patch };
-            // Only one choice can be the default.
             return patch.isDefault ? { ...choice, isDefault: false } : choice;
           }),
         };
@@ -104,8 +91,6 @@ export function CustomModelEditor({
     setDraft((current) => ({ ...current, descriptors: [...current.descriptors, descriptor] }));
   };
 
-  // Selecting a preset id replaces the descriptor's label/type/choices so the
-  // usual values are one click away; "Custom…" leaves the row blank to type into.
   const applyPresetId = (descriptor: EditorDescriptor, value: string | null) => {
     if (value === null) return;
     if (value === CUSTOM_ID_VALUE) {
@@ -154,7 +139,8 @@ export function CustomModelEditor({
         value={choice.id}
         onChange={(event) => updateChoice(descriptor.key, choice.key, { id: event.target.value })}
         placeholder="value"
-        className="w-28 font-mono"
+        font="mono"
+        className="w-28"
         spellCheck={false}
         aria-label="Choice value"
       />
@@ -168,7 +154,7 @@ export function CustomModelEditor({
         className="min-w-0 flex-1"
         aria-label="Choice label"
       />
-      <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+      <label className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
         <Switch
           size="sm"
           checked={choice.isDefault}
@@ -200,7 +186,7 @@ export function CustomModelEditor({
       className="flex flex-col gap-2 rounded-md border border-border/60 bg-background/40 p-2.5"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="w-14 shrink-0 text-[11px] text-muted-foreground">Option {index + 1}</span>
+        <span className="w-14 shrink-0 text-2xs text-muted-foreground">Option {index + 1}</span>
         {presets.length > 0 ? (
           <Select
             value={idSelectValue(descriptor)}
@@ -230,7 +216,8 @@ export function CustomModelEditor({
             value={descriptor.id}
             onChange={(event) => updateDescriptor(descriptor.key, { id: event.target.value })}
             placeholder="optionId"
-            className="w-36 font-mono"
+            font="mono"
+            className="w-36"
             spellCheck={false}
             aria-label="Option id"
           />

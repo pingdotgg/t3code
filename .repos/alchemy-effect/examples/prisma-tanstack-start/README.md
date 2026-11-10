@@ -1,6 +1,6 @@
 # Prisma TanStack Start
 
-Minimal TanStack Start app with Prisma Next queries, Prisma Postgres, and
+Minimal TanStack Start app with Prisma ORM queries, Prisma Postgres, and
 Prisma Compute managed by Alchemy.
 
 ## What It Creates
@@ -14,15 +14,15 @@ Prisma Compute managed by Alchemy.
 - Runtime env vars managed by `Prisma.Compute` in the branch environment and
   snapshotted into each Deployment.
 - An optional Prisma App custom domain when `PRISMA_TANSTACK_DOMAIN` is set.
-- A Prisma Next contract in `src/prisma/contract.prisma`.
-- Generated Prisma Next artifacts in `src/prisma/contract.json` and
+- A Prisma contract in `src/prisma/contract.prisma`.
+- Generated Prisma contract artifacts in `src/prisma/contract.json` and
   `src/prisma/contract.d.ts`.
 - A checked-in, versioned initial migration under `migrations/app/`.
 - An opt-in local seed script and server routes that query through
-  `@prisma-next/postgres/runtime` without returning database IDs or user data.
+  `@prisma/orm-postgres/runtime` without returning database IDs or user data.
 
 Alchemy emits the current contract, transactionally applies checked-in Prisma
-Next migrations, and verifies the live schema as an explicit `Command.Exec`
+migrations, and verifies the live schema as an explicit `Command.Exec`
 release step before Compute builds the artifact:
 
 ```sh
@@ -30,7 +30,7 @@ bun run db:migrate
 bun run build
 ```
 
-`migration apply` is idempotent and the strict emit/apply/verify sequence runs
+`db migrate` is idempotent and the strict emit/apply/verify sequence runs
 on every deploy, so an unplanned contract change, database restore, or schema
 drift (including unexpected extra schema objects) fails the release instead of
 being hidden by local memo state. PostgreSQL lock waits are capped at 30 seconds,
@@ -61,7 +61,7 @@ destroy this stack, then bootstrap the state store once:
 ```sh
 export CLOUDFLARE_ACCOUNT_ID="..."
 export CLOUDFLARE_API_TOKEN="..."
-bunx alchemy cloudflare bootstrap
+bunx alchemy provider cloudflare bootstrap
 ```
 
 Keep those Cloudflare credentials configured for every later dev, deploy, and
@@ -90,11 +90,11 @@ If port 3000 is busy:
 PRISMA_TANSTACK_DEV_PORT=3011 bun run dev
 ```
 
-## Prisma Next Workflow
+## Prisma Workflow
 
 ```sh
 bun run emit      # regenerate contract.json + contract.d.ts
-bunx prisma-next migration plan --name <change> # plan and review a migration
+bunx prisma migration plan --name <change> # plan and review a migration
 bun run db:migrate # emit, transactionally apply, and verify the live schema
 bun run seed       # opt-in demo data; never run by deploy
 bun run db:setup   # migrate + demo seed, used by local dev

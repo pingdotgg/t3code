@@ -1,0 +1,17 @@
+{
+  "name": "service-binding-nextjs-preview",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@opennextjs/cloudflare": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:nextjs"
+  }
+}

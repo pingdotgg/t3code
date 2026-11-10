@@ -1,119 +1,102 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
-import * as Console from "effect/Console";
-import * as Data from "effect/Data";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
-const { getWhenReady } = Test;
+const requestOnce = (url: string, init?: RequestInit) =>
+  Effect.tryPromise(async () => {
+    const response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(5000),
+    });
+    return {
+      status: response.status,
+      headers: response.headers,
+      body: await response.text(),
+    };
+  });
 
-class AssetNotReady extends Data.TaggedError("AssetNotReady")<{
-  body: string;
-}> {}
-
-// While the static-asset manifest is still propagating, Cloudflare can serve
-// placeholder content with a 200 — the status alone can't distinguish
-// "not yet" from "served", so retry until the body matches.
-const getBodyWhenReady = (url: string, expected: string) =>
-  Effect.gen(function* () {
-    const res = yield* getWhenReady(url);
-    expect(res.status).toBe(200);
-    const body = yield* res.text;
-    if (!body.includes(expected)) {
-      return yield* Effect.fail(new AssetNotReady({ body }));
-    }
-    return body;
-  }).pipe(
-    Effect.retry({
-      while: (error) => error instanceof AssetNotReady,
-      schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
-        Schedule.recurs(20),
-      ]),
-    }),
+// A fresh workers.dev URL can flap between serving and a 404 (or 5xx) while
+// it propagates across the edge, even after a first successful response, so
+// ride out those statuses. Assertions on a deliberate 404 use `requestOnce`.
+const request = (url: string, init?: RequestInit) =>
+  requestOnce(url, init).pipe(
+    Effect.flatMap((response) =>
+      response.status === 404 || response.status >= 500
+        ? Effect.fail(new Error(`${url} answered ${response.status}`))
+        : Effect.succeed(response),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("1 second"), times: 10 }),
   );
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
   state: Cloudflare.state(),
-  stage: "test",
 });
 
-// The first deploy runs the full Vite build, so give the hook more headroom
-// than the default 120s.
-const stack = beforeAll(deploy(Stack).pipe(Effect.tap(Console.log)), {
-  timeout: 600_000,
-});
-afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
-
-const base = Effect.map(stack, ({ url }) => {
-  if (!url) throw new Error("expected the site to expose a workers.dev url");
-  return url.replace(/\/+$/, "");
-});
-
-test(
-  "deploys and exposes a url",
-  Effect.gen(function* () {
-    const { url } = yield* stack;
-    expect(url).toBeString();
-  }),
-  { timeout: 180_000 },
+const stack = beforeAll(
+  destroy(Stack).pipe(
+    Effect.andThen(deploy(Stack)),
+    Effect.tap(({ url }) =>
+      request(url!).pipe(
+        Effect.flatMap((response) =>
+          response.status === 200 && response.body.includes("Server-rendered counter")
+            ? Effect.void
+            : Effect.fail(new Error("The example has not reached the edge yet")),
+        ),
+        Effect.retry({ schedule: Schedule.spaced("1 second"), times: 8 }),
+        Effect.timeout("60 seconds"),
+      ),
+    ),
+  ),
+  { timeout: 120_000 },
 );
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 120_000 });
+const base = Effect.map(stack, ({ url }) => url!.replace(/\/+$/, ""));
 
-// The point of the example: the document carries the page. A client-only
-// deployment would answer with an empty `<div id="root">` here.
 test(
-  "serves markup rendered at the edge",
+  "renders request cookies and serializes hydration flags",
   Effect.gen(function* () {
     const url = yield* base;
-    const html = yield* getBodyWhenReady(url, 'id="count"');
-    expect(html).toContain(">0<");
-    // The title comes from the rendered Document, not from index.html.
-    expect(html).toContain("<title>Counter: 0</title>");
+    for (const count of [0, 7]) {
+      const page = yield* request(url + "/counter", {
+        headers: { cookie: `count=${count}` },
+      });
+      expect(page.status).toBe(200);
+      expect(page.body).toContain(`<title>Count ${count}</title>`);
+      expect(page.body).toMatch(new RegExp(`id="count"[^>]*>${count}<`));
+      expect(page.body).toContain("Rendered on the Server");
+      expect(page.body).toContain("data-foldkit-flags");
+      expect(page.body).toContain("data-foldkit-build");
+      expect(page.headers.get("cache-control")).toBe("private, no-store");
+      expect(page.headers.get("vary")).toContain("cookie");
+    }
+    const head = yield* request(url, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.body).toBe("");
+    expect((yield* requestOnce(url + "/assets/missing.js")).status).toBe(404);
   }),
-  { timeout: 180_000 },
+  { timeout: 120_000 },
 );
 
-// Flags are derived from the request, so a different request renders a
-// different page before any JavaScript runs.
 test(
-  "renders request-derived flags",
+  "serves the generated JavaScript and Tailwind stylesheet",
   Effect.gen(function* () {
     const url = yield* base;
-    const html = yield* getBodyWhenReady(`${url}/?count=7`, 'id="count"');
-    expect(html).toContain(">7<");
-    expect(html).toContain("<title>Counter: 7</title>");
+    const page = yield* request(url);
+    const script = page.body.match(/<script[^>]+src="([^" ]+)"/);
+    const style = page.body.match(/<link[^>]+href="([^" ]+\.css)"/);
+    expect(script).not.toBeNull();
+    expect(style).not.toBeNull();
+    const javascript = yield* request(new URL(script![1]!, url).href);
+    expect(javascript.status).toBe(200);
+    expect(javascript.headers.get("content-type")).toContain("javascript");
+    const css = yield* request(new URL(style![1]!, url).href);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toContain("text/css");
+    expect(css.body).toContain(".text-6xl");
   }),
-  { timeout: 180_000 },
-);
-
-// Hydration compares the stamp before adopting any DOM, so a render without
-// one is a page no client can take over.
-test(
-  "stamps the handoff the client hydrates against",
-  Effect.gen(function* () {
-    const url = yield* base;
-    const html = yield* getBodyWhenReady(url, "data-foldkit-app");
-    expect(html).toContain("data-foldkit-build");
-    // The Flags the server used ride along for the client to decode.
-    expect(html).toContain("data-foldkit-flags");
-  }),
-  { timeout: 180_000 },
-);
-
-// A deep link has no file of its own, so it must reach the Worker and be
-// rendered — not be answered by the asset layer with the template.
-test(
-  "renders a path that matches no file",
-  Effect.gen(function* () {
-    const url = yield* base;
-    const html = yield* getBodyWhenReady(`${url}/anything`, 'id="count"');
-    expect(html).toContain("data-foldkit-app");
-  }),
-  { timeout: 180_000 },
+  { timeout: 120_000 },
 );

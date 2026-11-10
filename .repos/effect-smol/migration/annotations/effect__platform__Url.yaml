@@ -1,6 +1,0 @@
-"@effect/platform/Url#setUrlParams":
-  replacement: "Url.setUrlParams"
-  note: "Retained and widened to accept UrlParams.Input."
-"@effect/platform/Url#urlParams":
-  replacement: "Url.urlParams"
-  note: "Retained and returns the v4 UrlParams wrapper."

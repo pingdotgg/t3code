@@ -1,175 +1,128 @@
-import * as ConfigProvider from "effect/ConfigProvider";
+import { Command, Flag } from "effect/cli";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
-import { Command, Flag } from "effect/unstable/cli";
+import * as Stream from "effect/Stream";
+import * as Alchemist from "../../Alchemist/index.ts";
+import { paint } from "../../Util/Terminal.ts";
+import { formatLocalTimestamp, TAIL_COLORS } from "../Format.ts";
+import { config, envFile, parseSince, profile, resolveStage, stage } from "./flags.ts";
+import { instrumentCommand } from "./instrument.ts";
 
-import { findProviderByType, type LogLine } from "../../Provider.ts";
-import { stampedMode } from "../../ProviderMode.ts";
-import { Stage } from "../../Stage.ts";
-import * as State from "../../State/index.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
-import { fileLogger } from "../../Util/FileLogger.ts";
-
-import { AuthProviders } from "../../Auth/AuthProvider.ts";
-import { withProfileOverride } from "../../Auth/Profile.ts";
-import {
-  envFile,
-  formatLocalTimestamp,
-  importStack,
-  instrumentCommand,
-  parseResourceFilter,
-  parseSince,
-  profile,
-  resourceFilter,
-  script,
-  stage,
-  TAIL_COLORS,
-  TAIL_RESET,
-} from "./_shared.ts";
-
-const logsLimit = Flag.integer("limit").pipe(
-  Flag.withDescription("Number of log entries to fetch"),
+const logsLimit = Flag.Int("limit").pipe(
+  Flag.withDescription("Number of log entries to fetch (default: 100)"),
   Flag.withDefault(100),
 );
 
-const logsSince = Flag.string("since").pipe(
-  Flag.withDescription(
-    "Fetch logs since this time (e.g. '1h', '30m', '2024-01-01T00:00:00Z')",
-  ),
+const tail = Flag.Boolean("tail").pipe(
+  Flag.withAlias("t"),
+  Flag.withDescription("Continue streaming new log entries"),
+  Flag.withDefault(false),
+);
+
+const resources = Flag.String("resource").pipe(
+  Flag.withAlias("r"),
+  Flag.withDescription("Comma-separated logical resource IDs to include (for example Worker,Api)"),
   Flag.optional,
   Flag.map(Option.getOrUndefined),
 );
 
+const logsSince = Flag.String("since").pipe(
+  Flag.withDescription("Fetch logs since this time (e.g. '1h', '30m', '2024-01-01T00:00:00Z')"),
+  Flag.optional,
+  Flag.map(Option.getOrUndefined),
+);
+
+interface LogsArgs {
+  readonly main: string;
+  readonly stage: string;
+  readonly envFile: Option.Option<string>;
+  readonly profile: string | undefined;
+  readonly resources: string | undefined;
+  readonly limit: number;
+  readonly since: string | undefined;
+  readonly tail: boolean;
+}
+
+const runLogs = Effect.fn(function* ({
+  main,
+  stage,
+  envFile,
+  profile,
+  resources,
+  limit,
+  since,
+  tail,
+}: LogsArgs) {
+  const sinceDate = since ? yield* parseSince(since) : undefined;
+  const selected = (resources ?? "")
+    .split(",")
+    .map((resource) => resource.trim())
+    .filter((resource) => resource.length > 0);
+  const stack = yield* Alchemist.importStack(main);
+  const options = { stage, profile, envFile: Option.getOrUndefined(envFile) };
+  // Colors are assigned as each resource first appears, so the command
+  // builds the stack once instead of listing resources up front.
+  const colors = new Map<string, (typeof TAIL_COLORS)[number]>();
+  const format = (entry: Alchemist.Logs.LogEntry) => {
+    const fqn = entry.resource.fqn;
+    if (!colors.has(fqn)) colors.set(fqn, TAIL_COLORS[colors.size % TAIL_COLORS.length]!);
+    return `${paint(colors.get(fqn)!, `${formatLocalTimestamp(entry.timestamp)} [${fqn}]`)} ${entry.message}`;
+  };
+
+  if (tail) {
+    // The merged stream ends at once when no selected resource can tail.
+    let received = false;
+    yield* Alchemist.Logs.tail({ ...options, stack, resources: selected }).pipe(
+      Stream.runForEach((entry) => {
+        received = true;
+        return Console.log(format(entry));
+      }),
+    );
+    if (!received) yield* Console.log("No matching resources support live logs.");
+    return;
+  }
+
+  const entries = yield* Alchemist.Logs.entries({
+    ...options,
+    stack,
+    resources: selected,
+    limit,
+    since: sinceDate,
+  });
+  if (entries.length === 0) {
+    yield* Console.log(
+      selected.length > 0
+        ? "No resources with logs match --resource (deploy first, or selected resources may not expose logs)."
+        : "No resources with logs found. Deploy first, then run logs.",
+    );
+    return;
+  }
+  for (const entry of entries) yield* Console.log(format(entry));
+});
+
 export const logsCommand = Command.make(
   "logs",
   {
-    main: script,
+    main: config,
     envFile,
     stage,
     profile,
-    filter: resourceFilter,
+    resources,
     limit: logsLimit,
     since: logsSince,
+    tail,
   },
-  instrumentCommand(
-    "logs",
-    (a: { main: string; stage: string; profile: string; limit: number }) => ({
-      "alchemy.stage": a.stage,
-      "alchemy.profile": a.profile,
-      "alchemy.main": a.main,
-      "alchemy.limit": a.limit,
-    }),
-  )(
-    Effect.fn(function* ({
-      main,
-      stage,
-      envFile,
-      profile,
-      filter,
-      limit,
-      since,
-    }) {
-      const stackEffect = yield* importStack(main);
-
-      const services = Layer.mergeAll(
-        ConfigProvider.layer(
-          withProfileOverride(yield* loadConfigProvider(envFile), profile),
-        ),
-        Layer.succeed(AuthProviders, {}),
-        Layer.succeed(Stage, stage),
-        Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
-        State.localState(),
-      );
-
-      const sinceDate = since ? parseSince(since) : undefined;
-
-      yield* Effect.gen(function* () {
-        const stack = yield* stackEffect;
-
-        yield* Effect.gen(function* () {
-          const state = yield* yield* State.State;
-          const filterSet = parseResourceFilter(filter);
-          const availableIds = [
-            ...new Set(Object.values(stack.resources).map((r) => r.LogicalId)),
-          ].sort();
-
-          if (filterSet) {
-            for (const id of filterSet) {
-              if (!availableIds.includes(id)) {
-                return yield* Effect.die(
-                  new Error(
-                    `Unknown resource '${id}' in --filter. Available: ${availableIds.join(", ") || "(none)"}`,
-                  ),
-                );
-              }
-            }
-          }
-
-          const fqns = Object.keys(stack.resources);
-          const allLogs: { logicalId: string; lines: LogLine[] }[] = [];
-
-          for (const fqn of fqns) {
-            const resource = stack.resources[fqn]!;
-            if (filterSet && !filterSet.has(resource.LogicalId)) continue;
-
-            const resourceState = yield* state.get({
-              stack: stack.name,
-              stage: stack.stage,
-              fqn,
-            });
-            if (!(resourceState as any)?.attr) continue;
-
-            // Query with the provider variant of the mode that deployed the
-            // row (a local dev worker's logs come from the local provider).
-            const provider = yield* findProviderByType(
-              resource.Type,
-              stampedMode(resourceState as any),
-            );
-            if (!provider.logs) continue;
-
-            const lines = yield* provider.logs({
-              id: resource.LogicalId,
-              fqn,
-              instanceId: (resourceState as any).instanceId,
-              props: (resourceState as any).props,
-              output: (resourceState as any).attr,
-              options: { limit, since: sinceDate },
-            });
-
-            allLogs.push({ logicalId: resource.LogicalId, lines });
-          }
-
-          if (allLogs.length === 0) {
-            if (filterSet) {
-              yield* Console.log(
-                "No resources with logs match --filter (deploy first, or selected resources may not expose logs).",
-              );
-            } else {
-              yield* Console.log(
-                "No resources with logs found. Deploy first, then run logs.",
-              );
-            }
-            return;
-          }
-
-          const merged = allLogs
-            .flatMap(({ logicalId, lines }, i) => {
-              const color = TAIL_COLORS[i % TAIL_COLORS.length]!;
-              return lines.map((line) => ({
-                ...line,
-                formatted: `${color}${formatLocalTimestamp(line.timestamp)} [${logicalId}]${TAIL_RESET} ${line.message}`,
-              }));
-            })
-            .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-
-          for (const entry of merged) {
-            yield* Console.log(entry.formatted);
-          }
-        }).pipe(Effect.provide(stack.services));
-      }).pipe(Effect.provide(services));
-    }),
-  ),
-);
+  (args) =>
+    resolveStage("live", args.stage, args.envFile).pipe(
+      Effect.flatMap((stage) =>
+        instrumentCommand("logs", (a: LogsArgs) => ({
+          "alchemy.stage": a.stage,
+          "alchemy.profile": a.profile ?? "",
+          "alchemy.main": a.main,
+          "alchemy.limit": a.limit,
+          "alchemy.tail": a.tail,
+        }))(runLogs)({ ...args, stage }),
+      ),
+    ),
+).pipe(Command.withDescription("Fetch or tail logs from stack resources"));

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { pipe } from "effect/Function";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonSchemaGenerator";
@@ -9,15 +10,10 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-const UPSTREAM_REF = "678157acaa819d5510adfe359abb5d0392cfe461";
+const UPSTREAM_REF = "687a119f0fcaace47e1f1abcc77cec6c813fd6da";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -145,109 +141,48 @@ const ManualSchemas: Record<string, Schema.Json> = {
   },
 };
 
-// Codex 0.150 added these multi-agent values before our next full protocol
-// refresh. Keep every generated response namespace compatible with them.
-const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
-  CollabAgentTool: {
-    type: "string",
-    enum: [
-      "spawnAgent",
-      "sendInput",
-      "resumeAgent",
-      "wait",
-      "closeAgent",
-      "sendMessage",
-      "followupTask",
-      "interruptAgent",
-      "listAgents",
+// T3 Code only uses the plan for labels, so an unknown slug must not fail the whole
+// `account/read` decode and take the provider down with it.
+const DefinitionOverrides: Record<string, Schema.Json> = {
+  PlanType: { type: "string" },
+  // Newer custom Codex binaries emit partial answers before additional tools or text.
+  MessagePhase: {
+    description:
+      'Classifies an assistant message as interim commentary or final answer text.\n\nProviders do not emit this consistently, so callers must treat `None` as "phase unknown" and keep compatibility behavior for legacy models.',
+    oneOf: [
+      {
+        type: "string",
+        enum: ["commentary"],
+        description:
+          "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+      },
+      {
+        type: "string",
+        enum: ["partial_answer"],
+        description: "Stable answer text that may be followed by more assistant output or tools.",
+      },
+      {
+        type: "string",
+        enum: ["final_answer"],
+        description: "The assistant's terminal answer text for the current turn.",
+      },
     ],
-  },
-  CollabAgentToolCallStatus: {
-    type: "string",
-    enum: ["inProgress", "completed", "failed", "interrupted"],
-  },
-  PlanType: {
-    type: "string",
-    enum: [
-      "free",
-      "go",
-      "plus",
-      "pro",
-      "prolite",
-      "team",
-      "self_serve_business_prolite",
-      "self_serve_business_usage_based",
-      "business",
-      "ent26",
-      "enterprise_cbp_automation",
-      "enterprise_cbp_usage_based",
-      "enterprise",
-      "edu",
-      "edu_plus",
-      "edu_pro",
-      "unknown",
-    ],
-  },
-  SubAgentActivityKind: {
-    type: "string",
-    enum: ["started", "interacted", "interrupted", "completed"],
   },
 };
 
-// Pinned protocol JSON omits later CodexErrorInfo variants. Keep historical
-// thread payloads decodable; do not fold unknown values into "other".
-const CodexErrorInfoCompatibilityValues = [
-  "rateLimitExceeded",
-  "misalignmentPolicyViolation",
-] as const;
+// Codex sends error codes this ref does not list yet (e.g. `modelNotFound`). A closed enum
+// fails the whole notification decode, which drops a failed `turn/completed` and leaves the turn running.
+const OpenStringEnumDefinitions = new Set(["CodexErrorInfo"]);
 
-const CodexErrorInfoCompatibilityExports = new Set([
-  "V2ThreadReadResponse",
-  "V2ThreadResumeResponse",
-  "V2ThreadRollbackResponse",
-  "V2ThreadForkResponse",
-  "V2TurnCompletedNotification",
-]);
-
-function applyCodex0151DefinitionCompatibility(
-  exportName: string,
-  definitionName: string,
-  definitionSchema: Schema.Json,
-): Schema.Json {
-  if (
-    !CodexErrorInfoCompatibilityExports.has(exportName) ||
-    definitionName !== "CodexErrorInfo" ||
-    typeof definitionSchema !== "object"
-  ) {
-    return definitionSchema;
-  }
-
-  const schema = definitionSchema as {
-    readonly oneOf?: ReadonlyArray<{ readonly enum?: ReadonlyArray<string> }>;
-  };
-  const [firstVariant, ...remainingVariants] = schema.oneOf ?? [];
-  const currentEnum = firstVariant?.enum;
-  if (!currentEnum) {
-    return definitionSchema;
-  }
-
-  const missingValues = CodexErrorInfoCompatibilityValues.filter(
-    (value) => !currentEnum.includes(value),
-  );
-  if (missingValues.length === 0) {
-    return definitionSchema;
-  }
-
-  const enumValues = [...currentEnum];
-  const otherIndex = enumValues.indexOf("other");
-  const nextEnum =
-    otherIndex === -1
-      ? [...enumValues, ...missingValues]
-      : [...enumValues.slice(0, otherIndex), ...missingValues, ...enumValues.slice(otherIndex)];
-
+function openStringEnum(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
   return {
-    ...definitionSchema,
-    oneOf: [{ ...firstVariant, enum: nextEnum }, ...remainingVariants],
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) =>
+      isJsonSchemaNode(variant) && variant.type === "string" && Array.isArray(variant.enum)
+        ? { type: "string" }
+        : variant,
+    ),
   };
 }
 
@@ -268,9 +203,14 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
+const githubToken = process.env.GITHUB_TOKEN;
+
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
+    githubToken && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(githubToken)
+      : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((okResponse) => okResponse.text),
@@ -387,58 +327,78 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
   ) as Schema.Json;
 }
 
-// Codex 0.153 adds async questions to agent messages. Keep older protocol
-// fields until the next full refresh, including every thread history namespace.
-function addAsyncQuestionFields(value: Schema.Json): Schema.Json {
-  if (Array.isArray(value)) {
-    return value.map(addAsyncQuestionFields);
-  }
-  if (value === null || typeof value !== "object") {
+type JsonSchemaNode = { readonly [key: string]: Schema.Json };
+
+function isJsonSchemaNode(value: Schema.Json | undefined): value is JsonSchemaNode {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Visit only schema positions so fields literally named properties stay untouched.
+// Close Codex structs that omit additionalProperties; Effect otherwise imports open records.
+// Fold shared fields into each object alternative because Effect cannot intersect them.
+function adaptSchemaForEffect(value: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(value)) {
     return value;
   }
-  const properties = "properties" in value ? value.properties : undefined;
-  const itemType =
-    properties && typeof properties === "object" && "type" in properties
-      ? properties.type
-      : undefined;
-  if (
-    properties &&
-    typeof properties === "object" &&
-    itemType &&
-    typeof itemType === "object" &&
-    "enum" in itemType &&
-    Array.isArray(itemType.enum) &&
-    itemType.enum.includes("agentMessage")
-  ) {
-    return {
-      ...value,
-      properties: {
-        ...properties,
-        delivery: { anyOf: [{ type: "string", enum: ["async"] }, { type: "null" }] },
-        questions: {
-          anyOf: [
-            {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  options: {
-                    anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
-                  },
-                },
-                required: ["title"],
-              },
-            },
-            { type: "null" },
-          ],
-        },
-      },
-    };
+  const node: Record<string, Schema.Json> = { ...value };
+  for (const key of ["items", "additionalProperties"]) {
+    const child = node[key];
+    if (isJsonSchemaNode(child)) node[key] = adaptSchemaForEffect(child);
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, addAsyncQuestionFields(child)]),
-  );
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    const child = node[key];
+    if (Array.isArray(child)) node[key] = child.map(adaptSchemaForEffect);
+  }
+  for (const key of ["properties", "definitions"]) {
+    const child = node[key];
+    if (isJsonSchemaNode(child)) {
+      node[key] = Object.fromEntries(
+        Object.entries(child).map(([name, schema]) => [name, adaptSchemaForEffect(schema)]),
+      );
+    }
+  }
+
+  const { properties } = node;
+  if (
+    isJsonSchemaNode(properties) &&
+    Object.keys(properties).length > 0 &&
+    !("additionalProperties" in node)
+  ) {
+    node.additionalProperties = false;
+  }
+
+  const alternativesKey = "anyOf" in node ? "anyOf" : "oneOf";
+  const alternatives = node[alternativesKey];
+  if (
+    !isJsonSchemaNode(properties) ||
+    !Array.isArray(alternatives) ||
+    !alternatives.every(
+      (alternative) => isJsonSchemaNode(alternative) && alternative.type === "object",
+    )
+  ) {
+    return node;
+  }
+  const {
+    properties: _shared,
+    required,
+    type: _type,
+    additionalProperties: _closed,
+    ...rest
+  } = node;
+  const sharedRequired = Array.isArray(required) ? required : [];
+  return {
+    ...rest,
+    [alternativesKey]: alternatives.map((alternative) => {
+      const branch = alternative as JsonSchemaNode;
+      const branchProperties = isJsonSchemaNode(branch.properties) ? branch.properties : {};
+      const branchRequired = Array.isArray(branch.required) ? branch.required : [];
+      return {
+        ...branch,
+        properties: { ...properties, ...branchProperties },
+        required: [...new Set([...sharedRequired, ...branchRequired])],
+      };
+    }),
+  };
 }
 
 function toPascalCaseMethod(method: string) {
@@ -452,13 +412,13 @@ function toPascalCaseMethod(method: string) {
 }
 
 function parseRequestEntries(fileContents: string): ReadonlyArray<MethodEntry> {
-  const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params:\s*([^,}]+)/g;
+  const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params(\??):\s*([^,}|]+)/g;
   const entries: Array<MethodEntry> = [];
   let match: RegExpExecArray | null;
   while ((match = entryPattern.exec(fileContents)) !== null) {
     entries.push({
       method: match[1]!,
-      paramsType: match[2]!.trim(),
+      paramsType: `${match[2] ? "Nullable" : ""}${match[3]!.trim()}`,
     });
   }
   return entries;
@@ -506,6 +466,9 @@ function resolveResponseTypeName(
   generatedSchemaNames: ReadonlySet<string>,
 ): string {
   const overrides: Record<string, string> = {
+    "account/gatewayOAuth/cancel": "GatewayOAuthCancelResponse",
+    "account/gatewayOAuth/login": "GatewayOAuthLoginResponse",
+    "account/gatewayOAuth/read": "GatewayOAuthReadResponse",
     "account/logout": "LogoutAccountResponse",
     "account/rateLimits/read": "GetAccountRateLimitsResponse",
     "account/usage/read": "GetAccountTokenUsageResponse",
@@ -526,9 +489,7 @@ function resolveResponseTypeName(
     const fromParams = paramsType.replace(/Params$/, "Response");
     try {
       return resolveSchemaTypeName(fromParams, generatedSchemaNames);
-    } catch {
-      // Fall through to method-based lookup.
-    }
+    } catch {}
   }
 
   return resolveSchemaTypeName(`${toPascalCaseMethod(method)}Response`, generatedSchemaNames);
@@ -648,7 +609,7 @@ function rewriteExternalRefs(
         const definitionName = child.slice("#/definitions/".length);
         const localRewrite = localDefinitionNames.get(definitionName);
         if (localRewrite) {
-          return [key, `#/definitions/${localRewrite}`];
+          return [key, `#/components/schemas/${localRewrite}`];
         }
 
         const candidates = [
@@ -669,7 +630,7 @@ function rewriteExternalRefs(
           throw new Error(`Missing rewritten definition for ref: ${child}`);
         }
 
-        return [key, `#/definitions/${rewritten}`];
+        return [key, `#/components/schemas/${rewritten}`];
       }
 
       return [
@@ -716,18 +677,18 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     );
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
-      const compatibleDefinitionSchema =
-        Codex0150DefinitionSchemas[definitionName] ??
-        applyCodex0151DefinitionCompatibility(file.exportName, definitionName, definitionSchema);
-      aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
-        normalizeNullableTypes(
-          rewriteExternalRefs(
-            compatibleDefinitionSchema,
-            localDefinitionNames,
-            file.namespace,
-            exportNameByQualifiedName,
-          ),
+      aggregateSchemas[localDefinitionNames.get(definitionName)!] = pipe(
+        rewriteExternalRefs(
+          DefinitionOverrides[definitionName] ??
+            (OpenStringEnumDefinitions.has(definitionName)
+              ? openStringEnum(definitionSchema)
+              : definitionSchema),
+          localDefinitionNames,
+          file.namespace,
+          exportNameByQualifiedName,
         ),
+        normalizeNullableTypes,
+        stripNullDefaults,
       );
     }
 
@@ -738,15 +699,15 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       }
     }
 
-    aggregateSchemas[file.exportName] = stripNullDefaults(
-      normalizeNullableTypes(
-        rewriteExternalRefs(
-          topLevelSchema,
-          localDefinitionNames,
-          file.namespace,
-          exportNameByQualifiedName,
-        ),
+    aggregateSchemas[file.exportName] = pipe(
+      rewriteExternalRefs(
+        topLevelSchema,
+        localDefinitionNames,
+        file.namespace,
+        exportNameByQualifiedName,
       ),
+      normalizeNullableTypes,
+      stripNullDefaults,
     );
   }
 
@@ -760,7 +721,8 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    generator.addSchema(name, addAsyncQuestionFields(schema) as never);
+    aggregateSchemas[name] = adaptSchemaForEffect(schema);
+    generator.addSchema(name, aggregateSchemas[name] as never);
   }
 
   const generatedEntries = new Map<string, string>();

@@ -4,7 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as AcpError from "../errors.ts";
 
@@ -53,11 +53,23 @@ export const makeTerminationError = (
   handle: ChildProcessTerminationHandle,
 ): Effect.Effect<AcpError.AcpError> =>
   Effect.match(handle.exitCode, {
-    onFailure: (cause) =>
-      new AcpError.AcpTransportError({
-        operation: "read-process-exit-status",
-        pid: handle.pid,
-        cause,
-      }),
+    onFailure: (cause) => {
+      // The Node spawner reports signal exits as a platform error rather than an exit code.
+      const signal =
+        cause.reason.module === "ChildProcess" &&
+        cause.reason.method === "exitCode" &&
+        cause.reason.cause instanceof Error
+          ? /^Process interrupted due to receipt of signal: '(SIG[A-Z0-9]+)'$/.exec(
+              cause.reason.cause.message,
+            )?.[1]
+          : undefined;
+      return signal === undefined
+        ? new AcpError.AcpTransportError({
+            operation: "read-process-exit-status",
+            pid: handle.pid,
+            cause,
+          })
+        : new AcpError.AcpProcessExitedError({ signal, pid: handle.pid, cause });
+    },
     onSuccess: (code) => new AcpError.AcpProcessExitedError({ code, pid: handle.pid }),
   });

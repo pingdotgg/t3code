@@ -1,6 +1,6 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -32,10 +32,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -44,7 +41,6 @@ const getBodyWhenReady = (url: string, expected: string) =>
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
   state: Cloudflare.state(),
-  stage: "test",
 });
 
 // The first deploy runs the full Vite build, so give the hook more headroom
@@ -89,9 +85,7 @@ test(
     // In an SPA the utility classes live in the JS bundle, not the HTML, so
     // the proof that the @tailwindcss/vite plugin from the project's own
     // vite.config.ts ran is the compiled rule in the linked stylesheet.
-    const link = html.match(
-      /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-    );
+    const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
     expect(link).not.toBeNull();
     const href = link![1]!;
     const cssUrl = href.startsWith("http")

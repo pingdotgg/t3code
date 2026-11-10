@@ -1,72 +1,34 @@
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
+// @effect-diagnostics nodeBuiltinImport:off -- The service launcher starts before the CLI runtime.
+import * as NodeModule from "node:module";
+import * as NodeSea from "node:sea";
+import * as NodeURL from "node:url";
 
-import * as NetService from "@t3tools/shared/Net";
-import packageJson from "../package.json" with { type: "json" };
-import { authCommand } from "./cli/auth.ts";
-import { appCommand } from "./cli/app.ts";
-import { connectCommand } from "./cli/connect.ts";
-import { pairCommand } from "./cli/pair.ts";
-import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { sharedServerCommandFlags } from "./cli/config.ts";
 import { isEntrypoint } from "./entrypoint.ts";
-import { projectCommand } from "./cli/project.ts";
-import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
-import { serviceCommand } from "./cli/service.ts";
-import { servicePreflightCommand } from "./cli/servicePreflight.ts";
-import { themeCommand } from "./cli/theme.ts";
-import { triageCommand } from "./cli/triage.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
+async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
+  if (!NodeSea.isSea()) return import("./binMain.ts");
 
-const connectPublicConfigMissingMessage =
-  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
-
-class ConnectPublicConfigMissingError extends CliError.UserError {
-  override get message() {
-    return connectPublicConfigMissingMessage;
+  // Keep the executable's module URL so the CLI finds the web client and native packages beside it.
+  const require = NodeModule.createRequire(import.meta.url);
+  // require() resolves links in the executable path, such as a Windows junction.
+  const cliUrl = NodeURL.pathToFileURL(require.resolve(process.execPath)).href;
+  const hook = NodeModule.registerHooks({
+    load(url, context, next) {
+      if (url !== cliUrl) return next(url, context);
+      return {
+        format: "module",
+        source: new Uint8Array(NodeSea.getRawAsset("binMain.mjs")),
+        shortCircuit: true,
+      };
+    },
+  });
+  try {
+    return require(process.execPath) as typeof import("./binMain.ts");
+  } finally {
+    hook.deregister();
   }
 }
-
-const connectUnavailableCommand = Command.make("connect", {
-  command: Argument.string("command").pipe(Argument.variadic),
-}).pipe(
-  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
-  Command.unlisted,
-  Command.withHandler(() =>
-    Effect.fail(
-      new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
-        errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
-      }),
-    ),
-  ),
-);
-
-export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((flags) => runServerCommand(flags)),
-    Command.withSubcommands([
-      startCommand,
-      serveCommand,
-      appCommand,
-      pairCommand,
-      authCommand,
-      projectCommand,
-      serviceCommand,
-      servicePreflightCommand,
-      themeCommand,
-      triageCommand,
-      cloudEnabled ? connectCommand : connectUnavailableCommand,
-    ]),
-  );
-
-export const cli = makeCli();
 
 if (
   isEntrypoint({
@@ -75,9 +37,13 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
-  Command.run(cli, { version: packageJson.version }).pipe(
-    Effect.scoped,
-    Effect.provide(CliRuntimeLayer),
-    NodeRuntime.runMain,
-  );
+  // The launcher owns shutdown until its child exits, so it bypasses the Effect CLI runtime.
+  // The service unit passes no arguments; flags and help go through the full CLI.
+  if (process.argv[2] === "__service-launcher" && process.argv.length === 3) {
+    const { runServiceLauncherCli } = await import("./cli/serviceLauncher.ts");
+    await runServiceLauncherCli();
+  } else {
+    const { runCliCommand } = await loadCliMain();
+    await runCliCommand();
+  }
 }

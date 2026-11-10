@@ -5,18 +5,12 @@ describe("utils", () => {
   describe("sanitizePath", () => {
     it("strips query strings", () => {
       expect(sanitizePath("/tmp/example.wasm?init")).toBe("/tmp/example.wasm");
-      expect(sanitizePath("/tmp/example.wasm?module")).toBe(
-        "/tmp/example.wasm",
-      );
+      expect(sanitizePath("/tmp/example.wasm?module")).toBe("/tmp/example.wasm");
     });
 
     it("strips hashes", () => {
-      expect(sanitizePath("/tmp/example.wasm#fragment")).toBe(
-        "/tmp/example.wasm",
-      );
-      expect(sanitizePath("/tmp/example.wasm?init#fragment")).toBe(
-        "/tmp/example.wasm",
-      );
+      expect(sanitizePath("/tmp/example.wasm#fragment")).toBe("/tmp/example.wasm");
+      expect(sanitizePath("/tmp/example.wasm?init#fragment")).toBe("/tmp/example.wasm");
     });
   });
 
@@ -27,6 +21,14 @@ describe("utils", () => {
 
     it("detects nodejs_compat_v2", () => {
       expect(hasNodejsCompat(["nodejs_compat_v2"])).toBe(true);
+    });
+
+    it("detects Node.js compatibility enabled by date", () => {
+      expect(hasNodejsCompat(undefined, "2026-08-31")).toBe(true);
+    });
+
+    it("honors an explicit opt-out on a default-on date", () => {
+      expect(hasNodejsCompat(["no_nodejs_compat"], "2026-08-31")).toBe(false);
     });
 
     it("returns false without compatibility flags", () => {

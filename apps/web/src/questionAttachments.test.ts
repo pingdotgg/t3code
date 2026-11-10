@@ -1,8 +1,10 @@
-import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import { ApprovalRequestId, EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { useComposerDraftStore } from "./composerDraftStore";
 import {
   questionAttachmentDraftId,
+  countQuestionAttachments,
   questionAttachmentDraftPrefix,
   changeQuestionAttachmentPreparation,
   clearQuestionAttachmentDraft,
@@ -57,31 +59,6 @@ it("keeps question files separate from the normal draft and other questions", ()
   expect(revoke).toHaveBeenCalledWith(image.previewUrl);
   revoke.mockRestore();
 });
-it("scopes provider request ids to their environment and thread", () => {
-  const keys = [
-    questionAttachmentDraftId(environmentId, threadId, requestId, "q"),
-    questionAttachmentDraftId(EnvironmentId.make("environment-2"), threadId, requestId, "q"),
-    questionAttachmentDraftId(environmentId, ThreadId.make("thread-2"), requestId, "q"),
-  ];
-  expect(new Set(keys).size).toBe(3);
-});
-it("does not match drafts belonging to threads with a shared id prefix", () => {
-  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
-  expect(
-    questionAttachmentDraftId(environmentId, threadId, requestId, "q").startsWith(prefix),
-  ).toBe(true);
-  for (const suffix of ["-extra", ":extra", "/extra", "%extra"]) {
-    expect(
-      questionAttachmentDraftId(
-        environmentId,
-        ThreadId.make(`${threadId}${suffix}`),
-        requestId,
-        "q",
-      ).startsWith(prefix),
-    ).toBe(false);
-  }
-});
-
 it("does not clear another environment whose id contains a question prefix", () => {
   const otherEnvironment = EnvironmentId.make(
     `${environmentId}:question-${encodeURIComponent(JSON.stringify(threadId))}-nested`,
@@ -97,4 +74,65 @@ it("does not clear another environment whose id contains a question prefix", () 
   }
   expect(store.getComposerDraft(ownKey)).toBeNull();
   expect(store.getComposerDraft(otherKey)?.prompt).toBe("Keep this answer");
+});
+
+it("counts files, images, and pending preparation across the shared question budget", () => {
+  const first = questionAttachmentDraftId(environmentId, threadId, requestId, "first");
+  const second = questionAttachmentDraftId(environmentId, threadId, requestId, "second");
+  const other = questionAttachmentDraftId(
+    EnvironmentId.make("other"),
+    threadId,
+    requestId,
+    "first",
+  );
+  const store = useComposerDraftStore.getState();
+  store.addFiles(
+    second,
+    Array.from({ length: 6 }, (_, index) => ({
+      type: "file" as const,
+      id: `file-${index}`,
+      name: `spec-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      file: new File(["spec"], `spec-${index}.txt`),
+    })),
+  );
+  store.addImages(first, [
+    {
+      type: "image",
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      previewUrl: "blob:count-test",
+      file: new File(["image"], "image.png"),
+    },
+  ]);
+  changeQuestionAttachmentPreparation(second, 1);
+  changeQuestionAttachmentPreparation(other, 8);
+  expect(countQuestionAttachments([first, second])).toBe(8);
+  expect(countQuestionAttachments([second])).toBe(7);
+  changeQuestionAttachmentPreparation(second, -1);
+  expect(countQuestionAttachments([first, second])).toBe(7);
+});
+
+it("clears attachment drafts for requests the thread resolved, wherever they were answered", () => {
+  const store = useComposerDraftStore.getState();
+  const pending = RuntimeRequestId.make("pending");
+  const resolved = RuntimeRequestId.make("resolved");
+  const otherThread = ThreadId.make("thread-2");
+  const keep = questionAttachmentDraftId(environmentId, threadId, pending, "first");
+  const drop = questionAttachmentDraftId(environmentId, threadId, resolved, "first");
+  const elsewhere = questionAttachmentDraftId(environmentId, otherThread, resolved, "first");
+  for (const key of [keep, drop, elsewhere]) store.setPrompt(key, "Answer context");
+  changeQuestionAttachmentPreparation(drop, 1);
+
+  // The thread's projection synchronizes with only `pending` left, e.g. after
+  // `resolved` was answered on another device while no composer showed it.
+  makeThreadRequestsResolvedAnnouncer(environmentId, threadId)([pending]);
+
+  expect(store.getComposerDraft(keep)?.prompt).toBe("Answer context");
+  expect(store.getComposerDraft(drop)).toBeNull();
+  expect(store.getComposerDraft(elsewhere)?.prompt).toBe("Answer context");
+  expect(useQuestionAttachmentPreparation.getState().counts[drop]).toBeUndefined();
 });

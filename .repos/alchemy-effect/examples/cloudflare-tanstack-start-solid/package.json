@@ -18,17 +18,19 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@tanstack/solid-router": "^1.170.4",
-    "@tanstack/solid-start": "^1.168.6",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@tanstack/solid-router": "catalog:",
+    "@tanstack/solid-start": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "solid-js": "^1.9.12"
+    "effect": "catalog:",
+    "solid-js": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@types/bun": "catalog:tooling",
-    "typescript": "catalog:build",
-    "vite": "catalog:build",
-    "vite-plugin-solid": "^2.11.12"
+    "@alchemy.run/test": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-solid": "catalog:"
   }
 }

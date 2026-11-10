@@ -3,17 +3,16 @@ title: Setup
 description: Create a Railway workspace, generate an account API token, and store it in a profile.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../../versions";
+import PackageManagers from "../../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@next" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/railway@latest effect @effect/platform-bun @effect/platform-node`;
 
 Everything you need before deploying to Railway: the alchemy package,
 a Railway workspace, and an account API token stored in a profile.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 22+
 - A [Railway](https://railway.com) account
 - [Docker](https://docs.docker.com/get-docker/) for Effect-native
   [Services](/railway/compute/services) (Alchemy builds and pushes an
@@ -49,51 +48,27 @@ The official environment variable is `RAILWAY_API_TOKEN`. An optional
 
 ## Create a project directory
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-app" />
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pkgs} />
 
 ## Connect alchemy to Railway
 
 There is no separate credentials step. The first time you run
 `alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
 `Railway.providers()`, alchemy walks you through an interactive login
-with two options:
+with three options:
 
+- **OAuth** — opens `railway.com/cli-login` and pairs the CLI with
+  your account. No pre-existing token needed.
 - **API Token** — paste the token you generated above. It's saved
   under `~/.alchemy/credentials/<profile>/`.
 - **Environment Variables** — reads `RAILWAY_API_TOKEN` from the
   environment on every run (plus an optional `RAILWAY_API_URL`).
-  This is the method for CI — when alchemy detects `CI=true` it
-  skips the prompt and uses the environment automatically.
+  In CI (`CI=true`) alchemy skips the prompt and uses the
+  environment automatically.
 
 Either choice is saved to your **`default`**
 [profile](/environments/profiles) and reused on every subsequent
@@ -103,8 +78,15 @@ To re-run the setup later (e.g. to rotate the token, or configure a
 separate `prod` profile):
 
 ```sh
-alchemy login --configure
-alchemy login --profile prod --configure
+# Re-run the interactive setup (e.g. to rotate the token)
+alchemy profile edit --reconfigure Railway
+
+# Or connect Railway in a separate `prod` profile
+alchemy profile create prod
+alchemy profile edit --profile prod --add Railway
+
+# Non-interactive (scripts, agents)
+alchemy profile edit --add Railway --method stored --set token=env:RAILWAY_API_TOKEN
 ```
 
 Inspect what's stored (secrets are redacted):

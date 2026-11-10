@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * `@alchemy.run/frontend-frameworks/waku/aws` — the AWS Lambda deploy target for
  * the Waku integration.
@@ -29,7 +30,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { fileURLToPath } from "node:url";
 import type { Config as WakuConfig } from "waku/config";
 import { runBuildChild } from "../core/BuildChild.ts";
 import {
@@ -108,10 +108,7 @@ const makeAwsAdapterTarget = (
     adapter: () =>
       Effect.try({
         try: () =>
-          fileURLToPath(
-            import.meta
-              .resolve("@alchemy.run/frontend-frameworks/waku/aws-adapter"),
-          ),
+          fileURLToPath(import.meta.resolve("@alchemy.run/frontend-frameworks/waku/aws-adapter")),
         catch: (cause) =>
           new DeployTargetError({
             platform: "aws",
@@ -129,22 +126,16 @@ const makeAwsAdapterTarget = (
           new DeployTargetError({ platform: "aws", message, cause });
 
         if (output.distDirectory === undefined) {
-          return yield* Effect.fail(
-            fail("The waku build produced no dist directory")(undefined),
-          );
+          return yield* fail("The waku build produced no dist directory")(undefined);
         }
         const serverDir = path.join(output.distDirectory, "server");
         const serverIndex = path.join(serverDir, "index.js");
         const hasServerIndex = yield* fs
           .exists(serverIndex)
-          .pipe(
-            Effect.mapError(fail("Failed to probe the built server entry")),
-          );
+          .pipe(Effect.mapError(fail("Failed to probe the built server entry")));
         if (!hasServerIndex) {
-          return yield* Effect.fail(
-            fail(`The waku build produced no server entry at ${serverIndex}`)(
-              undefined,
-            ),
+          return yield* fail(`The waku build produced no server entry at ${serverIndex}`)(
+            undefined,
           );
         }
 
@@ -154,10 +145,7 @@ const makeAwsAdapterTarget = (
         // `./index.js` to parse as a module.
         yield* Effect.all(
           [
-            fs.writeFileString(
-              path.join(serverDir, SERVE_ENTRY_NAME),
-              serveSource,
-            ),
+            fs.writeFileString(path.join(serverDir, SERVE_ENTRY_NAME), serveSource),
             fs.writeFileString(
               path.join(serverDir, "package.json"),
               `${JSON.stringify({ type: "module" }, null, 2)}\n`,
@@ -166,17 +154,12 @@ const makeAwsAdapterTarget = (
           { concurrency: "unbounded" },
         ).pipe(Effect.mapError(fail("Failed to write the Lambda serve entry")));
 
-        const serveModule = yield* toOutputFile(
-          path.join("server", SERVE_ENTRY_NAME),
-          serveSource,
-        );
+        const serveModule = yield* toOutputFile(`server/${SERVE_ENTRY_NAME}`, serveSource);
         // The serve entry becomes `serverModules[0]` — the module alchemy's
         // Server resource deploys as the Lambda `main`.
         const serverModules = [
           serveModule,
-          ...(output.serverModules ?? []).filter(
-            (module_) => module_.name !== serveModule.name,
-          ),
+          ...(output.serverModules ?? []).filter((module_) => module_.name !== serveModule.name),
         ];
         return { ...output, serverModules } satisfies BuildOutput;
       }),
@@ -226,8 +209,10 @@ export const makeWakuAwsTarget = (
   ...makeAwsAdapterTarget(config),
   build: (context: WakuTargetBuildContext) =>
     runBuildChild({
+      runtime: "node",
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "waku",
       config: {
         rootDir: context.root,

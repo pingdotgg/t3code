@@ -1,9 +1,0 @@
-"@effect/platform/SocketServer#ErrorTypeId":
-  replacement: "SocketServer.ErrorTypeId"
-  note: "The API moved to effect/unstable/socket/SocketServer and retains this name."
-"@effect/platform/SocketServer#TcpAddress":
-  replacement: "SocketServer.TcpAddress"
-  note: "The API moved to effect/unstable/socket/SocketServer and retains this name."
-"@effect/platform/SocketServer#UnixAddress":
-  replacement: "SocketServer.UnixAddress"
-  note: "The API moved to effect/unstable/socket/SocketServer and retains this name."

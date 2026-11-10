@@ -3,8 +3,7 @@
 {
   "name": "workflows-shared-test",
   "main": "test/test-entry.ts",
-  "compatibility_date": "2025-02-04",
-  "compatibility_flags": ["enable_ctx_exports"],
+  "compatibility_date": "2026-08-31",
   "durable_objects": {
     "bindings": [{ "name": "ENGINE", "class_name": "Engine" }],
   },

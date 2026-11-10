@@ -6,67 +6,143 @@ import {
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   | "authMethodId"
+  | "authenticateEagerly"
   | "cancelBehavior"
   | "clientCapabilities"
+  | "clientInfo"
   | "onStderr"
   | "resumeMethod"
+  | "sessionMeta"
   | "transformSessionUpdate"
   | "transformStdout"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  /**
-   * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
-   * workspace reads and writes through T3, which turns each edit into a
-   * `session/request_permission` with the file content, instead of writing
-   * through its own tools. Chat sessions turn this on. Setup, probe, and text
-   * generation helpers leave it off so they never touch a workspace.
-   */
-  readonly clientFileSystem?: boolean;
-  /** ACP `authenticate` method id. Defaults to the personal Google account flow. */
+  /** Serve `fs/read_text_file` for runtimes whose native reader is not qualified. */
+  readonly clientFileReads?: boolean;
+  readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
+  /** The installed version, known before `initialize`; it picks the file reader and client name. */
+  readonly runtimeVersion?: string | null;
+  /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
+  readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
-/** Normal launches reject browser login; only the auth flow supplies `onAuthorizationUrl`. */
+function parseAntigravityVersion(version: string | null | undefined) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<number>) {
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * 1.4.2 through 1.4.5 create or overwrite skills/system/run-workflow/SKILL.md in the workspace
+ * unless `run_workflow` is disabled. Older builds offer the tool and leave the file alone.
+ */
+function antigravityWritesRunWorkflowSkill(version: string | null | undefined): boolean {
+  const parsed = parseAntigravityVersion(version);
+  return (
+    parsed !== undefined &&
+    compareVersions(parsed, [1, 4, 2]) >= 0 &&
+    compareVersions(parsed, [1, 4, 5]) <= 0
+  );
+}
+
+/**
+ * Releases T3 qualified for native range reads and linked video. On 1.4.5 the client-read path
+ * sends a whole file to serve one line, and the native reader keeps diff edits.
+ */
+export function isQualifiedAntigravityRelease(version: string | null | undefined): boolean {
+  return version?.trim() === "1.4.5";
+}
+
+// `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
+const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
+
+/**
+ * 1.4.5 appends `systemPrompt.append` to its system instructions on new, load and resume, and
+ * keeps none of it between processes, so every activation sends it again.
+ */
+export const antigravityAppendsSystemPrompt = (
+  initializeResult: EffectAcpSchema.InitializeResponse,
+) => isQualifiedAntigravityRelease(initializeResult.agentInfo?.version);
+
+export function antigravitySessionMeta(
+  initializeResult: EffectAcpSchema.InitializeResponse,
+  systemPromptAppend?: string,
+): EffectAcpSchema.NewSessionRequest["_meta"] | undefined {
+  const antigravity = {
+    ...(antigravityWritesRunWorkflowSkill(initializeResult.agentInfo?.version)
+      ? { disabledTools: ["run_workflow"] }
+      : {}),
+    ...(systemPromptAppend !== undefined && antigravityAppendsSystemPrompt(initializeResult)
+      ? { systemPrompt: { append: systemPromptAppend } }
+      : {}),
+  };
+  return Object.keys(antigravity).length === 0 ? undefined : { antigravity };
+}
+
+/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
+export function antigravityClientInfo(version: string | null | undefined) {
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
+    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
+    : { name: "zed", version: "0.0.0" };
+}
+
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
   input: AntigravityAcpRuntimeInput,
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
       authMethodId: input.authMethod ?? "oauth-personal",
+      authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
+      clientInfo: antigravityClientInfo(input.runtimeVersion),
+      sessionMeta: (initializeResult) =>
+        antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
+        ...input.clientCapabilities,
+        // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: {
-          readTextFile: input.clientFileSystem === true,
-          writeTextFile: input.clientFileSystem === true,
+          readTextFile:
+            input.clientFileReads === true && !isQualifiedAntigravityRelease(input.runtimeVersion),
+          writeTextFile: false,
         },
         terminal: false,
       },
@@ -98,6 +174,29 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+/**
+ * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
+ * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
+ * on the next turn without a restart.
+ */
+export function antigravityCliSessionMode(modeId: string): string {
+  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
+/** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
+export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
+  switch (modeId) {
+    case "yolo":
+      return "full-access";
+    case "auto_edit":
+      return "auto-accept-edits";
+    case "default":
+      return "approval-required";
+    default:
+      return undefined;
+  }
+}
+
 export function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
@@ -106,13 +205,29 @@ export function antigravityModelOptions(
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
 
+/** Runtime 1.4 reports thinking as its own option; 1.3 encoded it in the model ID. */
+export function antigravityThinkingConfig(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+) {
+  const option = configOptions?.find((candidate) => candidate.category === "thought_level");
+  return option?.type === "select" ? option : undefined;
+}
+
 /**
- * Resolves the model a turn should run on. A saved selection is reapplied
- * as-is. The provider default alias resolves to `defaultModel` when the
- * account offers it, so T3 can pick a newer model than the one Google marks
- * current. Otherwise the agent's current selection stands.
+ * Runtime 1.4 lists `gemini-3.8-flash` where 1.3 listed `gemini-3.8-flash-high`. The agent
+ * still accepts the old IDs, so pass them through; the current model may have no thinking option.
  */
-export function resolveAntigravityModel(input: {
+function legacyAntigravityFamily(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  model: string,
+) {
+  return antigravityModelOptions(configOptions)
+    .map((option) => option.value)
+    .filter((family) => model.startsWith(`${family}-`))
+    .toSorted((left, right) => right.length - left.length)[0];
+}
+
+function resolveAntigravityModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
   readonly defaultModel?: string | undefined;
@@ -121,7 +236,9 @@ export function resolveAntigravityModel(input: {
   const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
   if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
   const options = antigravityModelOptions(input.configOptions);
-  return input.defaultModel && options.some((option) => option.value === input.defaultModel)
+  return input.defaultModel &&
+    (options.some((option) => option.value === input.defaultModel) ||
+      legacyAntigravityFamily(input.configOptions, input.defaultModel) !== undefined)
     ? input.defaultModel
     : current;
 }
@@ -131,10 +248,9 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "getConfigOptions" | "setModel" | "setConfigOption"
     >;
     readonly model: string | null | undefined;
-    /** Model to select for the provider default alias. See `resolveAntigravityModel`. */
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
@@ -146,12 +262,18 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       model: input.model,
       defaultModel: input.defaultModel,
     });
-    // The default alias never sends an internal ID. It selects the manifest
-    // default when that differs from the agent's current model, and otherwise
-    // leaves the agent's choice alone.
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
     const options = antigravityModelOptions(configOptions);
+    const legacyFamily = options.some((option) => option.value === resolved)
+      ? undefined
+      : legacyAntigravityFamily(configOptions, resolved);
+    if (legacyFamily !== undefined) {
+      yield* input.runtime
+        .setConfigOption("model", resolved, { allowUnlistedValue: true })
+        .pipe(Effect.mapError(input.mapError));
+      return legacyFamily;
+    }
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(
@@ -167,7 +289,6 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
 );
 
 const IMAGE_MIME_TYPES = new Set(["image/bmp", "image/jpeg", "image/png", "image/webp"]);
-// Formats the bundled SDK's Audio type accepts. Anything else is rejected up front.
 const AUDIO_MIME_TYPES = new Set([
   "audio/aac",
   "audio/flac",
@@ -182,6 +303,18 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/webm",
 ]);
 const ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+// The agent inlines linked video bytes into one model request, so keep it under the inline limit.
+const ANTIGRAVITY_MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Only Gemini takes video. The evidence is the session's resolved model, so an account default
+ * counts once the agent reports it; opaque ids such as `agy-model` need a Gemini display name.
+ */
+function antigravityModelAcceptsVideo(
+  model: { readonly id: string; readonly name: string | undefined } | undefined,
+): boolean {
+  return model !== undefined && (/^gemini-/i.test(model.id) || /^gemini\b/i.test(model.name ?? ""));
+}
 const TEXT_MIME_TYPES = new Set([
   "application/json",
   "application/ld+json",
@@ -241,14 +374,19 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".ini",
   ".conf",
 ]);
-export const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
+const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 
-/** Sends uploads as native ACP content instead of workspace path hints. */
 export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(function* (input: {
   readonly input: ProviderSendTurnInput["input"];
   readonly attachments: ProviderSendTurnInput["attachments"];
-  readonly attachmentsDir: string;
+  readonly resolveAttachmentPath: (
+    attachment: NonNullable<ProviderSendTurnInput["attachments"]>[number],
+  ) => string | null;
+  readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
+  /** Linked video needs a runtime whose `resource_link` handling is qualified and a Gemini model. */
+  readonly agentVersion?: string | undefined;
+  readonly currentModel?: { readonly id: string; readonly name: string | undefined } | undefined;
 }): Effect.fn.Return<
   ReadonlyArray<EffectAcpSchema.ContentBlock>,
   EffectAcpErrors.AcpError,
@@ -256,30 +394,46 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // The agent runs on this host.
+  const platform = yield* HostProcess.Platform;
   const blocks: Array<EffectAcpSchema.ContentBlock> = [];
   const text = input.input?.trim();
   if (text) blocks.push({ type: "text", text });
   let totalBytes = 0;
 
   for (const attachment of input.attachments ?? []) {
+    const isPastedText =
+      attachment.type === "file" &&
+      "source" in attachment &&
+      attachment.source?._tag === "pasted-text";
+    // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
     const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
+    const video =
+      attachment.type === "file" &&
+      mimeType === "video/mp4" &&
+      isQualifiedAntigravityRelease(input.agentVersion) &&
+      // The agent turns a file URI into a path with unquote(urlparse(uri).path), which drops
+      // Windows drives and UNC hosts. Keep the saved path there until Google fixes it.
+      platform !== "win32" &&
+      antigravityModelAcceptsVideo(input.currentModel);
     const textFile =
       attachment.type === "file" &&
       (mimeType.startsWith("text/") ||
         TEXT_MIME_TYPES.has(mimeType) ||
         TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
-    if (!image && !audio && !pdf && !textFile) {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Antigravity does not support '${attachment.name}' (${attachment.mimeType}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file.`,
-      );
-    }
-    const attachmentPath = resolveAttachmentPath({
-      attachmentsDir: input.attachmentsDir,
-      attachment,
-    });
+    const isPathOnly =
+      (attachment.type === "image" && (!image || input.promptCapabilities?.image !== true)) ||
+      (attachment.type === "file" &&
+        (isPastedText ||
+          (audio
+            ? input.promptCapabilities?.audio !== true
+            : pdf || textFile
+              ? input.promptCapabilities?.embeddedContext !== true
+              : !video)));
+    const attachmentPath = input.resolveAttachmentPath(attachment);
     if (!attachmentPath) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Invalid attachment '${attachment.name}'.`,
@@ -294,18 +448,32 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           ),
         ),
       );
+    if (info.type !== "File") {
+      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+        `Could not read attachment '${attachment.name}'.`,
+      );
+    }
+    if (isPathOnly) continue;
     const size = Number(info.size);
     const limit = image
       ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
       : audio
         ? ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES
         : pdf
-          ? PROVIDER_SEND_TURN_MAX_FILE_BYTES
-          : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
+          ? MAX_TOTAL_ATTACHMENT_BYTES
+          : video
+            ? ANTIGRAVITY_MAX_VIDEO_ATTACHMENT_BYTES
+            : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
+    if (
+      attachment.type === "file" &&
+      (size > limit || totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES)
+    ) {
+      continue;
+    }
     totalBytes += size;
-    if (info.type !== "File" || size > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+    if (size > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Attachment '${attachment.name}' is too large. Antigravity accepts text files up to 1 MiB, images up to 10 MiB, audio up to 20 MiB, and 50 MiB total attachments.`,
+        `Image '${attachment.name}' is too large. Antigravity accepts images up to 10 MiB and 50 MiB of native attachments per message.`,
       );
     }
     const uri = yield* path.toFileUrl(attachmentPath).pipe(
@@ -314,8 +482,8 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
         EffectAcpErrors.AcpRequestError.invalidParams(`Invalid attachment '${attachment.name}'.`),
       ),
     );
-    if (pdf) {
-      blocks.push({ type: "resource_link", uri, name: attachment.name, mimeType });
+    if (pdf || video) {
+      blocks.push({ type: "resource_link", uri, name: attachment.name, mimeType, size });
       continue;
     }
     const bytes = yield* fileSystem.stream(attachmentPath, { bytesToRead: limit + 1 }).pipe(

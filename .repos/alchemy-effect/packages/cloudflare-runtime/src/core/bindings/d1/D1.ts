@@ -1,13 +1,13 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const D1Worker = {
-  worker: () =>
-    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/d1/D1.worker"),
+  worker: () => loadInternalWorker("#cloudflare-runtime-core-worker/bindings/d1/D1.worker"),
 };
 import * as Storage from "../../globals/Storage.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook } from "../../PluginContext.ts";
@@ -31,9 +31,7 @@ export class D1 extends Plugin.Service<
      * the binding should target: the shared `d1` service, with the database
      * id carried via designator props.
      */
-    readonly register: (
-      props: D1ServiceProps,
-    ) => Effect.Effect<WorkerdConfig.ServiceDesignator>;
+    readonly register: (props: D1ServiceProps) => Effect.Effect<WorkerdConfig.ServiceDesignator>;
   }
 >()("cloudflare-runtime/plugin/D1") {}
 
@@ -45,27 +43,24 @@ export const D1Live = Layer.effect(
     const storage = yield* Storage.Storage;
 
     const makeStorageService = Effect.gen(function* () {
-      const storageDiskPath =
-        "disk" in storage ? storage.disk?.path : undefined;
+      const storageDiskPath = "disk" in storage ? storage.disk?.path : undefined;
       if (!storageDiskPath) {
-        return yield* new ConfigError({
+        return yield* ConfigError.make({
           subtag: "D1",
-          message:
-            "Cannot configure D1 persistence: the Storage service has no disk path.",
+          message: "Cannot configure D1 persistence: the Storage service has no disk path.",
           hint: "Configure a disk-backed storage layer (`Storage.layerDisk` or `Storage.layerTemp`).",
         });
       }
       const persistPath = path.join(storageDiskPath, "d1");
       yield* fs.makeDirectory(persistPath, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigError({
-              subtag: "D1",
-              message: `Failed to create D1 persistence directory "${persistPath}": ${cause.message}`,
-              hint: "Ensure the storage directory is writable.",
-              detail: { persistPath },
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          ConfigError.make({
+            subtag: "D1",
+            message: `Failed to create D1 persistence directory "${persistPath}": ${cause.message}`,
+            hint: "Ensure the storage directory is writable.",
+            detail: { persistPath },
+            cause,
+          }),
         ),
       );
       return {
@@ -95,10 +90,8 @@ export const D1Live = Layer.effect(
             const d1Service: WorkerdConfig.Service = {
               name: SERVICE_D1,
               worker: {
-                compatibilityDate: "2025-01-01",
-                modules: formatInternalWorkerModules(
-                  yield* Effect.promise(D1Worker.worker),
-                ),
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+                modules: formatInternalWorkerModules(yield* Effect.promise(D1Worker.worker)),
                 durableObjectNamespaces: [
                   {
                     className: D1_OBJECT_CLASS_NAME,
@@ -149,18 +142,15 @@ export const local = (props: D1Props): BindingHook<D1> =>
   );
 
 export const remote = (binding: string, id: string) =>
-  makeRemoteBinding(
-    { name: binding, type: "d1", id, raw: true },
-    (service) => ({
-      name: binding,
-      wrapped: {
-        moduleName: "cloudflare-internal:d1-api",
-        innerBindings: [
-          {
-            name: "fetcher",
-            service,
-          },
-        ],
-      },
-    }),
-  );
+  makeRemoteBinding({ name: binding, type: "d1", id, raw: true }, (service) => ({
+    name: binding,
+    wrapped: {
+      moduleName: "cloudflare-internal:d1-api",
+      innerBindings: [
+        {
+          name: "fetcher",
+          service,
+        },
+      ],
+    },
+  }));

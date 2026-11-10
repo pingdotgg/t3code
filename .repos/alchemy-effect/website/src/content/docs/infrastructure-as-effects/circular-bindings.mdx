@@ -46,7 +46,7 @@ declares the shape A's runtime will expose — here, a `work` method.
 
 ```typescript
 // src/A.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export class A extends Cloudflare.Worker<A, { work: () => Effect.Effect<string> }>()("A") {}
@@ -64,7 +64,7 @@ this point — no runtime.
 
 ```typescript
 // src/B.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export class B extends Cloudflare.Worker<B, { work: () => Effect.Effect<string> }>()("B") {}
@@ -75,16 +75,16 @@ triggers any runtime code by importing the other's class.
 
 ## Add A's runtime, binding B
 
-Attach A's implementation with `A.make(...)`. Inside the Init phase,
+Attach A's implementation with `A.make(...)`. Inside the Construction phase,
 `yield* Cloudflare.Workers.bindWorker(B)` produces a typed stub whose
 methods dispatch to B's deployed Worker at runtime. A also exposes its
 own `work` RPC method so B can call back into it.
 
 ```diff lang="typescript"
   // src/A.ts
-  import * as Cloudflare from "alchemy/Cloudflare";
+  import * as Cloudflare from "@alchemy.run/cloudflare";
   import * as Effect from "effect/Effect";
-+ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 + import { B } from "./B.ts";
 
   export class A extends Cloudflare.Worker<A, { work: () => Effect.Effect<string> }>()("A") {}
@@ -116,9 +116,9 @@ binds it.
 
 ```diff lang="typescript"
   // src/B.ts
-  import * as Cloudflare from "alchemy/Cloudflare";
+  import * as Cloudflare from "@alchemy.run/cloudflare";
   import * as Effect from "effect/Effect";
-+ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 + import { A } from "./A.ts";
 
   export class B extends Cloudflare.Worker<B, { work: () => Effect.Effect<string> }>()("B") {}
@@ -150,7 +150,7 @@ the Layers to the generator so the Tags resolve to real Workers.
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import ALive, { A } from "./src/A.ts";
@@ -202,7 +202,7 @@ Under the hood, alchemy plans the cycle in two passes:
 
 The same pattern works for Lambda↔Lambda, Worker↔Container, or any
 mix — the Tag/Layer split is a property of every Function resource
-([Functions & Servers](/infrastructure-as-effects/functions-and-servers)), not just Workers.
+([Runtime](/infrastructure-as-effects/runtime)), not just Workers.
 
 ## When you don't need this
 

@@ -2,6 +2,11 @@
   "name": "hetzner-website-waku",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/hetzner-website-waku"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,31 +15,26 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/hetzner": "workspace:*",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "hono": "catalog:frontend",
-    "react": "~19.2.6",
-    "react-dom": "~19.2.6",
-    "react-server-dom-webpack": "catalog:frontend",
-    "waku": "catalog:frontend"
+    "effect": "catalog:",
+    "hono": "catalog:",
+    "react": "catalog:react-rsc",
+    "react-dom": "catalog:react-rsc",
+    "react-server-dom-webpack": "catalog:",
+    "waku": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/hetzner": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/hetzner-website-waku"
+    "@effect/platform-node": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }

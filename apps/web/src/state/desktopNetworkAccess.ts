@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -52,7 +52,7 @@ function getDesktopNetworkAccessBridge(): DesktopNetworkAccessBridge | undefined
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopNetworkAccessStateAtom(
+function createDesktopNetworkAccessStateAtom(
   getBridge: () => DesktopNetworkAccessBridge | undefined,
 ) {
   const loadDesktopNetworkAccess = Effect.fn("loadDesktopNetworkAccess")(function* () {
@@ -80,11 +80,12 @@ export function createDesktopNetworkAccessStateAtom(
   });
 
   return Atom.make(loadDesktopNetworkAccess()).pipe(
+    // Retain the snapshot, but let the SWR wrapper revalidate when Settings remounts.
+    Atom.keepAlive,
     Atom.swr({
       staleTime: DESKTOP_NETWORK_ACCESS_STALE_TIME_MS,
       revalidateOnMount: true,
     }),
-    Atom.keepAlive,
     Atom.withLabel("desktop:network-access"),
   );
 }

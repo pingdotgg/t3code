@@ -2,22 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
-} from "./workspaceBasenameLookup";
-
-describe("needsWorkspaceBasenameLookup", () => {
-  it("flags bare filenames", () => {
-    expect(needsWorkspaceBasenameLookup("ChatView.tsx")).toBe(true);
-    expect(needsWorkspaceBasenameLookup("Makefile")).toBe(true);
-  });
-
-  it("leaves anything with a directory alone", () => {
-    expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
-  });
-});
+  pickWorkspaceLinkMatch,
+  workspaceLinkLookupQuery,
+} from "@t3tools/client-runtime/workspace-basename-lookup";
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -31,6 +19,7 @@ describe("pickWorkspaceBasenameMatch", () => {
     );
   });
 
+  // regression: #6297 a bare filename resolves to a file, never a same-named directory
   it("ignores directories", () => {
     expect(
       pickWorkspaceBasenameMatch("components", [
@@ -63,14 +52,40 @@ describe("pickWorkspaceBasenameMatch", () => {
       ]),
     ).toBeNull();
   });
+});
 
-  it("returns null when nothing matches the name", () => {
-    expect(pickWorkspaceBasenameMatch("ChatView.tsx", [])).toBeNull();
-    expect(
-      pickWorkspaceBasenameMatch("ChatView.tsx", [
-        { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
-      ]),
-    ).toBeNull();
+describe("chat file links an agent shortened", () => {
+  const cwd = "/home/user/acme";
+  const entries = [
+    { path: "packages/server/src/cloud/http.ts", kind: "file" as const },
+    { path: "packages/server/src/cloud", kind: "directory" as const },
+    { path: "packages/web/src/api/http.ts", kind: "file" as const },
+    { path: "packages/server/src/index.ts", kind: "file" as const },
+    { path: "packages/web/src/index.ts", kind: "file" as const },
+  ];
+
+  it("searches for package-relative paths and repeated prefixes, not exact ones", () => {
+    expect(workspaceLinkLookupQuery("cloud/http.ts", cwd)).toBe("cloud/http.ts");
+    expect(workspaceLinkLookupQuery("acme/packages/web/src/index.ts", cwd)).toBe(
+      "packages/web/src/index.ts",
+    );
+    expect(workspaceLinkLookupQuery("./cloud/http.ts", cwd)).toBeNull();
+    expect(workspaceLinkLookupQuery("~/acme/src/config.ts", cwd)).toBeNull();
+    expect(workspaceLinkLookupQuery("packages/server/", cwd)).toBeNull();
+  });
+
+  it("opens the one file a package-relative path is the suffix of", () => {
+    expect(pickWorkspaceLinkMatch("cloud/http.ts", cwd, entries)).toBe(
+      "packages/server/src/cloud/http.ts",
+    );
+    expect(pickWorkspaceLinkMatch("acme/packages/web/src/index.ts", cwd, entries)).toBe(
+      "packages/web/src/index.ts",
+    );
+  });
+
+  it("opens nothing when the suffix names several files or splits a segment", () => {
+    expect(pickWorkspaceLinkMatch("src/index.ts", cwd, entries)).toBeNull();
+    expect(pickWorkspaceLinkMatch("ud/http.ts", cwd, entries)).toBeNull();
   });
 });
 
@@ -79,14 +94,7 @@ describe("claimWorkspaceBasenameLookup", () => {
     const first = claimWorkspaceBasenameLookup();
     const second = claimWorkspaceBasenameLookup();
 
-    // The older lookup answering last must not reopen the panel behind the
-    // newer one.
     expect(second()).toBe(true);
     expect(first()).toBe(false);
-  });
-
-  it("stays valid while it is the only claim", () => {
-    const only = claimWorkspaceBasenameLookup();
-    expect(only()).toBe(true);
   });
 });

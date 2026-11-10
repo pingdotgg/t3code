@@ -16,9 +16,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare",
-    "@effect/platform-node": "catalog:effect",
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   }
 }

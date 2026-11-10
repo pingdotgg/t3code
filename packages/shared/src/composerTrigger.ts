@@ -1,4 +1,9 @@
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "pull-request"
+  | "slash-command"
+  | "slash-model"
+  | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -40,13 +45,29 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/** A second slash makes the whole word a path, even when the caret precedes that slash. */
+export function isPathWord(
+  text: string,
+  wordStart: number,
+  cursor: number,
+  isWhitespaceChar: (char: string) => boolean,
+): boolean {
+  let wordEnd = cursor;
+  while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
+    wordEnd += 1;
+  }
+  return text.slice(wordStart + 1, wordEnd).includes("/");
+}
+
 /**
- * Detect an active trigger (@path, $skill, /command) at the cursor position.
- *
- * Accepts an optional `isWhitespaceChar` override so callers with inline
- * placeholder characters (e.g. terminal context chips on web) can treat
- * those as token boundaries.
+ * `$5`, `€9.99` and `$10k` are money, not skills. Matches the amounts the inline skill
+ * token regexes already refuse to render as skills, plus the punctuation prose puts after
+ * one (`$10k.`, `($5)`).
  */
+export function isCurrencyAmountQuery(query: string): boolean {
+  return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
@@ -58,6 +79,9 @@ export function detectComposerTrigger(
 
   if (linePrefix.startsWith("/")) {
     const commandMatch = /^\/(\S*)$/.exec(linePrefix);
+    if (commandMatch && isPathWord(text, lineStart, cursor, isWhitespaceChar ?? isWhitespace)) {
+      return null;
+    }
     if (commandMatch) {
       const commandQuery = commandMatch[1] ?? "";
       if (commandQuery.toLowerCase() === "model") {
@@ -76,7 +100,7 @@ export function detectComposerTrigger(
       };
     }
 
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
+    const modelMatch = /^\/model(?:\s+(.*))?$/i.exec(linePrefix);
     if (modelMatch) {
       return {
         kind: "slash-model",
@@ -95,10 +119,29 @@ export function detectComposerTrigger(
   const tokenStart = tokenIdx + 1;
 
   const token = text.slice(tokenStart, cursor);
-  if (token.startsWith("$")) {
+  if (token.startsWith("/")) {
+    if (isPathWord(text, tokenStart, cursor, wsCheck)) return null;
+    return {
+      kind: "slash-command",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (pullRequestMatch)
+    return {
+      kind: "pull-request",
+      query: pullRequestMatch[1] ?? "",
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  const skillPrefix = /^\p{Sc}/u.exec(token);
+  if (skillPrefix) {
+    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
     return {
       kind: "skill",
-      query: token.slice(1),
+      query: token.slice(skillPrefix[0].length),
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -125,4 +168,15 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** `/clear` as the whole message arms a fresh session instead of sending. */
+export function isClearComposerCommand(text: string): boolean {
+  return /^\/clear\s*$/i.test(text.trim());
+}
+
+/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+export function parseSideChatCommand(text: string): { prompt: string } | null {
+  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }

@@ -1,19 +1,44 @@
+import * as NodeNet from "node:net";
+import { stripVTControlCharacters } from "node:util";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import { SystemError } from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as LocalProvider from "../Local/LocalProvider.ts";
 import * as ProviderLayer from "../Local/ProviderLayer.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
-import {
-  CommandExecutor,
-  UnexpectedExit,
-  makeCommandError,
-  type CommandProps,
-} from "./Command.ts";
+import { moduleExtension } from "../Util/Node.ts";
+import { makeResourceOutput } from "../Util/ResourceOutput.ts";
+import { CommandExecutor, UnexpectedExit, makeCommandError, type CommandProps } from "./Command.ts";
 import { makeCommandRedactor } from "./Redaction.ts";
 
-export interface DevProps extends CommandProps {}
+export interface DevProps extends CommandProps {
+  /**
+   * Make the URL required: the resource is ready only once the command
+   * prints a URL, however long that takes, and fails if the command exits
+   * first. Without it, the resource waits 5 seconds and settles with
+   * `url: undefined` when no URL appears.
+   *
+   * A localhost/IP URL is still preferred: when the first URL printed is
+   * another one, the resource waits up to 5 seconds more for a local one
+   * before settling with it.
+   *
+   * @default false
+   */
+  waitForUrl?: boolean;
+  /**
+   * The port the command listens on. Alchemy sets `PORT` to it, over any
+   * `env.PORT`, and the resource is ready once the port accepts a
+   * connection, however long that takes. Output isn't scanned for a URL,
+   * so `waitForUrl` has no effect: `url` is `http://localhost:<port>`.
+   *
+   * The resource fails if the command exits before the port opens, or if
+   * another process already listens on the port when the command starts.
+   */
+  port?: number;
+}
 
 export interface Dev extends Resource<
   "Command.Dev",
@@ -23,7 +48,9 @@ export interface Dev extends Resource<
      * URL extracted from stdout/stderr. A `localhost`/IP URL (the dev
      * server's own address) is preferred over any other URL the command
      * prints; a non-local URL is only used as a fallback if no local one
-     * appears. Best-effort: `undefined` if no URL appears within 5 seconds.
+     * appears. Best-effort: `undefined` if no URL appears within 5 seconds,
+     * unless `waitForUrl` is set, which waits until one does. With `port`,
+     * it is `http://localhost:<port>`.
      */
     url: string | undefined;
   }
@@ -54,6 +81,36 @@ export interface Dev extends Resource<
  *   command: "npm run dev",
  * });
  * yield* Console.log(dev.url); // e.g. "http://localhost:5173"
+ * ```
+ *
+ * ### Requiring a URL
+ * By default the resource waits 5 seconds for a URL and settles with
+ * `url: undefined` if none appears. Set `waitForUrl` when downstream
+ * resources depend on the URL: the resource is ready only once the
+ * command prints one, however long the server takes to start, and fails
+ * if the command exits first.
+ *
+ * **Example:** Wait for a slow server's URL
+ * ```typescript
+ * const engine = yield* Dev("Engine", {
+ *   command: "rivet-engine start",
+ *   waitForUrl: true,
+ * });
+ * ```
+ *
+ * ### Known Port
+ * When you choose the port, pass it as `port`: Alchemy sets `PORT` to it
+ * and the resource is ready once the port accepts a connection, with no
+ * output scanning. This suits servers that print no URL, and wrappers
+ * that route the port elsewhere.
+ *
+ * **Example:** Serve on port 4000
+ * ```typescript
+ * const api = yield* Dev("Api", {
+ *   command: "node server.ts",
+ *   port: 4000,
+ * });
+ * yield* Console.log(api.url); // "http://localhost:4000"
  * ```
  *
  * ### Working Directory
@@ -105,10 +162,7 @@ export const DevProviderLive = () =>
 export const DevProviderLocal = () =>
   LocalProvider.make(
     Dev,
-    import.meta.resolve(
-      import.meta.url.endsWith(".ts") ? "./Local.ts" : "./Local.js",
-      import.meta.url,
-    ),
+    import.meta.resolve(`./Local${moduleExtension(import.meta.url)}`, import.meta.url),
     Effect.gen(function* () {
       const { spawn } = yield* CommandExecutor;
 
@@ -116,9 +170,37 @@ export const DevProviderLocal = () =>
         // The dev process is spawned into the instance scope the helper
         // provides: it keeps running after `start` returns (readiness) and
         // is killed when the helper closes the scope on restart/delete.
-        start: Effect.fn(function* ({ news: props, invalidate }) {
-          const child = yield* spawn(props);
+        start: Effect.fn(function* ({ fqn, news: props, invalidate }) {
+          const { port } = props;
+          // A restart has already killed the previous process group, so a
+          // listener now is someone else's (an orphaned server, say), and
+          // the readiness probe below would mistake it for this command.
+          if (port !== undefined && (yield* isListening(port))) {
+            return yield* makeCommandError(
+              props,
+              new SystemError({
+                _tag: "Busy",
+                module: "Command",
+                method: "Dev",
+                pathOrDescriptor: port,
+                description: "another process already listens on this port",
+              }),
+            );
+          }
+          const child = yield* spawn(
+            port === undefined ? props : { ...props, env: { ...props.env, PORT: `${port}` } },
+          );
           const redactor = makeCommandRedactor(props.env);
+          // Through the logger, never a raw fd write: the process that owns
+          // the terminal renders the records and writes them to the run log
+          // (and a bare write to its stdout would tear the animated region).
+          const prefixed = yield* makeResourceOutput(fqn);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              prefixed.stdout.flush();
+              prefixed.stderr.flush();
+            }),
+          );
 
           let buffer = "";
           // A non-local URL seen so far (docs link, error page, update notice,
@@ -127,20 +209,21 @@ export const DevProviderLocal = () =>
           // always wins if one shows up. See issue #695.
           let fallbackUrl: string | undefined;
           const deferred = yield* Deferred.make<string>();
+          // Done when the first URL of any kind appears.
+          const anyUrl = yield* Deferred.make<void>();
 
           const mirror = (sink: "stdout" | "stderr") =>
             child[sink].pipe(
               Stream.decodeText,
               redactor.stream,
-              Stream.tap((text) =>
-                Effect.sync(() => process[sink].write(text)),
-              ),
+              Stream.tap((text) => Effect.sync(() => prefixed[sink].push(text))),
               Stream.tap((text) =>
                 Effect.sync(() => {
                   if (Deferred.isDoneUnsafe(deferred)) return;
                   buffer += text;
                   const url = extractUrl(buffer);
                   if (!url) return;
+                  Deferred.doneUnsafe(anyUrl, Effect.void);
                   if (isLocalUrl(url)) {
                     // The dev server's own address — resolve immediately.
                     Deferred.doneUnsafe(deferred, Effect.succeed(url));
@@ -157,24 +240,34 @@ export const DevProviderLocal = () =>
           yield* mirror("stdout");
           yield* mirror("stderr");
 
-          // Readiness: a URL appears (or the 5s budget elapses), unless the
-          // process exits first — an exit before readiness is a failure.
+          // Readiness: a localhost/IP URL appears, or 5 seconds pass and we
+          // settle with any other URL we saw (`undefined` with none). With
+          // `waitForUrl`, those 5 seconds start only once some URL appears,
+          // so the URL is required and there is no deadline: the only other
+          // way out is the process exiting, which is a failure. With `port`,
+          // readiness is the port opening instead, again with no deadline.
+          const awaitLocalUrl = Deferred.await(deferred).pipe(
+            Effect.timeoutOrElse({
+              duration: "5 seconds",
+              orElse: () => Effect.succeed(fallbackUrl),
+            }),
+          );
           const url = yield* Effect.raceAllFirst([
-            Deferred.await(deferred).pipe(
-              Effect.timeoutOrElse({
-                duration: "5 seconds",
-                // No localhost/IP URL appeared in time — fall back to any
-                // other URL we saw (or `undefined` if it stayed silent).
-                orElse: () => Effect.succeed(fallbackUrl),
-              }),
-            ),
+            port !== undefined
+              ? isListening(port).pipe(
+                  Effect.repeat({
+                    schedule: Schedule.spaced("100 millis"),
+                    until: (listening) => listening,
+                  }),
+                  Effect.as(`http://localhost:${port}`),
+                )
+              : props.waitForUrl
+                ? Deferred.await(anyUrl).pipe(Effect.andThen(awaitLocalUrl))
+                : awaitLocalUrl,
             child.exitCode.pipe(
               Effect.mapError((error) => makeCommandError(props, error.reason)),
               Effect.flatMap((exitCode) =>
-                makeCommandError(
-                  props,
-                  new UnexpectedExit({ exitCode, stderr: buffer }),
-                ),
+                makeCommandError(props, new UnexpectedExit({ exitCode, stderr: buffer })),
               ),
             ),
           ]);
@@ -205,19 +298,16 @@ const LOCAL_URL_REGEX =
 // set of punctuation typically used to wrap URLs in log output.
 const URL_REGEX = /https?:\/\/[^\s)\],"'`]+/;
 
-// ECMA-262 ANSI/VT100 escape sequences — `Vite`, `Next`, etc. surround the
-// URL with color codes that would otherwise be eaten by the URL regex.
-// eslint-disable-next-line no-control-regex
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
-
 /**
  * Extract a URL from `text`, favoring a localhost/IP URL (the dev server's
  * own address) over any other URL. Returns the first localhost/IP URL if one
  * is present, otherwise the first plain http(s) URL, otherwise `undefined`.
+ * `Vite`, `Next`, etc. surround the URL with ANSI color codes that would
+ * otherwise be eaten by the URL regex, so strip them first.
  * @internal
  */
 export const extractUrl = (text: string) => {
-  const clean = text.replaceAll(ANSI_REGEX, "");
+  const clean = stripVTControlCharacters(text);
   const url = clean.match(LOCAL_URL_REGEX)?.[0] ?? clean.match(URL_REGEX)?.[0];
   // Some dev servers print their *bind* address (Nuxt: `http://0.0.0.0:3000`),
   // which is not a connectable host. Normalize the unspecified address to
@@ -230,3 +320,21 @@ export const extractUrl = (text: string) => {
 };
 
 const isLocalUrl = (url: string) => LOCAL_URL_REGEX.test(url);
+
+// Whether a TCP connection to `port` succeeds on either loopback address:
+// a server bound to `localhost` may listen on only one of them.
+const isListening = (port: number) =>
+  Effect.all([connects("127.0.0.1", port), connects("::1", port)], {
+    concurrency: "unbounded",
+  }).pipe(Effect.map(([ipv4, ipv6]) => ipv4 || ipv6));
+
+const connects = (host: string, port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const socket = NodeNet.connect({ host, port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resume(Effect.succeed(true));
+    });
+    socket.once("error", () => resume(Effect.succeed(false)));
+    return Effect.sync(() => socket.destroy());
+  });

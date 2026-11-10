@@ -1,5 +1,5 @@
-import { sortServerModules, type OutputFile } from "../../core/index.ts";
 import { describe, expect, it } from "vitest";
+import { sortServerModules, type OutputFile } from "../../core/index.ts";
 import {
   listEdgeFunctions,
   DEFAULT_COMPATIBILITY_DATE,
@@ -20,7 +20,8 @@ describe("makeRunnerConfig", () => {
     const config = makeRunnerConfig("/app");
     expect(config).toEqual({
       appDir: "/app",
-      configPath: "open-next.config.ts",
+      configPath: undefined,
+      cache: "static-assets",
       compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
       skipNextBuild: false,
       minify: false,
@@ -34,6 +35,7 @@ describe("makeRunnerConfig", () => {
       vite: { compatibilityDate: "2026-01-01" },
       nextjs: {
         configPath: "custom.config.ts",
+        cache: "kv",
         buildCommand: "npx next build --debug",
         skipNextBuild: true,
         minify: true,
@@ -43,6 +45,7 @@ describe("makeRunnerConfig", () => {
     expect(config).toEqual({
       appDir: "/app",
       configPath: "custom.config.ts",
+      cache: "kv",
       compatibilityDate: "2026-01-01",
       skipNextBuild: true,
       minify: true,
@@ -79,9 +82,7 @@ describe("toRuntimeModules", () => {
   });
 
   it("normalizes buffered text content to strings and text to bytes", () => {
-    const [text] = toRuntimeModules([
-      file("worker/worker.js", Buffer.from("hello")),
-    ]);
+    const [text] = toRuntimeModules([file("worker/worker.js", Buffer.from("hello"))]);
     expect(text).toEqual({
       name: "worker/worker.js",
       type: "ESModule",
@@ -95,17 +96,11 @@ describe("toRuntimeModules", () => {
 
 describe("hasDoQueueClass", () => {
   it("detects the DO queue class in string and buffered entries", () => {
-    expect(
-      hasDoQueueClass(file("worker/worker.js", "export { DOQueueHandler }")),
-    ).toBe(true);
-    expect(
-      hasDoQueueClass(
-        file("worker/worker.js", Buffer.from("class DOQueueHandler")),
-      ),
-    ).toBe(true);
-    expect(hasDoQueueClass(file("worker/worker.js", "export default {}"))).toBe(
-      false,
+    expect(hasDoQueueClass(file("worker/worker.js", "export { DOQueueHandler }"))).toBe(true);
+    expect(hasDoQueueClass(file("worker/worker.js", Buffer.from("class DOQueueHandler")))).toBe(
+      true,
     );
+    expect(hasDoQueueClass(file("worker/worker.js", "export default {}"))).toBe(false);
     expect(hasDoQueueClass(undefined)).toBe(false);
   });
 });
@@ -139,9 +134,7 @@ describe("listEdgeFunctions", () => {
   });
 
   it("treats middleware-only manifests (and junk) as edge-free", () => {
-    expect(listEdgeFunctions({ middleware: { "/": { files: [] } } })).toEqual(
-      [],
-    );
+    expect(listEdgeFunctions({ middleware: { "/": { files: [] } } })).toEqual([]);
     expect(listEdgeFunctions({})).toEqual([]);
     expect(listEdgeFunctions(undefined)).toEqual([]);
     expect(listEdgeFunctions("nope")).toEqual([]);

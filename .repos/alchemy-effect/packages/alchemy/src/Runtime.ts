@@ -26,10 +26,7 @@ import { asEffect } from "./Util/types.ts";
  * replace, which silently swaps the class in for the Effect and bricks
  * every deployed worker/lambda).
  */
-export const makeEntrypointLayer = (
-  tag: any,
-  entrypoint: any,
-): Layer.Layer<any> => {
+export const makeEntrypointLayer = (tag: any, entrypoint: any): Layer.Layer<any> => {
   if (typeof entrypoint?.build === "function") {
     return entrypoint;
   }
@@ -49,9 +46,7 @@ const parseRedactedMarker = (raw: string): string | undefined => {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isRedactedMarker(parsed)) {
-      return typeof parsed.value === "string"
-        ? parsed.value
-        : JSON.stringify(parsed.value);
+      return typeof parsed.value === "string" ? parsed.value : JSON.stringify(parsed.value);
     }
   } catch {
     // not JSON — plain env value, fall through
@@ -92,7 +87,7 @@ const reifyEnvString = (raw: string): string => {
  * marker. The interceptor's runtime branch reifies those markers for reads
  * during Init, but effects that run later (request handlers, nested
  * layers) resolve `Config` against the raw env-backed provider — without
- * this wrapper, `Config.number("PORT")` inside a handler sees the marker
+ * this wrapper, `Config.Number("PORT")` inside a handler sees the marker
  * JSON instead of the source value and fails with a schema error.
  *
  * Two behaviors:

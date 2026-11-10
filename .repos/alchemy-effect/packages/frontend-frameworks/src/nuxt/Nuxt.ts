@@ -1,3 +1,9 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
 import * as FrameworkCore from "../core/index.ts";
 import {
   Framework,
@@ -6,12 +12,6 @@ import {
   type DeployTargetError,
   type DeployTargetInput,
 } from "../core/index.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
-import type * as Scope from "effect/Scope";
 import {
   enforceNitroConfig,
   findPresetConflict,
@@ -42,10 +42,7 @@ export interface NuxtInstance {
     readonly _layers?: ReadonlyArray<NuxtConfigLayer> | undefined;
     readonly [key: string]: unknown;
   };
-  readonly hook: (
-    name: string,
-    fn: (...args: Array<never>) => unknown,
-  ) => unknown;
+  readonly hook: (name: string, fn: (...args: Array<never>) => unknown) => unknown;
   readonly ready: () => Promise<void>;
   readonly close: () => Promise<void>;
   /**
@@ -148,6 +145,11 @@ export interface NuxtDevPlatformContext {
    * to the framework half — see `NuxtOptions.dev.services`).
    */
   readonly services?: unknown;
+  /**
+   * Overrides for the dev platform's workerd process (opaque to the
+   * framework half — see `NuxtOptions.dev.workerd`).
+   */
+  readonly workerd?: unknown;
 }
 
 /**
@@ -207,8 +209,7 @@ export type NuxtTargetInput = DeployTargetInput<NuxtTarget, NuxtTargetConfig>;
  * The default deploy target: this package's own Cloudflare Workers target
  * module (`src/cloudflare.ts`), loaded from the project's dependency tree.
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/nuxt/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/nuxt/cloudflare";
 
 export interface NuxtOptions {
   /**
@@ -271,6 +272,12 @@ export interface NuxtOptions {
          * local-only.
          */
         readonly services?: unknown;
+        /**
+         * Overrides for the dev platform's workerd process (opaque to the
+         * framework half; the Cloudflare target takes `cloudflare-runtime`
+         * `WorkerdOptions`).
+         */
+        readonly workerd?: unknown;
       }
     | undefined;
 }
@@ -315,51 +322,42 @@ export const NUXT_KIT_SPECIFIER = "nuxt/kit";
  */
 export const make: (
   options?: NuxtOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: NuxtOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: NuxtOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: NuxtTargetConfig = {
-    compatibilityDate: options?.compatibilityDate,
-    compatibilityFlags: options?.compatibilityFlags,
-    main: options?.main,
-    nuxt: options?.nuxt,
-  };
+    const targetConfig: NuxtTargetConfig = {
+      compatibilityDate: options?.compatibilityDate,
+      compatibilityFlags: options?.compatibilityFlags,
+      main: options?.main,
+      nuxt: options?.nuxt,
+    };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<NuxtTarget, NuxtTargetConfig>(
-      root,
-      options?.target ?? DEFAULT_TARGET_SPECIFIER,
-      targetConfig,
-    ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<NuxtTarget, NuxtTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
 
-  const requireNitroPreset = (target: NuxtTarget) =>
-    typeof target.nitroPreset === "string" && target.nitroPreset.length > 0
-      ? Effect.succeed(target)
-      : Effect.fail(
-          fail(
-            `The resolved "${target.platform}" deploy target does not declare the nitro ` +
-              "preset hook (`nitroPreset`) and has no wholesale `build`",
-          ),
-        );
+    const requireNitroPreset = (target: NuxtTarget) =>
+      typeof target.nitroPreset === "string" && target.nitroPreset.length > 0
+        ? Effect.succeed(target)
+        : Effect.fail(
+            fail(
+              `The resolved "${target.platform}" deploy target does not declare the nitro ` +
+                "preset hook (`nitroPreset`) and has no wholesale `build`",
+            ),
+          );
 
-  const loadNuxtKit = (root: string) =>
-    FrameworkCore.loadProjectModule<NuxtKitModule>(
-      root,
-      NUXT_KIT_SPECIFIER,
-    ).pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Nuxt kit", error.cause),
-      ),
-    );
+    const loadNuxtKit = (root: string) =>
+      FrameworkCore.loadProjectModule<NuxtKitModule>(root, NUXT_KIT_SPECIFIER).pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Nuxt kit", error.cause)),
+      );
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = { root, framework: "nuxt", env: buildOptions?.env };
@@ -399,14 +397,9 @@ export const make: (
         // the merged options, so the user's raw value is read from the
         // project's own config layers and rejected with an actionable error
         // instead of being silently replaced.
-        const conflict = findPresetConflict(
-          nuxt.options._layers,
-          target.nitroPreset,
-        );
+        const conflict = findPresetConflict(nuxt.options._layers, target.nitroPreset);
         if (conflict !== undefined) {
-          return yield* Effect.fail(
-            fail(presetConflictMessage(conflict, target.nitroPreset)),
-          );
+          return yield* fail(presetConflictMessage(conflict, target.nitroPreset));
         }
 
         // Registered BEFORE nuxt.ready(): nitro:config fires while ready()
@@ -416,8 +409,7 @@ export const make: (
           nuxt.hook("nitro:config", (nitroConfig: NitroConfigSlice) => {
             enforceNitroConfig(nitroConfig, {
               preset: target.nitroPreset,
-              configure: (config) =>
-                target.configureNitro?.(config, { root, entry }),
+              configure: (config) => target.configureNitro?.(config, { root, entry }),
             });
           });
           nuxt.hook("nitro:init", (nitro: NitroInstanceSlice) => {
@@ -476,151 +468,156 @@ export const make: (
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const target = yield* resolveTarget(root);
-    // Resolve the project's kit before anything expensive: a root without
-    // a Nuxt install fails fast, without spawning the dev platform.
-    const kit = yield* loadNuxtKit(root);
+    const devInProcess: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const target = yield* resolveTarget(root);
+      // Resolve the project's kit before anything expensive: a root without
+      // a Nuxt install fails fast, without spawning the dev platform.
+      const kit = yield* loadNuxtKit(root);
 
-    // The dev platform is acquired BEFORE the server so its finalizer
-    // runs LAST (finalizers are LIFO): the platform (e.g. the Cloudflare
-    // target's platform-proxy workerd instance) outlives the last
-    // in-flight request of the closing dev server.
-    const platform =
-      target.devPlatform !== undefined
-        ? yield* target
-            .devPlatform({
-              root,
-              env: options?.dev?.env,
-              bindings: options?.dev?.bindings,
-              services: options?.dev?.services,
-            })
-            .pipe(Effect.mapError((error) => fail(error.message, error.cause)))
-        : undefined;
+      // The dev platform is acquired BEFORE the server so its finalizer
+      // runs LAST (finalizers are LIFO): the platform (e.g. the Cloudflare
+      // target's platform-proxy workerd instance) outlives the last
+      // in-flight request of the closing dev server.
+      const platform =
+        target.devPlatform !== undefined
+          ? yield* target
+              .devPlatform({
+                root,
+                env: options?.dev?.env,
+                bindings: options?.dev?.bindings,
+                services: options?.dev?.services,
+                workerd: options?.dev?.workerd,
+              })
+              .pipe(Effect.mapError((error) => fail(error.message, error.cause)))
+          : undefined;
 
-    // The user's nuxt.config.ts loads natively; the dev injection rides
-    // the overrides layer. No nitro preset here — nitro's dev flow runs
-    // its own Node dev preset (the SSR worker thread); the deploy preset
-    // only matters for `build`. Telemetry/devtools are disabled: this
-    // dev server runs headless under alchemy / the e2e harness.
-    //
-    // Injected plugins live under node_modules (this package's dist), so
-    // their directories must be forced into `nitro.externals.inline`:
-    // nitro's externals pass would otherwise keep the plugin external and
-    // node would resolve its `nitropack/runtime` import against the raw
-    // package, whose `#nitro-internal-virtual/*` imports only exist
-    // inside the dev bundle.
-    const nitroPlugins = platform?.nitroPlugins;
-    const nuxt = yield* Effect.tryPromise({
-      try: async () =>
-        await kit.loadNuxt({
-          cwd: root,
-          dev: true,
-          ready: false,
-          overrides: makeNuxtOverrides({
-            nuxtConfig: {
-              telemetry: false,
-              devtools: { enabled: false },
-              ...options?.nuxt,
-            },
-            nitroPlugins,
-            nitroExternalsInline: nitroPlugins?.map((plugin) =>
-              path.dirname(plugin),
-            ),
-            runtimeConfig: platform?.runtimeConfig,
+      // The user's nuxt.config.ts loads natively; the dev injection rides
+      // the overrides layer. No nitro preset here — nitro's dev flow runs
+      // its own Node dev preset (the SSR worker thread); the deploy preset
+      // only matters for `build`. Telemetry/devtools are disabled: this
+      // dev server runs headless under alchemy / the e2e harness.
+      //
+      // Injected plugins live under node_modules (this package's dist), so
+      // their directories must be forced into `nitro.externals.inline`:
+      // nitro's externals pass would otherwise keep the plugin external and
+      // node would resolve its `nitropack/runtime` import against the raw
+      // package, whose `#nitro-internal-virtual/*` imports only exist
+      // inside the dev bundle.
+      const nitroPlugins = platform?.nitroPlugins;
+      const nuxt = yield* Effect.tryPromise({
+        try: async () =>
+          await kit.loadNuxt({
+            cwd: root,
+            dev: true,
+            ready: false,
+            overrides: makeNuxtOverrides({
+              nuxtConfig: { telemetry: false, devtools: { enabled: false }, ...options?.nuxt },
+              nitroPlugins,
+              nitroExternalsInline: nitroPlugins?.map((plugin) => path.dirname(plugin)),
+              runtimeConfig: platform?.runtimeConfig,
+            }),
           }),
-        }),
-      catch: (error) => fail("Failed to load the Nuxt project", error),
-    });
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        try {
-          await nuxt.close();
-        } catch {
-          // teardown is best-effort
-        }
-      }),
-    );
-
-    yield* Effect.tryPromise({
-      try: () => nuxt.ready(),
-      catch: (error) => fail("Failed to initialize the Nuxt dev server", error),
-    });
-
-    const server = nuxt.server;
-    if (server === undefined || typeof server.listen !== "function") {
-      return yield* Effect.fail(
-        fail(
-          "The loaded Nuxt instance exposes no dev server (`nuxt.server.listen`)",
-        ),
-      );
-    }
-    // `nuxt.server.listen` is listhen-backed. listhen hunts upward from
-    // 3000 when NO port is given — colliding with (or IPv6-shadowing)
-    // user-facing `alchemy dev` proxy ports — while an explicit `port: 0`
-    // resolves to get-port-please's `getRandomPort`, the same
-    // probe-and-release `findEphemeralPort` does. Probe explicitly for
-    // uniformity with the Vite-based frameworks (see DevPort's TODO).
-    const port =
-      (devOptions?.port ?? options?.dev?.port) ||
-      (yield* FrameworkCore.findEphemeralPort());
-    const host = devOptions?.host;
-    const listener = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        // Nitro's dev-server `listen` is listhen-backed; the second
-        // argument merges into listhen's options (older versions ignore
-        // it, degrading to the default host).
-        try: () =>
-          server.listen(
-            port,
-            host !== undefined ? { hostname: host } : undefined,
-          ),
-        catch: (error) =>
-          fail("Failed to start the dev server listener", error),
-      }),
-      (listener) =>
+        catch: (error) => fail("Failed to load the Nuxt project", error),
+      });
+      yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
           try {
-            await listener.close?.();
+            await nuxt.close();
           } catch {
             // teardown is best-effort
           }
         }),
-    );
-    const url = listener.url;
-    if (url === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
-    }
+      );
 
-    // The initial dev build — same flow as `nuxi dev` (which awaits
-    // buildNuxt after wiring its listener); the promise resolves once
-    // the dev bundles are ready, watchers keep running in background.
-    yield* Effect.tryPromise({
-      try: () => kit.buildNuxt(nuxt),
-      catch: (error) => fail("Failed to build the dev server", error),
+      yield* Effect.tryPromise({
+        try: () => nuxt.ready(),
+        catch: (error) => fail("Failed to initialize the Nuxt dev server", error),
+      });
+
+      const server = nuxt.server;
+      if (server === undefined || typeof server.listen !== "function") {
+        return yield* fail("The loaded Nuxt instance exposes no dev server (`nuxt.server.listen`)");
+      }
+      // `nuxt.server.listen` is listhen-backed. listhen hunts upward from
+      // 3000 when NO port is given — colliding with (or IPv6-shadowing)
+      // user-facing `alchemy dev` proxy ports — while an explicit `port: 0`
+      // resolves to get-port-please's `getRandomPort`, the same
+      // probe-and-release `findEphemeralPort` does. Probe explicitly for
+      // uniformity with the Vite-based frameworks (see DevPort's TODO).
+      const port =
+        (devOptions?.port ?? options?.dev?.port) || (yield* FrameworkCore.findEphemeralPort());
+      const host = devOptions?.host;
+      const listener = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          // Nitro's dev-server `listen` is listhen-backed; the second
+          // argument merges into listhen's options (older versions ignore
+          // it, degrading to the default host).
+          try: () => server.listen(port, host !== undefined ? { hostname: host } : undefined),
+          catch: (error) => fail("Failed to start the dev server listener", error),
+        }),
+        (listener) =>
+          Effect.promise(async () => {
+            try {
+              await listener.close?.();
+            } catch {
+              // teardown is best-effort
+            }
+          }),
+      );
+      const url = listener.url;
+      if (url === undefined) {
+        return yield* fail("Could not determine the dev server URL");
+      }
+
+      // The initial dev build — same flow as `nuxi dev` (which awaits
+      // buildNuxt after wiring its listener); the promise resolves once
+      // the dev bundles are ready, watchers keep running in background.
+      yield* Effect.tryPromise({
+        try: () => kit.buildNuxt(nuxt),
+        catch: (error) => fail("Failed to build the dev server", error),
+      });
+
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
+        },
+        catch: (error) => fail("The dev server did not become reachable", error),
+      }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
+
+      return { url };
     });
 
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
-      },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
+    // Nuxt's kit/module caches and Nitro dev runtime are shared within a
+    // process. Concurrent projects can report readiness while serving a
+    // different project's build, so give each dev server its own process.
+    const dev: Framework["Service"]["dev"] = (devOptions) => {
+      if (FrameworkCore.isInsideDevChild() || !FrameworkCore.isJsonSerializable(options)) {
+        return devInProcess(devOptions);
+      }
+      const root = devOptions?.root ?? baseRoot;
+      const port = devOptions?.port ?? options?.dev?.port;
+      return FrameworkCore.runDevChild({
+        framework: "nuxt",
+        module: "@alchemy.run/frontend-frameworks/nuxt",
+        callerUrl: import.meta.url,
+        rootDir: root,
+        makeOptions: { ...options, root },
+        devOptions: {
+          root,
+          ...(port !== undefined ? { port } : {}),
+          ...(devOptions?.host !== undefined ? { host: devOptions.host } : {}),
+        },
+      });
+    };
 
-    return { url };
+    return Framework.of({ build, dev });
   });
-
-  return Framework.of({ build, dev });
-});
 
 /** The nitro server entry's module name within the `BuildOutput` (POSIX). */
 export const SERVER_ENTRY_NAME = "server/index.mjs";
@@ -645,30 +642,19 @@ export interface NitroOutputDirs {
  */
 export const readNitroOutput = (
   dirs: NitroOutputDirs,
-): Effect.Effect<
-  FrameworkCore.BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem
-> =>
+): Effect.Effect<FrameworkCore.BuildOutput, FrameworkError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const modules = yield* FrameworkCore.readServerModulesFromDisk({
       directory: dirs.serverDir,
       prefix: "server",
     }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
     if (modules.length === 0) {
-      return yield* Effect.fail(
-        fail(`The Nuxt build produced no server modules in ${dirs.serverDir}`),
-      );
+      return yield* fail(`The Nuxt build produced no server modules in ${dirs.serverDir}`);
     }
-    const serverModules = FrameworkCore.sortServerModules(
-      modules,
-      SERVER_ENTRY_NAME,
-    );
+    const serverModules = FrameworkCore.sortServerModules(modules, SERVER_ENTRY_NAME);
     if (serverModules[0]?.name !== SERVER_ENTRY_NAME) {
-      return yield* Effect.fail(
-        fail(
-          `The Nuxt build produced no "${SERVER_ENTRY_NAME}" entry in ${dirs.serverDir}`,
-        ),
+      return yield* fail(
+        `The Nuxt build produced no "${SERVER_ENTRY_NAME}" entry in ${dirs.serverDir}`,
       );
     }
     return {

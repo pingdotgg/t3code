@@ -1,5 +1,5 @@
+import * as Prisma from "@alchemy.run/prisma";
 import { Stage } from "alchemy";
-import * as Prisma from "alchemy/Prisma";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 
@@ -7,7 +7,7 @@ export const region = "eu-west-3" as const;
 
 export const appNameConfig = Effect.gen(function* () {
   const stage = yield* Stage;
-  return yield* Config.string("PRISMA_EFFECT_APP").pipe(
+  return yield* Config.String("PRISMA_EFFECT_APP").pipe(
     Effect.orElseSucceed(() => `alchemy-prisma-compute-effect-${stage}`),
   );
 });
@@ -16,9 +16,7 @@ export const Project = Prisma.Project(
   "Project",
   Effect.gen(function* () {
     return {
-      name: yield* Config.string("PRISMA_PROJECT").pipe(
-        Effect.orElseSucceed(() => undefined),
-      ),
+      name: yield* Config.String("PRISMA_PROJECT").pipe(Effect.orElseSucceed(() => undefined)),
       createDatabase: false,
       region,
     };

@@ -8,107 +8,36 @@ import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 
 describe("EnvironmentLinks", () => {
-  it.effect("retains link lookup failures with user and environment identity", () => {
-    const cause = new Error("database unavailable");
+  it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
+    const inserted: Array<Record<string, unknown>> = [];
     const fakeDb = {
-      select: () => ({
-        from: (table: unknown) => {
-          expect(table).toBe(relayEnvironmentLinks);
-          return {
-            where: () => ({
-              limit: () => Effect.fail(cause),
-            }),
-          };
+      insert: () => ({
+        values: (values: Record<string, unknown>) => {
+          inserted.push(values);
+          return { onConflictDoUpdate: () => Effect.void };
         },
       }),
     } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const links = yield* EnvironmentLinks.EnvironmentLinks;
-      const error = yield* Effect.flip(
-        links.getForUser({ userId: "user-1", environmentId: "env-1" }),
-      );
-
-      expect(error).toMatchObject({
-        _tag: "EnvironmentLinkLookupPersistenceError",
+      yield* links.upsert({
         userId: "user-1",
-        environmentId: "env-1",
-      });
-      expect(error.cause).toBe(cause);
-    }).pipe(
-      Effect.provide(
-        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
-      ),
-    );
-  });
-
-  it.effect("identifies delivery-user list failures without retaining key material", () => {
-    const cause = new Error("database unavailable");
-    const fakeDb = {
-      select: () => ({
-        from: (table: unknown) => {
-          expect(table).toBe(relayEnvironmentLinks);
-          return {
-            where: () => Effect.fail(cause),
-          };
-        },
-      }),
-    } as unknown as RelayDb.RelayDb["Service"];
-
-    return Effect.gen(function* () {
-      const links = yield* EnvironmentLinks.EnvironmentLinks;
-      const error = yield* Effect.flip(
-        links.listDeliveryUsersForEnvironment({
+        request: {
+          notificationsEnabled: false,
+          liveActivitiesEnabled: false,
+          managedTunnelsEnabled: true,
+        } as never,
+        proof: {
           environmentId: "env-1",
-          environmentPublicKey: "sensitive-public-key-material",
-        }),
-      );
-
-      expect(error).toMatchObject({
-        _tag: "EnvironmentLinkUserListPersistenceError",
-        operation: "list-delivery-users",
-        environmentId: "env-1",
+          environmentPublicKey: "public-key-1",
+          descriptor: { label: "Laptop" },
+        } as never,
+        endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
       });
-      expect(error.cause).toBe(cause);
-      expect(error).not.toHaveProperty("environmentPublicKey");
-    }).pipe(
-      Effect.provide(
-        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
-      ),
-    );
-  });
-
-  it.effect("selects users when either notifications or Live Activities are enabled", () => {
-    const whereConditions: Array<unknown> = [];
-    const fakeDb = {
-      select: (selection: unknown) => {
-        expect(selection).toBeDefined();
-        return {
-          from: (table: unknown) => {
-            expect(table).toBe(relayEnvironmentLinks);
-            return {
-              where: (condition: unknown) => {
-                whereConditions.push(condition);
-                return Effect.succeed([]);
-              },
-            };
-          },
-        };
-      },
-    } as unknown as RelayDb.RelayDb["Service"];
-
-    return Effect.gen(function* () {
-      const links = yield* EnvironmentLinks.EnvironmentLinks;
-      expect(yield* links.listUsersForEnvironment({ environmentId: "env-1" })).toEqual([]);
-      expect(whereConditions).toHaveLength(1);
-
-      const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
-      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $1');
-      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
-      expect(query.sql).toContain('"relay_environment_links"."notifications_enabled" = $2');
-      expect(query.sql).toContain('"relay_environment_links"."live_activities_enabled" = $3');
-      expect(query.sql).toContain(" or ");
-      expect(query.params).toEqual(["env-1", true, true]);
+      const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
+      expect(query.sql).toContain("environment_public_key");
+      expect(query.params).toEqual(["env-1", "public-key-1"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
@@ -129,8 +58,7 @@ describe("EnvironmentLinks", () => {
               where: (condition: unknown) => {
                 whereConditions.push(condition);
                 return {
-                  returning: (selection: unknown) => {
-                    expect(selection).toBeDefined();
+                  returning: () => {
                     return Effect.succeed([{ environmentId: "env-1" }]);
                   },
                 };

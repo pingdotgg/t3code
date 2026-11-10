@@ -1,7 +1,9 @@
+import type { StaticRouting } from "../types.ts";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { MAX_ROUTES_RULE_LENGTH, MAX_ROUTES_RULES } from "./constants.ts";
-import type { StaticRouting } from "../types.ts";
+
+const MAX_REPORTED_DUPLICATED_RULES = 5;
 
 // copy of what EWC does. Wrangler uploads the rules in one array (so the API is consistent with Wrangler config),
 // but router Worker expects the rules to be split into two arrays, which we do here.
@@ -9,11 +11,35 @@ import type { StaticRouting } from "../types.ts";
 
 export function parseStaticRouting(input: Array<string>): StaticRouting {
   if (input.length === 0) {
-    throw new Error(
-      "No `run_worker_first` rules were provided; must provide at least 1 rule.",
-    );
+    throw new Error("No `run_worker_first` rules were provided; must provide at least 1 rule.");
   }
   if (input.length > MAX_ROUTES_RULES) {
+    const seenRules = new Set<string>();
+    const duplicatedRules = new Set<string>();
+
+    for (const rule of input) {
+      if (seenRules.has(rule)) {
+        duplicatedRules.add(rule);
+      }
+      seenRules.add(rule);
+    }
+
+    if (duplicatedRules.size > 0) {
+      const duplicateEntryCount = input.length - seenRules.size;
+      const reportedDuplicatedRules = [...seenRules]
+        .filter((rule) => duplicatedRules.has(rule))
+        .slice(0, MAX_REPORTED_DUPLICATED_RULES);
+      const unreportedDuplicatedRuleCount = duplicatedRules.size - reportedDuplicatedRules.length;
+      const unreportedDuplicatedRulesMessage =
+        unreportedDuplicatedRuleCount > 0
+          ? `\n...and ${unreportedDuplicatedRuleCount} more duplicated ${unreportedDuplicatedRuleCount === 1 ? "rule" : "rules"}.`
+          : "";
+
+      throw new Error(
+        `Too many \`run_worker_first\` rules were provided; ${input.length} rules provided (${seenRules.size} distinct, ${duplicateEntryCount} duplicate ${duplicateEntryCount === 1 ? "entry" : "entries"}) exceeds max of ${MAX_ROUTES_RULES}. Note: duplicate entries count towards the route limit. Ensure that no duplicate rules are present in your \`run_worker_first\` configuration.\n\nThe duplicated rules found are:\n${reportedDuplicatedRules.map((rule) => `- ${JSON.stringify(rule)}`).join("\n")}${unreportedDuplicatedRulesMessage}`,
+      );
+    }
+
     throw new Error(
       `Too many \`run_worker_first\` rules were provided; ${input.length} rules provided exceeds max of ${MAX_ROUTES_RULES}.`,
     );
@@ -43,8 +69,7 @@ export function parseStaticRouting(input: Array<string>): StaticRouting {
     );
   }
 
-  const invalidAssetWorkerRules =
-    validateStaticRoutingRules(rawAssetWorkerRules);
+  const invalidAssetWorkerRules = validateStaticRoutingRules(rawAssetWorkerRules);
   const invalidUserWorkerRules = validateStaticRoutingRules(userWorkerRules);
   const errorMessage = formatInvalidRoutes([
     ...invalidRules,

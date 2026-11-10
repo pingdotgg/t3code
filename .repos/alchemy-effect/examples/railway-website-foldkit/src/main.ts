@@ -1,7 +1,6 @@
 import { Schema as S } from "effect";
-import type { Command, Runtime } from "foldkit";
+import type { Runtime, Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
-
 import { card } from "./components/Card.ts";
 
 // MODEL
@@ -16,14 +15,15 @@ export type Message = never;
 
 // UPDATE
 
-export const update = (
-  model: Model,
-  _message: Message,
-): readonly [Model, ReadonlyArray<Command.Command<Message>>] => [model, []];
+export const update = (model: Model, _message: Message): Update.Return<Model, Message> => ({
+  model,
+});
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message> = () => [{}, []];
+export const init: Runtime.ApplicationInit<Model, Message> = () => ({
+  model: {},
+});
 
 // VIEW
 

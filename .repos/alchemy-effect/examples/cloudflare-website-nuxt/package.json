@@ -2,6 +2,11 @@
   "name": "cloudflare-website-nuxt",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-nuxt"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,21 +15,18 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
-    "nitropack": "catalog:frontend",
-    "nuxt": "catalog:frontend",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/cloudflare-website-nuxt"
+    "@alchemy.run/test": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:node24",
+    "nitropack": "catalog:",
+    "nuxt": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
   }
 }

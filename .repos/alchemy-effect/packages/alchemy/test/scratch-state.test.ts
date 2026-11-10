@@ -1,8 +1,8 @@
-import { State } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import * as Core from "@/Test/Core";
-import { describe, expect } from "alchemy-test";
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Core from "@alchemy.run/test/Core";
 import * as Effect from "effect/Effect";
+import { State } from "@/State";
 import { TestLayers, TestResource } from "./test.resources.ts";
 
 const { test } = Test.make({ providers: TestLayers() });
@@ -18,7 +18,7 @@ const { test } = Test.make({ providers: TestLayers() });
 // Cross-process durability is exercised here as cross-INSTANCE durability:
 // each `Core.scratchStack` call builds a fresh store handle, so a second
 // instance only sees the first instance's rows if they were persisted.
-describe("test.provider scratch state durability", () => {
+describe("test.provider scratch state durability", { tags: ["unit", "local"] }, () => {
   const options = { providers: TestLayers() };
   const NAME = "durability-probe";
   const FILE = "test/scratch-state.test.ts";
@@ -26,7 +26,7 @@ describe("test.provider scratch state durability", () => {
   const listRows = (scratch: Core.ScratchStack, stackName: string) =>
     Effect.gen(function* () {
       const state = yield* yield* State;
-      return yield* state.list({ stack: stackName, stage: "test" });
+      return yield* state.list({ stack: stackName, stage: scratch.stage });
     }).pipe(Effect.provide(scratch.state));
 
   test(
@@ -69,6 +69,21 @@ describe("test.provider scratch state durability", () => {
       // the name stays the bare test name — the pre-existing behavior.
       const bare = Core.scratchStack(options, "same name");
       expect(bare.name).toEqual("same-name");
+    }),
+  );
+
+  test(
+    "scratch stacks default to ALCHEMY_TEST_STAGE, then test_${USER}",
+    Effect.sync(() => {
+      // `--stage` sets ALCHEMY_TEST_STAGE for the whole run.
+      const expected =
+        process.env.ALCHEMY_TEST_STAGE ||
+        `test_${process.env.USER || process.env.USERNAME || "unknown"}`;
+      expect(Core.defaultStage()).toBe(expected);
+      const scratch = Core.scratchStack(options, NAME, FILE);
+      expect(scratch.stage).toBe(expected);
+      const overridden = Core.scratchStack({ ...options, stage: "custom" }, NAME, FILE);
+      expect(overridden.stage).toBe("custom");
     }),
   );
 });

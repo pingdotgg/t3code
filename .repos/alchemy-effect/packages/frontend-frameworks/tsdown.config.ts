@@ -5,6 +5,18 @@ export default defineConfig([
     cwd: ".",
     entry: {
       "core/index": "src/core/index.ts",
+      "astro/neon": "src/astro/neon.ts",
+      "foldkit/neon": "src/foldkit/neon.ts",
+      "nextjs/neon": "src/nextjs/neon.ts",
+      "nuxt/neon": "src/nuxt/neon.ts",
+      "octane/neon": "src/octane/neon.ts",
+      "react-router/neon": "src/react-router/neon.ts",
+      "solidstart/neon": "src/solidstart/neon.ts",
+      "tanstack-start/neon": "src/tanstack-start/neon.ts",
+      "sveltekit/neon": "src/sveltekit/neon.ts",
+      "vite/neon": "src/vite/neon.ts",
+      "waku/neon": "src/waku/neon.ts",
+      "vocs/neon": "src/vocs/neon.ts",
       // Standalone child-process entries (spawned by BuildChild.ts /
       // DevChild.ts, never imported) — must keep their own stable files at
       // dist/core/.
@@ -16,14 +28,19 @@ export default defineConfig([
       "astro/cloudflare": "src/astro/cloudflare.ts",
       "astro/entrypoints/aws-server": "src/astro/entrypoints/aws-server.ts",
       "astro/entrypoints/node-server": "src/astro/entrypoints/node-server.ts",
+      "astro/cache": "src/astro/cache.ts",
+      "astro/config": "src/astro/config.ts",
       "astro/source": "src/astro/source.ts",
-      "astro/runtime/entrypoints/server":
-        "src/astro/runtime/entrypoints/server.ts",
+      "astro/runtime/entrypoints/server": "src/astro/runtime/entrypoints/server.ts",
       "astro/runtime/entrypoints/image-passthrough-endpoint":
         "src/astro/runtime/entrypoints/image-passthrough-endpoint.ts",
+      "foldkit/index": "src/foldkit/index.ts",
+      "foldkit/aws": "src/foldkit/aws.ts",
+      "foldkit/node": "src/foldkit/node.ts",
       "nextjs/index": "src/nextjs/index.ts",
       "nextjs/aws": "src/nextjs/aws.ts",
       "nextjs/node": "src/nextjs/node.ts",
+      "nextjs/cache-handler": "src/nextjs/cache-handler.ts",
       "nextjs/source": "src/nextjs/source.ts",
       "aws-lambda/index": "src/aws-lambda/index.ts",
       "nuxt/index": "src/nuxt/index.ts",
@@ -48,6 +65,18 @@ export default defineConfig([
       "tanstack-start/aws": "src/tanstack-start/aws.ts",
       "tanstack-start/node": "src/tanstack-start/node.ts",
       "sveltekit/index": "src/sveltekit/index.ts",
+      "vinext/index": "src/vinext/index.ts",
+      "vinext/aws": "src/vinext/aws.ts",
+      "vinext/node": "src/vinext/node.ts",
+      "vinext/cloudflare": "src/vinext/cloudflare.ts",
+      "vinext/source": "src/vinext/source.ts",
+      "vinext/cache/index": "src/vinext/cache/index.ts",
+      "vinext/cache/kv": "src/vinext/cache/kv.ts",
+      "vinext/cache/kv-runtime": "src/vinext/cache/kv-runtime.ts",
+      "vinext/cache/redis": "src/vinext/cache/redis.ts",
+      "vinext/cache/redis-runtime": "src/vinext/cache/redis-runtime.ts",
+      "vinext/cache/s3": "src/vinext/cache/s3.ts",
+      "vinext/cache/s3-runtime": "src/vinext/cache/s3-runtime.ts",
       "vite/index": "src/vite/index.ts",
       "vite/aws": "src/vite/aws.ts",
       "vite/node": "src/vite/node.ts",
@@ -81,18 +110,46 @@ export default defineConfig([
         /^@astrojs\/underscore-redirects(?:\/|$)/,
       ],
       // Fail the build if another dependency is bundled accidentally.
-      onlyBundle: [
-        "@astrojs/internal-helpers",
-        "@astrojs/underscore-redirects",
-      ],
+      onlyBundle: ["@astrojs/internal-helpers", "@astrojs/underscore-redirects"],
     },
     inputOptions: {
-      external: [/^(?:astro|cloudflare|virtual):/, /^nitropack(?:\/|$)/],
+      external: [
+        /^(?:astro|cloudflare|virtual):/,
+        /^nitropack(?:\/|$)/,
+        /^alchemy(?:\/|$)/,
+        /^@alchemy\.run\/redis(?:\/|$)/,
+        /^@distilled\.cloud\/aws(?:\/|$)/,
+      ],
       makeAbsoluteExternalsRelative: true,
     },
     outputOptions: {
       entryFileNames: "[name].js",
       chunkFileNames: "_chunks/[name]-[hash].js",
+    },
+  },
+  // The Astro cache provider runs in the Worker. It builds alone so its
+  // entry never changes how the main build splits chunks, which modules
+  // that resolve siblings via `import.meta.url` depend on.
+  {
+    cwd: ".",
+    entry: { "astro/runtime/cache/provider": "src/astro/runtime/cache/provider.ts" },
+    exports: false,
+    outDir: "dist",
+    clean: false,
+    tsconfig: "tsconfig.runtime.json",
+    format: "esm",
+    target: "esnext",
+    dts: false,
+    shims: false,
+    sourcemap: true,
+    deps: { onlyBundle: [] },
+    inputOptions: {
+      external: [/^(?:astro|cloudflare):/, /^astro(?:\/|$)/],
+      makeAbsoluteExternalsRelative: true,
+    },
+    outputOptions: {
+      entryFileNames: "[name].js",
+      codeSplitting: false,
     },
   },
   {

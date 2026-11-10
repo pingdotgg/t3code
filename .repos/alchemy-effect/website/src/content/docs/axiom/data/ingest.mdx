@@ -11,7 +11,7 @@ same Stack as the Workers and Functions that emit the data.
 ## Create a dataset
 
 ```typescript
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 const logs = yield* Axiom.Dataset("logs", {
   name: "my-app-logs",
@@ -67,7 +67,7 @@ export const Ingest = Axiom.ApiToken("Ingest", {
   },
 });
 
-// src/worker.ts — on the Worker's init Effect, merged with its other binding layers:
+// src/worker.ts — on the Worker's constructor Effect, merged with its other binding layers:
 Effect.provide(
   Layer.mergeAll(
     Cloudflare.R2.ReadWriteBucketBinding,
@@ -88,7 +88,8 @@ for the full pattern.
 - `otelEndpoint` — the root; most exporters auto-append the signal
   path.
 - `otelHeaders` — the non-secret headers Axiom expects, i.e.
-  `X-Axiom-Dataset: <name>`. The `Authorization: Bearer` header is
+  `X-Axiom-Dataset: <name>`, or `X-Axiom-Metrics-Dataset: <name>` for a
+  `otel:metrics:v1` dataset. The `Authorization: Bearer` header is
   deliberately excluded so no secret lives in dataset state — that's
   what the ingest token below is for.
 
@@ -147,7 +148,7 @@ own. `Stack.useSync` computes props from the resolved stage — handy
 at module scope where there's no `yield*` available:
 
 ```typescript
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import { Stack } from "alchemy/Stack";
 
 export const Traces = Axiom.Dataset(

@@ -21,9 +21,9 @@ highlight. The [navigation hash](../../apps/web/src/lib/assistantCitationNavigat
 uses base64url because router normalization otherwise decodes whitespace and
 source IDs inside the citation URI.
 
-[ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts) expands
-citations before dispatch to any provider adapter. It sends the saved excerpt
-without looking up the source, distinguishes quoted reference material from the
-user's comment, and leaves persisted messages in their original form. Input
-limits apply after expansion as well as before it. A draft that fits as encoded
-links can exceed the provider limit once expanded.
+Expand citations with the [shared formatter](../../packages/shared/src/assistantCitations.ts)
+before dispatch to a provider adapter. Send the saved excerpt without looking up
+the source, distinguish quoted reference material from the user's comment, and
+leave persisted messages in their original form. Input limits apply after
+expansion as well as before it. A draft that fits as encoded links can exceed the
+provider limit once expanded.

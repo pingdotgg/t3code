@@ -1,9 +1,3 @@
-// Minimal codex app-server stand-in for runtime-level collab tests.
-// Speaks just enough of the protocol for CodexSessionRuntime to start a
-// session, using REAL captured responses (codexMultiAgentWire.json), then
-// replays a scripted multi-agent notification sequence read from the
-// T3_CODEX_COLLAB_SCRIPT env var (a JSON file path) when the first turn
-// starts. Runs as a plain Node process — stdlib only.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 import * as NodePath from "node:path";
@@ -18,7 +12,7 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
-
+const openServerRequests = new Map();
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let message;
@@ -28,6 +22,24 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  if (openServerRequests.has(id)) {
+    // Match real Codex's resolved item ID so the runtime closes the corresponding approval card.
+    const request = openServerRequests.get(id);
+    openServerRequests.delete(id);
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.approvalResponses`,
+      `${JSON.stringify({ id, label: request.label, result: message.result ?? null })}\n`,
+    );
+    write({
+      jsonrpc: "2.0",
+      method: "serverRequest/resolved",
+      params: {
+        threadId: script.rootThreadId,
+        requestId: request.itemId ?? request.label,
+      },
+    });
+    return;
+  }
   if (method === undefined && script.serverRequests?.some((request) => request.id === id)) {
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.responses`,
@@ -58,7 +70,18 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "account/read") {
-    write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
+    write({
+      id,
+      result: { account: script.account ?? { type: "apiKey" }, requiresOpenaiAuth: false },
+    });
+    return;
+  }
+  if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
+    write({ id, error: { code: -32000, message: "usage unavailable" } });
+    return;
+  }
+  if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
+    write({ id, result: { outcome: script.resetCreditOutcome } });
     return;
   }
   if (method === "skills/list" || method === "model/list") {
@@ -67,6 +90,14 @@ rl.on("line", (line) => {
   }
   if (method === "thread/start") {
     write({ id, result: fixture.responses.threadStart });
+    return;
+  }
+  if (method === "thread/inject_items" && script.recordRequests) {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+      `${JSON.stringify({ method, params: message.params })}\n`,
+    );
+    write({ id, result: {} });
     return;
   }
   if (method === "thread/resume") {
@@ -136,8 +167,20 @@ rl.on("line", (line) => {
     for (const notification of script.notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
-    for (const request of script.serverRequests ?? []) {
-      write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
+    for (const [index, request] of (script.serverRequests ?? []).entries()) {
+      if (request.id !== undefined) {
+        write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
+        continue;
+      }
+      const requestId = 9000 + index;
+      const label = request.label ?? `approval-${requestId}`;
+      openServerRequests.set(requestId, { label, itemId: request.params?.itemId });
+      const params = JSON.parse(
+        JSON.stringify(request.params)
+          .replaceAll("${threadId}", String(rootThreadId))
+          .replaceAll("${turnId}", String(turn.id)),
+      );
+      write({ jsonrpc: "2.0", id: requestId, method: request.method, params });
     }
     if (script.holdTurnOpen !== true) {
       write({
@@ -152,9 +195,6 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "turn/interrupt") {
-    // Record which thread/turn was interrupted (append-only sidecar file the
-    // test reads) so Stop coverage can assert every live child was reached.
-    // failInterruptFor simulates a dead child whose interrupt errors.
     const target = message.params?.threadId;
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.interrupts`,
@@ -179,8 +219,6 @@ rl.on("line", (line) => {
       return;
     }
     if (script.hangInterruptFor && script.hangInterruptFor === target) {
-      // Never respond: simulates a wedged child whose RPC neither resolves
-      // nor rejects. The runtime's bounded deadline must move on.
       return;
     }
     write({ id, result: {} });

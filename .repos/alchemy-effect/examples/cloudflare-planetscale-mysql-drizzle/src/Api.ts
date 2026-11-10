@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle/MySQL";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle/MySQL";
 import { eq } from "drizzle-orm";
 import { Layer } from "effect";
 import * as Effect from "effect/Effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Hyperdrive } from "./Db.ts";
 import { relations, Users } from "./schema.ts";
 
@@ -13,8 +13,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
   {
     main: import.meta.url,
     compatibility: {
-      date: "2026-03-17",
-      flags: ["nodejs_compat"],
+      date: "2026-08-31",
     },
   },
   Effect.gen(function* () {
@@ -34,10 +33,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             }
             const id = Number(request.url.split("/").pop());
             if (Number.isNaN(id)) {
-              return yield* HttpServerResponse.json(
-                { error: "Invalid user ID" },
-                { status: 400 },
-              );
+              return yield* HttpServerResponse.json({ error: "Invalid user ID" }, { status: 400 });
             }
             const user = yield* db.query.Users.findFirst({
               where: { id },
@@ -55,32 +51,20 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 email: crypto.randomUUID(),
               })
               .$returningId();
-            const user = yield* db
-              .select()
-              .from(Users)
-              .where(eq(Users.id, created!.id));
+            const user = yield* db.select().from(Users).where(eq(Users.id, created!.id));
             return yield* HttpServerResponse.json({ user });
           }
           case "DELETE": {
             const id = Number(request.url.split("/").pop());
             if (Number.isNaN(id)) {
-              return yield* HttpServerResponse.json(
-                { error: "Invalid user ID" },
-                { status: 400 },
-              );
+              return yield* HttpServerResponse.json({ error: "Invalid user ID" }, { status: 400 });
             }
-            const [user] = yield* db
-              .select()
-              .from(Users)
-              .where(eq(Users.id, id));
+            const [user] = yield* db.select().from(Users).where(eq(Users.id, id));
             yield* db.delete(Users).where(eq(Users.id, id));
             return yield* HttpServerResponse.json({ user });
           }
           default: {
-            return yield* HttpServerResponse.json(
-              { error: "Method not allowed" },
-              { status: 405 },
-            );
+            return yield* HttpServerResponse.json({ error: "Method not allowed" }, { status: 405 });
           }
         }
       }).pipe(

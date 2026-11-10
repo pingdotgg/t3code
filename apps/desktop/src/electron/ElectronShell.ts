@@ -1,4 +1,6 @@
+import { MAC_PERMISSION_SETTINGS_URLS } from "../permissions/MacPermission.ts";
 import {
+  isLocalEditorFileUrl,
   REMOTE_CAPABLE_EDITOR_IDS,
   remoteSchemeForEditor,
   type SystemSettingsPane,
@@ -10,22 +12,7 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-/**
- * Deep links to individual System Settings panes. These are app-fixed, not
- * renderer-supplied, so they skip `parseSafeExternalUrl` — which exists to keep
- * arbitrary link schemes from reaching the OS handler — and open through their
- * own path below. The pane rather than the URL crosses the IPC boundary, so a
- * renderer can only ask for one of these known destinations.
- *
- * Full Disk Access uses the post-Ventura `PrivacySecurity.extension` anchor.
- */
-const SYSTEM_SETTINGS_URLS: Record<SystemSettingsPane, string> = {
-  "full-disk-access":
-    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
-};
-
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`)
-// must reach the OS handler; every other non-web scheme stays blocked.
+// Remote editor deep links and local editor file links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -34,13 +21,26 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
   }),
 );
 
+// "Use T3 Code in another app" opens these apps (apps/web/src/components/mcp/mcpApps.ts). List
+// each exact link shape the wizard sends, never a whole scheme.
+const APP_LAUNCH_URLS = new Set(["grokbot://app"]);
+
+// Zed embeds [user@]host in the path; reject passwords and ports there.
+const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
+
 const isRemoteEditorUrl = (url: URL) =>
   REMOTE_EDITOR_PROTOCOLS.has(url.protocol) &&
   url.username.length === 0 &&
   url.password.length === 0 &&
-  url.host === "vscode-remote" &&
-  url.pathname.startsWith("/ssh-remote+") &&
-  url.pathname.length > "/ssh-remote+".length;
+  (url.protocol === "zed:"
+    ? url.host === "ssh" && ZED_SSH_PATHNAME.test(url.pathname)
+    : url.protocol === "jetbrains:"
+      ? url.host === "gateway" &&
+        url.pathname === "/ssh/environment" &&
+        (url.searchParams.get("h") ?? "").length > 0
+      : url.host === "vscode-remote" &&
+        url.pathname.startsWith("/ssh-remote+") &&
+        url.pathname.length > "/ssh-remote+".length);
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {
@@ -49,7 +49,10 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
 
   try {
     const url = new URL(rawUrl);
-    return SAFE_WEB_PROTOCOLS.has(url.protocol) || isRemoteEditorUrl(url)
+    return SAFE_WEB_PROTOCOLS.has(url.protocol) ||
+      APP_LAUNCH_URLS.has(url.href) ||
+      isRemoteEditorUrl(url) ||
+      isLocalEditorFileUrl(url)
       ? Option.some(url.href)
       : Option.none();
   } catch {
@@ -61,16 +64,15 @@ export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
-    /** Opens a known System Settings pane by identifier, not by URL. */
     readonly openSystemSettings: (pane: SystemSettingsPane) => Effect.Effect<boolean>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = ElectronShell.of({
-  openExternal: (rawUrl) =>
-    Option.match(parseSafeExternalUrl(rawUrl), {
+  openExternal: Effect.fn("ElectronShell.openExternal")(function (rawUrl) {
+    return Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),
       onSome: (externalUrl) =>
         Effect.promise(() =>
@@ -79,16 +81,19 @@ export const make = ElectronShell.of({
             () => false,
           ),
         ),
-    }),
-  openSystemSettings: (pane) =>
-    Effect.promise(() =>
-      Electron.shell.openExternal(SYSTEM_SETTINGS_URLS[pane]).then(
+    });
+  }),
+  openSystemSettings: Effect.fn("ElectronShell.openSystemSettings")(function (pane) {
+    return Effect.promise(() =>
+      Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[pane]).then(
         () => true,
         () => false,
       ),
-    ),
-  copyText: (text) =>
-    Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined)),
+    );
+  }),
+  copyText: Effect.fn("ElectronShell.copyText")(function (text) {
+    return Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined));
+  }),
 });
 
 export const layer = Layer.succeed(ElectronShell, make);

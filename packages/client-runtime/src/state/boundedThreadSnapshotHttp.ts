@@ -1,0 +1,125 @@
+import type { ThreadId } from "@t3tools/contracts";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { HttpClient } from "effect/http";
+
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import type { PreparedConnection } from "../connection/model.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import {
+  executeAuthenticatedEnvironmentHttpRequest,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+
+const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
+
+export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentBoundedThreadSnapshot",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
+  readonly timeoutMs?: number;
+}) {
+  const endpoint = {
+    params: { threadId: input.threadId },
+    query: {
+      compactTurnItems: "1",
+      dedupeBodies: "1",
+      compactIds: "1",
+      deferWork: "1",
+    },
+  };
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    group: "orchestration",
+    method: "GET",
+    url: (urls) => urls.threadBoundedSnapshot(endpoint),
+    timeoutMs: input.timeoutMs ?? DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.threadBoundedSnapshot({
+        ...endpoint,
+        headers: withOrchestrationProtocolHeader(headers),
+      }),
+  }).pipe(
+    Effect.map(({ turnItemsOmitLocalVisible, ...snapshot }) => ({
+      ...snapshot,
+      projection: boundedSnapshotProjection({ ...snapshot, turnItemsOmitLocalVisible }),
+    })),
+  );
+});
+
+/**
+ * A structured EnvironmentResourceNotFoundError means the thread is missing. Any other failure
+ * leaves the snapshot to the socket.
+ */
+export const layer: Layer.Layer<
+  ThreadSnapshotLoader.ThreadSnapshotLoader,
+  never,
+  HttpClient.HttpClient
+> = Layer.effect(
+  ThreadSnapshotLoader.ThreadSnapshotLoader,
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    );
+    return ThreadSnapshotLoader.ThreadSnapshotLoader.of({
+      load: Effect.fn("ThreadSnapshotLoader.load")(function (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+      ) {
+        return fetchEnvironmentBoundedThreadSnapshot({
+          prepared,
+          threadId,
+          signer,
+          remoteAuthorization,
+        }).pipe(
+          Effect.map((bounded): ThreadSnapshotLoader.ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: bounded.snapshotSequence,
+              projection: bounded.projection,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+            history: {
+              historyCursor: bounded.historyCursor,
+              hasMoreHistory: bounded.hasMoreHistory,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+          })),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug(
+                "Bounded thread snapshot not found over HTTP; treating the thread as deleted.",
+              ).pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as({
+                  _tag: "missing",
+                } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Could not load the bounded thread snapshot over HTTP; using the socket snapshot instead.",
+            ).pipe(
+              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
+              Effect.as({
+                _tag: "unavailable",
+              } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
+            ),
+          ),
+        );
+      }),
+    });
+  }),
+);

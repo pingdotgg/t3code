@@ -1,5 +1,8 @@
+import { describe, expect, test } from "@alchemy.run/test";
+import * as Duration from "effect/Duration";
 import { deepEqual } from "@/Diff";
 import {
+  BYTES_MARKER,
   DATE_MARKER,
   decodeDuration,
   DURATION_MARKER,
@@ -7,37 +10,25 @@ import {
   reviveState,
   reviveStateRecursive,
 } from "@/State/StateEncoding";
-import { describe, expect, test } from "alchemy-test";
-import * as Duration from "effect/Duration";
 
 // Dates in persisted props must ROUND-TRIP: a provider's `diff`/`delete`/
 // `read` receive `olds` from the state store on a later run, and a
 // Date-typed prop must come back as a real Date — not `{}` (the old
 // structural-walk bug, which churned a phantom update on every plan) and
 // not a bare ISO string (which lies about the declared prop type).
-describe("StateEncoding Duration round-trip", () => {
+describe("StateEncoding Duration round-trip", { tags: ["unit", "local"] }, () => {
   // The revived value is untyped JSON, but a Duration in = a Duration out is
   // exactly what these tests assert; the cast lets `Duration.equals` (which
   // no longer accepts `unknown`) verify it.
   const roundTrip = (value: Duration.Duration) =>
-    JSON.parse(
-      JSON.stringify(encodeState(value)),
-      reviveState,
-    ) as Duration.Duration;
+    JSON.parse(JSON.stringify(encodeState(value)), reviveState) as Duration.Duration;
 
   test("finite, infinity, and negative infinity survive encode → JSON → revive", () => {
-    expect(
-      Duration.equals(roundTrip(Duration.seconds(15)), Duration.seconds(15)),
-    ).toBe(true);
-    expect(
-      Duration.equals(roundTrip(Duration.infinity), Duration.infinity),
-    ).toBe(true);
-    expect(
-      Duration.equals(
-        roundTrip(Duration.negativeInfinity),
-        Duration.negativeInfinity,
-      ),
-    ).toBe(true);
+    expect(Duration.equals(roundTrip(Duration.seconds(15)), Duration.seconds(15))).toBe(true);
+    expect(Duration.equals(roundTrip(Duration.infinity), Duration.infinity)).toBe(true);
+    expect(Duration.equals(roundTrip(Duration.negativeInfinity), Duration.negativeInfinity)).toBe(
+      true,
+    );
   });
 
   test("decodeDuration rebuilds Duration.toJSON without clamping negatives", () => {
@@ -53,7 +44,7 @@ describe("StateEncoding Duration round-trip", () => {
   });
 });
 
-describe("StateEncoding Date round-trip", () => {
+describe("StateEncoding Date round-trip", { tags: ["unit", "local"] }, () => {
   const value = {
     expires: new Date("2027-01-01T00:00:00.000Z"),
     nested: { dates: [new Date("2028-06-15T12:30:00.000Z")] },
@@ -61,16 +52,11 @@ describe("StateEncoding Date round-trip", () => {
   };
 
   test("encode → JSON → reviveState rebuilds Date instances (local store path)", () => {
-    const revived = JSON.parse(
-      JSON.stringify(encodeState(value)),
-      reviveState,
-    ) as typeof value;
+    const revived = JSON.parse(JSON.stringify(encodeState(value)), reviveState) as typeof value;
     expect(revived.expires).toBeInstanceOf(Date);
     expect(revived.expires.toISOString()).toBe("2027-01-01T00:00:00.000Z");
     expect(revived.nested.dates[0]).toBeInstanceOf(Date);
-    expect(revived.nested.dates[0]!.toISOString()).toBe(
-      "2028-06-15T12:30:00.000Z",
-    );
+    expect(revived.nested.dates[0]!.toISOString()).toBe("2028-06-15T12:30:00.000Z");
     expect(revived.text).toBe("unrelated");
   });
 
@@ -118,11 +104,37 @@ describe("StateEncoding Date round-trip", () => {
     ) as typeof suspicious;
     expect(viaHttp.n).toBe(1);
     expect(typeof viaHttp[DATE_MARKER]).toBe("string");
-    const viaLocal = JSON.parse(
-      JSON.stringify(suspicious),
-      reviveState,
-    ) as typeof suspicious;
+    const viaLocal = JSON.parse(JSON.stringify(suspicious), reviveState) as typeof suspicious;
     expect(viaLocal.n).toBe(1);
     expect(typeof viaLocal[DATE_MARKER]).toBe("string");
+  });
+});
+
+// Byte-valued props (a WAF byte-match string, a zip) must round-trip too:
+// drift repair and recreate run the provider with the persisted props, so a
+// dropped or mangled byte array cannot be rebuilt.
+describe("StateEncoding bytes round-trip", { tags: ["unit", "local"] }, () => {
+  const value = {
+    search: new TextEncoder().encode("/blocked"),
+    nested: [{ zip: new Uint8Array([0, 255]) }],
+  };
+
+  test("encode → JSON → reviveState rebuilds Uint8Array instances (local store path)", () => {
+    const revived = JSON.parse(JSON.stringify(encodeState(value)), reviveState) as typeof value;
+    expect(revived.search).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(revived.search)).toBe("/blocked");
+    expect([...revived.nested[0]!.zip]).toEqual([0, 255]);
+  });
+
+  test("encode → transport JSON → reviveStateRecursive rebuilds Uint8Array instances (HTTP store path)", () => {
+    const revived = reviveStateRecursive(
+      JSON.parse(JSON.stringify(encodeState(value))),
+    ) as typeof value;
+    expect(revived.search).toBeInstanceOf(Uint8Array);
+    expect([...revived.nested[0]!.zip]).toEqual([0, 255]);
+  });
+
+  test("the persisted envelope is the base64 marker", () => {
+    expect(encodeState(new Uint8Array([1, 2, 3]))).toEqual({ [BYTES_MARKER]: "AQID" });
   });
 });

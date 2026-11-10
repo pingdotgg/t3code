@@ -1,12 +1,9 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import Backend, { Bucket } from "./src/backend.ts";
 
 export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
-  compatibility: {
-    flags: ["nodejs_compat"],
-  },
   env: {
     GREETING: "Hello from TanStack Start on Cloudflare!",
     BUCKET: Bucket,

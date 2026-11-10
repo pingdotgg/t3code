@@ -21,7 +21,7 @@ registered — see [Setup](/docker/setup) and the
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Docker from "alchemy/Docker";
+import * as Docker from "@alchemy.run/docker";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -68,7 +68,7 @@ fixed once it holds data you care about.
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
 
-const configuredPassword = yield* Config.redacted("POSTGRES_PASSWORD").pipe(
+const configuredPassword = yield* Config.Redacted("POSTGRES_PASSWORD").pipe(
   Config.option,
 );
 const password = yield* Option.match(configuredPassword, {
@@ -134,6 +134,110 @@ port and protocol — here `"5432/tcp"` maps to `15432` — which is
 what your app's connection string needs; `Docker.inspectContainer`
 reads the same normalized attributes fresh from the daemon for any
 container by name, bound host ports included.
+
+The following examples show optional runtime controls on separate
+worker containers. Check your image's filesystem and user requirements
+before applying them to the Postgres container above.
+
+## Limit memory, CPU, and processes
+
+```typescript
+const worker = yield* Docker.Container("worker", {
+  image: "alpine:3.22",
+  command: ["sleep", "3600"],
+  memory: "256m",
+  memorySwap: "256m",
+  memoryReservation: "128m",
+  cpus: 0.5,
+  pidsLimit: 128,
+  start: true,
+});
+```
+
+`memory` is a hard RAM limit; `memoryReservation` is a soft
+limit under contention. `memorySwap` limits **RAM plus swap**, not
+swap alone. Setting it equal to `memory` disables swap for this
+container where supported. `cpus: 0.5` limits CPU time to half
+a core, and `pidsLimit` limits the number of processes and threads.
+These limits apply to ordinary Docker Engine containers, not Swarm
+services.
+
+## Restrict privileges and writable paths
+
+```typescript
+const worker = yield* Docker.Container("restricted-worker", {
+  image: "alpine:3.22",
+  command: ["sleep", "3600"],
+  readOnlyRootFilesystem: true,
+  capDrop: ["ALL"],
+  noNewPrivileges: true,
+  user: "1000:1000",
+  init: true,
+  tmpfs: [{ path: "/tmp", size: "32m", mode: 0o1777 }],
+  start: true,
+});
+```
+
+`readOnlyRootFilesystem` is Alchemy's name for Docker's `--read-only`:
+writeable directories must be mounted separately. The `tmpfs`
+above provides ephemeral scratch space; use a named `Volume` for
+data that must survive replacement. `capDrop: ["ALL"]` removes
+Linux capabilities, `noNewPrivileges` prevents gaining privileges
+through exec, and `user` sets the runtime UID/GID. `init` handles
+signal forwarding and reaping child processes. Only grant the
+capabilities and filesystem access your image actually requires.
+
+## Configure host security profiles
+
+```typescript
+const worker = yield* Docker.Container("profiled-worker", {
+  image: "alpine:3.22",
+  seccompProfile: "./security/worker-seccomp.json",
+  appArmorProfile: "worker-profile",
+});
+```
+
+`seccompProfile` points to a JSON file on the machine running
+Alchemy's Docker CLI. Alchemy hashes its **contents**, so editing
+the file recreates the container even when its path stays the
+same. `appArmorProfile` names an AppArmor policy that must already
+be loaded on the Docker host; its availability is host-dependent.
+Docker's default confinement applies when you leave these settings
+unset. Avoid `"unconfined"` unless disabling a policy is intentional.
+
+You can also provide `groupAdd: ["2000"]` for supplementary groups
+and `ulimits: { nofile: { soft: 1024, hard: 4096 } }` for per-process
+limits. `userNamespace` selects a user-namespace mode; `userNamespace: "host"`
+**opts out of** daemon user remapping rather than strengthening
+isolation.
+
+## Rotate logs and control shutdown
+
+```typescript
+const worker = yield* Docker.Container("logged-worker", {
+  image: "alpine:3.22",
+  logDriver: "local",
+  logOptions: { "max-size": "10m", "max-file": "3" },
+  oomScoreAdjustment: 200,
+  stopSignal: "SIGTERM",
+  stopTimeout: "15 seconds",
+});
+```
+
+`logDriver` and `logOptions` configure Docker-managed logging;
+supported options depend on the selected driver. `oomScoreAdjustment`
+adjusts Linux's preference for choosing a process under memory
+pressure; it does **not** disable the OOM killer. `stopSignal`
+selects the graceful-stop signal, and `stopTimeout` sets the
+grace period before Docker forces termination.
+
+Changing these create-time settings replaces a managed container.
+Replacement is **delete-first**, so account for downtime and keep
+persistent data in volumes. Unset options preserve Docker defaults;
+invalid combinations such as `memorySwap` without `memory` fail
+validation before container creation. See the
+[Container API reference](/providers/docker/container) for all
+properties and their types.
 
 ## Where next
 

@@ -1,10 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId, type VcsError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,27 +13,33 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import * as Base64Url from "effect/encoding/Base64Url";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
 
-const ServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
+  return CheckpointRef.make(`refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turnCount}`);
+}
+
+const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const VcsProcessTestLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
-const VcsDriverTestLayer = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcessTestLayer));
-const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
-  Layer.provideMerge(VcsDriverTestLayer),
-  Layer.provideMerge(NodeServices.layer),
+const layerVcsProcessTest = VcsProcess.layer.pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-const TestLayer = CheckpointStoreTestLayer.pipe(
-  Layer.provideMerge(VcsProcessTestLayer),
-  Layer.provideMerge(VcsDriverTestLayer),
-  Layer.provideMerge(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
+const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
+  Layer.provideMerge(layerVcsDriverTest),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+const layerTest = layerCheckpointStoreTest.pipe(
+  Layer.provideMerge(layerVcsProcessTest),
+  Layer.provideMerge(layerVcsDriverTest),
+  Layer.provideMerge(layerServerConfig),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 function makeTmpDir(
@@ -57,15 +64,22 @@ function writeTextFile(
 function git(
   cwd: string,
   args: ReadonlyArray<string>,
+  options: { readonly committedAt?: string; readonly allowNonZeroExit?: boolean } = {},
 ): Effect.Effect<string, VcsError, VcsProcess.VcsProcess> {
   return Effect.gen(function* () {
-    const process = yield* VcsProcess.VcsProcess;
-    const result = yield* process.run({
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const result = yield* vcsProcess.run({
       operation: "CheckpointStore.test.git",
       command: "git",
       cwd,
       args,
       timeoutMs: 10_000,
+      ...(options.committedAt === undefined
+        ? {}
+        : { env: { ...process.env, GIT_COMMITTER_DATE: options.committedAt } }),
+      ...(options.allowNonZeroExit === undefined
+        ? {}
+        : { allowNonZeroExit: options.allowNonZeroExit }),
     });
     return result.stdout.trim();
   });
@@ -94,28 +108,18 @@ function buildLargeText(lineCount = 5_000): string {
     .concat("\n");
 }
 
-it.layer(TestLayer)("CheckpointStore.layer", (it) => {
-  describe("isGitRepository", () => {
-    it.effect("returns false when no Git repository is detected", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        const checkpointStore = yield* CheckpointStore.CheckpointStore;
-
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
-      }),
-    );
-
-    it.effect("returns true when a Git repository is detected", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-        const checkpointStore = yield* CheckpointStore.CheckpointStore;
-
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
-      }),
-    );
-  });
-
+it.layer(layerTest)("CheckpointStore.layer", (it) => {
+  it.effect("detects a nested workspace without its own .git entry", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const nested = NodePath.join(tmp, "packages", "nested");
+      yield* fileSystem.makeDirectory(nested, { recursive: true });
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+    }),
+  );
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
@@ -149,21 +153,28 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
-    it.effect("keeps a/ and b/ patch prefixes when the repository disables them", () =>
+    it.effect("keeps the patch format clients parse when the repository changes it", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         yield* git(tmp, ["config", "diff.noprefix", "true"]);
+        yield* git(tmp, ["config", "diff.suppressBlankEmpty", "true"]);
+        yield* git(tmp, ["config", "diff.submodule", "log"]);
+        const sub = NodePath.join(tmp, "sub");
+        yield* git(tmp, ["init", "sub"]);
+        yield* initRepoWithCommit(sub);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store-noprefix");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nbefore\n");
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: fromCheckpointRef,
         });
-        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nafter\n");
+        yield* git(sub, ["commit", "--allow-empty", "-m", "moved"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -177,6 +188,9 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         });
 
         expect(diff).toContain("diff --git a/README.md b/README.md");
+        expect(diff).toContain(" # test\n \n-before\n+after\n");
+        expect(diff).toContain("diff --git a/sub b/sub");
+        expect(diff).toContain("+Subproject commit ");
       }),
     );
 
@@ -318,7 +332,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         const copiedText = Array.from({ length: 20 }, (_, index) => `copy line ${index}\n`).join(
           "",
         );
-        const platform = yield* HostProcessPlatform;
+        const platform = yield* HostProcess.Platform;
         const renamedPath = platform === "win32" ? "renamed café.txt" : "renamed\tcafé\nname.txt";
         const addedPath = platform === "win32" ? "new café.txt" : "new\tfile\n名.txt";
         for (const [path, contents] of Object.entries({
@@ -360,12 +374,12 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         );
         const expectedFiles = [
           { path: "binary.bin", additions: 0, deletions: 0 },
-          { path: "copied.txt", additions: 0, deletions: 0 },
+          { path: "copied.txt", previousPath: "copy-source.txt", additions: 0, deletions: 0 },
           { path: "copy-source.txt", additions: 1, deletions: 0 },
           { path: "deleted.txt", additions: 0, deletions: 1 },
           { path: "empty.txt", additions: 0, deletions: 0 },
           { path: addedPath, additions: 2, deletions: 0 },
-          { path: renamedPath, additions: 1, deletions: 1 },
+          { path: renamedPath, previousPath: "rename-old.txt", additions: 1, deletions: 1 },
         ].toSorted((left, right) => left.path.localeCompare(right.path));
         expect(firstSummary).toEqual(expectedFiles);
 
@@ -428,6 +442,129 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
           { path: "README.md", additions: 1, deletions: 1 },
         ]);
+      }),
+    );
+    it.effect("reads repository paths from a subdirectory workspace under diff.relative", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["config", "diff.relative", "true"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = NodePath.join(tmp, "app");
+        yield* fileSystem.makeDirectory(cwd);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-file-paths-subdirectory");
+        const refs = {
+          cwd,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.fromCheckpointRef });
+        yield* writeTextFile(NodePath.join(cwd, "kept.txt"), "kept\n");
+        yield* git(cwd, ["add", "kept.txt"]);
+        yield* git(cwd, ["commit", "-m", "kept"]);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# hidden\n");
+        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.toCheckpointRef });
+
+        const patch = yield* checkpointStore.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          filePaths: ["app/kept.txt"],
+        });
+        expect(patch).toContain("+++ b/app/kept.txt");
+        expect(patch).toContain("+kept");
+        expect(patch).not.toContain("hidden");
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["app/kept.txt"]));
+      }),
+    );
+  });
+
+  describe("listAuthoredPaths", () => {
+    it.effect("leaves out paths that only a merged upstream changed", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        const commitBeforeTurn = (file: string, contents: string) =>
+          Effect.gen(function* () {
+            yield* writeTextFile(NodePath.join(tmp, file), contents);
+            yield* git(tmp, ["add", "."]);
+            yield* git(tmp, ["commit", "-m", file], { committedAt: "2020-01-01T00:00:00Z" });
+          });
+
+        yield* git(tmp, ["checkout", "-b", "upstream"]);
+        yield* commitBeforeTurn("upstream.txt", "upstream\n");
+        yield* commitBeforeTurn("shared.txt", "upstream\n");
+        yield* git(tmp, ["checkout", "-"]);
+        yield* commitBeforeTurn("shared.txt", "ours\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toBeNull();
+
+        yield* git(tmp, ["merge", "upstream", "--no-edit"], { allowNonZeroExit: true });
+        yield* writeTextFile(NodePath.join(tmp, "shared.txt"), "upstream\n");
+        yield* git(tmp, ["commit", "-am", "merge upstream"]);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# edited\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        const numstat = yield* checkpointStore.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          format: "numstat",
+        });
+        expect(parseTurnDiffFilesFromNumstat(numstat).map((file) => file.path)).toEqual([
+          "README.md",
+          "shared.txt",
+          "upstream.txt",
+        ]);
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
+          new Set(["README.md", "shared.txt"]),
+        );
+      }),
+    );
+
+    it.effect("keeps paths from signed commits under log.showSignature", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const signingKey = NodePath.join(yield* makeTmpDir("checkpoint-signing-key-"), "key");
+        yield* (yield* VcsProcess.VcsProcess).run({
+          operation: "CheckpointStore.test.sshKeygen",
+          command: "ssh-keygen",
+          cwd: tmp,
+          args: ["-q", "-t", "ed25519", "-N", "", "-f", signingKey],
+          timeoutMs: 10_000,
+        });
+        yield* git(tmp, ["config", "gpg.format", "ssh"]);
+        yield* git(tmp, ["config", "user.signingkey", `${signingKey}.pub`]);
+        yield* git(tmp, ["config", "log.showSignature", "true"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-signed");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+        yield* writeTextFile(NodePath.join(tmp, "kept.txt"), "kept\n");
+        yield* git(tmp, ["add", "kept.txt"]);
+        yield* git(tmp, ["commit", "-S", "-m", "kept"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["kept.txt"]));
       }),
     );
   });

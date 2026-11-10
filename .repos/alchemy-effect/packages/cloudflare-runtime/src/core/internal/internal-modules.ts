@@ -23,9 +23,7 @@ export const formatExtensionModule = (self: {
     }),
   );
 
-export const moduleToWorkerd = (
-  module: Module,
-): WorkerdConfig.Worker_Module => {
+export const moduleToWorkerd = (module: Module): WorkerdConfig.Worker_Module => {
   switch (module.type) {
     case "ESModule":
       return { name: module.name, esModule: module.content };
@@ -41,7 +39,5 @@ export const moduleToWorkerd = (
       return { name: module.name, json: module.content };
     case "PythonModule":
       return { name: module.name, pythonModule: module.content };
-    case "PythonRequirement":
-      return { name: module.name, pythonRequirement: module.content };
   }
 };

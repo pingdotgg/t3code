@@ -1,3 +1,0 @@
-"@effect/cluster":
-  replacement: "effect/unstable/cluster"
-  note: "The @effect/cluster package was merged into the effect package; import the effect/unstable/cluster barrel or import specific modules directly (e.g. effect/unstable/cluster/<Module>)."

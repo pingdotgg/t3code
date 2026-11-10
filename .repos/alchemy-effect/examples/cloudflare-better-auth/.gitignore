@@ -1,0 +1,5 @@
+/public/ui.js
+*.map
+.env
+node_modules/
+.alchemy/

@@ -10,7 +10,6 @@ type RefreshProvidersTarget = {
   readonly input: { readonly refreshModels: true };
 };
 
-/** Explicit model-picker refresh. Repeated taps share the pending discovery. */
 export function createProviderCatalogRefreshRunner<Result>(
   refreshProviders: (target: RefreshProvidersTarget) => Promise<Result>,
 ) {
