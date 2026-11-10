@@ -1,6 +1,6 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Backend } from "@monorepo-multi-stack/backend";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
