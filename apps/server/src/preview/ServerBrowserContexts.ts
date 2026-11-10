@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Owns Playwright resources outside the Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Owns Playwright resources and their idle timer outside the Effect runtime.
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
@@ -26,6 +26,8 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Closes the shared browser once it has held no context for this long. */
+  readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
@@ -80,6 +82,8 @@ export class ServerBrowserContexts {
   private readonly clearing = new Map<string, Promise<void>>();
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingSharedContexts = 0;
 
   constructor(options: Options) {
     this.options = options;
@@ -136,6 +140,37 @@ export class ServerBrowserContexts {
     return this.browser;
   }
 
+  private async sharedContext(options?: Parameters<Browser["newContext"]>[0]) {
+    clearTimeout(this.idleTimer);
+    this.pendingSharedContexts++;
+    const launched = this.sharedBrowser();
+    try {
+      const context = await (await launched).newContext(options);
+      context.on("close", () => this.retireWhenIdle(launched));
+      return context;
+    } finally {
+      this.pendingSharedContexts--;
+      this.retireWhenIdle(launched);
+    }
+  }
+
+  private retireWhenIdle(launched: Promise<Browser>) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined || this.closing || this.pendingSharedContexts > 0) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => void this.retire(launched), delay);
+    this.idleTimer.unref();
+  }
+
+  private async retire(launched: Promise<Browser>) {
+    const browser = await launched.catch(() => undefined);
+    if (!browser || this.browser !== launched || this.pendingSharedContexts > 0) return;
+    if (browser.contexts().length > 0) return;
+    // Cleared first, so a request during the close launches a fresh browser.
+    this.browser = undefined;
+    await browser.close().catch(constVoid);
+  }
+
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
     const key = JSON.stringify([profileId, isolationKey ?? null]);
@@ -166,8 +201,7 @@ export class ServerBrowserContexts {
   private async createContext(profileId: string, isolationKey?: string) {
     const contextOptions = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
     if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
-      const browser = await this.sharedBrowser();
-      return browser.newContext(contextOptions);
+      return this.sharedContext(contextOptions);
     }
     const directory = this.profileDirectory(profileId);
     await NodeFSP.mkdir(directory, { recursive: true });
@@ -192,7 +226,7 @@ export class ServerBrowserContexts {
 
   async scratchPage() {
     if (this.closing) throw new Error("The preview browser is closed.");
-    const context = await (await this.sharedBrowser()).newContext();
+    const context = await this.sharedContext();
     const page = await context.newPage();
     page.once("close", () => void context.close().catch(constVoid));
     return page;
@@ -238,6 +272,7 @@ export class ServerBrowserContexts {
   }
 
   private async dispose() {
+    clearTimeout(this.idleTimer);
     await Promise.allSettled(
       [...this.contexts.values()].map(async (pending) => (await pending).close()),
     );

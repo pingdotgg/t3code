@@ -27,6 +27,8 @@ const makeContext = () => {
   return {
     on: vi.fn((event: string, listener: () => void) => events.on(event, listener)),
     pages: vi.fn(() => []),
+    newPage: vi.fn(async () => ({ once: vi.fn() })),
+    isClosed: () => closed,
     close: vi.fn(async () => {
       if (!closed) {
         closed = true;
@@ -40,7 +42,8 @@ const makeBrowser = () => {
   const events = new NodeEvents.EventEmitter();
   const contexts: ReturnType<typeof makeContext>[] = [];
   return {
-    contexts,
+    created: contexts,
+    contexts: () => contexts.filter((context) => !context.isClosed()),
     on: vi.fn((event: string, listener: () => void) => events.on(event, listener)),
     newContext: vi.fn(async () => {
       const context = makeContext();
@@ -79,6 +82,37 @@ beforeEach(() => {
 });
 
 describe("ServerBrowserContexts", () => {
+  it("closes the shared browser only after it holds no context for the idle period", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = makeBrowser();
+      const second = makeBrowser();
+      launches.launch
+        .mockResolvedValueOnce(first as unknown as Browser)
+        .mockResolvedValueOnce(second as unknown as Browser);
+      const pool = new ServerBrowserContexts({ ...options(), idleBrowserMs: 10 });
+      const agent = await pool.contextFor("default", "agent");
+      await pool.scratchPage();
+      await agent.close();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).not.toHaveBeenCalled();
+      await first.created[1]!.close();
+      await vi.advanceTimersByTimeAsync(9);
+      const next = await pool.contextFor("default", "next");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).not.toHaveBeenCalled();
+      await next.close();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).toHaveBeenCalledOnce();
+      await pool.contextFor("default", "later");
+      expect(launches.launch).toHaveBeenCalledTimes(2);
+      expect(second.newContext).toHaveBeenCalledOnce();
+      await pool.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lazily shares one browser across concurrent isolated sessions and reuses each context", async () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();
@@ -112,7 +146,7 @@ describe("ServerBrowserContexts", () => {
     });
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
-    for (const context of browser.contexts) expect(context.close).toHaveBeenCalled();
+    for (const context of browser.created) expect(context.close).toHaveBeenCalled();
   });
 
   it("keeps human profiles persistent without sharing their storage with agents", async () => {
@@ -177,7 +211,7 @@ describe("ServerBrowserContexts", () => {
       force: true,
     });
     expect(await pool.contextFor("work/team", "agent")).toBe(agent);
-    expect(browser.contexts[0]?.close).not.toHaveBeenCalled();
+    expect(browser.created[0]?.close).not.toHaveBeenCalled();
     launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
     expect(await pool.contextFor("work/team")).not.toBe(persistent);
     await pool.clearProfile("never-opened");
@@ -296,7 +330,7 @@ describe("ServerBrowserContexts", () => {
     await expect(pool.contextFor("default", "agent")).rejects.toThrow("closed");
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
-    expect(browser.contexts[0]?.close).toHaveBeenCalled();
+    expect(browser.created[0]?.close).toHaveBeenCalled();
   });
 
   it("uploads a file over 50 MB to a desktop tab, which shares the server's filesystem", async () => {
