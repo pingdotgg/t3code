@@ -35,6 +35,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { observeResize } from "~/lib/observeResize";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
@@ -310,6 +311,11 @@ describe("MessagesTimeline work rows", () => {
       ),
       reply("progress"),
     ];
+    // The app shell subscribes to the shared resize observer before any list mounts, so it is
+    // notified before Legend measures the new viewport.
+    const shell = document.body.appendChild(document.createElement("div"));
+    onTestFinished(() => shell.remove());
+    onTestFinished(observeResize(shell, () => {}));
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
       container,
     });

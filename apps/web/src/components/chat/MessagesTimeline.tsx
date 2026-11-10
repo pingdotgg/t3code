@@ -979,21 +979,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
         : TIMELINE_MAINTAIN_SCROLL_AT_END;
   // Legend animates every end pin of an animated list and queues a resize pin behind a running
   // one, so a viewport resize (terminal drawer) would push the live end out of view for a beat.
-  const pinEndOnViewportResize = useStableCallback(() => {
-    const list = listRef.current;
-    if (maintainScrollAtEnd !== TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) return;
-    if (list?.getState().isFollowingEnd) void list.scrollToEnd({ animated: false });
-  });
+  // Runs from Legend's onLayout, after it has measured the new viewport length.
+  const listViewportHeightRef = useRef<number | null>(null);
+  const pinEndOnViewportResize = useStableCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      const { height } = event.nativeEvent.layout;
+      const previousHeight = listViewportHeightRef.current;
+      listViewportHeightRef.current = height;
+      if (previousHeight === null || previousHeight === height) return;
+      const list = listRef.current;
+      if (maintainScrollAtEnd !== TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) return;
+      if (list?.getState().isFollowingEnd) void list.scrollToEnd({ animated: false });
+    },
+  );
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
-    let viewportHeight = viewportElement.clientHeight;
-    const stopObserving = observeResize(viewportElement, () => {
-      measureTimelineGutter(viewportElement);
-      if (viewportElement.clientHeight === viewportHeight) return;
-      viewportHeight = viewportElement.clientHeight;
-      pinEndOnViewportResize();
-    });
+    const stopObserving = observeResize(viewportElement, () =>
+      measureTimelineGutter(viewportElement),
+    );
     return () => {
       stopObserving();
       setTimelineViewportElement(null);
@@ -1324,6 +1328,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={maintainScrollAtEnd}
+              onLayout={pinEndOnViewportResize}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
