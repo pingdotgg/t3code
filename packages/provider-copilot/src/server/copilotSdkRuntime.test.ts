@@ -556,6 +556,7 @@ it.effect("steers a working main agent by queueing, then interrupting only its t
     const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
     const prompt = yield* startPrompt(runtime);
     fakes.emit(event("assistant.turn_start"));
+    fakes.emit(event("assistant.idle", {}, "agent-1"));
 
     const steered = yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
 
@@ -594,6 +595,7 @@ it.effect("sends without interrupting once the main agent has finished", () =>
     const prompt = yield* startPrompt(runtime);
     fakes.emit(event("assistant.turn_start"));
     fakes.emit(event("assistant.idle"));
+    fakes.emit(event("assistant.turn_start", {}, "agent-1"));
 
     yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
 

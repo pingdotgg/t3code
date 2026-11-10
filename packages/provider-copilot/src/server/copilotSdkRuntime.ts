@@ -1188,11 +1188,13 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
 
   // Runs on the SDK's delivery callback so a steer always sees the current turn state.
   const observe = (event: SessionEvent) => {
-    if (event.type === "assistant.turn_start") {
-      mainAgentBusy = true;
-      if (activePrompt !== undefined) activePrompt.steered = false;
+    if (event.agentId === undefined) {
+      if (event.type === "assistant.turn_start") {
+        mainAgentBusy = true;
+        if (activePrompt !== undefined) activePrompt.steered = false;
+      }
+      if (event.type === "assistant.idle" || event.type === "session.idle") mainAgentBusy = false;
     }
-    if (event.type === "assistant.idle" || event.type === "session.idle") mainAgentBusy = false;
     Queue.offerUnsafe(updates, event);
   };
 
