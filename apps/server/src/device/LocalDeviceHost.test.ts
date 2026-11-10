@@ -334,10 +334,35 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("stops a previous server's daemon with the current pin when its version is gone", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, baseDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(
+        path.join(
+          baseDir,
+          "tools",
+          "agent-device",
+          AGENT_DEVICE_VERSION,
+          "node_modules",
+          "agent-device",
+          "bin",
+          "agent-device.mjs",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
     Effect.gen(function* () {
       // Above the Linux and macOS PID limits, so never a live process.
       const deadPid = 4_194_305;
+      const path = yield* Path.Path;
       const { host, fs, stateDir, runs } = yield* agentFixture(
         () => Effect.die("A session that never readies agent tools must not start the daemon"),
         processOutput(0),
@@ -345,7 +370,7 @@ describe("AgentDevice startup", () => {
       );
       yield* host.stop;
       expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
-      expect(yield* fs.exists(`${stateDir}/daemon.json`)).toBe(false);
+      expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
