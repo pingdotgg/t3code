@@ -1,0 +1,253 @@
+---
+/**
+ * `<VendorGrid />` — distilled against each official SDK, one column per
+ * vendor and one row per metric. Each cell has two bars scaled to that cell.
+ * Numbers are medians from benchmark run f6019b376 (AWS: 6 calls; Cloudflare
+ * and GCP: 1 call each), default mode.
+ */
+type Cell = [official: number, distilled: number] | null;
+const VENDORS = [
+  { name: "AWS SDK v3", sub: "6 calls" },
+  { name: "cloudflare", sub: "workers.scripts.list" },
+  { name: "@google-cloud/storage", sub: "getBuckets" },
+];
+const METRICS: { label: string; fmt: (n: number) => string; cells: Cell[] }[] = [
+  {
+    label: "Bundle size",
+    fmt: (n) => `${(n / 1000).toFixed(1)} KB`,
+    cells: [
+      [143056, 55070],
+      [124466, 55816],
+      [239117, 39726],
+    ],
+  },
+  {
+    label: "Added latency",
+    fmt: (n) => `${n.toFixed(1)} µs`,
+    cells: [
+      [90.24, 15.68],
+      [15.51, 3.03],
+      [673.89, 6.19],
+    ],
+  },
+  {
+    label: "Import memory",
+    fmt: (n) => `${(n / 1e6).toFixed(2)} MB`,
+    cells: [
+      [3412520, 1033900],
+      [15314936, 651608],
+      [5142216, 689032],
+    ],
+  },
+  {
+    // Import + client setup + first call in a fresh process, bundled with
+    // rolldown (the bench's settings) as Alchemy deploys to Lambda/Workers.
+    // Median of 11 alternating runs on distilled main 8510122a3, mocked
+    // responses; AWS is the median over its 6 calls. Separate local harness,
+    // not part of benches/sdks yet.
+    label: "Cold start",
+    fmt: (n) => `${n.toFixed(1)} ms`,
+    cells: [
+      [33.6, 16.8],
+      [48.9, 16.3],
+      [21.0, 18.2],
+    ],
+  },
+];
+const WORD: Record<string, [string, string]> = {
+  "Bundle size": ["smaller", "bigger"],
+  "Added latency": ["faster", "slower"],
+  "Import memory": ["less", "more"],
+  "Cold start": ["faster", "slower"],
+};
+const ratio = ([o, d]: [number, number]) => `${(d <= o ? o / d : d / o).toFixed(1)}×`;
+---
+
+<figure class="vg not-content" aria-label="Distilled compared with the official AWS, Cloudflare and GCP SDKs">
+  <figcaption class="vg-title">Distilled vs the official SDKs</figcaption>
+  <div class="vg-legend">
+    <span><i class="o"></i>official SDK</span>
+    <span><i class="d"></i>distilled</span>
+  </div>
+  <div class="vg-grid">
+    <span></span>
+    {
+      VENDORS.map((v) => (
+        <div class="vg-vh">
+          <b>{v.name}</b>
+          <span>{v.sub}</span>
+        </div>
+      ))
+    }
+    {
+      METRICS.map((m) => (
+        <Fragment>
+          <div class="vg-mh">{m.label}</div>
+          {m.cells.map((c, vi) => {
+            if (!c)
+              return (
+                <div class="vg-cell na">
+                  <span class="vg-mh-mobile">{m.label}</span>
+                  <span class="vg-na">not measured yet</span>
+                </div>
+              );
+            const max = Math.max(...c);
+            const win = c[1] <= c[0];
+            return (
+              <div class={`vg-cell ${win ? "win" : "lose"}`} title={`${VENDORS[vi]!.name}: ${m.fmt(c[0])} · distilled: ${m.fmt(c[1])}`}>
+                <span class="vg-mh-mobile">{m.label}</span>
+                <span class="vg-big">{ratio(c)}</span>
+                <span class="vg-word">{WORD[m.label]![win ? 0 : 1]}</span>
+                <span class="vg-mini">
+                  <i class="o" style={`width:${(100 * c[0]) / max}%`} />
+                  <i class="d" style={`width:${Math.max(3, (100 * c[1]) / max)}%`} />
+                </span>
+              </div>
+            );
+          })}
+        </Fragment>
+      ))
+    }
+  </div>
+  <p class="vg-cap">
+    Distilled compared with each official SDK, same call on both sides. Hover a cell for the numbers. Cold start is import
+    plus the first call in a fresh process, bundled as deployed.
+  </p>
+</figure>
+
+<style is:global>
+  .vg {
+    margin: 2rem 0;
+    padding: 14px 16px 10px;
+    font: 14px/1.4 var(--alc-font-sans);
+    color: var(--alc-fg-1);
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 12px;
+  }
+  .vg * {
+    box-sizing: border-box;
+  }
+  .vg-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+  .vg-legend {
+    display: flex;
+    gap: 14px;
+    margin: 4px 0 10px;
+    font: 12px var(--alc-font-mono);
+    color: var(--alc-fg-3);
+  }
+  .vg-legend i,
+  .vg-legend i {
+    display: inline-block;
+    border-radius: 3px;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    vertical-align: -1px;
+  }
+  .vg i.o {
+    background: var(--alc-terracotta);
+  }
+  .vg i.d {
+    background: var(--alc-accent);
+  }
+  .vg-grid {
+    display: grid;
+    grid-template-columns: 7.5em repeat(3, minmax(0, 1fr));
+    gap: 10px 14px;
+    align-items: center;
+  }
+  .vg-vh b {
+    display: block;
+    font: 600 12.5px var(--alc-font-mono);
+  }
+  .vg-vh span {
+    font-size: 11px;
+    color: var(--alc-fg-4);
+  }
+  .vg-mh {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .vg-mh-mobile {
+    display: none;
+  }
+  .vg-cell {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: 0 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--alc-hairline-2);
+    cursor: default;
+  }
+  .vg-big {
+    font: 700 22px/1.1 var(--alc-font-mono);
+  }
+  .vg-word {
+    font-size: 12.5px;
+    color: var(--alc-fg-3);
+  }
+  .vg-cell.win .vg-big {
+    color: var(--alc-accent-text);
+  }
+  .vg-cell.lose .vg-big {
+    color: var(--alc-danger);
+  }
+  .vg-na {
+    grid-column: 1 / -1;
+    font-size: 12px;
+    font-style: italic;
+    color: var(--alc-fg-4);
+  }
+  .vg-mini {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 2px;
+    margin-top: 5px;
+  }
+  .vg-mini i {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+  }
+  .vg-cap {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: var(--alc-fg-4);
+  }
+  /* Narrow: keep the three vendor columns; metric names become row headers. */
+  @media (max-width: 620px) {
+    .vg-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px 10px;
+    }
+    .vg-grid > span:first-child {
+      display: none;
+    }
+    .vg-vh b {
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .vg-vh span {
+      display: none;
+    }
+    .vg-mh {
+      grid-column: 1 / -1;
+      margin-top: 4px;
+      font-size: 12.5px;
+    }
+    .vg-mh-mobile {
+      display: none;
+    }
+    .vg-big {
+      font-size: 17px;
+    }
+    .vg-word {
+      font-size: 11px;
+    }
+  }
+</style>
