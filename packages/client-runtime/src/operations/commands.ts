@@ -880,13 +880,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   }
   if (runId === undefined) {
     const projection = yield* getProjection(threadId);
-    runId = projection.runs.findLast(
-      (run) =>
-        run.status === "preparing" ||
-        run.status === "starting" ||
-        run.status === "running" ||
-        run.status === "waiting",
-    )?.id;
+    runId = projection.runs.findLast((run) => isOrchestrationV2RunActive(run.status))?.id;
     if (runId === undefined) {
       const latestRun = projection.runs.at(-1);
       if (

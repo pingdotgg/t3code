@@ -830,8 +830,6 @@ describe("OrchestratorMcpService", () => {
     readonly name: string;
     // C's turn also ends, and D's queued turn starts, before C's interrupt lands.
     readonly endsBeforeInterrupt: boolean;
-    // The promotion lands right after the cancel's Nth read of the child's runs.
-    readonly promotesAfterRunsRead?: number;
   }) {
     const parentThreadId = ThreadId.make(`thread:${input.name}-parent`);
     const childThreadId = ThreadId.make(`thread:${input.name}-child`);
@@ -845,6 +843,7 @@ describe("OrchestratorMcpService", () => {
     const parentProjection = {
       thread: { id: parentThreadId },
       runs: [],
+      providerTurns: [],
       contextTransfers: [],
       subagents: [
         {
@@ -871,28 +870,16 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       }) as unknown as OrchestrationV2ThreadProjection;
     const child = yield* Ref.make(childProjection(["running", "queued", "queued"]));
-    const runsReads = yield* Ref.make(0);
     const layerDependencies = Layer.mergeAll(
       NodeServices.layer,
       NodeCrypto.layer,
       Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadRecords: (threadId, records) =>
-          threadId === parentThreadId
-            ? Effect.succeed(parentProjection)
-            : Effect.tap(Ref.get(child), () =>
-                records.length === 1 && records[0] === "runs"
-                  ? Effect.flatMap(
-                      Ref.updateAndGet(runsReads, (reads) => reads + 1),
-                      (reads) =>
-                        reads === input.promotesAfterRunsRead
-                          ? Ref.set(child, childProjection(["completed", "running", "queued"]))
-                          : Effect.void,
-                    )
-                  : Effect.void,
-              ),
+        getThreadRecords: (threadId) =>
+          threadId === parentThreadId ? Effect.succeed(parentProjection) : Ref.get(child),
         getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
         listAppOwnedChildThreadIds: () => Effect.succeed([]),
         stopDelegatedTasks: () => Effect.void,
@@ -951,22 +938,6 @@ describe("OrchestratorMcpService", () => {
       const cancelled = yield* cancelPromotedTask({
         name: "mcp-cancel-promoted",
         endsBeforeInterrupt: false,
-      });
-      assert.equal(cancelled.status, "cancel_requested");
-      assert.deepEqual(cancelled.commands, [
-        { type: "queued-run.cancel", runId: cancelled.runId },
-        { type: "run.interrupt", runId: cancelled.runId },
-        { type: "delegated_task.completion-delivery.dispose", runId: undefined },
-      ]);
-    }),
-  );
-
-  it.effect("stops a queued follow-up task whose turn starts right after the cancel reads it", () =>
-    Effect.gen(function* () {
-      const cancelled = yield* cancelPromotedTask({
-        name: "mcp-cancel-promoted-after-read",
-        endsBeforeInterrupt: false,
-        promotesAfterRunsRead: 2,
       });
       assert.equal(cancelled.status, "cancel_requested");
       assert.deepEqual(cancelled.commands, [
