@@ -3575,6 +3575,7 @@ export default function ChatView(props: ChatViewProps) {
                                 draftId={draftId}
                                 activeThreadId={activeThreadId}
                                 activeThread={activeThread}
+                                activeThreadShell={activeThreadShell}
                                 promptHistoryEntries={timelineEntries}
                                 forceExpandedOnMobile={
                                   forceExpandedMobileComposer && isDraftHeroState
