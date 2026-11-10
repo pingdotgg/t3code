@@ -4661,6 +4661,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #30630 Codex replies to unsubscribe before it closes the thread and frees its writer.
+  it.effect("unloading a thread waits for Codex to close it", () =>
+    Effect.gen(function* () {
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-unload-waits-for-thread-closed",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -2),
+          backgroundExecTranscript.entries.at(-2)!,
+          {
+            type: "expect_outbound",
+            label: "unsubscribe",
+            frame: { id: 4, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+          },
+          {
+            type: "emit_inbound",
+            label: "unsubscribe-result",
+            frame: { id: 4, result: { status: "unsubscribed" } },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/closed",
+            frame: { method: "thread/closed", params: { threadId: BG_NATIVE_THREAD } },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-unload-waits-for-close"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const backgroundStopCases = [true, false, "still_running", "thread_unloaded"] as const;
   const makeBackgroundStopTranscript = (terminated: (typeof backgroundStopCases)[number]) => {
     const stillRunning = terminated === "still_running";
