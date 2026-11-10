@@ -739,6 +739,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
+    const idleWaiters = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -754,6 +755,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
       Queue.offer(events, event).pipe(Effect.asVoid);
     const ownerOf = (sessionId: string) => childOwners.get(sessionId) ?? threads.get(sessionId);
+    const markIdle = Effect.fnUntraced(function* (sessionId: string) {
+      busy.delete(sessionId);
+      const waiter = idleWaiters.get(sessionId);
+      idleWaiters.delete(sessionId);
+      if (waiter !== undefined) yield* Deferred.succeed(waiter, undefined);
+    });
+    // An execution's events precede its end, so once it ends everything it launched has been seen.
+    const awaitIdle = Effect.fnUntraced(function* (sessionId: string) {
+      if (!busy.has(sessionId)) return;
+      const waiter = idleWaiters.get(sessionId) ?? (yield* Deferred.make<void>());
+      idleWaiters.set(sessionId, waiter);
+      yield* Deferred.await(waiter).pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore);
+    });
     const markUnsettled = (state: ThreadState) => {
       state.unsettled = true;
       state.unsettledStarted = busy.has(state.sessionId);
@@ -2416,7 +2430,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           busy.add(sessionId);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
-          busy.delete(sessionId);
+          yield* markIdle(sessionId);
         }
       }
       const tracked = threads.get(sessionId ?? "");
@@ -2704,7 +2718,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const active = yield* client.session.active();
-      for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
+      for (const sessionId of busy) if (!(sessionId in active)) yield* markIdle(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
       }
@@ -3441,16 +3455,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
-      const calls = runningCalls(state).filter((call) => call.background);
-      const callers = sessionsOf(state);
-      // Ended subagent calls can run again to answer their own background reports.
-      const followUps = callers.filter(
-        (caller) =>
-          caller.subagent !== undefined &&
-          busy.has(caller.sessionId) &&
-          !isOrchestrationV2WorkActive(caller.subagent.call.status),
-      );
+    // The foreground stop runs before the final drain and succeeds with whether it interrupted a run,
+    // which can launch more work until it ends.
+    const stopBackground = Effect.fnUntraced(function* <E>(
+      state: ThreadState,
+      stopForeground: Effect.Effect<boolean, E>,
+    ) {
+      const backgroundCalls = () => runningCalls(state).filter((call) => call.background);
       // Child sessions are announced before call progress names them; use announcements to stop unnamed children.
       const announcedTo = (caller: ThreadState) =>
         [...announced.values()].flatMap((info) =>
@@ -3458,9 +3469,44 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       const childrenOf = (call: SubagentCall) =>
         call.child === undefined ? announcedTo(call.state) : [call.child.sessionId];
-      const children = new Map(
-        calls.flatMap((call) => childrenOf(call).map((childId) => [childId, call.state] as const)),
-      );
+      const interrupted = new Set<string>();
+      const unstopped = () =>
+        [
+          ...backgroundCalls().flatMap((call) =>
+            childrenOf(call).map((sessionId) => ({ sessionId, caller: call.state })),
+          ),
+          // Ended subagent calls can run again to answer their own background reports.
+          ...sessionsOf(state)
+            .filter(
+              (caller) =>
+                caller.subagent !== undefined &&
+                busy.has(caller.sessionId) &&
+                !isOrchestrationV2WorkActive(caller.subagent.call.status),
+            )
+            .map((caller) => ({ sessionId: caller.sessionId, caller: undefined })),
+        ].filter(({ sessionId }) => !interrupted.has(sessionId));
+      const unreached = new Set<string>();
+      const stopSessions = Effect.fnUntraced(function* () {
+        for (let sessions = unstopped(); sessions.length > 0; sessions = unstopped()) {
+          for (const { sessionId, caller } of sessions) {
+            if (interrupted.has(sessionId)) continue;
+            interrupted.add(sessionId);
+            caller?.stopped.add(sessionId);
+            const reached = yield* client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(
+                Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+                Effect.timeout(INTERRUPT_TIMEOUT),
+                Effect.tapCause((cause) =>
+                  Effect.logWarning("Could not stop an OpenCode subagent.", cause),
+                ),
+                Effect.exit,
+                Effect.map(Exit.isSuccess),
+              );
+            if (!reached && caller !== undefined) unreached.add(sessionId);
+          }
+        }
+      });
       const attempted = new Set<string>();
       const unremoved = () =>
         sessionsOf(state)
@@ -3498,42 +3544,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       });
       yield* removeShells();
-      const unreached = new Set<string>();
-      for (const [childId, caller] of children) {
-        caller.stopped.add(childId);
-        const reached = yield* client.session
-          .interrupt({ sessionID: Session.ID.make(childId) })
-          .pipe(
-            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
-            Effect.timeout(INTERRUPT_TIMEOUT),
-            Effect.tapCause((cause) =>
-              Effect.logWarning("Could not stop an OpenCode subagent.", cause),
-            ),
-            Effect.exit,
-            Effect.map(Exit.isSuccess),
-          );
-        if (!reached) unreached.add(childId);
-      }
-      for (const followUp of followUps) {
-        yield* client.session
-          .interrupt({ sessionID: Session.ID.make(followUp.sessionId) })
-          .pipe(
-            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
-            Effect.timeout(INTERRUPT_TIMEOUT),
-            Effect.ignore({ log: true }),
-          );
-      }
+      yield* stopSessions();
+      const foreground = yield* Effect.exit(stopForeground);
+      if (Exit.isSuccess(foreground) && foreground.value) yield* awaitIdle(state.sessionId);
       // Checked under the lock, so no shell launched before Stop settles outlives it.
       for (let settled = false; !settled;) {
         yield* removeShells();
+        yield* stopSessions();
         settled = yield* lock.withPermit(
           Effect.gen(function* () {
-            if (unremoved().length > 0) return false;
-            for (const call of calls) {
+            if (unremoved().length > 0 || unstopped().length > 0) return false;
+            for (const call of backgroundCalls()) {
               if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
               yield* settleCall(call, "interrupted");
             }
-            for (const caller of callers) {
+            for (const caller of sessionsOf(state)) {
               for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
             }
             for (const { caller, id } of removed) caller.shells.delete(id);
@@ -3554,6 +3579,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       }
       yield* stopStrays(state);
+      yield* foreground;
     });
 
     const listSkills = (location: { readonly directory: string }) =>
@@ -4024,42 +4050,50 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const state = threads.get(sessionId);
           if (state === undefined) return;
           const turn = state.active;
+          const stopTurn = Effect.gen(function* () {
+            if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
+              return false;
+            }
+            turn.interrupted = true;
+            const reply = yield* client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(
+                Effect.timeoutOption(INTERRUPT_TIMEOUT),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    turn.interrupted = false;
+                  }),
+                ),
+              );
+            if (reply._tag === "None") {
+              markUnsettled(state);
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              return false;
+            }
+            // Stop between steer executions retracts pending steers and skips any run they already started.
+            if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
+              markUnsettled(state);
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              yield* cancelStrandedSteers(state);
+              return false;
+            }
+            if (!reply.value.interrupted && state.active === turn && turn.unsent) {
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              return false;
+            }
+            if (!reply.value.interrupted && state.active === turn) {
+              turn.interrupted = false;
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: OPENCODE_PROVIDER,
+                detail: `OpenCode session ${sessionId} had nothing running to stop`,
+              });
+            }
+            return reply.value.interrupted;
+          });
           // User Stop must end background children and their report execution; steering leaves them running.
-          if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
-          if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
-            return;
-          }
-          turn.interrupted = true;
-          const reply = yield* client.session
-            .interrupt({ sessionID: Session.ID.make(sessionId) })
-            .pipe(
-              Effect.timeoutOption(INTERRUPT_TIMEOUT),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  turn.interrupted = false;
-                }),
-              ),
-            );
-          if (reply._tag === "None") {
-            markUnsettled(state);
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-          }
-          // Stop between steer executions retracts pending steers and skips any run they already started.
-          if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
-            markUnsettled(state);
-            yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-            return yield* cancelStrandedSteers(state);
-          }
-          if (!reply.value.interrupted && state.active === turn && turn.unsent) {
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-          }
-          if (!reply.value.interrupted && state.active === turn) {
-            turn.interrupted = false;
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver: OPENCODE_PROVIDER,
-              detail: `OpenCode session ${sessionId} had nothing running to stop`,
-            });
-          }
+          return yield* interruptInput.requestRuntimeRestart === true
+            ? stopBackground(state, stopTurn)
+            : Effect.asVoid(stopTurn);
         },
         (effect, interruptInput) =>
           effect.pipe(
