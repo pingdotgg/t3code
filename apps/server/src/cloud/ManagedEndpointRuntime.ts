@@ -1,5 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
@@ -100,6 +100,8 @@ interface ActiveConnector {
 }
 
 // An instantly failing relay client otherwise respawns ~100 times/sec and exhausts V8 via tracing.
+const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
+
 const RELAY_RESTART_STABLE_UPTIME_MS = 30_000;
 const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
 const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
@@ -226,6 +228,22 @@ export const make = Effect.gen(function* () {
   const prunedRef = yield* Ref.make(false);
   const retryLoopRunningRef = yield* Ref.make(false);
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
+  // The relay client shares the server's process group, so it exits on these signals before the finalizer runs.
+  let shutdownSignalReceived = false;
+  const onShutdownSignal = () => {
+    shutdownSignalReceived = true;
+  };
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      process.on("SIGINT", onShutdownSignal);
+      process.on("SIGTERM", onShutdownSignal);
+    }),
+    () =>
+      Effect.sync(() => {
+        process.off("SIGINT", onShutdownSignal);
+        process.off("SIGTERM", onShutdownSignal);
+      }),
+  );
   // An explicit cloudflared transport in the environment is the user's choice.
   const env = yield* HostProcess.Environment;
   const transportChosenByUser = Option.isSome(
@@ -252,15 +270,23 @@ export const make = Effect.gen(function* () {
   // Synchronous appends avoid a flush timer for this low-volume log.
   const fallbackLoggers = yield* Effect.service(Logger.CurrentLoggers);
   let writeFailureReported = false;
-  const relayClientLog = yield* Effect.try(
-    () =>
+  const relayClientLog = yield* Effect.try({
+    try: () =>
       new RotatingFileSink({
         filePath: relayClientLogPath,
         maxBytes: 1024 * 1024,
         maxFiles: 2,
         throwOnError: true,
       }),
-  ).pipe(
+    catch: (cause) =>
+      isRotatingFileSinkError(cause)
+        ? cause
+        : new RotatingFileSinkError({
+            operation: "initialize",
+            filePath: relayClientLogPath,
+            cause,
+          }),
+  }).pipe(
     Effect.map((sink) =>
       Logger.make((options) => {
         try {
@@ -353,6 +379,7 @@ export const make = Effect.gen(function* () {
 
           const desiredConfig = yield* Ref.get(desiredConfigRef);
           if (
+            shutdownSignalReceived ||
             !desiredConfig ||
             desiredConfig.providerKind !== "cloudflare_tunnel" ||
             runtimeConfigKey(desiredConfig) !== connector.configKey

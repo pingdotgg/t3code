@@ -16,6 +16,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export type PullRequestEditParams = PullRequestParams &
   (
@@ -49,6 +51,13 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         : (pr?.body ?? null);
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? original ?? "";
+  const completions = usePullRequestCompletions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: value,
+    onChangeValue: setDraft,
+    support: params.field === "title" ? null : (pr?.capabilities ?? null),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -131,8 +140,12 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         />
       }
     >
+      <PullRequestCompletionSuggestions completions={completions} />
       <TextInput
         multiline={params.field !== "title"}
+        selection={completions.selection}
+        onSelectionChange={completions.onSelectionChange}
+        onBlur={completions.onBlur}
         editable={!busy && original !== null}
         autoFocus
         accessibilityLabel={

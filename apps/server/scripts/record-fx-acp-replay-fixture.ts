@@ -34,6 +34,7 @@ import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fi
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as Result from "effect/Result";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -502,11 +503,8 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   };
 
   const outputPath = readArgValues("--out")[0] ?? (yield* path.fromFileUrl(variant.transcriptFile));
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
     const dumpPath = path.join(
       recorderEnv.TMPDIR ?? "/tmp",
       `fx-replay-${fixtureName}-failed.json`,
@@ -514,9 +512,9 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
     yield* fs.writeFileString(dumpPath, encodeJson(transcript));
     yield* Console.log(
       `Live orchestration failed ${fixtureName} assertions; left ${outputPath} unchanged. Dump: ${dumpPath}`,
-      liveFailure.value,
+      liveFailure.failure,
     );
-    return yield* Effect.die(liveFailure.value);
+    return yield* Effect.die(liveFailure.failure);
   }
 
   const { entries: transcriptEntries, ...header } = transcript;
