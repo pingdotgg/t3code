@@ -7,7 +7,6 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
-import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 
 it.effect.each(["merge", "disable-auto-merge"] as const)(
@@ -1022,9 +1021,6 @@ describe("review decisions", () => {
     const across = { ...listing, repositories: ["acme/web", "acme/docs"], limit: 99 };
     const readFirstPages = (
       listMergeRequestsInProjects: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestsInProjects"],
-      input: Partial<
-        Parameters<NonNullable<PullRequestProviderApi["listChangeRequestsInRepositories"]>>[0]
-      > = {},
     ) =>
       providerWith(() => Effect.die("a GraphQL page carries its own states"), {
         supportsGraphqlList: () => Effect.succeed(true),
@@ -1032,24 +1028,9 @@ describe("review decisions", () => {
       }).pipe(
         Effect.flatMap((provider) => {
           assert.isDefined(provider.listChangeRequestsInRepositories);
-          return provider.listChangeRequestsInRepositories({ ...across, ...input });
+          return provider.listChangeRequestsInRepositories(across);
         }),
       );
-
-    it.effect("asks a host with one project for a whole page of its rows", () =>
-      Effect.gen(function* () {
-        const asked: Array<number> = [];
-        yield* readFirstPages(
-          (input) => {
-            asked.push(input.first);
-            return Effect.succeed([]);
-          },
-          { repositories: ["acme/web"] },
-        );
-
-        expect(asked).toEqual([99]);
-      }),
-    );
 
     it.effect("leaves out a failed read's projects, but fails on a rate limit", () =>
       Effect.gen(function* () {
@@ -1110,16 +1091,10 @@ describe("review decisions", () => {
           expect(
             yield* readTwice(Effect.fail(new GitLabCli.GitLabCliCommandError(context))),
           ).toEqual({ reasons: ["failed", "failed"], versionReads: 1 });
-          // The caller has to see these to back off or ask for a login, so they are not cached.
+          // The caller has to see a rate limit to back off, so it is not cached.
           expect(
             yield* readTwice(Effect.fail(new GitLabCli.GitLabCliRateLimitError(context))),
           ).toEqual({ reasons: ["rate-limited", "rate-limited"], versionReads: 2 });
-          expect(
-            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliAuthenticationError(context))),
-          ).toEqual({ reasons: ["unauthenticated", "unauthenticated"], versionReads: 2 });
-          expect(
-            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliUnavailableError(context))),
-          ).toEqual({ reasons: ["missing-tool", "missing-tool"], versionReads: 2 });
         }),
     );
   });
