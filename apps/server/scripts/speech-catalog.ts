@@ -31,6 +31,15 @@ const ASR_FAMILIES = new Set([
   "medasr",
 ]);
 
+// Older clients rank and pick setup models by this flag; current clients use language recommendations.
+const RECOMMENDED = new Set([
+  "parakeet-unified-en-0.6b",
+  "nemotron-3.5-asr-streaming-0.6b",
+  "canary-180m-flash",
+  "cohere-transcribe-03-2026",
+  "whisper-medium",
+]);
+
 // Handy labels these weights MIT; Moonshine lists them under its Community License at https://huggingface.co/moonshine-ai/moonshine-models.
 const COMMUNITY_LICENSED_MOONSHINE = /^moonshine-(?:(?:base|tiny)-(?:ar|ja|ko|uk|vi|zh)|base-es)$/;
 
@@ -106,7 +115,7 @@ export function generateSpeechCatalog(
             accelerated: realtimeFactor ? BENCHMARK_DICTATION_SECONDS / realtimeFactor : null,
           },
         },
-        recommended: false,
+        recommended: RECOMMENDED.has(model.id),
         supportsStreaming: model.capabilities.streaming,
         supportsLanguageDetection: model.capabilities.languageDetection,
         supportsTranslation: model.capabilities.translate,

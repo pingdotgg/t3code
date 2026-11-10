@@ -17,7 +17,7 @@
         "accuracy": { "en": { "grade": "A-", "errorPercent": 3.99 } },
         "secondsPer30s": { "cpu": 2.149767108563239, "accelerated": 1.1867088607594936 }
       },
-      "recommended": false,
+      "recommended": true,
       "supportsStreaming": true,
       "supportsLanguageDetection": false,
       "supportsTranslation": false
@@ -94,7 +94,7 @@
         },
         "secondsPer30s": { "cpu": 2.8328611898016995, "accelerated": 1.7508024511234315 }
       },
-      "recommended": false,
+      "recommended": true,
       "supportsStreaming": true,
       "supportsLanguageDetection": true,
       "supportsTranslation": false
@@ -118,7 +118,7 @@
         },
         "secondsPer30s": { "cpu": 1.3805798435342844, "accelerated": 0.9067553271875473 }
       },
-      "recommended": false,
+      "recommended": true,
       "supportsStreaming": false,
       "supportsLanguageDetection": false,
       "supportsTranslation": true
@@ -167,7 +167,7 @@
         },
         "secondsPer30s": { "cpu": 6.960556844547565, "accelerated": 3.7059913526868433 }
       },
-      "recommended": false,
+      "recommended": true,
       "supportsStreaming": false,
       "supportsLanguageDetection": false,
       "supportsTranslation": false
@@ -369,7 +369,7 @@
         },
         "secondsPer30s": { "cpu": 15.584415584415584, "accelerated": 7.343941248470013 }
       },
-      "recommended": false,
+      "recommended": true,
       "supportsStreaming": false,
       "supportsLanguageDetection": true,
       "supportsTranslation": true
