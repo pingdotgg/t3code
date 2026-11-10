@@ -101,6 +101,8 @@ const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+// Keeps each fetch command line well under Windows' 32 KiB limit.
+const STATUS_FETCH_REFSPEC_BATCH = 100;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
 const REPOSITORY_PATHS_REFRESH_COALESCE_TTL = Duration.seconds(5);
@@ -530,6 +532,50 @@ function branchNameFromHeadRef(value: string): string | null {
   return ref.startsWith("refs/heads/") && ref.length > "refs/heads/".length
     ? ref.slice("refs/heads/".length)
     : null;
+}
+
+const STATUS_FETCH_REF_FORMAT =
+  "%(refname)%00%(objectname)%00%(symref)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)";
+
+// Status reads only the remote's default branch and the upstreams of checked-out branches.
+// Fetching every branch costs tens of seconds on remotes with thousands of them.
+function statusFetchBranches(
+  forEachRefStdout: string,
+  lsRemoteStdout: string,
+  remoteName: string,
+): string[] {
+  const trackingPrefix = `refs/remotes/${remoteName}/`;
+  const localOids = new Map<string, string>();
+  const wanted = new Set<string>();
+  let defaultBranch: string | null = null;
+  for (const line of forEachRefStdout.split("\n")) {
+    const [refName = "", oid = "", symref = "", worktreePath, upstreamRemote, upstreamRef = ""] =
+      line.split("\0");
+    if (refName === `${trackingPrefix}HEAD`) {
+      defaultBranch = parseDefaultBranchFromRemoteHeadRef(symref, remoteName);
+    } else if (refName.startsWith(trackingPrefix)) {
+      localOids.set(refName.slice(trackingPrefix.length), oid);
+    } else if (
+      worktreePath &&
+      upstreamRemote === remoteName &&
+      upstreamRef.startsWith("refs/heads/")
+    ) {
+      wanted.add(upstreamRef.slice("refs/heads/".length));
+    }
+  }
+  for (const branch of defaultBranch === null ? DEFAULT_BASE_BRANCH_CANDIDATES : [defaultBranch]) {
+    wanted.add(branch);
+  }
+  // A branch deleted on the remote fails the whole fetch, so only request advertised ones.
+  const changed: string[] = [];
+  for (const line of lsRemoteStdout.split("\n")) {
+    const [oid = "", refName = ""] = line.split("\t");
+    const branch = refName.startsWith("refs/heads/") ? refName.slice("refs/heads/".length) : null;
+    if (branch !== null && wanted.has(branch) && localOids.get(branch) !== oid) {
+      changed.push(branch);
+    }
+  }
+  return changed;
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
@@ -1356,16 +1402,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // this poll from starting `git gc --auto`. When that gc fails, for example on a repository
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
-    const args = [
-      "--git-dir",
-      gitCommonDir,
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      "--no-auto-gc",
-      "--",
-      remoteName,
-    ];
+    const gitDirArgs = ["--git-dir", gitCommonDir];
+    const runStatusGit = (args: readonly string[], fallbackErrorDetail: string) =>
+      executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, [...gitDirArgs, ...args], {
+        env: STATUS_UPSTREAM_REFRESH_ENV,
+        fallbackErrorDetail,
+        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+        forceKillAfterMs: 1_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      }).pipe(Effect.map((result) => result.stdout));
+    const refresh = Effect.gen(function* () {
+      const [localRefs, remoteHeads] = yield* Effect.all(
+        [
+          runStatusGit(
+            [
+              "for-each-ref",
+              `--format=${STATUS_FETCH_REF_FORMAT}`,
+              "refs/heads/",
+              `refs/remotes/${remoteName}/`,
+            ],
+            "Git could not list local branches.",
+          ),
+          runStatusGit(
+            ["ls-remote", "--heads", "--", remoteName],
+            "Background Git ls-remote exited with a non-zero status.",
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const branches = statusFetchBranches(localRefs, remoteHeads, remoteName);
+      for (let start = 0; start < branches.length; start += STATUS_FETCH_REFSPEC_BATCH) {
+        yield* runStatusGit(
+          [
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-auto-gc",
+            "--",
+            remoteName,
+            ...branches
+              .slice(start, start + STATUS_FETCH_REFSPEC_BATCH)
+              .map((branch) => `+refs/heads/${branch}:refs/remotes/${remoteName}/${branch}`),
+          ],
+          "Background Git fetch exited with a non-zero status.",
+        );
+      }
+    });
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1376,13 +1458,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
-          forceKillAfterMs: 1_000,
-        }).pipe(
-          Effect.asVoid,
+        const started = yield* refresh.pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
@@ -4579,8 +4655,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { headCommit: input.targetCommit, moved: true, onTarget: true };
     });
 
+  // Fetches one branch: fetching a whole remote takes tens of seconds on hosts with thousands of branches.
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
-    const args = ["fetch", "--quiet", "--", input.remoteName];
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
@@ -4605,28 +4681,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
       );
     };
-    const fetchAll = runFetch(args).pipe(
-      Effect.flatMap((result) =>
-        result.exitCode === 0
-          ? Effect.void
-          : Effect.fail(
-              new GitCommandError({
-                ...gitCommandContext({
-                  operation: "GitVcsDriver.fetchRemote",
-                  cwd: input.cwd,
-                  args,
-                }),
-                detail: fetchFailureDetail(result.stderr) ?? options.fallbackErrorDetail,
-                ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-                stdoutLength: result.stdout.length,
-                stderrLength: result.stderr.length,
-              }),
-            ),
-      ),
-    );
-    if (input.refName === undefined) {
-      return yield* fetchAll.pipe(Effect.as(true));
-    }
     const branch =
       parseRemoteRefWithRemoteNames(input.refName, [input.remoteName])?.branchName ?? input.refName;
     const scopedArgs = [
@@ -5171,7 +5225,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.flatMap((fetched) =>
             fetched
               ? Effect.void
-              : fetchRemote({ cwd: input.cwd, remoteName: input.remoteName }).pipe(Effect.asVoid),
+              : Effect.fail(
+                  new GitCommandError({
+                    ...gitCommandContext({
+                      operation: "GitVcsDriver.fetchRemote",
+                      cwd: input.cwd,
+                      args: ["fetch", "--", input.remoteName, input.refName],
+                    }),
+                    detail: `Branch '${input.refName}' was not found on remote '${input.remoteName}'.`,
+                  }),
+                ),
           ),
         ),
       );

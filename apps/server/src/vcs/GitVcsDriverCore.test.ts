@@ -1497,7 +1497,14 @@ it.effect.each([
         if (!ChildProcess.isStandardCommand(command))
           return yield* Effect.die("expected Git command");
         if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
-        assert.deepEqual(command.args, ["fetch", "--quiet", "--", "origin"]);
+        assert.deepEqual(command.args, [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          "--",
+          "origin",
+          "+refs/heads/main:refs/remotes/origin/main",
+        ]);
         assert.equal(command.options.env?.LANGUAGE, "C");
         assert.equal(command.options.env?.GIT_TERMINAL_PROMPT, "0");
         yield* Ref.update(attempts, (count) => count + 1);
@@ -1520,7 +1527,9 @@ it.effect.each([
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
-    const error = yield* driver.fetchRemote({ cwd, remoteName: "origin" }).pipe(Effect.flip);
+    const error = yield* driver
+      .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+      .pipe(Effect.flip);
     assert.include(error.detail, scenario.expected);
     assert.equal(error.exitCode, 128);
     assert.equal(error.stderrLength, stderr.length);
@@ -1601,6 +1610,64 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
 
       assert.equal(status.upstreamRef, "feature/base");
       assert.deepStrictEqual(fetches, []);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("fetches for status only the moved default branch and checked-out upstreams", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetches: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
+          fetches.push(command.args.slice(command.args.indexOf("fetch")).map(String));
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const worktree = NodePath.join(yield* makeTmpDir("git-vcs-driver-worktrees-"), "stale");
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["branch", "-M", "main"]);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      const branches = ["main", "feature", "gone", "idle", "unrelated"];
+      yield* git(cwd, ["push", "origin", ...branches.map((name) => `HEAD:refs/heads/${name}`)]);
+      yield* git(cwd, ["remote", "set-head", "origin", "main"]);
+      yield* git(cwd, ["checkout", "-b", "feature", "--track", "origin/feature"]);
+      yield* git(cwd, ["branch", "--track", "idle", "origin/idle"]);
+      yield* git(cwd, ["worktree", "add", "-b", "stale", "--track", worktree, "origin/gone"]);
+      yield* git(remote, ["--git-dir=.", "update-ref", "-d", "refs/heads/gone"]);
+      // Pushing by path leaves the local remote-tracking refs behind the remote.
+      const moved = yield* git(cwd, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "moved"]);
+      const movedBranches = ["main", "feature", "idle", "unrelated"];
+      yield* git(cwd, [
+        "push",
+        remote,
+        ...movedBranches.map((name) => `${moved}:refs/heads/${name}`),
+      ]);
+      const before = yield* git(cwd, ["rev-parse", "origin/unrelated"]);
+
+      const status = yield* driver.statusDetailsRemote(cwd);
+
+      assert.deepStrictEqual(fetches, [
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          "--no-auto-gc",
+          "--",
+          "origin",
+          "+refs/heads/feature:refs/remotes/origin/feature",
+          "+refs/heads/main:refs/remotes/origin/main",
+        ],
+      ]);
+      assert.equal(status.behindCount, 1);
+      assert.equal(yield* git(cwd, ["rev-parse", "origin/unrelated"]), before);
     }),
   ).pipe(Effect.provide(layerTest)),
 );
@@ -4081,7 +4148,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "second.txt", "second\n");
         yield* git(cwd, ["add", "second.txt"]);
         yield* git(cwd, ["commit", "-m", "second commit"]);
-        yield* git(cwd, ["push"]);
+        // Push by path so the status poll still has a moved branch to fetch.
+        yield* git(cwd, ["push", remote, `HEAD:refs/heads/${initialBranch}`]);
         yield* git(cwd, ["repack", "-d"]);
         yield* git(cwd, ["config", "gc.autoPackLimit", "1"]);
         yield* git(cwd, ["config", "gc.autoDetach", "false"]);
@@ -5650,7 +5718,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const missingRemote = `${cwd}/private-missing-remote`;
         yield* git(cwd, ["remote", "add", "origin", missingRemote]);
-        const error = yield* driver.fetchRemote({ cwd, remoteName: "origin" }).pipe(Effect.flip);
+        const error = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+          .pipe(Effect.flip);
         assert.include(error.detail, "could not access the remote repository");
         assert.equal(error.exitCode, 128);
         assert.isAbove(error.stderrLength ?? 0, 0);
@@ -5679,7 +5749,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(yield* driver.resolvePrimaryRemoteName(cwd), remoteName);
         yield* driver.fetchRemoteTrackingBranch({ cwd, remoteName, remoteBranch: initialBranch });
-        yield* driver.fetchRemote({ cwd, remoteName });
+        yield* driver.fetchRemote({ cwd, remoteName, refName: initialBranch });
         const head = yield* driver.fetchRefCommit({ cwd, ref: "refs/pull/7/head" });
 
         assert.isFalse(yield* fileSystem.exists((yield* Path.Path).join(cwd, "t3-marker")));
@@ -6222,8 +6292,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadCount, 0);
         assert.equal(status.aheadOfDefaultCount, 0);
 
-        yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "local-only" });
-        assert.isTrue(
+        // A missing branch fails instead of falling back to fetching every branch.
+        const missing = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: "local-only" })
+          .pipe(Effect.flip);
+        assert.equal(missing.detail, "Branch 'local-only' was not found on remote 'origin'.");
+        assert.isFalse(
           yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "unrelated" }),
         );
       }),
