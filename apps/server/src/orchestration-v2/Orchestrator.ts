@@ -1774,7 +1774,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         derivePendingBackgroundWork({
           latestRun: latestExecutedRun(projection.runs),
           providerThreads: projection.providerThreads,
-          turnItems,
+          turnItems: turnItems.filter(
+            (item) =>
+              item.type !== "subagent" ||
+              item.origin !== "app_owned" ||
+              projection.subagents.some(
+                (task) =>
+                  task.id === item.subagentId && task.completionDelivery?.state !== "disposed",
+              ),
+          ),
           activeProviderThreadId: projection.thread.activeProviderThreadId,
           runs: projection.runs,
         }),
