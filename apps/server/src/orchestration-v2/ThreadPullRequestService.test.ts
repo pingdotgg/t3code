@@ -181,6 +181,105 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
+  it.effect("looks up a finished turn's branch once for all its turn-end events", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = { ...threadShell("turn-end-thread"), branch: "t3/turn-end" };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        // A turn end commits its checkpoints and the run's end together.
+        const turnEnd = [
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
+        ] as Array<OrchestrationV2DomainEvent>;
+        const activation = yield* Deferred.make<void>();
+        const sweepStarted = yield* Deferred.make<void>();
+        const turnEndQueued = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly refresh: boolean }> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            // The batch arrives while the worker is busy with the startup sweep.
+            streamDomainEvents: Stream.fromEffect(Deferred.await(sweepStarted)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.fromIterable(turnEnd)),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(turnEndQueued, undefined)).pipe(Stream.drain),
+              ),
+              Stream.concat(Stream.never),
+            ),
+            getPullRequestSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads: [thread],
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (_input, options) =>
+              Effect.gen(function* () {
+                const refresh = options?.refresh ?? false;
+                lookups.push({ refresh });
+                if (!refresh) {
+                  yield* Deferred.succeed(sweepStarted, undefined);
+                  yield* Deferred.await(turnEndQueued);
+                }
+                return null;
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Deferred.await(turnEndQueued);
+          yield* service.drain;
+        }).pipe(Effect.provide(dependencies));
+
+        // Each refresh is a GitHub request for the same branch and head.
+        expect(lookups.filter((lookup) => lookup.refresh)).toEqual([{ refresh: true }]);
+      }),
+    ),
+  );
+
   it.effect.each([
     {
       worktree: "a linked worktree",
