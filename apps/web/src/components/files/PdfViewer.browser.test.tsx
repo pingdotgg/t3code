@@ -155,6 +155,7 @@ it("keeps the reading position when a later range forces a full read", async () 
   const pageTwo = new TextDecoder().decode(bytes).indexOf("\n6 0 obj");
   const url = "https://assets.example/report.pdf";
   const requests: (string | null)[] = [];
+  let fullReadCache: RequestCache | undefined;
   let revise!: () => void;
   const revised = new Promise<void>((resolve) => (revise = resolve));
   const realFetch = globalThis.fetch;
@@ -163,7 +164,10 @@ it("keeps the reading position when a later range forces a full read", async () 
     const range = new Headers(init?.headers).get("range");
     requests.push(range);
     const match = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
-    if (!match) return new Response(bytes);
+    if (!match) {
+      fullReadCache = init?.cache;
+      return new Response(bytes);
+    }
     const start = Number(match[1]);
     const end = Math.min(Number(match[2]), bytes.length - 1);
     const changed = start <= pageTwo && end > pageTwo;
@@ -199,6 +203,8 @@ it("keeps the reading position when a later range forces a full read", async () 
     expect(height(2)).toBeGreaterThan(height(1)! * 2);
   });
   expect(region().scrollTop).toBeCloseTo(top, 0);
+  // The changed file may sit in the HTTP cache from an earlier full read.
+  expect(fullReadCache).toBe("reload");
 });
 
 it("restores page, within-page offset and zoom after a remount", async () => {

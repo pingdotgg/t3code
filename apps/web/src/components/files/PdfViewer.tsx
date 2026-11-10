@@ -201,7 +201,7 @@ export default function PdfViewer(props: {
           props.src,
           controller.signal,
           limit,
-          revision > 0 ? "reload" : "default",
+          revision > 0 || fullRead ? "reload" : "default",
         ))
       );
     })()
