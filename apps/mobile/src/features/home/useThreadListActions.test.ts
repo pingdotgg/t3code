@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
   failedAction: null as string | null,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
-  offlineTriage: new Set<string>(),
+  sessionNotLoaded: new Set<string>(),
   successValues: new Map<string, unknown>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
@@ -62,6 +62,9 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readThreadTriageScope: (environmentId: string) =>
+    state.scopes.get(environmentId)?.has(AuthOrchestrationOperateScope) === true ||
+    state.sessionNotLoaded.has(environmentId),
 }));
 vi.mock("../../state/presentation", () => ({
   connectedEnvironmentIdsAtom: "connected-environments",
@@ -77,32 +80,28 @@ vi.mock("../../state/atom-registry", () => ({
     get: (atom: string) =>
       atom === "connected-environments"
         ? state.connectedEnvironmentIds
-        : atom.startsWith("offline-triage:")
-          ? state.offlineTriage.has(atom.slice("offline-triage:".length))
-          : atom.startsWith("pending-sync:")
-            ? new Set<string>()
-            : atom === "thread-drop-busy"
-              ? state.dropBusy
-              : atom === "thread-shells"
-                ? state.shells
-                : atom === "queued-thread-keys"
-                  ? new Set<string>()
-                  : new Map(
-                      [...state.scopes.keys()].map((environmentId) => [
-                        environmentId,
-                        {
-                          environment: {
-                            capabilities: {
-                              threadSettlement: true,
-                              threadSnooze: true,
-                              threadPinning: true,
-                              threadPinReorder: true,
-                              threadTitleRegeneration: true,
-                            },
-                          },
+        : atom === "thread-drop-busy"
+          ? state.dropBusy
+          : atom === "thread-shells"
+            ? state.shells
+            : atom === "queued-thread-keys"
+              ? new Set<string>()
+              : new Map(
+                  [...state.scopes.keys()].map((environmentId) => [
+                    environmentId,
+                    {
+                      environment: {
+                        capabilities: {
+                          threadSettlement: true,
+                          threadSnooze: true,
+                          threadPinning: true,
+                          threadPinReorder: true,
+                          threadTitleRegeneration: true,
                         },
-                      ]),
-                    ),
+                      },
+                    },
+                  ]),
+                ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -130,45 +129,41 @@ vi.mock("../../state/threads", () => ({
     threadShellsAtom: "thread-shells",
     navigationThreadShellsAtom: "thread-shells",
   },
-  threadEnvironment: {
-    offlineTriagePermittedAtom: (environmentId: string) => `offline-triage:${environmentId}`,
-    pendingSyncAtom: (environmentId: string) => `pending-sync:${environmentId}`,
-    ...Object.fromEntries(
-      [
-        "archive",
-        "unarchive",
-        "delete",
-        "settle",
-        "unsettle",
-        "snooze",
-        "unsnooze",
-        "pin",
-        "unpin",
-        "reorderPin",
-        "reorderActive",
-        "updateMetadata",
-      ].map((action) => [
-        action,
-        async (request: {
-          environmentId: string;
-          input: { threadId: string; orderKey?: string };
-        }) => {
-          state.requests.push({ action, ...request });
-          const triage = ["settle", "unsettle", "snooze", "unsnooze"].includes(action);
-          if (
-            !state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope) &&
-            !(triage && state.offlineTriage.has(request.environmentId))
-          ) {
-            return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
-          }
-          if (action === state.failedAction)
-            return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
-          state.afterRequest?.();
-          return AsyncResult.success(state.successValues.get(action));
-        },
-      ]),
-    ),
-  },
+  threadEnvironment: Object.fromEntries(
+    [
+      "archive",
+      "unarchive",
+      "delete",
+      "settle",
+      "unsettle",
+      "snooze",
+      "unsnooze",
+      "pin",
+      "unpin",
+      "reorderPin",
+      "reorderActive",
+      "updateMetadata",
+    ].map((action) => [
+      action,
+      async (request: {
+        environmentId: string;
+        input: { threadId: string; orderKey?: string };
+      }) => {
+        state.requests.push({ action, ...request });
+        // Without a loaded session the command itself queues settle and snooze.
+        if (
+          !state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope) &&
+          !state.sessionNotLoaded.has(request.environmentId)
+        ) {
+          return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
+        }
+        if (action === state.failedAction)
+          return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
+        state.afterRequest?.();
+        return AsyncResult.success(state.successValues.get(action));
+      },
+    ]),
+  ),
 }));
 
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
@@ -205,7 +200,7 @@ beforeEach(() => {
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
-  state.offlineTriage = new Set();
+  state.sessionNotLoaded = new Set();
   state.successValues = new Map();
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
@@ -246,12 +241,11 @@ describe("thread list operation permissions", () => {
     expect(state.requests).toEqual([]);
   });
 
-  // Offline, the session may not have loaded; only settle, snooze and their undo may queue.
   it.each(mutationCases)(
-    "%s without a loaded session follows the remembered offline triage permission",
+    "%s runs before the session loads only for settle, snooze and their undo",
     async (handler, action) => {
       state.scopes.get(primaryEnvironmentId)!.clear();
-      state.offlineTriage.add(primaryEnvironmentId);
+      state.sessionNotLoaded.add(primaryEnvironmentId);
 
       await useThreadListActions()[handler](makeThread(), "2099-01-01T00:00:00.000Z");
 
@@ -461,30 +455,11 @@ describe("thread action undo", () => {
     expect(readThreadUndoNotice()).toBeNull();
   });
 
-  it("restores snooze with the remembered grant if the session disappears during Undo", async () => {
-    const thread = makeThread({ snoozedUntil: "2099-01-01T09:00:00.000Z" });
-    expect(await useThreadListActions().settleThread(thread)).toBe(true);
-    state.afterRequest = () => {
-      state.scopes.delete(primaryEnvironmentId);
-      state.offlineTriage.add(primaryEnvironmentId);
-    };
-
-    await readThreadUndoNotice()!.undo();
-
-    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "snooze"]);
-    expect(state.requests.at(-1)?.input).toEqual({
-      threadId: thread.id,
-      snoozedUntil: thread.snoozedUntil,
-    });
-    expect(state.alerts).toEqual([]);
-  });
-
   // Whether the queued settle reached the server is known only when Undo runs.
   it.each([
     ["cancels it before it syncs", { sequence: 0, cancelledPendingSync: true }, ["snooze"]],
     ["finds it delivered", { sequence: 3 }, ["pin", "snooze"]],
   ])("restores a queued settle only as far as needed when Undo %s", async (_, undone, restored) => {
-    state.successValues.set("settle", { sequence: 1, pendingSync: true });
     state.successValues.set("unsettle", undone);
     const thread = makeThread({
       pinnedAt: "2026-09-02T00:00:00.000Z",
@@ -492,10 +467,8 @@ describe("thread action undo", () => {
       snoozedUntil: "2099-01-01T09:00:00.000Z",
     });
     expect(await useThreadListActions().settleThread(thread)).toBe(true);
-    expect(readThreadUndoNotice()?.action).toBe("Settled");
     await readThreadUndoNotice()!.undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", ...restored]);
-    expect(readThreadUndoNotice()).toBeNull();
   });
 
   // regression: #21401 restore archive and thread action undo

@@ -281,10 +281,6 @@ describe("settle and snooze Undo", () => {
       const snoozedUntil = "2030-01-01T09:00:00.000Z";
       threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
       threadShell.snoozedUntil = snoozedUntil;
-      commands.settle.mockResolvedValue({
-        _tag: "Success",
-        value: { sequence: 1, pendingSync: true },
-      });
       commands.unsettle.mockResolvedValue({ _tag: "Success", value: undone });
       await useThreadActions().settleThread(target);
       expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled", count: 1 });

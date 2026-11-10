@@ -52,8 +52,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
-import { useEnvironmentScope } from "~/state/session";
-import { readThreadTriageScope, threadEnvironment } from "../../state/threads";
+import { useEnvironmentScope, useThreadTriageScope } from "~/state/session";
+import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -61,7 +61,7 @@ import { environmentShell } from "../../state/shell";
 import { ThreadStatusLine } from "./ThreadStatusLine";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { readEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, readThreadTriageScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
@@ -179,10 +179,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const router = useRouter();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
-  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(environmentId));
-  // Offline, wake and un-settle only cancel a change still waiting to sync.
-  const canTriageThread =
-    canOperateThread || (activeThreadId !== null && pendingSync.has(activeThreadId));
+  const canTriageThread = useThreadTriageScope(environmentId);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -658,7 +655,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (!readThreadTriageScope(environmentId)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadSettled) {
-        if (canTriageThread) void handleUnsettleActiveThread();
+        void handleUnsettleActiveThread();
         return;
       }
       if (settleAndAdvance(activeThreadRef)) return;

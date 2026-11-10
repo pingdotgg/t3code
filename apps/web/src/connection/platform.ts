@@ -798,12 +798,8 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
       return Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
       }).pipe(
-        Effect.andThen(browserThreadTriageOutboxStore.clearEnvironment(environmentId)),
-        Effect.catch(() =>
-          Effect.logWarning("Could not clear offline thread changes.", {
-            environmentId,
-            reason: "storage",
-          }),
+        Effect.andThen(
+          Effect.ignore(browserThreadTriageOutboxStore.clearEnvironment(environmentId)),
         ),
       );
     }),

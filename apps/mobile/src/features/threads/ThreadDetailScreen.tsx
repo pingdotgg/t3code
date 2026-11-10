@@ -163,6 +163,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
+import { useThreadTriageScope } from "../../state/session";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
@@ -585,11 +586,7 @@ function ThreadDetailBody(
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
-  // Offline, wake and un-settle only cancel a change still waiting to sync.
-  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(props.environmentId)).has(
-    props.selectedThread.id,
-  );
-  const canTriageThread = props.canOperateThread || pendingSync;
+  const canTriageThread = useThreadTriageScope(props.environmentId);
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(

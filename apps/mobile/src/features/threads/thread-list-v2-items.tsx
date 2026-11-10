@@ -51,7 +51,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useThreadTriageScope } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -282,7 +282,7 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze"]);
+const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
 
 const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
 
@@ -805,15 +805,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  // Offline, settle and snooze can still queue where the last session could change threads.
-  const offlineTriagePermitted = useAtomValue(
-    threadEnvironment.offlineTriagePermittedAtom(thread.environmentId),
-  );
-  const triageOnly = !canOperateThread && offlineTriagePermitted;
-  // Un-settle and wake only cancel a change still waiting to sync.
-  const triageAllows = (action: string) =>
-    TRIAGE_MENU_ACTION_IDS.has(action) ||
-    (pendingSync && (action === "unsettle" || action === "unsnooze"));
+  // Before the session loads, only settle, snooze and their undo are offered: they can queue.
+  const triageOnly = useThreadTriageScope(thread.environmentId) && !canOperateThread;
+  const triageAllows = (action: string) => TRIAGE_MENU_ACTION_IDS.has(action);
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],

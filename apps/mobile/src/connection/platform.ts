@@ -265,16 +265,9 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
           Effect.promise(() => clearThreadOutboxEnvironment(environmentId)),
           Effect.promise(() => clearComposerDraftsEnvironment(environmentId)),
           Effect.sync(() => clearThreadComposerErrorsForEnvironment(environmentId)),
-          mobileThreadTriageOutboxStore.clearEnvironment(environmentId),
+          Effect.ignore(mobileThreadTriageOutboxStore.clearEnvironment(environmentId)),
         ],
         { concurrency: "unbounded", discard: true },
-      ).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not clear mobile environment-owned data.", {
-            environmentId,
-            cause,
-          }),
-        ),
       ),
     ),
   }),

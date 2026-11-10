@@ -73,7 +73,11 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadEnvironment } from "../../state/threads";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useThreadTriageScope,
+} from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -468,14 +472,10 @@ export function SortableThreadRow(
     rowProps.thread.environmentId,
     AuthOrchestrationOperateScope,
   );
-  // Offline, a drop onto Settled can still queue; the drop handler keeps other moves live-only.
-  const canTriageThread = useAtomValue(
-    threadEnvironment.offlineTriagePermittedAtom(rowProps.thread.environmentId),
-  );
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
-      sortableDisabled || !(canOperateThread || canTriageThread)
+      sortableDisabled || !canOperateThread
         ? SIDEBAR_SORTABLE_DRAG_DISABLED
         : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
@@ -671,10 +671,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  // Offline, snooze can still queue where the last session could change threads.
-  const offlineTriagePermitted = useAtomValue(
-    threadEnvironment.offlineTriagePermittedAtom(thread.environmentId),
-  );
+  const canTriageThread = useThreadTriageScope(thread.environmentId);
   const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(thread.environmentId)).has(
     thread.id,
   );
@@ -960,9 +957,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
   const showSnoozeButton =
-    (canOperateThread || offlineTriagePermitted) &&
-    props.snoozeSupported &&
-    canSnooze(thread, { now: snoozeGateNow });
+    canTriageThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
   if (snoozeMenuOpenRaw && !showSnoozeButton) setSnoozeMenuOpen(false);
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;

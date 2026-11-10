@@ -156,11 +156,11 @@ import {
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
-import { readThreadPendingSync, readThreadTriageScope, threadEnvironment } from "../state/threads";
+import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { readEnvironmentScope, readThreadTriageScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -858,7 +858,7 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
   );
 }
 
-/** Settle, snooze and their undo can queue offline where the last session could operate. */
+/** Settle, snooze and their undo can queue before the environment's session loads. */
 function canOperateThreads(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
   triage = false,
@@ -2128,7 +2128,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           const thread = threadByKey.get(key);
           return thread ? [thread] : [];
         }),
-        plan.kind === "settle",
       )
     )
       return;
@@ -2638,10 +2637,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
-              canTriageOffline: appAtomRegistry.get(
-                threadEnvironment.offlineTriagePermittedAtom(threadRef.environmentId),
-              ),
-              hasPendingSync: readThreadPendingSync(threadRef.environmentId, threadRef.threadId),
+              canTriage: readThreadTriageScope(threadRef.environmentId),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

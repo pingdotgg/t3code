@@ -8,7 +8,6 @@ import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
-  type ServerConfig,
 } from "@t3tools/contracts";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
@@ -50,7 +49,6 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
-  requireThreadVersionGuard,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -119,14 +117,8 @@ function applySnooze(
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
-  options: {
-    /** Offline settle and snooze replay once this reports a synchronized shell. */
-    readonly shellStatusAtom?: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
-    /** Whether the loaded session can change threads; null until it loads. */
-    readonly operateScopeAtom?: (environmentId: EnvironmentId) => Atom.Atom<boolean | null>;
-    /** Cached config; offline changes queue only for servers that can check them. */
-    readonly serverConfigAtom?: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
-  } = {},
+  /** Offline settle and snooze are sent once this reports a synchronized shell. */
+  shellStatusAtom?: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -437,28 +429,20 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
-  const versionGuard = createEnvironmentCommand(runtime, {
-    label: "environment-data:commands:thread:version-guard",
-    execute: () => requireThreadVersionGuard(),
-  });
   const triage = createThreadTriageOutbox({
     runtime,
     sourceSnapshotAtom: snapshotAtom,
-    ...(options.shellStatusAtom === undefined ? {} : { shellStatusAtom: options.shellStatusAtom }),
-    ...(options.serverConfigAtom === undefined
-      ? {}
-      : { serverConfigAtom: options.serverConfigAtom }),
-    applySettle: (thread, queuedAt) => applySettle(thread, queuedAt, false),
-    applySnooze: (thread, snoozedUntil, queuedAt) =>
-      applySnooze(thread, snoozedUntil, queuedAt, false),
-    checkServer: (registry, environmentId) =>
-      versionGuard.run(registry, { environmentId, input: undefined }),
-    replay: (registry, { environmentId, threadId, commandId, action, snapshotSequence }) =>
+    ...(shellStatusAtom === undefined ? {} : { shellStatusAtom }),
+    apply: (thread, action, queuedAt) =>
       action.type === "settle"
-        ? settle.run(registry, { environmentId, input: { threadId, commandId, snapshotSequence } })
+        ? applySettle(thread, queuedAt, false)
+        : applySnooze(thread, action.snoozedUntil, queuedAt, false),
+    send: (registry, { environmentId, threadId, commandId, action }) =>
+      action.type === "settle"
+        ? settle.run(registry, { environmentId, input: { threadId, commandId } })
         : snooze.run(registry, {
             environmentId,
-            input: { threadId, commandId, snapshotSequence, snoozedUntil: action.snoozedUntil },
+            input: { threadId, commandId, snoozedUntil: action.snoozedUntil },
           }),
   });
   const optimistic = createOptimisticThreadLifecycle(triage.snapshotAtom);
@@ -473,13 +457,6 @@ export function createThreadEnvironmentAtoms<R, E>(
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     pendingSyncAtom: triage.pendingSyncAtom,
-    /** Until a session loads, offline settle and snooze stay available; replay is checked again. */
-    offlineTriagePermittedAtom: Atom.family((environmentId: EnvironmentId) =>
-      Atom.make((get) => {
-        const operateScopeAtom = options.operateScopeAtom?.(environmentId);
-        return operateScopeAtom === undefined || get(operateScopeAtom) !== false;
-      }),
-    ),
     settle: triage.queueWhenOffline(settle, () => ({ type: "settle" as const })),
     unsettle: triage.cancelQueued(
       optimistic.wrap(commands.unsettle, (thread, input, now) => ({

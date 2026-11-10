@@ -17,7 +17,6 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
-import { environmentSession } from "./session";
 import {
   pendingThreadCreationOutcomesAtom,
   selectThreadCreationDetail,
@@ -37,11 +36,7 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
-  {
-    shellStatusAtom: environmentShell.statusAtom,
-    operateScopeAtom: environmentSession.operateScopeAtom,
-    serverConfigAtom: serverEnvironment.configValueAtom,
-  },
+  environmentShell.statusAtom,
 );
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(

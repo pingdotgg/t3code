@@ -69,10 +69,8 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
-  /** Offline, settle and snooze can queue where the last session could operate. */
-  readonly canTriageOffline?: boolean;
-  /** Offline, un-settle and wake only cancel a change still waiting to sync. */
-  readonly hasPendingSync?: boolean;
+  /** Settle, snooze and their undo can queue before the environment's session loads. */
+  readonly canTriage?: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -270,11 +268,7 @@ export function buildThreadActionMenuItems(
     ? items
     : items.map((item) =>
         threadActionRequiresOperate(item.id) &&
-        !(
-          state.canTriageOffline === true &&
-          isThreadTriageAction(item.id) &&
-          (state.hasPendingSync === true || (item.id !== "unsettle" && item.id !== "unsnooze"))
-        )
+        !(state.canTriage === true && isThreadTriageAction(item.id))
           ? {
               ...item,
               disabled: true,

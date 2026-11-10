@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import {
+  AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
@@ -70,6 +71,34 @@ export function readEnvironmentScope(
   return sessionHasScope(
     appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
     scope,
+  );
+}
+
+/**
+ * Settle and snooze can queue for an environment whose session has not loaded yet, such as one
+ * that was offline at launch. The server checks the grant when the change is sent.
+ */
+function sessionAllowsThreadTriage(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+): boolean {
+  return (
+    !AsyncResult.isSuccess(result) ||
+    sessionGrantsScope(result.value, AuthOrchestrationOperateScope)
+  );
+}
+
+export function useThreadTriageScope(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    sessionAllowsThreadTriage,
+  );
+}
+
+export function readThreadTriageScope(environmentId: EnvironmentId): boolean {
+  return sessionAllowsThreadTriage(
+    appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
   );
 }
 

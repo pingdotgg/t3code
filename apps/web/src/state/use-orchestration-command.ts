@@ -22,8 +22,8 @@ function hasLiveOperateGrant(environmentId: EnvironmentId): boolean {
 }
 
 /**
- * `permitted` replaces the live operate check, so settle, snooze and their undo can pass the
- * remembered offline grant. It runs on every call, like the default.
+ * `permitted` replaces the operate check, so settle, snooze and their undo can queue before the
+ * environment's session loads. It runs on every call, like the default.
  */
 export function useOrchestrationCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,

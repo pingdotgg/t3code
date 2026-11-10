@@ -16,7 +16,7 @@ import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
-import { readEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, readThreadTriageScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -77,19 +77,18 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
-/** Settle, snooze and their undo may queue offline where the last session could change threads. */
+/** Settle, snooze and their undo may queue before the environment's session loads. */
 function checkThreadOperationPermission(
   thread: EnvironmentThreadShell,
   title: string,
   triage = false,
 ): boolean {
-  if (readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return true;
   if (
-    triage &&
-    appAtomRegistry.get(threadEnvironment.offlineTriagePermittedAtom(thread.environmentId))
-  ) {
+    triage
+      ? readThreadTriageScope(thread.environmentId)
+      : readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)
+  )
     return true;
-  }
   Dialog.alert(title, "This connection cannot change threads.");
   return false;
 }
