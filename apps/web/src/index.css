@@ -1346,7 +1346,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* On a destructive button: the normal key hint with a label that reads on
    it (light in dark mode, dark on the white hint in light mode). */
 @utility kbd-on-destructive {
-  --kbd-background: var(--kbd-destructive-fill, var(--kbd-fill));
+  --kbd-background: var(--kbd-destructive-fill, var(--kbd-fill)) !important;
   --kbd-foreground: var(--kbd-on-destructive-foreground);
   --kbd-box-shadow: var(--kbd-destructive-shadow, var(--kbd-shadow));
 }
@@ -4131,6 +4131,32 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     oklch(from var(--background) calc(l + 0.065) c h)
   ) !important;
   --composer-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22) !important;
+}
+
+/* Named light palettes already pair action and hover colors with their label. */
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="soft-gradient"] > body,
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="soft-gradient"] {
+  --lit-fill: linear-gradient(var(--primary), var(--message-action-hover)) !important;
+}
+
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="aqua-gloss-full"]
+  > body,
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="aqua-gloss-full"] {
+  --lit-fill: linear-gradient(
+    var(--primary) 0%,
+    color-mix(in srgb, var(--primary) 75%, var(--message-action-hover)) 50%,
+    var(--message-action-hover) 50%,
+    color-mix(in srgb, var(--primary) 50%, var(--message-action-hover)) 100%
+  ) !important;
+}
+
+:root:not(.dark)[data-theme-id]:not(
+    [data-theme-id=""]
+  )[data-surface-style="gradient-rim-everywhere"]
+  > body,
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
+  [data-surface-preview="gradient-rim-everywhere"] {
+  --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
 }
 
 /* Every other surface follows the style too (pen I71Cep): wells (inputs,
