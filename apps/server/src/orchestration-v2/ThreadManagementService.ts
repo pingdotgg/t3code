@@ -1250,14 +1250,24 @@ const make = Effect.gen(function* () {
         yield* providerTurn === undefined && !active
           ? Effect.void
           : providerTurn === undefined
-            ? orchestrator.dispatch({
-                type: "run.force-stop.settle",
-                commandId,
-                threadId: input.threadId,
-                runId: run.id,
-                attemptId: run.activeAttemptId!,
-                reason: FORCE_STOP_REASON,
-              })
+            ? orchestrator.dispatch(
+                run.activeAttemptId === null
+                  ? {
+                      type: "run.interrupt",
+                      commandId,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      reason: FORCE_STOP_REASON,
+                    }
+                  : {
+                      type: "run.force-stop.settle",
+                      commandId,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      attemptId: run.activeAttemptId,
+                      reason: FORCE_STOP_REASON,
+                    },
+              )
             : orchestrator.dispatch({
                 type: "thread.background-work.settle",
                 commandId,
