@@ -271,45 +271,42 @@ export function layoutThreadFlameChart(trace: ThreadTimingTrace): FlameChartLayo
       durationMs: turn.durationMs,
       depth: 0,
     });
+  }
 
-    const depthById = new Map<string, number>();
-    const ordered = turn.spans
-      .slice()
-      .sort(
-        (left, right) =>
-          right.durationMs - left.durationMs ||
-          left.startMs - right.startMs ||
-          left.id.localeCompare(right.id),
-      );
-
-    for (const span of ordered) {
-      let parentDepth = 0;
-      for (const candidate of ordered) {
-        if (candidate.id === span.id) continue;
-        const candidateDepth = depthById.get(candidate.id);
-        if (candidateDepth === undefined) continue;
-        // Any overlap (not only full containment) needs a deeper row so bars
-        // and click targets do not stack on the same depth.
-        const overlaps = candidate.startMs < span.endMs && span.startMs < candidate.endMs;
-        if (overlaps) parentDepth = Math.max(parentDepth, candidateDepth);
-      }
-      const depth = parentDepth + 1;
-      depthById.set(span.id, depth);
-      maxDepth = Math.max(maxDepth, depth);
-      nodes.push({
-        id: span.id,
-        kind: span.kind,
-        runId: turn.runId,
-        turnOrdinal: turn.ordinal,
-        spanId: span.id,
-        label: span.label,
-        startMs: span.startMs,
-        endMs: span.endMs,
-        durationMs: span.durationMs,
-        depth,
-        status: span.status,
-      });
-    }
+  const ordered = trace.turns
+    .flatMap((turn) => turn.spans.map((span) => ({ turn, span })))
+    .sort(
+      (left, right) =>
+        left.span.startMs - right.span.startMs ||
+        right.span.durationMs - left.span.durationMs ||
+        left.span.id.localeCompare(right.span.id),
+    );
+  let activeSpans: FlameChartNode[] = [];
+  for (const { turn, span } of ordered) {
+    activeSpans = activeSpans.filter((candidate) => candidate.endMs > span.startMs);
+    const parentDepth = activeSpans.reduce(
+      (maximum, candidate) =>
+        candidate.endMs >= span.endMs ? Math.max(maximum, candidate.depth) : maximum,
+      0,
+    );
+    let depth = parentDepth + 1;
+    while (activeSpans.some((candidate) => candidate.depth === depth)) depth += 1;
+    maxDepth = Math.max(maxDepth, depth);
+    const node = {
+      id: span.id,
+      kind: span.kind,
+      runId: turn.runId,
+      turnOrdinal: turn.ordinal,
+      spanId: span.id,
+      label: span.label,
+      startMs: span.startMs,
+      endMs: span.endMs,
+      durationMs: span.durationMs,
+      depth,
+      status: span.status,
+    } satisfies FlameChartNode;
+    activeSpans.push(node);
+    nodes.push(node);
   }
 
   nodes.sort(

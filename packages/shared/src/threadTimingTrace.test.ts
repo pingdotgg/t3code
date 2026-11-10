@@ -317,6 +317,13 @@ describe("layoutThreadFlameChart", () => {
           startedAt: "2026-05-22T12:00:00.000Z",
           completedAt: "2026-05-22T12:00:20.000Z",
         }),
+        run({
+          id: "r2",
+          ordinal: 2,
+          requestedAt: "2026-05-22T12:00:06.000Z",
+          startedAt: "2026-05-22T12:00:20.000Z",
+          completedAt: "2026-05-22T12:00:25.000Z",
+        }),
       ],
       turnItems: [
         item({
@@ -344,7 +351,11 @@ describe("layoutThreadFlameChart", () => {
     expect(layout.nodes.find((node) => node.kind === "turn")?.depth).toBe(0);
     expect(layout.nodes.find((node) => node.id === "tasks-1")?.depth).toBe(1);
     expect(layout.nodes.find((node) => node.id === "tool-1")?.depth).toBe(2);
-    expect(layout.maxDepth).toBe(2);
+    const queue = layout.nodes.find((node) => node.kind === "queue" && node.runId === "r2");
+    expect(queue).toBeDefined();
+    expect(queue?.depth).not.toBe(layout.nodes.find((node) => node.id === "tasks-1")?.depth);
+    expect(queue?.depth).not.toBe(layout.nodes.find((node) => node.id === "tool-1")?.depth);
+    expect(layout.maxDepth).toBe(3);
   });
 
   it("gives partially overlapping equal-duration spans distinct depths", () => {
