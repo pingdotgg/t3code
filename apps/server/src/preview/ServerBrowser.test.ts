@@ -2732,6 +2732,11 @@ it.effect("a queued action whose timeout passes while it waits never runs", () =
       const { broker, tabId } = yield* ready;
       const page = contexts[0]!.page;
       yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const stopRan = Promise.withResolvers<void>();
+      contexts[0]!.sessions.at(-1)!.detach.mockImplementationOnce(() => {
+        stopRan.resolve();
+        return new Promise<void>(() => {});
+      });
       const started = Promise.withResolvers<void>();
       const finish = Promise.withResolvers<void>();
       page.emulateMedia.mockImplementationOnce(() => {
@@ -2751,10 +2756,11 @@ it.effect("a queued action whose timeout passes while it waits never runs", () =
       const queued = yield* broker
         .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
         .pipe(Effect.flip, Effect.forkScoped);
-      const stop = yield* broker
-        .invoke({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
-        .pipe(Effect.exit, Effect.forkScoped);
       // The host answers in arrival order, so the click is queued once this answers.
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      yield* broker
+        .invoke({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.ignore, Effect.forkScoped);
       yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
       // Past the click's timeout but before the server answers it.
       yield* TestClock.adjust("1200 millis");
@@ -2763,8 +2769,7 @@ it.effect("a queued action whose timeout passes while it waits never runs", () =
       expect(yield* Fiber.join(queued)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
       expect(page.locator).not.toHaveBeenCalled();
       // A late stop still runs, or capture would keep going with no recording to stop.
-      yield* Fiber.join(stop);
-      expect(contexts[0]!.sessions.at(-1)!.detach).toHaveBeenCalled();
+      yield* Effect.promise(() => stopRan.promise);
     }),
   ).pipe(Effect.provide(layer)),
 );
