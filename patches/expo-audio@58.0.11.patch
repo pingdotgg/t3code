@@ -1,124 +1,3 @@
-diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
-index 198fe6d..5b39611 100644
---- a/ios/AudioRecorder.swift
-+++ b/ios/AudioRecorder.swift
-@@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
-   }
- 
-   func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
--    // Update internal state when recording finishes automatically (e.g., from recordForDuration)
--    currentState = .stopped
-+    // Update internal state when AVAudioRecorder finishes or fails.
-+    currentState = flag ? .stopped : .error
-     resetDurationTracking()
-     durationLimitSeconds = nil
- 
-     emit(event: recordingStatus, payload: [
-       "id": id,
-       "isFinished": true,
--      "hasError": false,
--      "error": nil,
-+      "hasError": !flag,
-+      "error": flag ? nil : "Recording failed",
-       "url": recorder.url.absoluteString
-     ])
-   }
-diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
---- a/ios/AudioModule.swift
-+++ b/ios/AudioModule.swift
-@@ -6,6 +6,7 @@
-
-   private let sessionQueue = DispatchQueue(label: "expo.modules.audio.session", qos: .userInitiated)
-   private var sessionIsActive = false
-+  private var hasAudioSessionOwner = false
-   private var audioSessionActivityKeepers = Set<String>()
-   private let audioEnabled = OSAllocatedUnfairLock(initialState: true)
-
-@@ -41,6 +42,16 @@
-       try setIsAudioActive(isActive)
-     }
-
-+    // Video shares AVAudioSession but is absent from this module's registry.
-+    Function("setAudioSessionOwner") { (owned: Bool) in
-+      self.sessionQueue.sync {
-+        self.hasAudioSessionOwner = owned
-+        if !owned {
-+          self.deactivateSession()
-+        }
-+      }
-+    }
-+
-     AsyncFunction("requestRecordingPermissionsAsync") { (promise: Promise) in
-       #if os(iOS)
-       appContext?.permissions?.askForPermission(
-@@ -259,9 +259,9 @@
-         }
-       }
-
--      Function("pause") { player in
-+      Function("pause") { (player: AudioPlayer, deactivateSession: Bool?) in
-         player.ref.pause()
--        if !player.keepAudioSessionActive {
-+        if deactivateSession != false && !player.keepAudioSessionActive {
-           self.deactivateSession()
-         }
-       }
-@@ -957,6 +967,7 @@
-     sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-       guard let self,
-         self.sessionIsActive,
-+        !self.hasAudioSessionOwner,
-         self.audioSessionActivityKeepers.isEmpty,
-         !self.isSessionInUse else {
-         return
-diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
-index 3194a8ebd1b91793d03a1692c563b5d2e83c2738..e7e713199f776b60093b75da782197427cf2000d 100644
---- a/src/AudioModule.types.ts
-+++ b/src/AudioModule.types.ts
-@@ -24,6 +24,8 @@ import type { AudioStream } from './AudioStream.types';
-  */
- export declare class NativeAudioModule extends NativeModule {
-   setIsAudioActiveAsync(active: boolean): Promise<void>;
-+  /** iOS only: protect the shared session from delayed expo-audio deactivation. */
-+  setAudioSessionOwner?(owned: boolean): void;
-   setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
-   requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
-   requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
-@@ -175,8 +177,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
-
-   /**
-    * Pauses the player.
-+   * @param deactivateSession On iOS, pass false when handing the shared session to another player.
-    */
--  pause(): void;
-+  pause(deactivateSession?: boolean): void;
-
-   /**
-    * Replaces the current audio source with a new one.
-diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
-index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..b590f9654bbf74b5052b71e31b7ed6d3d0050aa4 100644
---- a/build/AudioModule.types.d.ts
-+++ b/build/AudioModule.types.d.ts
-@@ -8,6 +8,8 @@ import type { AudioStream } from './AudioStream.types';
-  */
- export declare class NativeAudioModule extends NativeModule {
-     setIsAudioActiveAsync(active: boolean): Promise<void>;
-+    /** iOS only: protect the shared session from delayed expo-audio deactivation. */
-+    setAudioSessionOwner?(owned: boolean): void;
-     setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
-     requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
-     requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
-@@ -135,8 +137,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
-     play(): void;
-     /**
-      * Pauses the player.
-+     * @param deactivateSession On iOS, pass false when handing the shared session to another player.
-      */
--    pause(): void;
-+    pause(deactivateSession?: boolean): void;
-     /**
-      * Replaces the current audio source with a new one.
-      */
 diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/src/main/java/expo/modules/audio/AudioModule.kt
 index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3fc842c3d 100644
 --- a/android/src/main/java/expo/modules/audio/AudioModule.kt
@@ -126,7 +5,7 @@ index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3
 @@ -677,7 +677,7 @@ class AudioModule : Module() {
          }
        }
-
+ 
 -      Function("pause") { player: AudioPlayer ->
 +      Function("pause") { player: AudioPlayer, /* deactivateSession - iOS only */ _: Boolean? ->
          runOnMain {
@@ -135,12 +14,12 @@ index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3
 @@ -824,10 +824,14 @@ class AudioModule : Module() {
          return@Function recorder.getAvailableInputs(audioManager)
        }
-
+ 
 -      Function("setInput") { recorder: AudioRecorder, input: String ->
 +      AsyncFunction("setInput") Coroutine { recorder: AudioRecorder, input: String ->
          recorder.setInput(input, audioManager)
        }
-
+ 
 +      Function("cancelInputSelection") { recorder: AudioRecorder ->
 +        recorder.cancelInputSelection()
 +      }
@@ -304,7 +183,7 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..1ced279991294d3d81cb20fa339ca73e
        }
      }
 diff --git a/android/src/main/java/expo/modules/audio/AudioUtils.kt b/android/src/main/java/expo/modules/audio/AudioUtils.kt
-index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..cd0c7624b4cd8a4ebf7ed3b3390cfc76802e8530 100644
+index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..b52d0cd0622c233b45115b90057c1765337e4297 100644
 --- a/android/src/main/java/expo/modules/audio/AudioUtils.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioUtils.kt
 @@ -2,6 +2,8 @@ package expo.modules.audio
@@ -386,7 +265,7 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..cd0c7624b4cd8a4ebf7ed3b3390cfc76
    return MediaSession.Builder(context, PlayRequestingPlayer(player, onPlay))
 diff --git a/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..cdba9724318cf06afd21b4df6b895b381afa8e6f
+index 0000000000000000000000000000000000000000..372ab7554df73f043b9cb832a6b1d769d2ed69bf
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/audio/RecordingInputRoute.kt
 @@ -0,0 +1,53 @@
@@ -484,3 +363,125 @@ index 0000000000000000000000000000000000000000..4dd0567e2170770e9b0f6a17dc4581bc
 +    assertEquals(recordingInputUid(first, listOf(first)), recordingInputUid(reconnected, listOf(reconnected)))
 +  }
 +}
+diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
+index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..a312b8fcdaf728220db3d6c04d92fd78a4aa101c 100644
+--- a/build/AudioModule.types.d.ts
++++ b/build/AudioModule.types.d.ts
+@@ -8,6 +8,8 @@ import type { AudioStream } from './AudioStream.types';
+  */
+ export declare class NativeAudioModule extends NativeModule {
+     setIsAudioActiveAsync(active: boolean): Promise<void>;
++    /** iOS only: protect the shared session from delayed expo-audio deactivation. */
++    setAudioSessionOwner?(owned: boolean): void;
+     setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
+     requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
+     requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
+@@ -135,8 +137,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+     play(): void;
+     /**
+      * Pauses the player.
++     * @param deactivateSession On iOS, pass false when handing the shared session to another player.
+      */
+-    pause(): void;
++    pause(deactivateSession?: boolean): void;
+     /**
+      * Replaces the current audio source with a new one.
+      */
+diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
+index 42ce9e8f213ebc243db25ef836456757b0daeb09..b422c3c10349b14803d5e9d7afeed617e76e09af 100644
+--- a/ios/AudioModule.swift
++++ b/ios/AudioModule.swift
+@@ -6,6 +6,7 @@ public class AudioModule: Module {
+ 
+   private let sessionQueue = DispatchQueue(label: "expo.modules.audio.session", qos: .userInitiated)
+   private var sessionIsActive = false
++  private var hasAudioSessionOwner = false
+   private var audioSessionActivityKeepers = Set<String>()
+   private let audioEnabled = OSAllocatedUnfairLock(initialState: true)
+ 
+@@ -41,6 +42,16 @@ public class AudioModule: Module {
+       try setIsAudioActive(isActive)
+     }
+ 
++    // Video shares AVAudioSession but is absent from this module's registry.
++    Function("setAudioSessionOwner") { (owned: Bool) in
++      self.sessionQueue.sync {
++        self.hasAudioSessionOwner = owned
++        if !owned {
++          self.deactivateSession()
++        }
++      }
++    }
++
+     AsyncFunction("requestRecordingPermissionsAsync") { (promise: Promise) in
+       #if os(iOS)
+       appContext?.permissions?.askForPermission(
+@@ -259,9 +270,9 @@ public class AudioModule: Module {
+         }
+       }
+ 
+-      Function("pause") { player in
++      Function("pause") { (player: AudioPlayer, deactivateSession: Bool?) in
+         player.ref.pause()
+-        if !player.keepAudioSessionActive {
++        if deactivateSession != false && !player.keepAudioSessionActive {
+           self.deactivateSession()
+         }
+       }
+@@ -957,6 +968,7 @@ public class AudioModule: Module {
+     sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+       guard let self,
+         self.sessionIsActive,
++        !self.hasAudioSessionOwner,
+         self.audioSessionActivityKeepers.isEmpty,
+         !self.isSessionInUse else {
+         return
+diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
+index 198fe6dc95b564ff3916657f14ea67fc44d2e424..5b396114bbeb5e1c99da54f4e6d2376ad978dfa0 100644
+--- a/ios/AudioRecorder.swift
++++ b/ios/AudioRecorder.swift
+@@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+   }
+ 
+   func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+-    // Update internal state when recording finishes automatically (e.g., from recordForDuration)
+-    currentState = .stopped
++    // Update internal state when AVAudioRecorder finishes or fails.
++    currentState = flag ? .stopped : .error
+     resetDurationTracking()
+     durationLimitSeconds = nil
+ 
+     emit(event: recordingStatus, payload: [
+       "id": id,
+       "isFinished": true,
+-      "hasError": false,
+-      "error": nil,
++      "hasError": !flag,
++      "error": flag ? nil : "Recording failed",
+       "url": recorder.url.absoluteString
+     ])
+   }
+diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
+index 3194a8ebd1b91793d03a1692c563b5d2e83c2738..d8822a6c2ad8a581275e2ca428f4b5d0ed961be2 100644
+--- a/src/AudioModule.types.ts
++++ b/src/AudioModule.types.ts
+@@ -24,6 +24,8 @@ import type { AudioStream } from './AudioStream.types';
+  */
+ export declare class NativeAudioModule extends NativeModule {
+   setIsAudioActiveAsync(active: boolean): Promise<void>;
++  /** iOS only: protect the shared session from delayed expo-audio deactivation. */
++  setAudioSessionOwner?(owned: boolean): void;
+   setAudioModeAsync(category: Partial<AudioMode>): Promise<void>;
+   requestRecordingPermissionsAsync(): Promise<PermissionResponse>;
+   requestNotificationPermissionsAsync(): Promise<PermissionResponse>;
+@@ -175,8 +177,9 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+ 
+   /**
+    * Pauses the player.
++   * @param deactivateSession On iOS, pass false when handing the shared session to another player.
+    */
+-  pause(): void;
++  pause(deactivateSession?: boolean): void;
+ 
+   /**
+    * Replaces the current audio source with a new one.
