@@ -1055,6 +1055,7 @@ export const make = Effect.gen(function* () {
           ...processCommand,
           cwd,
           timeoutMs: AFTER_PUSH_TIMEOUT_MS,
+          allowNonZeroExit: true,
         })
         .pipe(
           Effect.mapError(
@@ -1066,7 +1067,18 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.asVoid,
+          Effect.flatMap((result) =>
+            result.exitCode === 0
+              ? Effect.void
+              : Effect.fail(
+                  new GitManagerError({
+                    operation: "runAfterPushHook",
+                    cwd,
+                    detail: `The configured hooks.afterPush command failed with exit code ${result.exitCode}.`,
+                    diagnostics: (result.stderr.trim() || result.stdout.trim()).slice(0, 2_000),
+                  }),
+                ),
+          ),
         );
     }).pipe(Effect.asVoid);
   });

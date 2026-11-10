@@ -476,10 +476,12 @@ export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitM
   operation: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
+  diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Git manager failed in ${this.operation}: ${this.detail}`;
+    const summary = `Git manager failed in ${this.operation}: ${this.detail}`;
+    return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;
   }
 }
 

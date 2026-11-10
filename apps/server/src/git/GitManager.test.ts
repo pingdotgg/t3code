@@ -1299,42 +1299,57 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("fails the action and stops remaining hooks.afterPush commands", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/failing-after-push-hook"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      const skippedMarker = NodePath.join(remoteDir, "skipped-after-hook-failure");
-      const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
-      NodeFS.writeFileSync(
-        NodePath.join(repoDir, ".t3code", "vcs.json"),
-        JSON.stringify({
-          hooks: { afterPush: ["exit 7", `touch ${shellQuote(skippedMarker)}`] },
-        }),
-      );
-      yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
-      yield* runGit(repoDir, ["commit", "-m", "Configure failing after-push hook"]);
+  it.effect.each([
+    {
+      command: "printf 'Compilation failed: missing module' >&2; printf 'build output'; exit 7",
+      diagnostics: "Compilation failed: missing module",
+    },
+    {
+      command: "printf 'Compilation failed on stdout'; exit 7",
+      diagnostics: "Compilation failed on stdout",
+    },
+    { command: "exit 7", diagnostics: "" },
+    { command: "printf '%02001d' 0 >&2; exit 7", diagnostics: "0".repeat(2_000) },
+  ])(
+    "fails the action and stops remaining hooks.afterPush commands ($command)",
+    ({ command, diagnostics }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/failing-after-push-hook"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        const skippedMarker = NodePath.join(remoteDir, "skipped-after-hook-failure");
+        const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+        NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".t3code", "vcs.json"),
+          JSON.stringify({
+            hooks: { afterPush: [command, `touch ${shellQuote(skippedMarker)}`] },
+          }),
+        );
+        yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
+        yield* runGit(repoDir, ["commit", "-m", "Configure failing after-push hook"]);
 
-      const { manager } = yield* makeManager();
-      const error = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "push",
-      }).pipe(Effect.flip);
+        const { manager } = yield* makeManager();
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "push",
+        }).pipe(Effect.flip);
 
-      expect(error.message).toContain("configured hooks.afterPush command failed");
-      expect(NodeFS.existsSync(skippedMarker)).toBe(false);
-      expect(
-        yield* runGit(remoteDir, [
-          "--git-dir=.",
-          "show-ref",
-          "--verify",
-          "refs/heads/feature/failing-after-push-hook",
-        ]).pipe(Effect.map((output) => output.exitCode)),
-      ).toBe(0);
-    }),
+        expect(error.message).toBe(
+          `Git manager failed in runAfterPushHook: The configured hooks.afterPush command failed with exit code 7.${diagnostics ? `\n\n${diagnostics}` : ""}`,
+        );
+        expect(NodeFS.existsSync(skippedMarker)).toBe(false);
+        expect(
+          yield* runGit(remoteDir, [
+            "--git-dir=.",
+            "show-ref",
+            "--verify",
+            "refs/heads/feature/failing-after-push-hook",
+          ]).pipe(Effect.map((output) => output.exitCode)),
+        ).toBe(0);
+      }),
   );
 
   it.effect("does not run hooks.afterPush when no push was needed", () =>
