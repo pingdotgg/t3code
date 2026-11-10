@@ -6,8 +6,8 @@ import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { assert, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -415,7 +415,7 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     );
     const capabilities = yield* probeClaudeCapabilities(
       yield* decodeClaudeSettings({ binaryPath: "claude" }),
-      { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: configDir },
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
     );
     assert.deepEqual(
       capabilities.models?.map((model) => model.value),
