@@ -542,6 +542,7 @@ type SnapshotInput = {
   readonly cdp: CDPSession;
   /** Headless pages render at the scale the server set; a desktop page at its display's. */
   readonly renderScale: number | "display";
+  readonly fullScreenshot?: boolean | undefined;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -585,8 +586,13 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.cdp, { format: "png" }).then((png) =>
-      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+    captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+      scale < 1
+        ? {
+            data: await shrinkPng(input.cdp, full, scale),
+            full: input.fullScreenshot ? full : undefined,
+          }
+        : { data: full, full: undefined },
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
@@ -611,7 +617,7 @@ const capture = async (
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw tooBusy();
   }
-  const [page, data] = await pageAndScreenshot;
+  const [page, { full, data }] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
   // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
@@ -638,6 +644,7 @@ const capture = async (
       data,
       ...pngSize(data),
     },
+    ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
 
@@ -908,8 +915,10 @@ export const evaluate = async (
   timeoutMs: number,
 ) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true;
       // Stops a busy script; an awaited promise is abandoned and settles unread.
       void cdp.send("Runtime.terminateExecution").catch(constVoid);
       reject(
@@ -920,10 +929,23 @@ export const evaluate = async (
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
+  const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
     returnByValue: input.returnByValue ?? true,
+  };
+  // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
+  // so it only retries what the page's parser rejected. A parse error has a scriptId but no stack and
+  // ran nothing; a browser-internal rejection has neither.
+  const evaluation = cdp.send("Runtime.evaluate", params).then((classic) => {
+    const failure = classic.exceptionDetails;
+    const unparsed =
+      failure?.exception?.className === "SyntaxError" &&
+      failure.scriptId !== undefined &&
+      failure.stackTrace === undefined;
+    return unparsed && !timedOut && input.expression.includes("await")
+      ? cdp.send("Runtime.evaluate", { ...params, replMode: true })
+      : classic;
   });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
