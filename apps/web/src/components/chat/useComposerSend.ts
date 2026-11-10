@@ -922,9 +922,11 @@ export function useComposerSend(input: ComposerSendInput) {
         (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null
           ? "Retry or remove failed uploads before sending."
           : null);
-      if (uploadBlockReason !== null) {
+      const blockReason =
+        uploadBlockReason ?? (draftChangedDuringPreparation() ? changedDraftError : null);
+      if (blockReason !== null) {
         sendInFlightRef.current = false;
-        setThreadError(threadIdForSend, uploadBlockReason);
+        setThreadError(threadIdForSend, blockReason);
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
