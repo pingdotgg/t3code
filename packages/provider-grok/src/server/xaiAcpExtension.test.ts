@@ -172,44 +172,65 @@ describe("XAiAcpExtension", () => {
   });
 
   it.each([
-    "SUBAGENT_MARKER: 35 entries",
-    "An earlier command reported Status: failed before the fix succeeded.",
-    "An earlier command reported Exit Code: 1 before the fix succeeded.",
-  ])("hydrates subagent completion from get_command_or_subagent_output: %s", (output) => {
-    expect(
-      extractXAiAcpSubagentUpdate({
-        toolCallId: "call-get-1",
-        title: "get_command_or_subagent_output",
-        status: "completed",
-        data: {
-          rawInput: {
-            task_ids: ["019f44a6-4820-7402-925d-bc862ee711dd"],
-            timeout_ms: 30000,
-          },
-          rawOutput: {
-            type: "Text",
-            text: [
+    { output: "SUBAGENT_MARKER: 35 entries" },
+    { output: "An earlier command reported Status: failed before the fix succeeded." },
+    { output: "An earlier command reported Exit Code: 1 before the fix succeeded." },
+    { output: "Before\n=== Output ===\nAfter" },
+    { output: "Done", command: 'Command: echo "=== Output ===" && false' },
+    { output: "Done", newline: "\r\n", delimiter: "  === Output ===\t" },
+    { output: "Failed", taskStatus: "failed" },
+    { output: "Failed", exitCode: 2 },
+    { output: "Status: completed", delimiter: null },
+  ])(
+    "hydrates subagent completion from get_command_or_subagent_output: $output",
+    ({
+      output,
+      command,
+      newline = "\n",
+      delimiter = "=== Output ===",
+      taskStatus = "completed",
+      exitCode = 0,
+    }) => {
+      const text =
+        delimiter === null
+          ? output
+          : [
               "=== Task 019f44a6-4820-7402-925d-bc862ee711dd ===",
-              "Status: completed",
-              "Exit Code: 0",
+              ...(command === undefined ? [] : [command]),
+              `Status: ${taskStatus}`,
+              `Exit Code: ${exitCode}`,
               "",
-              "=== Output ===",
+              delimiter,
               output,
-            ].join("\n"),
+            ].join(newline);
+      expect(
+        extractXAiAcpSubagentUpdate({
+          toolCallId: "call-get-1",
+          title: "get_command_or_subagent_output",
+          status: "completed",
+          data: {
+            rawInput: {
+              task_ids: ["019f44a6-4820-7402-925d-bc862ee711dd"],
+              timeout_ms: 30000,
+            },
+            rawOutput: {
+              type: "Text",
+              text,
+            },
           },
-        },
-      }),
-    ).toEqual({
-      nativeTaskId: "call-get-1",
-      prompt: "",
-      title: null,
-      model: null,
-      status: "completed",
-      childSessionId: "019f44a6-4820-7402-925d-bc862ee711dd",
-      result: output,
-      suppressNormalTool: true,
-    });
-  });
+        }),
+      ).toEqual({
+        nativeTaskId: "call-get-1",
+        prompt: "",
+        title: null,
+        model: null,
+        status: taskStatus === "failed" || exitCode !== 0 ? "failed" : "completed",
+        childSessionId: "019f44a6-4820-7402-925d-bc862ee711dd",
+        result: output,
+        suppressNormalTool: true,
+      });
+    },
+  );
 
   it("attributes multi-task get_output envelopes to the result task_id", () => {
     expect(

@@ -733,6 +733,16 @@ function resultTaskIdFromGetOutputTool(
   return taskHeader;
 }
 
+function splitLegacyOutput(output: string) {
+  const boundary = /^[ \t]*=== Output ===[ \t]*\r?$/im.exec(output);
+  return boundary === null
+    ? undefined
+    : {
+        header: output.slice(0, boundary.index),
+        body: output.slice(boundary.index + boundary[0].length),
+      };
+}
+
 function resultFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
@@ -752,8 +762,7 @@ function resultFromGetOutputTool(
     return null;
   }
   if (output === undefined) return null;
-  const marker = output.match(/=== Output ===\s*([\s\S]*)$/i);
-  const body = (marker?.[1] ?? output).trim();
+  const body = (splitLegacyOutput(output)?.body ?? output).trim();
   return body.length > 0 ? body : null;
 }
 
@@ -772,7 +781,7 @@ function statusFromGetOutputTool(
     return result.exit_code === 0 ? "completed" : "failed";
   }
   if (output !== undefined) {
-    const header = output.split(/=== Output ===/i, 1)[0] ?? output;
+    const header = splitLegacyOutput(output)?.header ?? output;
     if (/Status:\s*failed/i.test(header) || /Exit Code:\s*-?(?!0\b)\d+/i.test(header)) {
       return "failed";
     }
