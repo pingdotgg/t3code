@@ -5201,10 +5201,11 @@ describe("PiAdapterV2", () => {
       const skill = yield* takeEvent((event) => event.type === "user_message.delivered");
       assert.deepInclude(skill, { messageId: "message:thread-pi-test:skill" as never });
 
-      // A command awaiting a dialog acks after a later steer, so acks follow request ids, not send order.
+      // A command awaiting a dialog acks after a later steer, so acks follow request ids, not send
+      // order, and an expanded steer Pi starts meanwhile is not taken for the unacked command.
       yield* steer("message:thread-pi-test:dialog", "/confirm");
       const dialogPrompt = yield* fake.takeRequest("prompt");
-      yield* steer("message:thread-pi-test:waiting", "Then say MANGO");
+      yield* steer("message:thread-pi-test:waiting", "/skill:plan");
       const waitingPrompt = yield* fake.takeRequest("prompt");
       const ackFor = (request: PiRpcRecord, disposition: string) =>
         fake.emit({
@@ -5215,15 +5216,18 @@ describe("PiAdapterV2", () => {
           data: { disposition },
         });
       yield* ackFor(waitingPrompt, "queued");
-      yield* ackFor(dialogPrompt, "handled");
-      const dialog = yield* takeEvent((event) => event.type === "user_message.delivered");
-      assert.deepInclude(dialog, { messageId: "message:thread-pi-test:dialog" as never });
       yield* fake.emit({
         type: "message_start",
-        message: { role: "user", content: [{ type: "text", text: "Then say MANGO" }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "<skill>Plan the work</skill>" }],
+        },
       });
       const waiting = yield* takeEvent((event) => event.type === "user_message.delivered");
       assert.deepInclude(waiting, { messageId: "message:thread-pi-test:waiting" as never });
+      yield* ackFor(dialogPrompt, "handled");
+      const dialog = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(dialog, { messageId: "message:thread-pi-test:dialog" as never });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

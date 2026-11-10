@@ -377,7 +377,12 @@ interface ActivePiTurn {
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
   /** Steers Pi queued but has not started, oldest first. */
-  readonly unreadSteers: Array<{ readonly messageId: MessageId; readonly text: string }>;
+  readonly unreadSteers: Array<{
+    readonly messageId: MessageId;
+    readonly text: string;
+    /** Pi acked it as queued or started; a pending extension command has no user message yet. */
+    queuedMessage: boolean;
+  }>;
   sawUserMessage: boolean;
 }
 
@@ -1955,10 +1960,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             if (role !== "user") return;
             // Pi starts a queued steer as a user message with its text, as Pi's own queue matches it.
-            // An expanded prompt template no longer matches, so after the turn's prompt take the oldest.
+            // An expanded prompt template no longer matches, so after the turn's prompt take the
+            // oldest steer Pi acked as queuing a message.
             const text = contentText(recordField(event["message"], "content"));
             const matched = turn.unreadSteers.findIndex((steer) => steer.text === text);
-            const index = matched === -1 && turn.sawUserMessage ? 0 : matched;
+            const index =
+              matched === -1 && turn.sawUserMessage
+                ? turn.unreadSteers.findIndex((steer) => steer.queuedMessage)
+                : matched;
             turn.sawUserMessage = true;
             const [steer] = index === -1 ? [] : turn.unreadSteers.splice(index, 1);
             if (steer !== undefined) yield* emitSteerDelivered(turn, steer.messageId);
@@ -2275,6 +2284,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (steer !== undefined && event["success"] === true) {
                 yield* emitSteerDelivered(responseTurn, steer.messageId);
               }
+            } else if (responseTurn !== null && steerIndex !== -1) {
+              responseTurn.unreadSteers[steerIndex]!.queuedMessage = true;
             }
             if (event["success"] === true) {
               // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
@@ -2975,6 +2986,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   turn.unreadSteers.push({
                     messageId: steerInput.message.messageId,
                     text: payload.message,
+                    queuedMessage: false,
                   });
                   yield* sendPrompt({
                     providerTurnId: turn.providerTurn.id,
