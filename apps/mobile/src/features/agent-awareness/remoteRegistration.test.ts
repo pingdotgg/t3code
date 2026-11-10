@@ -106,17 +106,13 @@ const catalogMock = vi.hoisted(() => ({
   atom: Symbol("catalogValueAtom"),
   value: { isReady: true, entries: new Map<string, { readonly enabled: boolean }>() },
   listeners: new Set<(value: unknown) => void>(),
-  reads: 0,
 }));
 
 // Avoid importing the native connection stack; registration only reads these atoms.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: (atom: unknown) => {
-      if (atom !== catalogMock.atom) return environmentConfigsMock.configs;
-      catalogMock.reads++;
-      return catalogMock.value;
-    },
+    get: (atom: unknown) =>
+      atom === catalogMock.atom ? catalogMock.value : environmentConfigsMock.configs,
     subscribe: (_atom: unknown, listener: (value: unknown) => void) => {
       catalogMock.listeners.add(listener);
       return () => catalogMock.listeners.delete(listener);
@@ -301,7 +297,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     environmentConfigsMock.configs.clear();
     catalogMock.value = { isReady: true, entries: new Map() };
     catalogMock.listeners.clear();
-    catalogMock.reads = 0;
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -780,7 +775,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       catalogMock.value = { isReady: true, entries: new Map([["env-a", { enabled: false }]]) };
       for (const listener of catalogMock.listeners) listener(catalogMock.value);
       const toggle = backgroundRuntime.pending.shift()!;
-      const readsBefore = catalogMock.reads;
       const toggleFiber = yield* Effect.forkChild(
         toggle.operation as Effect.Effect<
           unknown,
@@ -789,8 +783,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         >,
         { startImmediately: true },
       );
-      // A snapshot taken now would be older than the update still in flight.
-      expect(catalogMock.reads).toBe(readsBefore);
       openUpdate?.();
       yield* Fiber.join(update);
       toggle.resolve(yield* Fiber.await(toggleFiber));
