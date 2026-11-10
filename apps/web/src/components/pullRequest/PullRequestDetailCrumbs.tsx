@@ -113,7 +113,7 @@ export function PullRequestDetailCrumbs({
 }) {
   const state = detail ? resolvePullRequestState(detail) : null;
   return (
-    <div className="mt-2 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5 pl-4 text-label text-muted-foreground">
+    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
       {detail && toneClassName && state ? (
         <>
           {onBack ? (
@@ -129,12 +129,15 @@ export function PullRequestDetailCrumbs({
                 repositoryUrl ? (
                   <InlineButton
                     tone="muted"
+                    className="min-w-0 shrink @max-sm/pr-header:hidden"
                     onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
                   >
-                    {detail.repository}
+                    <span className="truncate">{detail.repository}</span>
                   </InlineButton>
                 ) : (
-                  <span className="shrink-0">{detail.repository}</span>
+                  <span className="min-w-0 truncate @max-sm/pr-header:hidden">
+                    {detail.repository}
+                  </span>
                 )
               }
             />
@@ -160,7 +163,7 @@ export function PullRequestDetailCrumbs({
               }
             >
               <state.Icon aria-hidden />
-              {state.label}
+              <span className="@max-sm/pr-header:sr-only">{state.label}</span>
             </Badge>
           ) : null}
           {children}
