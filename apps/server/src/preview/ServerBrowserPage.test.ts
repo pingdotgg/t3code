@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -299,6 +308,25 @@ describe("server browser element refs", () => {
     expect(await page.evaluate("window.runs")).toBe(1);
   });
 
+  it("does not rerun an expression whose awaited browser call rejects with a SyntaxError", async () => {
+    let posts = 0;
+    await page.route("http://preview.test/**", (route) => {
+      if (route.request().method() === "POST") posts++;
+      return route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" });
+    });
+    await page.goto("http://preview.test/");
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      {
+        expression:
+          "(async () => { const r = await fetch('/api', { method: 'POST' }); return r.json() })()",
+      },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("is not valid JSON");
+    expect(posts).toBe(1);
+  });
+
   it("returns the result of a top-level await expression that reloads the page", async () => {
     await page.route("http://preview.test/", (route) =>
       route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
@@ -455,6 +483,40 @@ describe("server browser drag", () => {
       expect(unobserved).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("server browser evaluate", () => {
+  it("does not retry a parse error that arrives after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const classic = Promise.withResolvers<unknown>();
+      const send = vi.fn((method: string) =>
+        method === "Runtime.evaluate" ? classic.promise : Promise.resolve({}),
+      );
+      const cdp = { send } as unknown as CDPSession;
+      const evaluation = ServerBrowserPage.evaluate(cdp, { expression: "await 0; 1" }, 10);
+      const rejected = expect(evaluation).rejects.toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      classic.resolve({
+        result: { type: "object" },
+        exceptionDetails: {
+          text: "Uncaught",
+          scriptId: "4",
+          exception: { type: "object", className: "SyntaxError" },
+        },
+      });
+      await classic.promise;
+      expect(send.mock.calls.map(([method]) => method)).toEqual([
+        "Runtime.evaluate",
+        "Runtime.terminateExecution",
+      ]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
