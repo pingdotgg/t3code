@@ -5,6 +5,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   isListedThreadLineage,
   type ModelSelection,
+  type OrchestrationProjectShell,
   type Project,
   ProjectId,
   ProviderInstanceId,
@@ -20,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -246,6 +248,39 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
         ),
       ),
     { concurrency: 4, discard: true },
+  );
+});
+
+// Archive, not delete: a missing folder is often an unplugged drive, and archiving keeps threads.
+export const archiveMissingProjects = Effect.fn("archiveMissingProjects")(function* (
+  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot" | "archivedAt">>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const projectService = yield* ProjectService.ProjectService;
+  const random = yield* SecureRandom.SecureRandom;
+  yield* Effect.forEach(
+    projects.filter((project) => !project.archivedAt),
+    (project) =>
+      Effect.gen(function* () {
+        if (yield* fileSystem.exists(project.workspaceRoot)) return;
+        yield* projectService.update({
+          commandId: CommandId.make(yield* random.uuidV4()),
+          projectId: project.id,
+          archived: true,
+        });
+        yield* Effect.logInfo("Archived project whose folder is missing", {
+          projectId: project.id,
+          workspaceRoot: project.workspaceRoot,
+        });
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to check project folder", {
+            projectId: project.id,
+            cause,
+          }),
+        ),
+      ),
+    { concurrency: 8, discard: true },
   );
 });
 
@@ -572,6 +607,9 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       "projects.auto-pull",
       Effect.gen(function* () {
         const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
+        yield* archiveMissingProjects(projects).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, random),
+        );
         const settings = yield* serverSettings.getSettings;
         yield* autoPullProjects(projects, settings);
       }),

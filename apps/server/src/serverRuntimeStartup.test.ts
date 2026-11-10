@@ -364,3 +364,37 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),
 );
+
+it.effect("startup archives active projects whose folder is gone", () =>
+  Effect.gen(function* () {
+    const archived: string[] = [];
+    const projects = {
+      update: (input: { projectId: string; archived?: boolean }) =>
+        Effect.sync(() => {
+          if (input.archived) archived.push(input.projectId);
+          return {} as never;
+        }),
+    } as unknown as ProjectService.ProjectService["Service"];
+    const fileSystem = {
+      exists: (path: string) =>
+        path === "/unreadable"
+          ? Effect.fail(new Error("EACCES") as never)
+          : Effect.succeed(path === "/present"),
+    } as unknown as FileSystem.FileSystem;
+    const project = (workspaceRoot: string, archivedAt: string | null = null) =>
+      ({ id: ProjectId.make(workspaceRoot), workspaceRoot, archivedAt }) as never;
+
+    yield* ServerRuntimeStartup.archiveMissingProjects([
+      project("/present"),
+      project("/gone"),
+      project("/already-archived", "2026-01-01T00:00:00.000Z"),
+      project("/unreadable"),
+    ]).pipe(
+      Effect.provideService(ProjectService.ProjectService, projects),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provide(NodeCrypto.layer),
+    );
+
+    assert.deepStrictEqual(archived, ["/gone"]);
+  }),
+);
