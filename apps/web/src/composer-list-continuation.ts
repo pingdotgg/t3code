@@ -98,51 +98,102 @@ function indentWidth(line: string, fromColumn = 0): number {
   return column - fromColumn;
 }
 
-function renumberFollowingItems(
+type OrderedMarker = Extract<ListMarker, { kind: "ordered" }>;
+type NumberedRun = { marker: OrderedMarker; first: number };
+
+function markerNumber(marker: OrderedMarker): number {
+  return Number.parseInt(marker.numberText, 10);
+}
+
+function continuesOrderedList(
+  marker: ListMarker | null | undefined,
+  next: ListMarker,
+): marker is OrderedMarker {
+  return (
+    marker?.kind === "ordered" && next.kind === "ordered" && marker.delimiter === next.delimiter
+  );
+}
+
+// A run stops at the line that ends it, and the next, shallower run reads on from that line.
+function extendWithRenumbering(
   value: string,
-  afterLineEnd: number,
-  marker: Extract<ListMarker, { kind: "ordered" }>,
   tokens: ReturnType<typeof inlineTokenRanges>,
-): { end: number; text: string } | null {
-  const baseWidth = indentWidth(marker.indent);
+  edit: ComposerListEdit,
+  afterLineEnd: number,
+  runs: ReadonlyArray<NumberedRun>,
+): ComposerListEdit {
   const parts: string[] = [];
-  let expected = Number.parseInt(marker.numberText, 10) + 2;
   let position = afterLineEnd;
   let copiedUntil = afterLineEnd;
   let tokenIndex = 0;
-  while (position < value.length && Number.isSafeInteger(expected)) {
-    const lineStart = position + 1;
-    const nextBreak = value.indexOf("\n", lineStart);
-    const lineEnd = nextBreak === -1 ? value.length : nextBreak;
-    position = lineEnd;
-    let token = tokens[tokenIndex];
-    while (token && token.end <= lineStart) {
-      tokenIndex += 1;
-      token = tokens[tokenIndex];
-    }
-    // A newline inside a chip does not start a list item.
-    if (token && token.start < lineStart) continue;
+  for (const { marker, first } of runs) {
+    const baseWidth = indentWidth(marker.indent);
+    let expected = first;
+    while (position < value.length && Number.isSafeInteger(expected)) {
+      const lineStart = position + 1;
+      const nextBreak = value.indexOf("\n", lineStart);
+      const lineEnd = nextBreak === -1 ? value.length : nextBreak;
+      position = lineEnd;
+      let token = tokens[tokenIndex];
+      while (token && token.end <= lineStart) {
+        tokenIndex += 1;
+        token = tokens[tokenIndex];
+      }
+      // A newline inside a chip does not start a list item.
+      if (token && token.start < lineStart) continue;
 
-    const line = value.slice(lineStart, lineEnd);
-    const width = indentWidth(line);
-    if (line.trim() === "" || width < baseWidth) break;
-    if (width > baseWidth) continue;
-    const parsed = parseListMarker(line);
-    if (parsed?.marker.kind !== "ordered" || parsed.marker.delimiter !== marker.delimiter) break;
+      const line = value.slice(lineStart, lineEnd);
+      const width = indentWidth(line);
+      if (line.trim() === "" || width < baseWidth) {
+        position = lineStart - 1;
+        break;
+      }
+      if (width > baseWidth) continue;
+      const parsed = parseListMarker(line);
+      if (parsed?.marker.kind !== "ordered" || parsed.marker.delimiter !== marker.delimiter) break;
 
-    const current = parsed.marker;
-    const numberStart = lineStart + current.indent.length;
-    const numberEnd = numberStart + current.numberText.length;
-    const replacement = current.numberText.startsWith("0")
-      ? String(expected).padStart(current.numberText.length, "0")
-      : String(expected);
-    if (replacement !== current.numberText) {
-      parts.push(value.slice(copiedUntil, numberStart), replacement);
-      copiedUntil = numberEnd;
+      const current = parsed.marker;
+      const numberStart = lineStart + current.indent.length;
+      const numberEnd = numberStart + current.numberText.length;
+      const replacement = current.numberText.startsWith("0")
+        ? String(expected).padStart(current.numberText.length, "0")
+        : String(expected);
+      if (replacement !== current.numberText) {
+        parts.push(value.slice(copiedUntil, numberStart), replacement);
+        copiedUntil = numberEnd;
+      }
+      expected += 1;
     }
-    expected += 1;
   }
-  return parts.length === 0 ? null : { end: copiedUntil, text: parts.join("") };
+  if (parts.length === 0) return edit;
+  return {
+    ...edit,
+    end: copiedUntil,
+    replacement: edit.replacement + value.slice(edit.end, afterLineEnd) + parts.join(""),
+  };
+}
+
+// `edit` rewrites the lifted line from its start. Siblings left at or past the lifted item's new
+// content column become its children, numbered from 1; `parentList` counts on after it.
+function renumberAfterLift(
+  value: string,
+  tokens: ReturnType<typeof inlineTokenRanges>,
+  edit: ComposerListEdit,
+  lineEnd: number,
+  lifted: ListMarker,
+  parentList: ListMarker | null,
+): ComposerListEdit {
+  const runs: NumberedRun[] = [];
+  if (lifted.kind === "ordered") {
+    const liftedTo = parseListMarker(edit.replacement + value.slice(edit.end, lineEnd));
+    if (liftedTo && indentWidth(lifted.indent) >= liftedTo.contentColumn) {
+      runs.push({ marker: lifted, first: 1 });
+    }
+  }
+  if (parentList?.kind === "ordered") {
+    runs.push({ marker: parentList, first: markerNumber(parentList) + 2 });
+  }
+  return extendWithRenumbering(value, tokens, edit, lineEnd, runs);
 }
 
 function inlineTokenRanges(value: string): Array<{ start: number; end: number }> {
@@ -209,11 +260,9 @@ function nestedNumber(
   previousChild: ListMarker | undefined,
 ): { replacedLength: number; text: string } {
   if (marker.kind !== "ordered") return { replacedLength: 0, text: "" };
-  const continues =
-    previousChild?.kind === "ordered" && previousChild.delimiter === marker.delimiter;
   return {
     replacedLength: marker.numberText.length,
-    text: continues
+    text: continuesOrderedList(previousChild, marker)
       ? nextOrderedMarkerText(`${previousChild.numberText}${marker.delimiter}`).slice(0, -1)
       : "1",
   };
@@ -231,35 +280,27 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   if (value.slice(markerEnd, line.end).trim() === "") {
     const parent = parentMarker(value, line.start, parsed.marker, tokens);
     const replacement = parent ? nextMarkerText(parent) : "";
-    const cursorAfter = line.start + replacement.length;
-    const end = Math.max(cursor, markerEnd);
-    const renumbered =
-      parent?.kind === "ordered" ? renumberFollowingItems(value, line.end, parent, tokens) : null;
-    if (renumbered) {
-      return {
-        start: line.start,
-        end: renumbered.end,
-        replacement: replacement + value.slice(end, line.end) + renumbered.text,
-        cursorAfter,
-      };
-    }
-    return { start: line.start, end, replacement, cursorAfter };
+    const edit = {
+      start: line.start,
+      end: Math.max(cursor, markerEnd),
+      replacement,
+      cursorAfter: line.start + replacement.length,
+    };
+    return parent ? renumberAfterLift(value, tokens, edit, line.end, parsed.marker, parent) : edit;
   }
   const insertion = `\n${nextMarkerText(parsed.marker)}`;
-  const cursorAfter = cursor + insertion.length;
+  const edit = {
+    start: cursor,
+    end: cursor,
+    replacement: insertion,
+    cursorAfter: cursor + insertion.length,
+  };
   const { marker } = parsed;
-  if (marker.kind === "ordered") {
-    const renumbered = renumberFollowingItems(value, line.end, marker, tokens);
-    if (renumbered) {
-      return {
-        start: cursor,
-        end: renumbered.end,
-        replacement: insertion + value.slice(cursor, line.end) + renumbered.text,
-        cursorAfter,
-      };
-    }
-  }
-  return { start: cursor, end: cursor, replacement: insertion, cursorAfter };
+  return marker.kind === "ordered"
+    ? extendWithRenumbering(value, tokens, edit, line.end, [
+        { marker, first: markerNumber(marker) + 2 },
+      ])
+    : edit;
 }
 
 export function listIndentForTab(
@@ -290,7 +331,7 @@ export function listIndentForTab(
     const number = nestedNumber(marker, previousChild);
     const replacedEnd = line.start + marker.indent.length + number.replacedLength;
     const replacement = indent + number.text;
-    return {
+    const edit = {
       start: line.start,
       end: replacedEnd,
       replacement,
@@ -299,6 +340,11 @@ export function listIndentForTab(
           ? line.start + indent.length
           : start - replacedEnd + line.start + replacement.length,
     };
+    return continuesOrderedList(above.marker, marker)
+      ? extendWithRenumbering(value, tokens, edit, line.end, [
+          { marker: above.marker, first: markerNumber(above.marker) + 1 },
+        ])
+      : edit;
   }
   return { start: line.start, end: line.start, replacement: "  ", cursorAfter: start + 2 };
 }
@@ -318,25 +364,20 @@ export function listOutdentForTab(
   const parent = parentMarker(value, line.start, marker, tokens);
   // With no parent above, undo one step of Tab's two-space fallback.
   const indent = parent?.indent ?? marker.indent.replace(/^(?:\t| {1,2})/, "");
-  const continues =
-    parent?.kind === "ordered" &&
-    marker.kind === "ordered" &&
-    parent.delimiter === marker.delimiter;
+  const continues = continuesOrderedList(parent, marker);
   const number = continues ? nestedNumber(marker, parent) : { replacedLength: 0, text: "" };
   const replacedEnd = line.start + marker.indent.length + number.replacedLength;
   const replacement = indent + number.text;
-  const cursorAfter =
-    start < replacedEnd
-      ? line.start + indent.length
-      : start - replacedEnd + line.start + replacement.length;
-  const renumbered = continues ? renumberFollowingItems(value, line.end, parent, tokens) : null;
-  if (renumbered) {
-    return {
-      start: line.start,
-      end: renumbered.end,
-      replacement: replacement + value.slice(replacedEnd, line.end) + renumbered.text,
-      cursorAfter,
-    };
-  }
-  return { start: line.start, end: replacedEnd, replacement, cursorAfter };
+  const edit = {
+    start: line.start,
+    end: replacedEnd,
+    replacement,
+    cursorAfter:
+      start < replacedEnd
+        ? line.start + indent.length
+        : start - replacedEnd + line.start + replacement.length,
+  };
+  return parent
+    ? renumberAfterLift(value, tokens, edit, line.end, marker, continues ? parent : null)
+    : edit;
 }

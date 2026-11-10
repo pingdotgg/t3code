@@ -48,12 +48,17 @@ describe("composer list continuation", () => {
     }
   });
 
-  it("renumbers the parent list after lifting an empty nested item", () => {
-    const value = "1. a\n   1. \n2. b";
-    const edit = listContinuationForEnter(value, value.indexOf("\n2."))!;
-    expect(applyEdit(value, edit)).toBe("1. a\n2. \n3. b");
-    expect(edit.cursorAfter).toBe("1. a\n2. ".length);
-  });
+  it.each([
+    ["1. a\n   1. \n2. b", "1. a\n2. \n3. b"],
+    ["1. a\n   1. \n   2. c\n2. b", "1. a\n2. \n   1. c\n3. b"],
+  ])(
+    "renumbers the lifted item's siblings and parent list after lifting the empty item in %j",
+    (value, expected) => {
+      const edit = listContinuationForEnter(value, value.indexOf("1. \n") + 3)!;
+      expect(applyEdit(value, edit)).toBe(expected);
+      expect(edit.cursorAfter).toBe("1. a\n2. ".length);
+    },
+  );
 
   it("refuses to split a supplementary currency skill chip", () => {
     const value = "1. 𑿝review go";
@@ -75,6 +80,7 @@ describe("composer list indentation", () => {
     ["10. parent\n11. child", "10. parent\n    1. child"],
     ["1.\tparent\n2. child", "1.\tparent\n    1. child"],
     ['1. @"file\n   9. name"\n2. child', '1. @"file\n   9. name"\n   1. child'],
+    ["1. parent\n2. child\n3. next\n4. last", "1. parent\n   1. child\n2. next\n3. last"],
   ])("nests %j as a first child and keeps the caret on its text", (value, expected) => {
     const cursor = value.lastIndexOf("child") + 2;
     const edit = listIndentForTab(value, cursor, cursor)!;
@@ -103,6 +109,8 @@ describe("composer list indentation", () => {
   it.each([
     ["1. a\n   1. b\n2. c", "1. a\n2. b\n3. c"],
     ["- a\n  5. b", "- a\n5. b"],
+    ["1. a\n   1. b\n   2. c\n2. d", "1. a\n2. b\n   1. c\n3. d"],
+    ["- a\n  1. b\n  2. c", "- a\n1. b\n  2. c"],
   ])("outdents %j to %j and renumbers only within the parent's list", (value, expected) => {
     const edit = listOutdentForTab(value, value.indexOf("b"), value.indexOf("b"))!;
     expect(applyEdit(value, edit)).toBe(expected);
