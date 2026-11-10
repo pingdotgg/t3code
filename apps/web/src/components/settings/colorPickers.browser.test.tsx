@@ -106,6 +106,14 @@ describe("theme color field", () => {
     await echo("#ffffff");
     expect(slider(HUE).getAttribute("aria-valuenow")).toBe("10");
   });
+
+  it("keeps a translucent color's alpha when a hex value is typed", async () => {
+    await using screen = await renderThemeField("#22ccff80");
+    const { onChange } = screen;
+
+    await userEvent.fill(byLabel("Accent color picker hex value"), "#ff0000");
+    expect(onChange).toHaveBeenLastCalledWith("accent", "#ff000080");
+  });
 });
 
 async function renderAccentPicker(value: string) {

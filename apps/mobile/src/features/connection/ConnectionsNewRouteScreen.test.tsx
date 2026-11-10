@@ -74,7 +74,9 @@ vi.mock("../settings/settings-navigation", () => ({
   leaveSettingsPage: vi.fn(),
   openSettings: vi.fn(),
 }));
-vi.mock("../workspace/workspace-selection-store", () => ({ workspaceHasColumns: () => false }));
+vi.mock("../layout/workspace/workspace-selection-store", () => ({
+  workspaceHasColumns: () => false,
+}));
 vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
 vi.mock("./CloudEnvironmentRows", () => ({ CloudEnvironmentRows: () => null }));
 vi.mock("./environmentSections", () => ({

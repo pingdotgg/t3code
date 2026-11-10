@@ -1,0 +1,64 @@
+---
+title: In memory
+description: Run a domain model in a single process, for tests and for apps that don't need Cloudflare.
+---
+
+`Domain.InMemory` runs your whole model in the current process: aggregates, views and policies, with nothing to deploy. Swap it for `DomainCloudflare.layerDurableObjects()` and nothing else changes.
+
+## Host the model in memory
+
+```typescript
+// packages/server/test/bankInMemory.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Layer from "effect/Layer";
+import { Bank, BankHandlers } from "@bank/domain/Bank.model";
+import { MemoryLedgerStore } from "@bank/domain/Ledger/LedgerStore";
+import { SiftFraudCheck } from "../src/Fraud/SiftFraudCheck.ts";
+import { MfaChallengeLive } from "../src/MfaChallenge.ts";
+import { SessionLive } from "../src/Session.ts";
+import { StripePayments } from "../src/Settlement/StripePayments.ts";
+import { SessionKeyTest } from "./session.ts";
+
+// The model, its external systems, and the middleware its Apis declare: what a Worker would serve.
+export const BankInMemory = Layer.mergeAll(SessionLive, MfaChallengeLive).pipe(
+  Layer.provideMerge(Bank.layer(BankHandlers)),
+  Layer.provide(Layer.mergeAll(Domain.InMemory, SiftFraudCheck, StripePayments, MemoryLedgerStore)),
+  Layer.provideMerge(SessionKeyTest),
+);
+```
+
+Policies and projections run for real, and views catch up just after each command, as they do on Cloudflare.
+
+## Call it through an Api
+
+`clientInProcess` calls an Api in the same process, through its real middleware. Provide the in-memory model, and sign in with `signedInAs` from [Testing an Api](/domain/testing-apis#sign-sessions-in-tests).
+
+```typescript
+// packages/server/test/inMemory.test.ts
+import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+import { customer } from "@bank/domain/Actor";
+import { BankInMemory } from "./bankInMemory.ts";
+import { register } from "./flows.ts";
+import { signedInAs } from "./session.ts";
+
+it.live("a customer registers and deposits", () =>
+  Effect.gen(function* () {
+    const sam = yield* CustomerApi.clientInProcess.pipe(Effect.provide(signedInAs(customer("c-1"))));
+    const accountId = yield* register(sam, "c-1", "sam");
+    const { reply } = yield* sam.DepositMoney(accountId, { amount: 100 });
+    expect(reply.balance).toBe(100);
+  }).pipe(Effect.scoped, Effect.provide(BankInMemory)),
+);
+```
+
+Each test that provides `BankInMemory` gets a fresh, empty bank.
+
+## Keep stories separate
+
+Stories run on their own in-memory model with a controlled clock and stubbed external systems, so you don't provide `Domain.InMemory` to them. See [Story](/domain/story).
+
+:::note
+Test more of an Api in [Testing an Api](/domain/testing-apis).
+:::
