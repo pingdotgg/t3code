@@ -516,6 +516,16 @@ describe("AcpRegistrySupport", () => {
         },
       });
       expect(requests).toEqual([registryUrl]);
+
+      const path = yield* Path.Path;
+      const relativeOverride = yield* resolver.resolve(
+        settings({ commandPath: path.relative(process.cwd(), commandPath) }),
+        "/workspace",
+      );
+      expect(path.isAbsolute(relativeOverride.spawn.command)).toBe(true);
+      expect(yield* fileSystem.realPath(relativeOverride.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
