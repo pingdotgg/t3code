@@ -37,7 +37,7 @@ class T3VoiceTranscriptionModule : Module() {
       } else {
         withContext(Dispatchers.IO) {
           val context = requireNotNull(appContext.reactContext)
-          val locale = Resources.getSystem().configuration.locales[0]
+          val locale = speechLocale(Resources.getSystem().configuration.locales[0])
           isGoogleVoiceTranscriptionSupported { MlKitSpeechClient(context, locale, it) }
         }
       }
@@ -52,7 +52,7 @@ class T3VoiceTranscriptionModule : Module() {
           )
         }
         val context = requireNotNull(appContext.reactContext)
-        val locale = Resources.getSystem().configuration.locales[0]
+        val locale = speechLocale(Resources.getSystem().configuration.locales[0])
         val mode = prepareGoogleVoiceTranscription { MlKitSpeechClient(context, locale, it) }
         mapOf("locale" to locale.toLanguageTag(), "mode" to mode)
       }

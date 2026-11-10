@@ -715,6 +715,43 @@ it.effect("lists nothing for an author Forgejo has no account for", () =>
   ),
 );
 
+it.effect.each([
+  { query: undefined, count: 3 },
+  { query: "", count: 3 },
+  { query: " \t ", count: 3 },
+  { query: "", count: 101 },
+])("reads all $count assignees once for author query '$query'", ({ query, count }) => {
+  const paths: string[] = [];
+  const users = Array.from({ length: count }, (_, index) => ({ login: `dev-${index}` }));
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const search = provider.searchRepositoryAuthors;
+    if (search === undefined) return yield* Effect.die("author search missing");
+    const found = yield* search({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      ...(query === undefined ? {} : { query }),
+    });
+    assert.strictEqual(paths.length, 1);
+    assert.deepStrictEqual(found, {
+      items: users.map(({ login }) => ({ login, name: null, avatarUrl: null })),
+      truncated: false,
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          assert.strictEqual(input.path.split("?")[0], "repos/maria/project/assignees");
+          // Forgejo ignores paging here: every page is the full list, with no Link header.
+          return encodeJsonEffect(users).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("says an author search was cut short by a server that pages below its limit", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoPullRequestProvider.make;
