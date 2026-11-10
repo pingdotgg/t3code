@@ -166,6 +166,9 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
+Until then it shows no limits. Readings are not kept across a server restart.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
@@ -174,7 +177,8 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
+The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
+accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required. Hub readings refresh at
 most once a minute, with longer pauses after failures; if a read fails, the last successful reading
 stays visible until it is fifteen minutes old, with a warning that it could not be refreshed.
