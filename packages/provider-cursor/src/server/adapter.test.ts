@@ -911,7 +911,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("carries an interrupted prompt into the steer that restarts the turn", () =>
+  it.effect.each([false, true])("handles interrupted prompts when rollback is %s", (rollback) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
@@ -934,6 +934,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-steer",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -1030,16 +1031,25 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      if (rollback) {
+        yield* runtime.rollbackThread({
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("steer-reset"),
+            appRunOrdinal: 0,
+          },
+        });
+      }
       yield* runtime.startTurn(turnInput(2, steerText));
 
       assert.lengthOf(sentMessages, 2);
       const steered = sentMessages[1]!;
       assert.include(steered, steerText);
-      assert.include(
-        steered,
-        firstPrompt,
-        "the interrupted prompt is missing from the run that replaces it",
-      );
+      if (rollback)
+        assert.notInclude(steered, firstPrompt, "rollback must discard the interrupted prompt");
+      else assert.include(steered, firstPrompt, "steering preserves the interrupted prompt");
 
       yield* Deferred.succeed(runEnds[1]!, "finished");
       yield* runtime.events.pipe(

@@ -2859,6 +2859,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 Effect.ensuring(Ref.set(liveAgent, null)),
               );
               yield* Ref.set(told, null);
+              yield* Ref.set(interruptedPrompt, null);
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
