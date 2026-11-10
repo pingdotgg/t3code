@@ -3016,21 +3016,24 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           }
           yield* Queue.end(queue);
         }
-        yield* eventSink.stream({ threadId, afterSequence }).pipe(
-          Stream.filter(
-            ({ event }) =>
-              event.type === "turn-item.updated" &&
-              event.payload.id === seededToolCalls.cutOff.id &&
-              event.payload.status === "interrupted",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-        );
+        const interrupts = (count: number) =>
+          eventSink.stream({ threadId, afterSequence }).pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "turn-item.updated" &&
+                event.payload.id === seededToolCalls.cutOff.id &&
+                event.payload.status === "interrupted",
+            ),
+            Stream.take(count),
+            Stream.runDrain,
+          );
+        yield* interrupts(1);
         yield* Deferred.succeed(resume, undefined);
         assert.equal(
           Exit.isFailure(yield* Fiber.join(consumer)),
           release !== "provider stop" && release !== "early close",
         );
+        yield* interrupts(2);
 
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
         assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);

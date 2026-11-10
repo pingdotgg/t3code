@@ -2013,11 +2013,12 @@ export const layerWithOptions = (
                 ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
                 : Effect.void,
             ),
+            // Detached so the consumer's run failure is not ordered behind release cleanup.
             Effect.andThen(
               Effect.suspend(() => {
                 const cleanup = subscriberReleaseCleanup.get(queue);
                 subscriberReleaseCleanup.delete(queue);
-                return cleanup ?? Effect.void;
+                return cleanup === undefined ? Effect.void : Effect.forkDetach(cleanup);
               }),
             ),
           );
