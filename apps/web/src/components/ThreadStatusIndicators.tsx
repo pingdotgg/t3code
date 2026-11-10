@@ -376,7 +376,11 @@ export function ThreadPullRequestsMiniList({
           </ThreadPullRequestMiniListItem>
         );
       })}
-      {hiddenCount > 0 ? <li className="text-muted-foreground">{hiddenCount} more</li> : null}
+      {hiddenCount > 0 ? (
+        <li className={cn("text-muted-foreground", onOpenPullRequest ? "pl-6" : "pl-5")}>
+          {hiddenCount} more
+        </li>
+      ) : null}
     </ul>
   );
 }
