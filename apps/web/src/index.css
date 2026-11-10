@@ -3285,6 +3285,12 @@ html:root[data-theme-id="t3-code-classic"] > body {
   color: var(--foreground);
 }
 
+/* Main's toolbar is its page color. The lifted pane takes its header with it, or the strip
+   between the tab notches reads as a black bar. */
+html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
+  background-color: var(--background);
+}
+
 html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
   --app-panel-fill: var(--background);
 }
