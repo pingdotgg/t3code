@@ -147,7 +147,11 @@ it.live.each(
           assert.include(provider, 'base_url="https://api.openai.com/v1"');
           assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
           assert.notInclude(provider, "env_key");
-          assert.include(provider, "refresh_interval_ms=0");
+          const refreshIntervalMs = Number(/refresh_interval_ms=(\d+)/u.exec(provider)?.[1]);
+          assert.isTrue(
+            refreshIntervalMs > 0 && refreshIntervalMs <= 60_000,
+            `refresh_interval_ms=${refreshIntervalMs} must be in (0, 60000]: 0 makes Codex reuse the launch token forever for model catalog requests, and a longer interval outlives the broker's 60s renewal margin`,
+          );
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.
           if (source === "managed" && account === "primary") {
