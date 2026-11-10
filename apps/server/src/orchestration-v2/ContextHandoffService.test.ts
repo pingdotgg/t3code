@@ -210,6 +210,36 @@ it.effect("caps the side chat context block without summarizing discarded parent
     });
     assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
     assert.notInclude(framingOnly, "Main thread activity");
+
+    const multiFilePatch = ContextHandoffService.makeSideChatContext({
+      parentThreadId,
+      digest: [
+        {
+          id: TurnItemId.make("turn-item:patch"),
+          threadId: parentThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 60,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: DateTime.makeUnsafe(0),
+          type: "file_change",
+          fileName: "src/a.ts",
+          changes: [
+            { operation: "update", path: "src/a.ts" },
+            { operation: "add", path: "src/b.ts" },
+            { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+          ],
+        },
+      ],
+    });
+    assert.include(multiFilePatch, "- File change: src/a.ts, src/b.ts, src/new.ts");
   }).pipe(Effect.provide(layerTest)),
 );
 

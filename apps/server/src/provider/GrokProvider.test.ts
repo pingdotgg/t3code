@@ -722,6 +722,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount"
       }
     }),
   );
+
+  it.effect("tells accounts in Legacy (no storage) to switch to Privacy Mode", () =>
+    Effect.gen(function* () {
+      const { usageLimits: limits } = yield* readGrokAccount({
+        HOME: "/definitely/not/a/grok-home",
+        GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"private-token"}}',
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    error:
+                      "Grok Build is not supported in Legacy (no storage). Switch to Privacy Mode to use Grok Build. [WKE=privacy-mode:legacy]",
+                  },
+                  { status: 403 },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(limits.unavailable?.reason).toBe("probeFailed");
+      expect(limits.unavailable?.message).toMatch(/Privacy Mode/);
+      expect(limits.unavailable?.message).not.toMatch(/WKE=|Grok Build is not supported/);
+    }),
+  );
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount email", (it) => {
