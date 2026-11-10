@@ -111,6 +111,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   const seen = new Set<string>();
   let found = false;
   let error = false;
+  let databaseRows = 0;
+  let databasePages = 0;
   const append = (records: UsageRecord[], record: UsageRecord | null) => {
     if (record === null || record.timestampMs < sinceMs) return;
     if (record.dedupeKey !== null) {
@@ -172,19 +174,20 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const predicates =
           table === "session_message" ? ["type IN ('assistant', 'compaction')"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        predicates.push("rowid > ?", "rowid <= ?");
-        const [range] = yield* sql.unsafe<{
-          readonly first_row_id: number | null;
-          readonly last_row_id: number | null;
-        }>(
-          `SELECT (SELECT MIN(rowid) FROM ${table}) AS first_row_id, (SELECT MAX(rowid) FROM ${table}) AS last_row_id`,
-        );
-        const firstRowId = range?.first_row_id;
-        const lastRowId = range?.last_row_id;
-        if (typeof firstRowId !== "number" || typeof lastRowId !== "number") continue;
-        // StatementSync.all materializes results; page by rowid and exclude mid-scan appends.
-        // Omit tracing because large histories require thousands of statements.
-        for (let after = firstRowId - 1; after < lastRowId; after += MESSAGE_PAGE_SIZE) {
+        // List only rowids so SQLite can use time indexes without reading message bodies.
+        const listed = (yield* sql.unsafe<{ readonly row_id: number }>(
+          `SELECT rowid AS row_id FROM ${table}
+           ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}`,
+          timestamp === "NULL" ? [] : [sinceMs],
+        )).toSorted((a, b) => a.row_id - b.row_id);
+        databaseRows += listed.length;
+        // Filter and project in SQLite: user diffs and assistant bodies can be hundreds of MB.
+        const validAssistant = `CASE WHEN typeof(data) = 'text' AND json_valid(data)
+          THEN json_type(data, '$.role') IS NULL OR data ->> '$.role' = 'assistant' END`;
+        // Omit per-page spans; the enclosing scan records row and page counts.
+        for (let start = 0; start < listed.length; start += MESSAGE_PAGE_SIZE) {
+          const page = listed.slice(start, start + MESSAGE_PAGE_SIZE);
+          databasePages++;
           const rows = yield* sql
             .unsafe<{
               readonly id: unknown;
@@ -192,13 +195,15 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT id, session_id, data, ${timestamp} AS created
-               FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
-              [
-                ...(timestamp === "NULL" ? [] : [sinceMs]),
-                after,
-                Math.min(after + MESSAGE_PAGE_SIZE, lastRowId),
-              ],
+              `SELECT id, session_id, ${timestamp} AS created, json_object(
+                 'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
+                 'model', data -> '$.model', 'modelID', data -> '$.modelID',
+                 'time', data -> '$.time', 'id', data -> '$.id', 'sessionID', data -> '$.sessionID'
+               ) AS data
+               FROM ${table}
+               WHERE rowid IN (${page.map(() => "?").join(", ")}) AND ${validAssistant}
+               ORDER BY rowid`,
+              page.map((row) => row.row_id),
             )
             .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
@@ -215,6 +220,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         }
       }
     }).pipe(
+      (read) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(read)),
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
       Effect.catchTags({
         SqlError: () => {
@@ -290,6 +296,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
       }),
     );
   }
+  yield* Effect.annotateCurrentSpan({
+    "usage.database_rows": databaseRows,
+    "usage.database_pages": databasePages,
+  });
   return { files, missing: !found && !error, error };
 });
 
