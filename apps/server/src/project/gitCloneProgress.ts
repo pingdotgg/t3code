@@ -16,8 +16,9 @@ const STAGE_PREFIXES: ReadonlyArray<readonly [RegExp, ProjectCloneStage]> = [
   [/^Checking out files/, "checkout"],
 ];
 
-// The tail is trimmed in code: optional groups of `\s*` and `.*?` backtrack cubically on long space runs.
-const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(.*)$/;
+// Linear on hostile remote output: the tail is trimmed in code (optional `\s*`/`.*?` groups backtrack
+// cubically), and `s` lets it span U+2028 so a failed `$` cannot retry at every later counter.
+const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(.*)$/s;
 const DONE_SUFFIX = ", done.";
 
 /** Pass each bare-CR progress redraw as a separate line. */
