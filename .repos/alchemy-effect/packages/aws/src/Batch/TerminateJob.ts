@@ -1,0 +1,31 @@
+import type * as batch from "@distilled.cloud/aws/batch";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { JobQueue } from "./JobQueue.ts";
+
+export interface TerminateJobRequest extends batch.TerminateJobRequest {}
+
+/**
+ * Terminate a running (or cancel a queued) AWS Batch job from runtime code.
+ *
+ * ### Terminating Jobs
+ * **Example:** Terminate a job
+ * ```typescript
+ * const terminateJob = yield* Batch.TerminateJob(queue);
+ * yield* terminateJob({ jobId, reason: "superseded" });
+ * ```
+ *
+ * @binding
+ */
+export interface TerminateJob extends Binding.Service<
+  TerminateJob,
+  "AWS.Batch.TerminateJob",
+  (
+    queue: JobQueue,
+  ) => Effect.Effect<
+    (
+      request: TerminateJobRequest,
+    ) => Effect.Effect<batch.TerminateJobResponse, batch.TerminateJobError>
+  >
+> {}
+export const TerminateJob = Binding.Service<TerminateJob>("AWS.Batch.TerminateJob");

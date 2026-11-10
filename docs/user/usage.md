@@ -24,13 +24,10 @@ OpenCode reads its SQLite database and older JSON history. Antigravity reads loc
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
-Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
-This includes headless T3 sessions and desktop usage across machines; the same account counts
-once across connected environments. Without an accessible CLI login, T3 shows a
-notice instead of incomplete local totals. T3 does not estimate missing tokens from conversation text.
-On macOS, choose **Enable Cursor usage** on Usage to allow T3 to read your existing CLI login
-from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
-you to allow access on the server Mac.
+Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
+`CURSOR_API_KEY`. This includes headless T3 sessions and desktop usage across machines; the same
+account counts once across connected environments. T3 does not estimate missing tokens from
+conversation text.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -87,6 +84,30 @@ marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish
 without writing again to environments that already saved. Changes are not queued after you close
 the dialog.
 
+## Show only some models
+
+To count only some models, or to leave some out, add `usageModelFilter` to the server's
+`settings.json` in its `userdata` directory, such as `~/.t3/userdata/settings.json`:
+
+```json
+{
+  "usageModelFilter": {
+    "include": [{ "provider": "claude", "model": "orbit-1" }, { "model": "orbit-2" }],
+    "exclude": [{ "model": "drift-9" }]
+  }
+}
+```
+
+`include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
+as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
+counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
+show every model again.
+
+If the setting is invalid, Usage ignores it and shows every model, and the next save of any other
+setting removes it from `settings.json`.
+
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
@@ -135,14 +156,17 @@ belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode 
 in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
-its monthly allowance, including separate Auto and API usage, using the CLI login or
-`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
-usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
-a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
+its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
+otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
+Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
+Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
+
+Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
+Until then it shows no limits. Readings are not kept across a server restart.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
@@ -152,7 +176,8 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
+The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
+accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure
