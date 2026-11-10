@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -550,8 +549,9 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "updates npm-global OpenCode by generation and runs upgrade only for its own installer's path",
   () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const root = NodeFS.realpathSync(
-        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-update-")),
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-update-" }),
       );
       const v2Prefix = NodePath.join(root, "v2");
       const v1Prefix = NodePath.join(root, "v1");
@@ -593,7 +593,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           "upgrade",
         ]);
       }
-    }),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const versionOutput: { current: string | undefined } = { current: undefined };
@@ -632,8 +632,9 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
         const root = NodeFS.realpathSync(
-          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-driver-update-")),
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-driver-update-" }),
         );
         const binaryPath = npmGlobalInstall(NodePath.join(root, "v1"), ["opencode-ai"], "opencode");
         const instance = yield* OpenCodeDriver.create({
