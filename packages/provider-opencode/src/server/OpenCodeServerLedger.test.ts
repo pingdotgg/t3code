@@ -297,9 +297,10 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-stop-" });
       const binaryPath = path.join(tempDir, "opencode");
+      // The background child shares the leader's group, so stopping only the leader would leave the group behind.
       yield* fs.writeFileString(
         binaryPath,
-        '#!/bin/sh\necho "opencode server listening on http://127.0.0.1:4096"\nexec sleep 600\n',
+        '#!/bin/sh\nsleep 600 &\necho "opencode server listening on http://127.0.0.1:4096"\nwait\n',
       );
       yield* fs.chmod(binaryPath, 0o755);
 
