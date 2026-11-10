@@ -406,7 +406,14 @@ it.each([
     (flow: ReturnType<typeof useNewTaskFlow>, picked: EnvironmentProject) =>
       flow.setProject(picked),
   ],
-  ["a send starts", 0, (flow: ReturnType<typeof useNewTaskFlow>) => flow.setSubmitting(true)],
+  [
+    "a send starts and ends",
+    0,
+    (flow: ReturnType<typeof useNewTaskFlow>) => {
+      flow.setSubmitting(true);
+      flow.setSubmitting(false);
+    },
+  ],
 ] as const)(
   "leaves a triage draft alone when %s while its new machine prepares",
   async (_name, expectedProject, interrupt) => {
