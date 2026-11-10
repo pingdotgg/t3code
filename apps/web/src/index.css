@@ -3399,9 +3399,11 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --ss-default-tray-fill: var(--tray-fill);
   --ss-default-tray-shadow: var(--tray-shadow);
   --ss-default-tray-stroke: var(--tray-stroke);
+  --ss-default-warning-foreground: var(--warning-foreground);
 }
 
 [data-surface-preview] {
+  --warning-foreground: var(--ss-default-warning-foreground);
   --dismiss-background: initial;
   --dismiss-border: initial;
   --dismiss-shadow: initial;
@@ -4138,6 +4140,19 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    and accent, so they hold in light, dark, black chrome and named themes.
    :where() keeps this block at the specificity of the per-style blocks, so a
    style can still override a shared role. */
+
+/* Tinted warning labels need a darker amber on the light recipes. */
+:root:not(.dark)[data-surface-style]:not(
+    [data-surface-style="gradient-rim"],
+    [data-surface-style="flat"]
+  )
+  > body,
+:root:not(.dark)
+  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
+  --warning-foreground: oklch(
+    from var(--ss-default-warning-foreground) min(l, 0.48) c h
+  ) !important;
+}
 
 :root[data-surface-style]:not(
     :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
