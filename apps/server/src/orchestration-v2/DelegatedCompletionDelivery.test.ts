@@ -2575,7 +2575,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             creationSource: outcome === "failed" ? "web" : "mcp",
             commandId: CommandId.make(`command:followup-send-${outcome}`),
             threadId: child.childThreadId,
-            senderThreadId: parentThreadId,
+            // `t3 thread send` and unscoped MCP sessions carry no sender thread.
+            ...(outcome === "completed" ? {} : { senderThreadId: parentThreadId }),
             messageId,
             text: "Check the same work again.",
             attachments: [],
@@ -2802,90 +2803,6 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             );
           }
         }),
-    );
-
-    it.effect("tracks an unscoped MCP send to a finished child as a follow-up", () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const eventSink = yield* EventSink.EventSinkV2;
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        const now = yield* DateTime.now;
-        const parentThreadId = ThreadId.make("thread:unscoped-followup");
-        const projectId = ProjectId.make("project:unscoped-followup");
-        const parentRunId = RunId.make("run:unscoped-followup");
-        const rootNodeId = NodeId.make("node:unscoped-followup");
-        yield* seedParentWithTerminalTask({
-          threadId: parentThreadId,
-          projectId,
-          runId: parentRunId,
-          rootNodeId,
-          taskId: NodeId.make("node:unscoped-followup-seed"),
-          deliveryState: "acknowledged",
-          now,
-        });
-        const child = yield* seedRestartCancelledChild({
-          parentThreadId,
-          projectId,
-          parentRunId,
-          rootNodeId,
-          name: "unscoped-followup-child",
-          completionWake: "always",
-          continuationPending: false,
-          runStatus: "completed",
-          now,
-        });
-        yield* orchestrator.recoverDelegatedTasks;
-        let firstWake = yield* requests.take;
-        while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
-        yield* orchestrator.dispatch({
-          type: "delegated_task.completion-delivery.acknowledge",
-          commandId: CommandId.make("command:unscoped-followup-ack"),
-          parentThreadId,
-          taskId: child.taskId,
-          observedByRunId: parentRunId,
-        });
-        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
-          (run) => run.id === parentRunId,
-        )!;
-        yield* eventSink.write({
-          commandId: reconcileCommandId("unscoped-followup-parent-finished"),
-          events: [
-            {
-              id: EventId.make("event:unscoped-followup-parent-finished"),
-              type: "run.updated",
-              threadId: parentThreadId,
-              runId: parentRunId,
-              occurredAt: now,
-              payload: { ...parentRun, status: "completed", completedAt: now },
-            },
-          ],
-        });
-        // `t3 thread send` and other MCP sessions without a thread scope carry no sender.
-        const messageId = MessageId.make("message:unscoped-followup");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "agent",
-          creationSource: "mcp",
-          commandId: CommandId.make("command:unscoped-followup-send"),
-          threadId: child.childThreadId,
-          messageId,
-          text: "Check the same work again.",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
-        });
-        const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
-          (row) => row.userMessageId === messageId,
-        )!;
-        assert.isDefined(
-          run.delegatedTaskId,
-          "the child's follow-up run is not tracked as a delegated task on its parent",
-        );
-        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
-          (task) => task.id === run.delegatedTaskId,
-        );
-        assert.equal(followup?.childThreadId, child.childThreadId);
-        assert.equal(followup?.completionWake, "always");
-      }),
     );
 
     it.effect("tracks a child's usage-limit auto-resume as a follow-up", () =>
