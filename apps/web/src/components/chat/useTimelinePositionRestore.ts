@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { RememberedTimelinePosition } from "./timelineScrollAnchoring";
@@ -87,8 +88,20 @@ export function startTimelinePositionRestore({
   // Reading history or finding: follow lets go before the restore claims the viewport.
   if (position?.atEnd === false || releaseForFind) viewport.navigate({ releasesFollow: true });
   const releaseScrollHold = viewport.holdProgrammaticScroll();
+  const element = list.getScrollableNode();
+  const content = element?.firstElementChild;
+  const stopObserving =
+    position?.atEnd !== false && content && element
+      ? observeResize(content, () => {
+          const offset = measuredEndOffset(element);
+          if (Math.abs(element.scrollTop - offset) <= 1) return;
+          element.scrollTop = offset;
+          void list.scrollToOffset({ offset, animated: false });
+        })
+      : undefined;
   const stop = () => {
     cancelled = true;
+    stopObserving?.();
     releaseScrollHold();
     unsubscribe();
   };
