@@ -13028,6 +13028,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
+    "does not count an empty task-notification success buffered while idle as background work",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-idle-empty-notification"),
+              text: "Wait in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+
+          // On resume after a server restart, the CLI reports the shell the old process lost,
+          // then closes that notification with an empty zero-turn success.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: "task-lost-shell",
+              tool_use_id: "toolu-lost-shell",
+              status: "stopped",
+              output_file: "",
+              summary: "Background shell command didn't finish before the previous session ended",
+              uuid: "00000000-0000-4000-8000-000000000a01",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000a02",
+              result: "",
+              numTurns: 0,
+              origin: { kind: "task-notification" },
+              terminalReason: null,
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
     "emits one interrupted terminal for a positive task-notification result racing interrupt",
     () =>
       Effect.scoped(
