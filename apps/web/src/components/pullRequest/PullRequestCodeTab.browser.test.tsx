@@ -9,7 +9,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, binaryDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,10 +47,27 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
+    binaryDiffAtom: Atom.make(() =>
+      AsyncResult.success<PullRequestDiffResult>({
+        patch: [
+          "diff --git a/figures/example.png b/figures/example.png",
+          "new file mode 100644",
+          "index 0000000..e7f9ad7",
+          "Binary files /dev/null and b/figures/example.png differ",
+          "",
+        ].join("\n"),
+        truncated: false,
+        nextCursor: null,
+      }),
+    ),
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
+const mocks = vi.hoisted(() => ({
+  paged: false,
+  binary: false,
+  diffCommits: [] as Array<string | undefined>,
+}));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -64,6 +81,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (mocks.binary) return binaryDiffAtom;
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
     },
@@ -125,8 +143,9 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, binary = false }: { paged: boolean; binary?: boolean }) {
   mocks.paged = paged;
+  mocks.binary = binary;
   mocks.diffCommits = [];
 }
 
@@ -234,4 +253,17 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
+});
+
+it("says why an expanded binary file has no lines to show", async () => {
+  setup({ paged: false, binary: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await expect.element(screen.getByText("figures/example.png", { exact: true })).toBeVisible();
+
+  await screen.getByRole("button", { name: "Expand diff" }).click();
+
+  await expect.element(screen.getByRole("button", { name: "Collapse diff" })).toBeVisible();
+  await expect.element(screen.getByText(/binary/i).first()).toBeVisible();
 });
