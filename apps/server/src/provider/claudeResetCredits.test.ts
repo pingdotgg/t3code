@@ -4,7 +4,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -115,18 +119,64 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("reads the macOS Keychain login Claude Code stores", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* fs.makeTempDirectoryScoped();
+      const spawned: Array<ReadonlyArray<string>> = [];
+      const keychain = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command))
+            return yield* Effect.die("Unexpected spawn.");
+          spawned.push([String(command.command), ...command.args.map(String)]);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(
+              Stream.make('{"claudeAiOauth":{"accessToken":"keychain-token"}}\n'),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const client = HttpClient.make((request) => {
+        expect(request.headers.authorization).toBe("Bearer keychain-token");
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+            }),
+          ),
+        );
+      });
+      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, keychain),
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(spawned[0]).toEqual(
+        expect.arrayContaining(["find-generic-password", "Claude Code-credentials", "-w"]),
+      );
+    }),
+  );
+
+  it.effect("reads nothing from failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HttpClient.HttpClient, refuseRequests),
-      );
       const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      expect(limited).toBeUndefined();
     }),
   );
 });
