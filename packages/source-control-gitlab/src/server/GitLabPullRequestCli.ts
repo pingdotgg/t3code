@@ -321,6 +321,8 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Ten busy gitlab.com projects at 99 rows each answer about 1.06 MB, past the 1 MB process default.
+const PROJECTS_LIST_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
@@ -1644,6 +1646,7 @@ export const make = Effect.gen(function* () {
     readonly query: string;
     readonly variables: Record<string, unknown>;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
+    readonly maxOutputBytes?: number;
   }) =>
     api({
       cwd: input.cwd,
@@ -1651,6 +1654,7 @@ export const make = Effect.gen(function* () {
       path: "graphql",
       method: "POST",
       stdin: JSON.stringify({ query: input.query, variables: input.variables }),
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     }).pipe(
       Effect.flatMap((result) => {
         const decoded = input.decode(result.stdout.trim());
@@ -2068,6 +2072,7 @@ export const make = Effect.gen(function* () {
             first: Math.max(1, Math.min(input.first, MAX_PAGE_SIZE)),
           }),
           decode: decodeMergeRequestGraphqlProjectsListJson,
+          maxOutputBytes: PROJECTS_LIST_MAX_OUTPUT_BYTES,
         }).pipe(
           Effect.map((projects) =>
             projects.flatMap(({ repository, page }) =>

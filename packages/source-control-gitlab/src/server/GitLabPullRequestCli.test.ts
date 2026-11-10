@@ -453,6 +453,47 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads a batched answer larger than one project's output allowance", () =>
+    Effect.gen(function* () {
+      const repositories = Array.from({ length: 10 }, (_, index) => `acme/p${index}`);
+      const body = JSON.stringify({
+        data: {
+          metadata: { enterprise: true },
+          projects: {
+            nodes: repositories.map((fullPath) => ({
+              fullPath,
+              mergeRequests: {
+                pageInfo: { hasNextPage: true, endCursor: "c1" },
+                nodes: Array.from({ length: 99 }, (_, index) => ({
+                  ...graphqlListNode(index + 1),
+                  title: "x".repeat(1_100),
+                })),
+              },
+            })),
+          },
+        },
+      });
+      // VcsProcess truncates stdout at the caller's allowance, 1 MB unless one is given.
+      mockedExecute.mockImplementation((request) => {
+        const allowance = request.maxOutputBytes ?? 1_000_000;
+        return Effect.succeed(output(body.slice(0, allowance), body.length > allowance));
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const pages = yield* cli.listMergeRequestsInProjects({
+        cwd: "/w",
+        repositories,
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        first: 99,
+      });
+
+      expect(body.length).toBeGreaterThan(1_000_000);
+      expect(pages.map(({ batch }) => batch.items.length)).toEqual(repositories.map(() => 99));
+    }),
+  );
+
   it.effect("reads REST for a REST cursor, and when a first GraphQL read or command fails", () =>
     Effect.gen(function* () {
       mockedExecute
