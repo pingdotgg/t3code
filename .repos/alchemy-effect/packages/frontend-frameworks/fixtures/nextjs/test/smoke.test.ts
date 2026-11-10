@@ -8,8 +8,7 @@ import { expect, test } from "@playwright/test";
  * re-fetches the rewritten absolute URL — a port-less `localhost` host would
  * send that loopback fetch to port 80.
  */
-const get = (server: { url: URL }, path: string) =>
-  fetch(new URL(path, server.url));
+const get = (server: { url: URL }, path: string) => fetch(new URL(path, server.url));
 
 for (const mode of Playwright.SERVER_METHODS) {
   test.describe(mode, () => {
@@ -23,9 +22,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(body).toContain("rendered-at:");
     });
 
-    it("serves the API route with the middleware header", async ({
-      server,
-    }) => {
+    it("serves the API route with the middleware header", async ({ server }) => {
       const response = await get(server, "/api/hello");
       expect(response.status).toBe(200);
       expect(response.headers.get("x-fixture-middleware")).toBe("passed");
@@ -41,9 +38,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(json.url).toContain("/api/hello");
     });
 
-    it("reads a Text binding through getCloudflareContext", async ({
-      server,
-    }) => {
+    it("reads a Text binding through getCloudflareContext", async ({ server }) => {
       const response = await get(server, "/api/binding");
       expect(response.status).toBe(200);
       const json = (await response.json()) as { value: string | null };
@@ -54,9 +49,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       const first = await get(server, "/isr");
       expect(first.status).toBe(200);
       const firstBody = await first.text();
-      const firstStamp = firstBody.match(
-        /isr-rendered-at:(?:<!-- -->)?(\d+)/,
-      )?.[1];
+      const firstStamp = firstBody.match(/isr-rendered-at:(?:<!-- -->)?(\d+)/)?.[1];
       expect(firstStamp).toBeDefined();
 
       // The prerendered payload serves as-is: repeated hits inside the
@@ -64,9 +57,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       const second = await get(server, "/isr");
       expect(second.status).toBe(200);
       const secondBody = await second.text();
-      const secondStamp = secondBody.match(
-        /isr-rendered-at:(?:<!-- -->)?(\d+)/,
-      )?.[1];
+      const secondStamp = secondBody.match(/isr-rendered-at:(?:<!-- -->)?(\d+)/)?.[1];
       expect(secondStamp).toBe(firstStamp);
     });
 
@@ -93,9 +84,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       await expect(page.getByTestId("count")).toHaveText("count:2");
     });
 
-    it("serves a prerendered dynamic segment (generateStaticParams)", async ({
-      server,
-    }) => {
+    it("serves a prerendered dynamic segment (generateStaticParams)", async ({ server }) => {
       const response = await get(server, "/products/alpha");
       expect(response.status).toBe(200);
       const body = await response.text();
@@ -103,9 +92,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(body).toMatch(/product-slug:(?:<!-- -->)?alpha/);
     });
 
-    it("renders a non-prerendered dynamic segment on demand", async ({
-      server,
-    }) => {
+    it("renders a non-prerendered dynamic segment on demand", async ({ server }) => {
       const response = await get(server, "/products/gamma");
       expect(response.status).toBe(200);
       expect(await response.text()).toMatch(/product-slug:(?:<!-- -->)?gamma/);
@@ -119,10 +106,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(body).toMatch(/docs-path:(?:<!-- -->)?guides\/deploy\/workers/);
     });
 
-    it("mutates a KV binding through a server action form", async ({
-      page,
-      server,
-    }) => {
+    it("mutates a KV binding through a server action form", async ({ page, server }) => {
       const name = `visitor-${Date.now()}`;
       await page.goto(new URL("/guestbook", server.url.toString()).toString());
       await expect(page.locator("h1")).toHaveText("GUESTBOOK_MARKER");
@@ -130,14 +114,10 @@ for (const mode of Playwright.SERVER_METHODS) {
       await page.locator('button[type="submit"]').click();
       // The action writes to FIXTURE_KV and revalidates; the page re-renders
       // with the latest entry read back from KV.
-      await expect(page.locator("main")).toContainText(
-        `guestbook-latest:${name}`,
-      );
+      await expect(page.locator("main")).toContainText(`guestbook-latest:${name}`);
     });
 
-    it("streams the Suspense shell before the resolved content", async ({
-      server,
-    }) => {
+    it("streams the Suspense shell before the resolved content", async ({ server }) => {
       // `accept-encoding: identity`: the local live (miniflare) serving path
       // buffers gzip bodies to completion, which would hide the progressive
       // flush this test asserts. Production Cloudflare streams gzip fine.
@@ -166,17 +146,13 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(buffer).toContain("STREAMING_RESOLVED_MARKER");
     });
 
-    it("serves the custom not-found boundary for unmatched routes", async ({
-      server,
-    }) => {
+    it("serves the custom not-found boundary for unmatched routes", async ({ server }) => {
       const response = await get(server, "/definitely/not/a/route");
       expect(response.status).toBe(404);
       expect(await response.text()).toContain("CUSTOM_NOT_FOUND_MARKER");
     });
 
-    it("serves the custom not-found boundary from notFound()", async ({
-      server,
-    }) => {
+    it("serves the custom not-found boundary from notFound()", async ({ server }) => {
       const response = await get(server, "/gone");
       expect(response.status).toBe(404);
       expect(await response.text()).toContain("CUSTOM_NOT_FOUND_MARKER");
@@ -207,14 +183,10 @@ for (const mode of Playwright.SERVER_METHODS) {
 
     it("applies next.config headers", async ({ server }) => {
       const response = await get(server, "/api/hello");
-      expect(response.headers.get("x-fixture-config-header")).toBe(
-        "from-next-config",
-      );
+      expect(response.headers.get("x-fixture-config-header")).toBe("from-next-config");
     });
 
-    it("serves a Pages Router page with getServerSideProps", async ({
-      server,
-    }) => {
+    it("serves a Pages Router page with getServerSideProps", async ({ server }) => {
       const response = await get(server, "/legacy");
       expect(response.status).toBe(200);
       const body = await response.text();

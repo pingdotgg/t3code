@@ -34,6 +34,16 @@ const mockRuntimeOptions = {
   authMethodId: "test",
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
+// The spawner extends the real process environment, so the test must set it there.
+const setProcessEnv = (name: string, value: string) => {
+  const previous = process.env[name];
+  process.env[name] = value;
+  return () => {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  };
+};
+
 describe("AcpSessionRuntime", () => {
   it.effect.each(["session/new", "session/resume"] as const)(
     "buffers root metadata while %s startup is still pending",
@@ -422,16 +432,8 @@ describe("AcpSessionRuntime", () => {
   it.effect("does not restore ambient variables to a sanitized child environment", () =>
     Effect.gen(function* () {
       yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const previous = process.env.T3_ACP_RUNTIME_AMBIENT;
-          process.env.T3_ACP_RUNTIME_AMBIENT = "sentinel";
-          return previous;
-        }),
-        (previous) =>
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env.T3_ACP_RUNTIME_AMBIENT;
-            else process.env.T3_ACP_RUNTIME_AMBIENT = previous;
-          }),
+        Effect.sync(() => setProcessEnv("T3_ACP_RUNTIME_AMBIENT", "sentinel")),
+        (restore) => Effect.sync(restore),
       );
       const runtime = yield* AcpSessionRuntime.make({
         ...mockRuntimeOptions,

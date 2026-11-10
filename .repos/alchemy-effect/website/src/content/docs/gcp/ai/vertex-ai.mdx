@@ -1,0 +1,102 @@
+---
+title: Vertex AI
+description: Call Gemini on Vertex AI from Cloud Run with the GenerateContent binding — no API key, just the service's own identity.
+---
+
+`GCP.AIPlatform.GenerateContent` binds a Gemini model to your service.
+The service calls Vertex AI as itself, so there's no API key to store
+or rotate.
+
+## Bind a model
+
+```typescript
+// src/Chat.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Chat extends GCP.Function<Chat>()(
+  "Chat",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const gemini = yield* GCP.AIPlatform.GenerateContent("gemini-2.5-flash");
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const { prompt } = (yield* request.json) as { prompt: string };
+
+        const response = yield* gemini.generate({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+        });
+
+        const text = (response.candidates?.[0]?.content?.parts ?? [])
+          .filter((part) => !part.thought)
+          .map((part) => part.text ?? "")
+          .join("");
+        return yield* HttpServerResponse.json({ text });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.AIPlatform.GenerateContentHttp)),
+) {}
+```
+
+The binding grants the service `roles/aiplatform.user`. Gemini 2.5 can
+return "thought" parts, so filter them out of the answer.
+
+## Pick a region
+
+The model runs on the `global` endpoint by default, which sends each
+request wherever there's capacity. Pin a region instead:
+
+```typescript
+const gemini = yield* GCP.AIPlatform.GenerateContent({
+  model: "gemini-2.5-flash",
+  location: "us-central1",
+});
+```
+
+## Tune a request
+
+System instructions and generation settings go on each call:
+
+```typescript
+const response = yield* gemini.generate({
+  contents: [{ role: "user", parts: [{ text: prompt }] }],
+  systemInstruction: { parts: [{ text: "Answer in one sentence." }] },
+  generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
+});
+```
+
+## Handle rejected prompts
+
+A blocked prompt or a bad setting fails with `BadRequest`. Return it to
+the caller instead of a bare 500:
+
+```typescript
+.pipe(
+  Effect.catchTag("BadRequest", (error) =>
+    HttpServerResponse.json({ error: error.message }, { status: 400 }),
+  ),
+  Effect.orDie,
+)
+```
+
+## Keep it private
+
+A public chat endpoint spends money on anyone's prompts. Leave
+`invokerIamDisabled` off and call it from your own services with
+[`InvokeService`](/gcp/networking/private-services).
+
+## Example
+
+[`examples/gcp-vertex-ai`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-vertex-ai)
+is a chat endpoint with a live test.
+
+## Where next
+
+- [Cloud Run](/gcp/compute/cloud-run) — the service the model is bound
+  to.
+- [AIPlatform reference](/providers/gcp/aiplatform#generatecontent) —
+  every Vertex AI resource and binding.

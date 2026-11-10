@@ -24,6 +24,7 @@ import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import { childProcessLogger } from "./ChildOutput.ts";
 import { devChildUrlMarker, type DevChildPayload } from "./DevChild.ts";
 import type { FrameworkDevServer } from "./Framework.ts";
 
@@ -51,9 +52,7 @@ const program = Effect.scoped(
     )) as Partial<FrameworkModule>;
     if (typeof module.make !== "function") {
       return yield* Effect.die(
-        new Error(
-          `Dev child module ${payload.module} does not export a make function`,
-        ),
+        new Error(`Dev child module ${payload.module} does not export a make function`),
       );
     }
     const service = yield* module.make(payload.makeOptions);
@@ -64,25 +63,23 @@ const program = Effect.scoped(
     // this fiber and the enclosing scope closes the dev server.
     return yield* Effect.never;
   }),
-).pipe(Effect.provide(NodeServices.layer));
+).pipe(Effect.provide([NodeServices.layer, childProcessLogger]));
 
 const controller = new AbortController();
 process.once("SIGTERM", () => controller.abort());
 process.once("SIGINT", () => controller.abort());
 
-void Effect.runPromiseExit(program, { signal: controller.signal }).then(
-  (exit) => {
-    const code = Exit.match(exit, {
-      onSuccess: () => 0,
-      onFailure: (cause) => {
-        if (Cause.hasInterrupts(cause)) {
-          return 0;
-        }
-        console.error(cause);
-        return 1;
-      },
-    });
-    // The macrotask hop lets buffered stdout/stderr drain before exiting.
-    setTimeout(() => process.exit(code), 0);
-  },
-);
+void Effect.runPromiseExit(program, { signal: controller.signal }).then((exit) => {
+  const code = Exit.match(exit, {
+    onSuccess: () => 0,
+    onFailure: (cause) => {
+      if (Cause.hasInterrupts(cause)) {
+        return 0;
+      }
+      console.error(cause);
+      return 1;
+    },
+  });
+  // The macrotask hop lets buffered stdout/stderr drain before exiting.
+  setTimeout(() => process.exit(code), 0);
+});
