@@ -20,8 +20,6 @@ OpenCode 2 converts the shared OpenCode database to its own format the first tim
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
 started on 1.x continue on 2.x.
 
-Plan mode uses OpenCode's `plan` agent.
-
 ## Compaction
 
 OpenCode compacts long conversations itself, and T3 Code has no setting for it. On
