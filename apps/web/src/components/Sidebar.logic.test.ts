@@ -34,6 +34,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  sortSidebarFolderThreadsByStatus,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1638,6 +1639,55 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("sortSidebarFolderThreadsByStatus", () => {
+  const idle = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestRun: makeLatestRun(),
+    lastVisitedAt: "2026-03-09T10:06:00.000Z",
+    runtime: null,
+  };
+  const runtime = {
+    status: "running" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  };
+  const named = (id: string, overrides: object) => ({ ...idle, ...overrides, id });
+  const working = named("working", { runtime });
+  const waiting = named("waiting", { runtime: { ...runtime, status: "idle" as const } });
+  const done = named("done", {});
+  const unseen = named("unseen", { lastVisitedAt: "2026-03-09T10:04:00.000Z" });
+  const failed = named("failed", { runtime: { ...runtime, status: "failed" as const } });
+  const attention = named("attention", { hasPendingUserInput: true });
+
+  it("puts threads that need you first and running ones last, keeping order within a tier", () => {
+    const sorted = sortSidebarFolderThreadsByStatus([
+      working,
+      waiting,
+      done,
+      unseen,
+      failed,
+      attention,
+      named("working-2", { runtime }),
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "attention",
+      "failed",
+      "unseen",
+      "done",
+      "waiting",
+      "working",
+      "working-2",
+    ]);
+    expect(sortSidebarFolderThreadsByStatus([])).toEqual([]);
   });
 });
 

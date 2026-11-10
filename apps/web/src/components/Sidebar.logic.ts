@@ -917,6 +917,38 @@ export function resolveSidebarFolderDot(
 }
 
 /**
+ * Orders a boring-sidebar folder's threads by the same status classification
+ * as `resolveSidebarFolderDot`, so the order and the dot never disagree:
+ * needs you, failed, unseen completion, done, waiting, then running. Threads
+ * in the same tier keep their incoming order.
+ */
+export function sortSidebarFolderThreadsByStatus<
+  T extends ThreadStatusInput & SidebarThreadStatusInput,
+>(threads: ReadonlyArray<T>): T[] {
+  const tierOf = (thread: T) => {
+    switch (resolveSidebarThreadStatus(thread)) {
+      case "input":
+      case "approval":
+      case "request":
+      case "limited":
+        return 0;
+      case "failed":
+        return 1;
+      case "ready":
+        return hasUnseenCompletion(thread) ? 2 : 3;
+      case "waiting":
+        return 4;
+      default:
+        return 5;
+    }
+  };
+  return threads
+    .map((thread, index) => ({ thread, index, tier: tierOf(thread) }))
+    .toSorted((a, b) => a.tier - b.tier || a.index - b.index)
+    .map(({ thread }) => thread);
+}
+
+/**
  * Keys the old per-project sidebar saved folder open state under, most
  * specific first, for `resolveProjectExpanded`. Boring folders read and write
  * the same keys, so a legacy user's closed folders stay closed after regrouping.
