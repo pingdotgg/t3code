@@ -4,13 +4,14 @@ import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneCont
 import { beginLayoutTabDrag } from "../layout/layoutDrag";
 import { useLayoutStore } from "../layout/layoutStore";
 import {
-  buildLayoutTabMenuItems,
-  isLayoutTabMenuId,
+  finishLayoutTabRename,
   LayoutPaneTab,
   LayoutPaneTabStrip,
-  runLayoutTabMenuAction,
+  showLayoutTabMenu,
+  tabMuteMenuItem,
   useLayoutPaneSiblingTabs,
   useLayoutTabLabel,
+  useLayoutTabRenameRequested,
 } from "../layout/PaneTabs";
 import { findLayoutTab, type LayoutTab } from "../layout/layoutModel";
 import type {
@@ -188,22 +189,6 @@ function previewTabIdOf(
 ): string | null {
   if (surface.kind !== "preview" || !surface.resourceId) return null;
   return sessions[surface.resourceId]?.tabId ?? null;
-}
-
-/**
- * Stays disabled until desktop overlay state arrives: a server session id can
- * resolve while the preview manager's createTab is still in flight, and muting
- * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
- */
-function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
-  const muted = input.overlay?.audioMuted ?? false;
-  return {
-    label: muted ? "Unmute tab" : "Mute tab",
-    disabled: input.overlay === null || !input.canResolveRuntimeTabId,
-  };
 }
 
 type TabAudioState = "none" | "audible" | "muted";
@@ -678,6 +663,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
   const siblingTabs = useLayoutPaneSiblingTabs();
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
+  const renameRequested = useLayoutTabRenameRequested(layoutTabId);
+  const renamingDeviceId = renamingDevice ?? (renameRequested ? props.activeSurfaceId : null);
   // The active tab's breadcrumb and the row's actions slot; its surface
   // portals its header into them (PanelTabBreadcrumb, PanelTabActions).
   const [breadcrumbSlot, setBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
@@ -786,6 +773,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.preventDefault();
     event.stopPropagation();
 
+    if (layoutTabId !== null) {
+      void showLayoutTabMenu(
+        layoutTabId,
+        { x: event.clientX, y: event.clientY },
+        props.keybindings,
+        () => setRenamingDevice(surface.id),
+      );
+      return;
+    }
+
     const api = readLocalApi();
     if (!api) return;
 
@@ -809,37 +806,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
         }),
       });
-    }
-    // A surface tab in the layout offers the layout's tab actions after its own.
-    if (layoutTabId !== null) {
-      const keybindings = props.keybindings;
-      const layoutItems = buildLayoutTabMenuItems(
-        useLayoutStore.getState().layout,
-        layoutTabId,
-        keybindings,
-      ).map((item, index) =>
-        index === 0 && items.length > 0 ? { ...item, separatorBefore: true } : item,
-      );
-      const picked = await api.contextMenu.show<
-        TabContextMenuAction | (typeof layoutItems)[number]["id"]
-      >([...items, ...layoutItems], { x: event.clientX, y: event.clientY });
-      if (picked !== null && isLayoutTabMenuId(picked)) {
-        runLayoutTabMenuAction(picked, layoutTabId);
-        return;
-      }
-      if (picked === "rename") setRenamingDevice(surface.id);
-      else if (picked === "copy-path" && surface.kind === "file" && !surface.attachment) {
-        props.onCopyFilePath(surface.relativePath);
-      } else if (picked === "toggle-mute") {
-        const runtimeTabId =
-          menuPreviewTabId && menuOverlay
-            ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
-            : null;
-        if (runtimeTabId) {
-          void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
-        }
-      }
-      return;
     }
     items.push(
       { id: "close", label: "Close" },
@@ -914,6 +880,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const onFinishRenameTab = useStableCallback((surfaceId: string, title: string) => {
     props.onRenameDevice?.(surfaceId, title);
     setRenamingDevice(null);
+    finishLayoutTabRename(layoutTabId);
   });
 
   useRevealActiveTab(tabListRef, layoutTabId === null ? props.activeSurfaceId : null);
@@ -1043,7 +1010,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     surface={surface}
                     // A layout tab's strip drags the whole tab instead.
                     dragDisabled={
-                      !props.onMoveSurface || renamingDevice === surface.id || layoutTabId !== null
+                      !props.onMoveSurface ||
+                      renamingDeviceId === surface.id ||
+                      layoutTabId !== null
                     }
                     active={surface.id === props.activeSurfaceId}
                     pending={props.pendingSurfaceIds.has(surface.id)}
@@ -1059,7 +1028,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     theme={resolvedTheme}
                     environmentId={props.environmentId}
                     pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
-                    renaming={renamingDevice === surface.id}
+                    renaming={renamingDeviceId === surface.id}
                     canRename={props.onRenameDevice !== undefined}
                     ownsDesktopTitleBar={ownsDesktopTitleBar}
                     notched={notched}

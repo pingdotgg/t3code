@@ -26,10 +26,12 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
   useOrchestrationCommand: (() => (input: unknown) => state.switchRef(input)) as never,
 }));
 
-vi.mock(import("../../hooks/useThreadActions"), async (importOriginal) => ({
-  ...(await importOriginal()),
+// Not importOriginal: the original imports itself back through PaneTabs' thread menu.
+vi.mock(import("../../hooks/useThreadActions"), () => ({
   useThreadActions: (() => ({})) as never,
   useAcknowledgeThreadWoke: (() => () => undefined) as never,
+  canTurnThreadIntoProject: () => false,
+  navigateAfterThreadDeletion: async () => undefined,
 }));
 
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
