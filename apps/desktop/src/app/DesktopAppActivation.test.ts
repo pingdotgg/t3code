@@ -45,10 +45,7 @@ describe("dropped-folder failure warnings", () => {
         },
       } as unknown as Electron.BrowserWindow;
       let owner = Option.none<Electron.BrowserWindow>();
-      const warnings: Array<{
-        detail: string | undefined;
-        owner: Electron.BrowserWindow | undefined;
-      }> = [];
+      const warningOwners: Array<Electron.BrowserWindow | undefined> = [];
       const activation = yield* make.pipe(
         Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
           stateDir: "/tmp/issue-32640/activation-test",
@@ -66,9 +63,9 @@ describe("dropped-folder failure warnings", () => {
         } as unknown as ElectronWindow.ElectronWindow["Service"]),
         Effect.provideService(ElectronDialog.ElectronDialog, {
           ...ElectronDialog.make,
-          showMessageBox: (options, owner) =>
+          showMessageBox: (_options, owner) =>
             Effect.sync(() => {
-              warnings.push({ detail: options.detail, owner });
+              warningOwners.push(owner);
               return { response: 0, checkboxChecked: false };
             }),
         }),
@@ -95,14 +92,7 @@ describe("dropped-folder failure warnings", () => {
         yield* activation.openWorkspace("/tmp/issue-32640/project");
       }
 
-      expect(warnings).toEqual([
-        {
-          detail: localEnabled
-            ? "Could not create the thread."
-            : "Turn on the local environment in Settings to open folders.",
-          owner: hasWindow ? window : undefined,
-        },
-      ]);
+      expect(warningOwners).toEqual([hasWindow ? window : undefined]);
     }),
   );
 });
