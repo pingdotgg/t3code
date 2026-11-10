@@ -44,7 +44,9 @@ export const fileLinkPills = (
 ) => {
   const files = worldFiles.map((file) => (file.startsWith("/") ? file : `${cwd}/${file}`));
   // A link whose label names its own file renders as one pill, so code in that label is no pill.
-  const withoutFileLabels = finalText.replace(
+  // Fenced blocks render as code, never as pills.
+  const prose = finalText.replace(/```[\s\S]*?(?:```|$)/g, "");
+  const withoutFileLabels = prose.replace(
     /\[([^\]\n]*)\]\(([^)\s]+)\)/g,
     (link, label: string, href: string) =>
       isMarkdownFileLinkLabel(label.replaceAll("`", ""), normalizeMarkdownLinkDestination(href))
@@ -52,7 +54,7 @@ export const fileLinkPills = (
         : link,
   );
   const sources = [
-    ...extractMarkdownLinkHrefs(finalText),
+    ...extractMarkdownLinkHrefs(prose),
     ...extractInlineCodeSpans(withoutFileLabels).flatMap(
       (span) => inlineCodeFilePathCandidate(span) ?? [],
     ),
