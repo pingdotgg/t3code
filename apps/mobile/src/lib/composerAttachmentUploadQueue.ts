@@ -21,8 +21,10 @@ export function composerAttachmentUploadKey(
   return `${environmentId}:${attachmentId}`;
 }
 
+/** Environment and thread ids may both contain colons, so a thread draft key resolves to the longest known environment it starts with. */
 export function composerDraftEnvironmentId(
   draftKey: string,
+  environmentIds: Iterable<EnvironmentId>,
   queuedMessages: ReadonlyArray<{
     readonly messageId: string;
     readonly environmentId: EnvironmentId;
@@ -42,8 +44,16 @@ export function composerDraftEnvironmentId(
     const legacy = parseLegacyNewTaskDraftKey(draftKey);
     return legacy === null ? null : EnvironmentId.make(legacy.environmentId);
   }
-  const separator = draftKey.lastIndexOf(":");
-  return separator > 0 ? EnvironmentId.make(draftKey.slice(0, separator)) : null;
+  let match: EnvironmentId | null = null;
+  for (const environmentId of environmentIds) {
+    if (
+      draftKey.startsWith(`${environmentId}:`) &&
+      (match === null || environmentId.length > match.length)
+    ) {
+      match = environmentId;
+    }
+  }
+  return match;
 }
 
 type UploadServerConfig = {
