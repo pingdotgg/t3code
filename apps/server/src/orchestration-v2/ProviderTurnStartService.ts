@@ -1274,7 +1274,13 @@ export const layer: Layer.Layer<
               source.activeAttemptId !== null &&
               acceptedAttemptIds.has(source.activeAttemptId),
           );
-          if (previous?.status !== "failed") return false;
+          if (
+            previous === undefined ||
+            (previous.status !== "failed" &&
+              previous.status !== "interrupted" &&
+              previous.status !== "cancelled")
+          )
+            return false;
           const previousAttempt = projection.attempts.find(
             (source) => source.id === previous.activeAttemptId,
           );
