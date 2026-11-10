@@ -164,27 +164,7 @@ describe("rendered Markdown task saves", () => {
 });
 
 describe("rendered Markdown select all", () => {
-  const selectAll = () =>
-    userEvent.keyboard(
-      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
-    );
-
-  it("selects only the rendered file content", async () => {
-    using _settings = setup();
-    await using screen = await render(
-      <>
-        <p>Transcript text from the chat thread.</p>
-        {markdownPreview(false, "# Notes\n\nRendered file body.\n")}
-      </>,
-    );
-    await userEvent.click(screen.getByText("Rendered file body."));
-    await selectAll();
-    const selection = window.getSelection()?.toString() ?? "";
-    expect(selection).toContain("Rendered file body.");
-    expect(selection).not.toContain("Transcript text from the chat thread.");
-  });
-
-  it("stays scoped to the file after toggling a task checkbox", async () => {
+  it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();
     await using screen = await render(
       <>
@@ -192,10 +172,19 @@ describe("rendered Markdown select all", () => {
         {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
       </>,
     );
+    const expectFileOnlySelection = async () => {
+      await userEvent.keyboard(
+        isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+      );
+      const selection = window.getSelection()?.toString() ?? "";
+      expect(selection).toContain("Rendered file body.");
+      expect(selection).not.toContain("Transcript text from the chat thread.");
+    };
+
+    await userEvent.click(screen.getByText("Rendered file body."));
+    await expectFileOnlySelection();
+    // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
-    await selectAll();
-    const selection = window.getSelection()?.toString() ?? "";
-    expect(selection).toContain("Rendered file body.");
-    expect(selection).not.toContain("Transcript text from the chat thread.");
+    await expectFileOnlySelection();
   });
 });
