@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { TRIAGE_PROMPT_FILE_NAME } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
@@ -24,6 +25,9 @@ const FAILING_AGENT_WINDOWS = `@echo Error: There is not enough space on the dis
 @exit /b 1
 `;
 
+const prependToPath = (dir: string) =>
+  vi.stubEnv("PATH", `${dir}${NodePath.delimiter}${process.env.PATH ?? ""}`);
+
 it.live("a failed agent launch points at the prompt it could not run", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -32,9 +36,7 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
     NodeFS.writeFileSync(NodePath.join(binDir, "codex"), FAILING_AGENT_POSIX, { mode: 0o755 });
     NodeFS.writeFileSync(NodePath.join(binDir, "codex.cmd"), FAILING_AGENT_WINDOWS);
     yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        vi.stubEnv("PATH", `${binDir}${NodePath.delimiter}${process.env.PATH ?? ""}`),
-      ),
+      Effect.sync(() => prependToPath(binDir)),
       () => Effect.sync(() => vi.unstubAllEnvs()),
     );
     const previousExitCode = process.exitCode;
@@ -61,5 +63,9 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
     assert.include(output, promptFilePath);
     assert.include(output, buildTriageLaunchPrompt(promptFilePath));
     assert.include(output, NodePath.join(NodePath.dirname(promptFilePath), "context.md"));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer))),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  ),
 );
