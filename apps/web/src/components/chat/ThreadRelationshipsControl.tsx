@@ -1189,7 +1189,7 @@ export function ThreadRelationshipsPanel(props: {
           data-thread-relationships-panel
         >
           {hasRelatives ? (
-            <>
+            <div className="flex flex-col has-[>ul:first-child]:pt-1 has-[>ul:last-child]:pb-1">
               {delegatedFrom === undefined ? null : (
                 <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
                   <DelegatedFromRow
@@ -1222,7 +1222,7 @@ export function ThreadRelationshipsPanel(props: {
                   threads
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
         </ThreadDetailsSection>
       ) : null}
