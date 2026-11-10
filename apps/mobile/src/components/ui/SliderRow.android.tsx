@@ -1,7 +1,7 @@
 import { Slider } from "@expo/ui/jetpack-compose";
 import { fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
 import * as Haptics from "expo-haptics";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
@@ -12,11 +12,8 @@ import type { SliderRowProps } from "./SliderRow.types";
 
 export function SliderRow(props: SliderRowProps) {
   const { colors } = useControlTheme();
-  const draft = useRef(props.value);
-  const dragging = useRef(false);
-  useEffect(() => {
-    if (!dragging.current) draft.current = props.value;
-  }, [props.value]);
+  // The value of the drag in progress; null between drags.
+  const draft = useRef<number | null>(null);
   const commit = (value: number) => {
     if (props.disabled) return;
     const next = Math.min(
@@ -66,12 +63,12 @@ export function SliderRow(props: SliderRowProps) {
                 inactiveTrackColor: colors["--color-secondary"],
               }}
               onValueChange={(value) => {
-                dragging.current = true;
                 draft.current = value;
               }}
               onValueChangeFinished={() => {
-                dragging.current = false;
-                commit(draft.current);
+                const value = draft.current;
+                draft.current = null;
+                if (value !== null) commit(value);
               }}
             />
           </NativeThemeHost>

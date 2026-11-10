@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { CursorConfigureOptions } from "@cursor/sdk";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,16 +15,16 @@ const sdkDefaults = vi.hoisted(() => ({ useHttp1ForAgent: undefined as boolean |
 
 // Holds the SDK's process-wide default the way it does: only keys present change, null clears.
 vi.mock("./sdk.ts", () => ({
-  Agent: {},
-  createAgentPlatform: {},
-  SqliteLocalAgentStore: {},
-  Cursor: {
-    configure: ({ local }: CursorConfigureOptions) => {
-      if (local !== undefined && "useHttp1ForAgent" in local) {
-        sdkDefaults.useHttp1ForAgent = local.useHttp1ForAgent ?? undefined;
-      }
+  loadCursorSdk: () => ({
+    Cursor: {
+      configure: ({ local }: CursorConfigureOptions) => {
+        if (local !== undefined && "useHttp1ForAgent" in local) {
+          sdkDefaults.useHttp1ForAgent = local.useHttp1ForAgent ?? undefined;
+        }
+      },
     },
-  },
+  }),
+  loadCursorSqlite: () => ({}),
 }));
 
 const withHost = (environment: NodeJS.ProcessEnv, home: string) =>
@@ -36,6 +37,7 @@ const withHost = (environment: NodeJS.ProcessEnv, home: string) =>
   );
 
 // Shaped like the SDK's minified class: the constructor is not named after the error.
+// @effect-diagnostics-next-line extendsNativeError:off - mimics the Cursor SDK's own native Error class.
 class o extends Error {
   override name = "WriteIterableClosedError";
 }
@@ -65,11 +67,37 @@ describe("CursorSdk unhandled rejection guard", () => {
     }),
   );
 
+  it.effect("keeps the server running when the SDK writes after its request stream ended", () =>
+    Effect.gen(function* () {
+      // Shaped like `ConnectError.from(e, Code.Aborted)` from the SDK's connect-node body pump.
+      const cause = Object.assign(new Error("write after end"), {
+        code: "ERR_STREAM_WRITE_AFTER_END",
+      });
+      const reason = Object.assign(new Error("[aborted] write after end", { cause }), {
+        name: "ConnectError",
+        code: 10,
+        rawMessage: "write after end",
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), []);
+    }),
+  );
+
   it.effect("still exits on other rejections", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* rejectThroughGuard(new Error("WritableIterable is closed")), [
         [1],
       ]);
+    }),
+  );
+
+  it.effect("still exits on aborted requests other than a write after end", () =>
+    Effect.gen(function* () {
+      const cause = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      const reason = Object.assign(new Error("[aborted] socket hang up", { cause }), {
+        name: "ConnectError",
+        code: 10,
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), [[1]]);
     }),
   );
 });
@@ -127,7 +155,9 @@ describe("CursorSdk agent transport", () => {
         Object.entries(env).map(([key, directory]) => [key, path.join(root, directory)]),
       );
       yield* Effect.gen(function* () {
-        yield* Layer.build(CursorSdk.layer);
+        const sdk = Context.get(yield* Layer.build(CursorSdk.layer), CursorSdk.CursorSdk);
+        assert.isUndefined(sdkDefaults.useHttp1ForAgent);
+        sdk.load();
         assert.strictEqual(sdkDefaults.useHttp1ForAgent, expected);
       }).pipe(Effect.scoped, withHost(environment, path.join(root, "home")));
       assert.isUndefined(sdkDefaults.useHttp1ForAgent);

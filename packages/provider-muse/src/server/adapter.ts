@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -26,6 +27,7 @@ import {
 import type { MuseSettings } from "../settings.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -52,7 +54,7 @@ import {
   MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
-  MuseTurnRetryScheduled,
+  MuseRetryScheduled,
   MuseTurnCompleted,
   MuseTurnStartResult,
   MuseUserInput,
@@ -64,7 +66,9 @@ import {
 import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
+  MuseSdkError,
   museApprovalMode,
+  museCanonicalPath,
   musePermissionProfile,
   museWorkspaceRoot,
   type createMuseSdkHost,
@@ -82,7 +86,10 @@ import {
   type BackgroundWorkReport,
 } from "@t3tools/provider-core/server/notification";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+} from "@t3tools/provider-core/server/failure";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
@@ -212,12 +219,22 @@ interface ActiveTurn {
   readonly started: Map<string, DateTime.Utc>;
   readonly dirty: Set<string>;
   readonly settledRequests: Set<string>;
+  readonly retries: Array<MuseRetryRow>;
   readonly done: Deferred.Deferred<void>;
   todoPlanId?: PlanId;
   nextOrdinal: number;
   flushScheduled: boolean;
   interruptRequested: boolean;
   compact: boolean;
+}
+
+interface MuseRetryRow {
+  readonly method: string;
+  readonly nativeId: string;
+  readonly retry: OrchestrationV2ProviderRetry;
+  readonly cause: string;
+  readonly code: string | undefined;
+  running: boolean;
 }
 
 interface PendingRequest {
@@ -247,15 +264,21 @@ const nativeRef = (nativeId: string) => ({
   nativeId,
   strength: "strong" as const,
 });
+/** The roster lists a child under its turn item's native id, so readers can pair the two. */
+const backgroundTaskId = (item: MuseItem) =>
+  item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
   "session/tokenUsage",
   "session/todoListChanged",
   "turn/retryScheduled",
+  "turn/modelRetryScheduled",
   "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
+// Reminder children and other runtime items can start while the model is still retrying.
+const MODEL_OUTPUT_KINDS = new Set(["agentMessage", "reasoning", "toolCall"]);
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
 export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
@@ -276,8 +299,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: MUSE_PROVIDER,
-    getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("MuseAdapter.getCapabilities")(function () {
+      return Effect.succeed(MuseProviderCapabilitiesV2);
+    }),
+    planSelectionTransition: Effect.fn("MuseAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
       input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
@@ -285,11 +312,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       if (input.runtimePolicy.interactionMode === "plan")
         return yield* protocolError("Muse Code does not support dedicated Plan mode");
       const scope = yield* Effect.scope;
-      // Muse requires canonical workspace roots and approval paths; resolve symlinks once.
+      // Native realpath also corrects filesystem case, which Muse validates.
       const requestedCwd = input.runtimePolicy.cwd ?? providerHost.paths.cwd;
-      const cwd = yield* fileSystem
-        .realPath(requestedCwd)
-        .pipe(Effect.orElseSucceed(() => requestedCwd));
+      const cwd = yield* museCanonicalPath(requestedCwd);
       const workspaceRoot = yield* museWorkspaceRoot(cwd);
       const now = yield* DateTime.now;
       let session: OrchestrationV2ProviderSession = {
@@ -378,18 +403,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.gen(function* () {
-                yield* eventPermit.withPermits(1)(failHost(cause));
-                return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
-              }),
+            // The enclosing operation owns the span for this inline handler.
+            TimeoutError: Effect.fnUntraced(function* (cause) {
+              yield* eventPermit.withPermits(1)(failHost(cause));
+              return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
+            }),
           }),
         );
       const updateSession = Effect.fnUntraced(function* (
         status: OrchestrationV2ProviderSession["status"],
         lastError: string | null = null,
       ) {
-        session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
+        session = {
+          ...session,
+          status,
+          // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
+          lastError:
+            lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
         yield* emit({
           type: "provider_session.updated",
           driver: MUSE_PROVIDER,
@@ -433,6 +465,52 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           updatedAt: time,
         };
       };
+      const emitRetry = Effect.fnUntraced(function* (
+        turn: ActiveTurn,
+        row: MuseRetryRow,
+        status: "running" | "completed" | "interrupted",
+      ) {
+        const time = yield* DateTime.now;
+        const base = baseItem(turn, row.nativeId, time);
+        yield* emit({
+          type: "turn_item.updated",
+          driver: MUSE_PROVIDER,
+          turnItem: {
+            ...makeProviderRetryTurnItem({
+              ...base,
+              driver: MUSE_PROVIDER,
+              nodeId: turn.input.rootNodeId,
+              itemOrdinal: base.ordinal,
+              failure: makeProviderFailure({
+                // Clients show only the failure message, so a waiting row carries its delay.
+                message:
+                  status === "running"
+                    ? `${row.cause}. Retrying in ${formatDuration(row.retry.retryDelayMs ?? 0)}.`
+                    : row.cause,
+                code: row.code,
+                class: "provider_error",
+                retryable: true,
+              }),
+              retry: row.retry,
+              status,
+              updatedAt: time,
+            }),
+            // The shared helper keys one row per turn; a long Muse turn can retry several times.
+            id: base.id,
+          },
+        });
+      });
+      // Muse sends no recovered event, so model output or the turn's end closes open retry rows.
+      const settleRetries = Effect.fnUntraced(function* (
+        turn: ActiveTurn,
+        status: "completed" | "interrupted",
+      ) {
+        for (const row of turn.retries) {
+          if (!row.running) continue;
+          row.running = false;
+          yield* emitRetry(turn, row, status);
+        }
+      });
       const childItemIdentity = (context: ChildContext, nativeId: string) =>
         `${options.instanceId}:child:${context.childSessionId}:${nativeId}`;
       const itemStatus = (item: MuseItem): OrchestrationV2TurnItemStatus => {
@@ -594,9 +672,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           item.result?.summary ??
           (status === "failed" ? item.failureReason : undefined);
         const result = resultText ?? null;
-        const nativeTaskRef = item.childSessionId
-          ? nativeRef(item.childSessionId)
-          : nativeRef(item.subagentId ?? item.itemId);
+        const nativeTaskRef = nativeRef(backgroundTaskId(item));
         const subagent: OrchestrationV2Subagent = {
           id: base.nodeId,
           threadId: base.threadId,
@@ -674,7 +750,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
             return [
               {
-                taskId: itemId,
+                taskId: item ? backgroundTaskId(item) : itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
@@ -713,7 +789,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          const running = observedChildren.has(item.itemId);
+          // Muse reveals a subagent's ids over several revisions, so a running child is
+          // relisted whenever the id its turn item carries moves.
+          const listed = thread?.pendingBackgroundTasks?.some(
+            (task) => task.taskId === backgroundTaskId(item),
+          );
+          if (wasRunning !== running || (running && !listed)) yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -952,6 +1034,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             yield* publishItem(turn, item, item.status === "inProgress" ? status : undefined);
         }
         turn.dirty.clear();
+        // A failed turn has its own failure row; its retry rows only record that retrying stopped.
+        yield* settleRetries(turn, status === "completed" ? "completed" : "interrupted");
         for (const entry of pending.values())
           if (entry.request.providerTurnId !== null) yield* resolvePending(entry, "cancelled");
         turn.providerTurn = { ...turn.providerTurn, status, completedAt };
@@ -1052,7 +1136,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
-        yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
+        yield* Effect.tryPromise({
+          try: () => failed.close(),
+          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+        }).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
@@ -1363,7 +1450,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               });
           }
         }
-        if (wake && active?.nativeId !== wake.nativeId) {
+        // Muse compacts the latest run, which can be the held wake; its compaction item ends this turn.
+        if (
+          wake &&
+          active?.nativeId !== wake.nativeId &&
+          !(active?.compact && itemEvent?.kind === "compaction")
+        ) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
           if (turnId === wake.nativeId) {
             wake.events.push([method, data]);
@@ -1387,6 +1479,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               return;
             const previous = turn.items.get(item.itemId);
             if (previous && previous.revision >= item.revision) return;
+            if (method === "item/started" && MODEL_OUTPUT_KINDS.has(item.kind))
+              yield* settleRetries(turn, "completed");
             turn.items.set(item.itemId, item);
             turn.dirty.delete(item.itemId);
             yield* publishItem(turn, item);
@@ -1481,6 +1575,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             break;
           case "session/tokenUsage": {
             const usage = yield* decode(MuseTokenUsageEvent, params);
+            yield* settleRetries(turn, "completed");
             const previous = turn.providerTurn.turnTokenUsage;
             const contextUsage = thread?.contextUsage;
             turn.providerTurn = {
@@ -1604,21 +1699,32 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             });
             break;
           }
-          case "turn/retryScheduled": {
-            const retry = yield* decode(MuseTurnRetryScheduled, params);
-            const time = yield* DateTime.now;
-            yield* emit({
-              type: "turn_item.updated",
-              driver: MUSE_PROVIDER,
-              turnItem: {
-                ...baseItem(turn, `retry:${retry.nextAttempt}`, time),
-                type: "system_notice",
-                status: "completed",
-                title: "Muse retry",
-                completedAt: time,
-                message: `Muse is retrying this turn (attempt ${retry.nextAttempt} of ${retry.maxAttempts}): ${retry.reason}`,
+          case "turn/retryScheduled":
+          case "turn/modelRetryScheduled": {
+            const retry = yield* decode(MuseRetryScheduled, params);
+            const cause =
+              retry.httpStatus === undefined ? retry.errorKind : `HTTP ${retry.httpStatus}`;
+            // A chain's first retry opens a row; its later attempts update that row.
+            const index =
+              retry.attempt > 1 ? turn.retries.findLastIndex((row) => row.method === method) : -1;
+            const row: MuseRetryRow = {
+              method,
+              nativeId: turn.retries[index]?.nativeId ?? `retry:${retry.sourceRange.first.id}`,
+              // Muse counts the first request as attempt 1; T3 counts retries.
+              retry: {
+                attempt: retry.attempt,
+                maxAttempts: Math.max(1, retry.maxAttempts - 1),
+                retryDelayMs: Math.trunc(retry.retryDelayMs),
               },
-            });
+              cause:
+                retry.reason ??
+                (cause ? `Model request failed (${cause})` : "Model request failed"),
+              code: retry.errorKind,
+              running: true,
+            };
+            if (index === -1) turn.retries.push(row);
+            else turn.retries[index] = row;
+            yield* emitRetry(turn, row, "running");
             break;
           }
         }
@@ -1707,7 +1813,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 closed = true;
                 hostEpoch++;
               }
-              const close = Effect.tryPromise(() => created.close());
+              const close = Effect.tryPromise({
+                try: () => created.close(),
+                catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+              });
               // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
               // keep its close promise pending. Let the scope reap those holders.
               yield* (
@@ -1855,6 +1964,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
+          if (result.history?.noneReason === "projectionUnavailable")
+            return yield* protocolError(
+              "Muse cannot stream this session because its live view is unavailable",
+            );
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
@@ -2008,6 +2121,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           started: new Map(),
           dirty: new Set(),
           settledRequests: new Set(),
+          retries: [],
           done: yield* Deferred.make<void>(),
           nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
           flushScheduled: false,
@@ -2029,8 +2143,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
-          const held = wake;
-          wake = undefined;
+          // Compaction cannot join a running wake, so the wake stays held for its continuation.
+          const held = compact ? undefined : wake;
+          if (held) wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
@@ -2039,17 +2154,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (continuation) return;
         yield* Effect.gen(function* () {
           if (compact) {
-            const result = yield* request("session/compact", {}, true, nativeId).pipe(
+            // The turn's terminal reports a declined compaction; only a broken host fails the command.
+            const declined = yield* request("session/compact", {}, true, nativeId).pipe(
               Effect.flatMap((value) => decode(MuseCompactResult, value)),
+              Effect.map((result) =>
+                result.status === "accepted"
+                  ? undefined
+                  : result.status === "noop"
+                    ? (result.reason ?? "Muse has no context to compact.")
+                    : `Muse returned an unsupported compaction status: ${result.status}`,
+              ),
+              Effect.catch((error) => (broken ? Effect.fail(error) : Effect.succeed(error.detail))),
             );
-            if (result.status === "noop")
-              yield* eventPermit.withPermits(1)(
-                finish(turn, "failed", result.reason ?? "Muse has no context to compact."),
-              );
-            else if (result.status !== "accepted")
-              return yield* protocolError(
-                `Muse returned an unsupported compaction status: ${result.status}`,
-              );
+            if (declined !== undefined)
+              yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
             const result = yield* request(
               "turn/start",
@@ -2229,6 +2347,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
+            // Recovering an ended turn is done unless Muse still runs work Stop cannot end.
+            if (
+              !turn &&
+              args.requestRuntimeRestart === true &&
+              observedChildren.size === 0 &&
+              wake === undefined
+            )
+              return;
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
@@ -2241,11 +2367,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   hostEpoch++;
-                  yield* Effect.tryPromise(() => host.close()).pipe(
-                    Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
-                    Effect.onError(failHost),
-                  );
+                  yield* Effect.tryPromise({
+                    try: () => host.close(),
+                    catch: (cause) => protocolError("Cannot stop Muse compaction", cause),
+                  }).pipe(Effect.onError(failHost));
                   broken = true;
+                  wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");

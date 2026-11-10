@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { Agent, createAgentPlatform, Cursor, SqliteLocalAgentStore } from "./sdk.ts";
+import { loadCursorSdk, loadCursorSqlite } from "./sdk.ts";
 
 // The SDK leaves a shell-error promise unhandled, which would exit the server.
 const CURSOR_SHELL_SPAWN_MARKERS = [
@@ -37,12 +37,23 @@ function isCursorShellSpawnFailure(reason: unknown): boolean {
 }
 
 /**
- * After a local exec fails, the SDK writes a final frame to the exec's stream from
- * a promise nothing awaits. If that stream has already closed, the write rejects.
- * The SDK's class is minified, so only its `name` identifies it.
+ * The SDK writes final frames from promises nothing awaits. A closed stream rejects them
+ * with WriteIterableClosedError; an ended request body rejects them with the Aborted
+ * ConnectError its connect-node pump wraps around ERR_STREAM_WRITE_AFTER_END. The classes
+ * are minified, so only `name` identifies them.
  */
 function isCursorClosedStreamWrite(reason: unknown): boolean {
-  return reason instanceof Error && reason.name === "WriteIterableClosedError";
+  if (!(reason instanceof Error)) {
+    return false;
+  }
+  if (reason.name === "WriteIterableClosedError") {
+    return true;
+  }
+  return (
+    reason.name === "ConnectError" &&
+    reason.cause instanceof Error &&
+    Reflect.get(reason.cause, "code") === "ERR_STREAM_WRITE_AFTER_END"
+  );
 }
 
 function onUnhandledRejection(reason: unknown): void {
@@ -51,7 +62,7 @@ function onUnhandledRejection(reason: unknown): void {
     return;
   }
   if (isCursorClosedStreamWrite(reason)) {
-    console.error("Cursor SDK wrote to a closed exec stream. The server will keep running.");
+    console.error("Cursor SDK wrote to a closed stream. The server will keep running.");
     return;
   }
   if (process.listenerCount("unhandledRejection") > 1) {
@@ -91,9 +102,8 @@ const readCursorCliUseHttp1ForAgent = Effect.gen(function* () {
 export class CursorSdk extends Context.Service<
   CursorSdk,
   {
-    readonly Agent: typeof Agent;
-    readonly createAgentPlatform: typeof createAgentPlatform;
-    readonly SqliteLocalAgentStore: typeof SqliteLocalAgentStore;
+    readonly load: typeof loadCursorSdk;
+    readonly loadSqlite: typeof loadCursorSqlite;
   }
 >()("@t3tools/provider-cursor/server/CursorSdk") {}
 
@@ -111,12 +121,25 @@ export const layer = Layer.effect(
         }),
     );
     // The SDK picks the agent transport per process, so no provider instance can own this.
-    if (yield* readCursorCliUseHttp1ForAgent) {
-      yield* Effect.acquireRelease(
-        Effect.sync(() => Cursor.configure({ local: { useHttp1ForAgent: true } })),
-        () => Effect.sync(() => Cursor.configure({ local: { useHttp1ForAgent: null } })),
-      );
+    if (!(yield* readCursorCliUseHttp1ForAgent)) {
+      return CursorSdk.of({ load: loadCursorSdk, loadSqlite: loadCursorSqlite });
     }
-    return CursorSdk.of({ Agent, createAgentPlatform, SqliteLocalAgentStore });
+    let configured = false;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (configured) loadCursorSdk().Cursor.configure({ local: { useHttp1ForAgent: null } });
+      }),
+    );
+    return CursorSdk.of({
+      load: () => {
+        const sdk = loadCursorSdk();
+        if (!configured) {
+          sdk.Cursor.configure({ local: { useHttp1ForAgent: true } });
+          configured = true;
+        }
+        return sdk;
+      },
+      loadSqlite: loadCursorSqlite,
+    });
   }),
 );

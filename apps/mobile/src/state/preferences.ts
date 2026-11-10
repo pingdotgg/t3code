@@ -130,7 +130,7 @@ export function createMobilePreferencesState(
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
-export const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
+const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;

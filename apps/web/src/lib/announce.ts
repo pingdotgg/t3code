@@ -37,6 +37,8 @@ function createRegion() {
  * replaces one still waiting from the same `source`, so a superseded status isn't read out.
  */
 export function announce(message: string, source?: string) {
+  // Stores announce without a mounted owner, so they also run where no DOM exists (unit tests).
+  if (typeof document === "undefined") return;
   if (!regions) {
     regions = [createRegion(), createRegion()];
     document.addEventListener("focusin", () => {
