@@ -432,7 +432,7 @@ it.layer(
         const vitePlusNodePath = NodePath.join(tempDir, "vite-plus-node/bin/node");
         const binaryPath = NodePath.join(tempDir, ".vite-plus/bin/package-tool");
         writeExecutable(binaryPath);
-        const advise = (env: NodeJS.ProcessEnv, vitePlusPacks: string) =>
+        const advise = (env: NodeJS.ProcessEnv, vitePlusPacks: string, nodeSource = "lts") =>
           resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
             binaryPath,
             env: { PATH: npmBinDir, ...env },
@@ -441,7 +441,11 @@ it.layer(
               ChildProcessSpawner.ChildProcessSpawner,
               // `vp i -g` runs the npm beside Vite+'s Node; `npm view` ignores min-release-age.
               stdoutSpawner((command, args) => {
-                if (command === "vp") return `${vitePlusNodePath}\n`;
+                if (command === "vp") {
+                  return JSON.stringify({
+                    node: { source: nodeSource, bin_path: vitePlusNodePath, installed: true },
+                  });
+                }
                 if (command === npmPath) {
                   return args[0] === "view" ? '"1.2.0"' : "example-package-tool-1.2.0.tgz\n";
                 }
@@ -466,6 +470,14 @@ it.layer(
           latestVersion: "1.1.0",
         });
         expect((yield* advise({}, "1.2.0"))?.latestVersion).toBe("1.2.0");
+        // Install never uses the system Node `vp env off` reports, so this falls back to `npm view`.
+        expect(
+          (yield* advise(
+            { npm_config_min_release_age: "7", VP_HOME: "system-first" },
+            "1.1.0",
+            "system PATH",
+          ))?.latestVersion,
+        ).toBe("1.2.0");
       }).pipe(
         Effect.provide(ProviderLatestVersions.layer),
         Effect.provideService(

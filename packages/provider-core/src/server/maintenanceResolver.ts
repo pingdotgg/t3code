@@ -486,18 +486,32 @@ function parseNpmPackVersion(stdout: string, packageName: string): string | null
   return version && !/\s/.test(version) ? version : null;
 }
 
-// `vp i -g` installs through the npm beside Vite+'s Node, which can differ from PATH's npm.
+const decodeVitePlusCurrentEnv = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      node: Schema.Struct({
+        source: Schema.String,
+        bin_path: Schema.String,
+        installed: Schema.Boolean,
+      }),
+    }),
+  ),
+);
+
+// `vp i -g` installs through the npm beside Vite+'s managed Node, even under `vp env off`, and
+// `vp env current` names that Node unless it reports a system one, which install does not use.
 // Pack honours npm's min-release-age and `before`, which `npm view` ignores, and resolves
 // `@latest` the way install does. `--json=false` keeps its output to the tarball name.
 const resolveVitePlusInstallableLatestVersion = Effect.fn(
   "resolveVitePlusInstallableLatestVersion",
 )(function* (packageName: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
   const path = yield* Path.Path;
-  const nodePath = nonEmptyString(
-    yield* runProbe("vp", ["env", "exec", "node", "-p", "process.execPath"], env),
-  );
-  if (!nodePath || !path.isAbsolute(nodePath)) return null;
-  const npmPath = path.join(path.dirname(nodePath), platform === "win32" ? "npm.cmd" : "npm");
+  const current = yield* runProbe("vp", ["env", "current", "--json"], env);
+  const node = current ? Option.getOrUndefined(decodeVitePlusCurrentEnv(current))?.node : undefined;
+  if (!node?.installed || node.source === "system PATH" || !path.isAbsolute(node.bin_path)) {
+    return null;
+  }
+  const npmPath = path.join(path.dirname(node.bin_path), platform === "win32" ? "npm.cmd" : "npm");
   const packed = yield* runProbe(
     npmPath,
     ["pack", "--dry-run", "--json=false", "--global", `${packageName}@latest`],
