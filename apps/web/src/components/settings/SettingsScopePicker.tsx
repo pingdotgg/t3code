@@ -196,13 +196,11 @@ function ScopePopover({
     >
       <PopoverTrigger
         aria-label={`Settings scope: ${triggerLabel}`}
-        render={<ContentButton variant="tab" className="-ms-2.5" />}
+        render={<ContentButton variant="breadcrumb" className="-ms-2.5" />}
       >
         {trigger}
         {projectLabel || environmentLabel ? (
-          <span className="min-w-0 max-w-48 truncate text-meta text-muted-foreground">
-            {triggerLabel}
-          </span>
+          <span className="min-w-0 truncate text-meta text-muted-foreground">{triggerLabel}</span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" alignOffset={48} padding="none" initialFocus={searchRef}>
