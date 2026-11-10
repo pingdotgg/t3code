@@ -108,13 +108,13 @@ it.effect("creates then updates a definition, keeping its id and createdAt", () 
   }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("replaying a create commandId resolves to the same pipeline", () =>
+it.effect("replaying a create commandId returns the pipeline it made without overwriting it", () =>
   Effect.gen(function* () {
     const service = yield* PipelineService.PipelineService;
     const commandId = decodeCommandId("command-1");
     const first = yield* service.upsert(upsertInput({ commandId }));
     const second = yield* service.upsert(upsertInput({ commandId, name: "Edited" }));
-    assert.strictEqual(second.pipeline.id, first.pipeline.id);
+    assert.deepStrictEqual(second.pipeline, first.pipeline);
     assert.strictEqual((yield* service.list()).pipelines.length, 1);
   }).pipe(Effect.provide(testLayer)),
 );
