@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the Keychain name is a plain function, as in Claude Code.
+import * as NodeCrypto from "node:crypto";
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
@@ -9,6 +11,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const API_BASE = "https://api.anthropic.com";
@@ -42,6 +46,7 @@ const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
+const decodeCredentialsJson = Schema.decodeEffect(Schema.fromJsonString(Credentials));
 const ClaimResponse = Schema.Struct({
   result: Schema.Literals([
     "reset",
@@ -134,10 +139,45 @@ const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends S
   );
 });
 
+/** Claude Code's Keychain entry; a CLAUDE_CONFIG_DIR adds a hash of that folder to the name. */
+export const claudeKeychainService = (customConfigDir: string | undefined) =>
+  customConfigDir
+    ? `Claude Code-credentials-${NodeCrypto.createHash("sha256").update(customConfigDir.normalize("NFC")).digest("hex").slice(0, 8)}`
+    : "Claude Code-credentials";
+
+// /usr/bin/security wrote the entry for Claude Code, so it reads it back without a prompt.
+const readKeychainLogin = Effect.fn("claudeResetCredits.readKeychainLogin")(
+  function* (customConfigDir: string | undefined) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", claudeKeychainService(customConfigDir), "-w"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+      { concurrency: 2 },
+    );
+    if (Number(exitCode) !== 0) return undefined;
+    const credentials = yield* decodeCredentialsJson(stdout);
+    return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
+  },
+  Effect.scoped,
+  Effect.timeout("5 seconds"),
+  Effect.orElseSucceed(() => undefined),
+);
+
+/** customConfigDir is the CLAUDE_CONFIG_DIR Claude runs with, if any. */
 const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
   configDir: string,
+  customConfigDir: string | undefined,
 ) {
-  if ((yield* HostProcess.Platform) === "darwin") return undefined;
+  if ((yield* HostProcess.Platform) === "darwin") {
+    const token = yield* readKeychainLogin(customConfigDir);
+    if (token) return token;
+  }
   const path = yield* Path.Path;
   const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
   return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
@@ -151,8 +191,8 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
+  function* (configDir: string, customConfigDir: string | undefined, version: string) {
+    const token = yield* readAccessToken(configDir, customConfigDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -197,6 +237,7 @@ const CLAIM_OUTCOMES = {
 /** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;
+  readonly customConfigDir: string | undefined;
   readonly accountConfigPath: string;
   readonly version: string;
   readonly grantId: string;
@@ -205,7 +246,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
   }
-  const token = yield* readAccessToken(input.configDir).pipe(
+  const token = yield* readAccessToken(input.configDir, input.customConfigDir).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
   );
   const config = yield* readJson(Config, input.accountConfigPath).pipe(
