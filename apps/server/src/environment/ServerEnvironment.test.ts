@@ -189,6 +189,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         Effect.provideService(HostProcess.LinuxLibc, "libc" in host ? host.libc : "gnu"),
       );
       expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
+      expect(descriptor.capabilities.keepAwake).toBe(host.platform === "darwin" ? true : undefined);
     }),
   );
   it.effect.each([
