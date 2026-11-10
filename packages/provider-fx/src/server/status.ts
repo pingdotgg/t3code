@@ -19,13 +19,13 @@ import {
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   nonEmptyTrimmed,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   type ProviderProbeResult,
   providerModelsFromSettings,
   type ServerProviderDraft,
+  providerProbeEnvironment,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -135,6 +135,8 @@ const FxModels = Schema.fromJsonString(
 );
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
 
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
+
 function fxAuth(auth: string | undefined): ServerProviderAuth {
   const method = nonEmptyTrimmed(auth);
   if (method === undefined) return { status: "unknown" };
@@ -162,8 +164,9 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
 
-  const versionResult = yield* runFxCli(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  const probeEnvironment = providerProbeEnvironment(environment);
+  const versionResult = yield* runFxCli(settings, ["--version"], probeEnvironment).pipe(
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
@@ -177,7 +180,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     return snapshot(settings, checkedAt, {
       installed: true,
@@ -189,7 +192,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   }
 
   const read = (args: ReadonlyArray<string>) =>
-    runFxCli(settings, args, environment).pipe(
+    runFxCli(settings, args, probeEnvironment).pipe(
       Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
       Effect.map(Option.filter((output) => output.code === 0)),
       Effect.map(Option.map((output) => output.stdout)),
