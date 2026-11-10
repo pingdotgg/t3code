@@ -5,6 +5,7 @@ import type {
   PullRequestAction,
   PullRequestListEntry,
   PullRequestListResult,
+  PullRequestSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -34,6 +35,7 @@ import {
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
   pullRequestListNotices,
@@ -690,6 +692,26 @@ describe("pull request list overrides", () => {
       [2, "open"],
     ]);
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
+  });
+
+  it("shows a reply's queued merge as open and never un-merges a merged row", () => {
+    const reply = { state: "open", updatedAt: "2026-07-03T00:00:00Z", observedAt: 300 } as const;
+    const override = pullRequestOverrideAfterAction(
+      entry(1, "open"),
+      "merge",
+      new Date(900),
+      1,
+      reply as unknown as PullRequestSummary,
+    )!;
+    const overrides = new Map([["#1", override]]);
+    expect(applyPullRequestOverrides([entry(1, "open")], overrides, key, "open")).toMatchObject([
+      { state: "open", updatedAt: reply.updatedAt, observedAt: 300 },
+    ]);
+    expect(
+      applyPullRequestOverrides([entry(1, "merged")], overrides, key, "all").map(
+        (row) => row.state,
+      ),
+    ).toEqual(["merged"]);
   });
 
   it("keeps a confirmed close hidden when its override is cleared", () => {
