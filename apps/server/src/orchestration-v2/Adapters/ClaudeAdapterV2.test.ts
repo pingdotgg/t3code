@@ -2737,6 +2737,42 @@ describe("ClaudeAdapterV2 native fork", () => {
           },
         } satisfies OrchestrationV2ProviderThread;
 
+        // The parent cleared its goal with a later turn, which says nothing about the fork point.
+        const now = yield* DateTime.now;
+        const sourceProviderTurns = [1, 2].map((ordinal) => ({
+          id: ProviderTurnId.make(`provider-turn-claude-goal-source-${ordinal}`),
+          providerThreadId: sourceProviderThread.id,
+          nodeId: NodeId.make(`node-claude-goal-source-${ordinal}`),
+          runAttemptId: RunAttemptId.make(`run-attempt-claude-goal-source-${ordinal}`),
+          nativeTurnRef: {
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeId: `assistant-message-cursor-${ordinal}`,
+            strength: "weak" as const,
+          },
+          ordinal,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        }));
+        const [forkPointTurn, sourceHeadTurn] = sourceProviderTurns;
+        yield* runtime.forkThread({
+          sourceProviderThread: { ...sourceProviderThread, goal: null },
+          sourceProviderTurns,
+          providerTurnId: forkPointTurn!.id,
+          targetThreadId: ThreadId.make("thread-claude-goal-side-chat-behind-head"),
+          sideChat: true,
+        });
+        assert.deepEqual(prompts, [{ session: "side-chat-native-session", text: "/goal clear" }]);
+        prompts.length = 0;
+        yield* runtime.forkThread({
+          sourceProviderThread: { ...sourceProviderThread, goal: null },
+          sourceProviderTurns,
+          providerTurnId: sourceHeadTurn!.id,
+          targetThreadId: ThreadId.make("thread-claude-goal-side-chat-at-head"),
+          sideChat: true,
+        });
+        assert.deepEqual(prompts, []);
+
         const sideChat = yield* runtime.forkThread({
           sourceProviderThread,
           targetThreadId: sideChatThreadId,

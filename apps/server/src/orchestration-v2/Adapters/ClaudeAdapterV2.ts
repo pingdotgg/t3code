@@ -2269,15 +2269,30 @@ const getNativeConversationHeadId = Effect.fnUntraced(function* (
   return nativeHeadRef.nativeId;
 });
 
+const claudeForkSourceTurns = (
+  input: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
+): ReadonlyArray<OrchestrationV2ProviderTurn> =>
+  (input.sourceProviderTurns ?? [])
+    .filter((turn) => turn.providerThreadId === input.sourceProviderThread.id)
+    .toSorted((left, right) => left.ordinal - right.ordinal);
+
+const isClaudeForkBehindSourceHead = (
+  input: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
+): boolean => {
+  if (input.providerTurnId === undefined) {
+    return false;
+  }
+  const latest = claudeForkSourceTurns(input).at(-1);
+  return latest !== undefined && latest.id !== input.providerTurnId;
+};
+
 const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpToMessageId")(
   function* (input: ProviderAdapter.ProviderAdapterV2ForkThreadInput) {
     if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
       return undefined;
     }
 
-    const sourceTurns = input.sourceProviderTurns
-      .filter((turn) => turn.providerThreadId === input.sourceProviderThread.id)
-      .toSorted((left, right) => left.ordinal - right.ordinal);
+    const sourceTurns = claudeForkSourceTurns(input);
     const boundaryIndex = sourceTurns.findIndex((turn) => turn.id === input.providerTurnId);
     if (boundaryIndex < 0) {
       return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
@@ -12416,9 +12431,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updated.add(forked.sessionId);
                 return updated;
               });
-              // A side chat keeps the parent's goal in its forked transcript, and the goal's Stop hook would block its turns.
+              // A side chat keeps the fork point's goal, whose Stop hook would block its turns; only at the parent's head does the parent's goal show it.
               const goalClearedAt =
-                forkInput.sideChat === true && forkInput.sourceProviderThread.goal != null
+                forkInput.sideChat === true &&
+                (forkInput.sourceProviderThread.goal != null ||
+                  isClaudeForkBehindSourceHead(forkInput))
                   ? yield* clearForkedGoal(forkInput, forked.sessionId)
                   : undefined;
               const headMessageId = goalClearedAt ?? forked.headMessageId;
