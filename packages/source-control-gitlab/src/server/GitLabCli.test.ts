@@ -169,6 +169,13 @@ layer("GitLabCli.layer", (it) => {
       webRoot: "https://example.com:8443/gitlab",
     },
     {
+      repository: "https://example.com:8443/gitlab/gitlab/team/app.git",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com:8443",
+      subfolder: "gitlab",
+      webRoot: "https://example.com:8443/gitlab",
+    },
+    {
       repository: "http://example.com/gitlab/gitlab/team/app.git",
       projectPath: "gitlab/team/app",
       configuredHost: "example.com/gitlab",
@@ -195,11 +202,16 @@ layer("GitLabCli.layer", (it) => {
   ])("resolves $repository through its nested project path on the selected server", (row) =>
     Effect.gen(function* () {
       const url = `${row.webRoot}/gitlab/team/app`;
+      // Like glab, unset config keys print nothing.
+      const config = {
+        host: row.configuredHost,
+        [`subfolder --host ${row.configuredHost}`]: row.subfolder,
+      };
       mockedRun.mockImplementation((input) =>
         Effect.succeed(
           processOutput(
             input.args[0] === "config"
-              ? `${row.configuredHost}\n`
+              ? `${config[input.args.slice(2).join(" ")] ?? ""}\n`
               : JSON.stringify({ ...project, web_url: url, http_url_to_repo: `${url}.git` }),
           ),
         ),

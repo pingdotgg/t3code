@@ -609,7 +609,18 @@ export const make = Effect.gen(function* () {
         );
         if (configuredUrl && webServerIdentity(configuredUrl) === requestedHost) {
           // Install roots belong to web URLs; SSH paths already name the full namespace.
-          const root = configuredUrl.pathname.replace(/^\/+|\/+$/gu, "");
+          // glab 1.87+ stores the root in the host's `subfolder` key instead of `host`.
+          const configuredRoot =
+            configuredUrl.pathname === "/"
+              ? yield* execute({
+                  cwd: input.cwd,
+                  args: ["config", "get", "subfolder", "--host", configuredUrl.host],
+                }).pipe(
+                  Effect.map((result) => result.stdout.trim()),
+                  Effect.orElseSucceed(() => ""),
+                )
+              : configuredUrl.pathname;
+          const root = configuredRoot.replace(/^\/+|\/+$/gu, "");
           if (root && projectPath.startsWith(`${root}/`)) {
             projectPath = projectPath.slice(root.length + 1);
           }
