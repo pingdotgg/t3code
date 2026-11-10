@@ -546,6 +546,8 @@ function SubagentTimelineLink(props: {
         driver={props.driver}
         remote={remote}
         plain
+        // The tool rows' 24px icon column; the pull-back leaves their 5px gap to the label.
+        className="-me-0.75 size-6"
       />
       <span className="min-w-0 shrink truncate text-label text-foreground">{props.title}</span>
       {remote !== undefined ? (
@@ -587,9 +589,9 @@ function SubagentTimelineLink(props: {
       {props.event ? null : <SubagentStatusGlyph status={liveStatus} />}
     </>
   );
-  // Timeline rows share the tool rows' columns: avatar on the text line, title on the label line.
+  // The tool rows' metrics: 24px tall, flush left, the same end inset.
   const className =
-    "group/subagent flex h-7.5 w-full min-w-0 items-center gap-2 rounded-row px-1.5 text-left";
+    "group/subagent flex min-h-6 w-full min-w-0 items-center gap-2 rounded-md pe-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger
