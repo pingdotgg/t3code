@@ -201,7 +201,7 @@ function StageRow({
       trailing={
         <>
           {trailing ? (
-            <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+            <span className="max-w-2/3 min-w-0 truncate text-xs text-muted-foreground tabular-nums">
               {trailing}
             </span>
           ) : null}
