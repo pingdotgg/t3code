@@ -15,20 +15,16 @@ import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import { BadArgument, SystemError } from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
-import * as Redacted from "effect/Redacted";
-import type * as Scope from "effect/Scope";
-import { initialCwd } from "../Util/Node.ts";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Redacted from "effect/Redacted";
+import type * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import type { ScopedPlanStatusSession } from "../Report.ts";
 import { isNonInteractive } from "../Util/interactive.ts";
-import {
-  makeCommandRedactor,
-  redactPlatformReason,
-  type CommandRedactor,
-} from "./Redaction.ts";
+import { initialCwd } from "../Util/Node.ts";
+import { makeCommandRedactor, redactPlatformReason, type CommandRedactor } from "./Redaction.ts";
 
 /**
  * Base properties for a command resource.
@@ -84,11 +80,7 @@ export class CommandExecutor extends Context.Service<
      */
     readonly spawn: (
       props: CommandProps,
-    ) => Effect.Effect<
-      ChildProcessSpawner.ChildProcessHandle,
-      CommandError,
-      Scope.Scope
-    >;
+    ) => Effect.Effect<ChildProcessSpawner.ChildProcessHandle, CommandError, Scope.Scope>;
     /**
      * Executes a command, returning the exit code, stdout, and stderr.
      * Throws a {@link CommandError} if the command exits with a non-zero exit code.
@@ -96,10 +88,7 @@ export class CommandExecutor extends Context.Service<
     readonly run: (
       props: CommandRunProps,
       session: ScopedPlanStatusSession,
-    ) => Effect.Effect<
-      { exitCode: number; stdout: string; stderr: string },
-      CommandError
-    >;
+    ) => Effect.Effect<{ exitCode: number; stdout: string; stderr: string }, CommandError>;
   }
 >()("alchemy/Command/CommandExecutor") {}
 
@@ -108,21 +97,10 @@ export class CommandExecutor extends Context.Service<
  */
 export class CommandError extends Data.TaggedError("CommandError")<{
   command: string;
-  reason:
-    | SystemError
-    | BadArgument
-    | UnexpectedExit
-    | OutputNotFound
-    | CommandTimedOut;
+  reason: SystemError | BadArgument | UnexpectedExit | OutputNotFound | CommandTimedOut;
   cause?: unknown;
 }> {
-  constructor({
-    command,
-    reason,
-  }: {
-    command: string;
-    reason: CommandError["reason"];
-  }) {
+  constructor({ command, reason }: { command: string; reason: CommandError["reason"] }) {
     if ("cause" in reason) {
       super({ command, reason, cause: reason.cause });
     } else {
@@ -153,9 +131,7 @@ export class UnexpectedExit extends Data.TaggedError("UnexpectedExit")<{
 /**
  * Represents when a finite command exceeds its configured timeout.
  */
-export class CommandTimedOut extends Data.TaggedError("CommandTimedOut")<{
-  timeout: string;
-}> {
+export class CommandTimedOut extends Data.TaggedError("CommandTimedOut")<{ timeout: string }> {
   override get message() {
     return `The command timed out after ${this.timeout}; its process group was terminated.`;
   }
@@ -164,9 +140,7 @@ export class CommandTimedOut extends Data.TaggedError("CommandTimedOut")<{
 /**
  * Represents when the output directory does not exist.
  */
-export class OutputNotFound extends Data.TaggedError("OutputNotFound")<{
-  outdir: string;
-}> {
+export class OutputNotFound extends Data.TaggedError("OutputNotFound")<{ outdir: string }> {
   override get message() {
     return `The output directory "${this.outdir}" does not exist.`;
   }
@@ -182,20 +156,12 @@ export const makeCommandError = (
     reason instanceof BadArgument || reason instanceof SystemError
       ? redactPlatformReason(reason, redactor)
       : reason._tag === "UnexpectedExit"
-        ? new UnexpectedExit({
-            exitCode: reason.exitCode,
-            stderr: redactor.redact(reason.stderr),
-          })
+        ? new UnexpectedExit({ exitCode: reason.exitCode, stderr: redactor.redact(reason.stderr) })
         : reason._tag === "OutputNotFound"
           ? new OutputNotFound({ outdir: redactor.redact(reason.outdir) })
-          : new CommandTimedOut({
-              timeout: redactor.redact(reason.timeout),
-            });
+          : new CommandTimedOut({ timeout: redactor.redact(reason.timeout) });
 
-  return new CommandError({
-    command: redactor.redact(props.command),
-    reason: safeReason,
-  });
+  return new CommandError({ command: redactor.redact(props.command), reason: safeReason });
 };
 
 const TERMINATION_GRACE_PERIOD = Duration.seconds(1);
@@ -204,7 +170,7 @@ const TERMINATION_SIGNAL_DISPATCH_TIMEOUT = Duration.millis(25);
 const parseExecutionTimeout = (
   props: CommandRunProps,
 ): Effect.Effect<Duration.Duration | undefined, CommandError> => {
-  if (props.timeout === undefined) return Effect.succeed(undefined);
+  if (props.timeout === undefined) return Effect.undefined;
   const decoded = Duration.fromInput(props.timeout);
   if (
     Option.isNone(decoded) ||
@@ -233,10 +199,7 @@ const terminateProcessGroup = (child: ChildProcessSpawner.ChildProcessHandle) =>
     // the full process tree on Windows.
     yield* child
       .kill({ killSignal: "SIGTERM" })
-      .pipe(
-        Effect.timeoutOption(TERMINATION_SIGNAL_DISPATCH_TIMEOUT),
-        Effect.ignore,
-      );
+      .pipe(Effect.timeoutOption(TERMINATION_SIGNAL_DISPATCH_TIMEOUT), Effect.ignore);
     yield* Effect.sleep(TERMINATION_GRACE_PERIOD);
 
     // Always signal the group again: the root may have exited promptly while
@@ -250,16 +213,8 @@ const redactChildProcessHandle = (
   child: ChildProcessSpawner.ChildProcessHandle,
   redactor: CommandRedactor,
 ): ChildProcessSpawner.ChildProcessHandle => {
-  const stdout = child.stdout.pipe(
-    Stream.decodeText,
-    redactor.stream,
-    Stream.encodeText,
-  );
-  const stderr = child.stderr.pipe(
-    Stream.decodeText,
-    redactor.stream,
-    Stream.encodeText,
-  );
+  const stdout = child.stdout.pipe(Stream.decodeText, redactor.stream, Stream.encodeText);
+  const stderr = child.stderr.pipe(Stream.decodeText, redactor.stream, Stream.encodeText);
   return ChildProcessSpawner.makeHandle({
     pid: child.pid,
     exitCode: child.exitCode,
@@ -289,9 +244,7 @@ export const CommandExecutorLive = () =>
         if (props.shell) {
           return Effect.succeed({ bin: props.command, args: [] });
         }
-        const [bin, ...args] = props.command
-          .split(/(\s+)/)
-          .filter((part) => !!part.trim());
+        const [bin, ...args] = props.command.split(/(\s+)/).filter((part) => !!part.trim());
         if (!bin) {
           return Effect.fail(
             makeCommandError(
@@ -321,17 +274,10 @@ export const CommandExecutorLive = () =>
                   env: Object.fromEntries(
                     Object.entries(props.env ?? {})
                       .filter(
-                        (
-                          entry,
-                        ): entry is [
-                          string,
-                          string | Redacted.Redacted<string>,
-                        ] => entry[1] !== undefined,
+                        (entry): entry is [string, string | Redacted.Redacted<string>] =>
+                          entry[1] !== undefined,
                       )
-                      .map(([k, v]) => [
-                        k,
-                        Redacted.isRedacted(v) ? Redacted.value(v) : v,
-                      ]),
+                      .map(([k, v]) => [k, Redacted.isRedacted(v) ? Redacted.value(v) : v]),
                   ),
                   extendEnv: true,
                   stdin: isNonInteractive() ? "ignore" : "inherit",
@@ -346,16 +292,11 @@ export const CommandExecutorLive = () =>
               ),
               (child) =>
                 child
-                  .kill({
-                    killSignal: "SIGTERM",
-                    forceKillAfter: TERMINATION_GRACE_PERIOD,
-                  })
+                  .kill({ killSignal: "SIGTERM", forceKillAfter: TERMINATION_GRACE_PERIOD })
                   .pipe(Effect.ignore),
             ),
           ),
-          Effect.map((child) =>
-            redactChildProcessHandle(child, makeCommandRedactor(props.env)),
-          ),
+          Effect.map((child) => redactChildProcessHandle(child, makeCommandRedactor(props.env))),
           mapError(props),
         );
 
@@ -368,20 +309,14 @@ export const CommandExecutorLive = () =>
         stream.pipe(
           Stream.decodeText,
           redactor.stream,
-          Stream.tapSink(
-            Sink.make<string>()(
-              flow(Stream.splitLines, Stream.runForEach(tap)),
-            ),
-          ),
+          Stream.tapSink(Sink.make<string>()(flow(Stream.splitLines, Stream.runForEach(tap)))),
           Stream.mkString,
         );
 
       /** Maps a PlatformError to a CommandError. */
       const mapError = (props: CommandProps) =>
         Effect.mapError((error: PlatformError | CommandError) =>
-          error._tag === "CommandError"
-            ? error
-            : makeCommandError(props, error.reason),
+          error._tag === "CommandError" ? error : makeCommandError(props, error.reason),
         );
 
       return CommandExecutor.of({
@@ -409,40 +344,29 @@ export const CommandExecutorLive = () =>
               { concurrency: "unbounded" },
             ).pipe(mapError(props));
 
-            const result =
-              timeout === undefined
-                ? yield* execution
-                : yield* Effect.gen(function* () {
-                    const fiber = yield* Effect.forkScoped(execution);
-                    const completed = yield* Fiber.join(fiber).pipe(
-                      Effect.timeoutOption(timeout),
-                    );
-                    if (Option.isSome(completed)) return completed.value;
+            const runExecution = Effect.gen(function* () {
+              if (timeout === undefined) {
+                return yield* execution;
+              }
+              const fiber = yield* Effect.forkScoped(execution);
+              const completed = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(timeout));
+              if (Option.isSome(completed)) return completed.value;
 
-                    yield* terminateProcessGroup(child);
-                    yield* Fiber.interrupt(fiber).pipe(
-                      Effect.timeoutOption(TERMINATION_GRACE_PERIOD),
-                      Effect.ignore,
-                    );
-                    return yield* Effect.fail(
-                      makeCommandError(
-                        props,
-                        new CommandTimedOut({
-                          timeout: Duration.format(timeout),
-                        }),
-                      ),
-                    );
-                  });
-
+              yield* terminateProcessGroup(child);
+              yield* Fiber.interrupt(fiber).pipe(
+                Effect.timeoutOption(TERMINATION_GRACE_PERIOD),
+                Effect.ignore,
+              );
+              return yield* makeCommandError(
+                props,
+                new CommandTimedOut({ timeout: Duration.format(timeout) }),
+              );
+            });
+            const result = yield* runExecution;
             if (result.exitCode !== 0) {
-              return yield* Effect.fail(
-                makeCommandError(
-                  props,
-                  new UnexpectedExit({
-                    exitCode: result.exitCode,
-                    stderr: result.stderr,
-                  }),
-                ),
+              return yield* makeCommandError(
+                props,
+                new UnexpectedExit({ exitCode: result.exitCode, stderr: result.stderr }),
               );
             }
             return result;

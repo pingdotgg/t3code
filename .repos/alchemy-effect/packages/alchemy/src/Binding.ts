@@ -19,10 +19,7 @@ export interface ServiceShape<
 >
   extends Context.ServiceClass.Shape<Identifier, Shape>, ServiceLike {}
 
-type BindParameters<
-  Parameters extends any[],
-  Req = never,
-> = Parameters extends []
+type BindParameters<Parameters extends any[], Req = never> = Parameters extends []
   ? []
   : // Variadic lists (`number extends length`) — e.g. `(...parameters:
     // [Parameter, ...Parameter[]])` — must be checked FIRST: a plain array
@@ -32,28 +29,17 @@ type BindParameters<
     ? Parameters extends [infer First, ...infer Rest]
       ? [
           Input<First> | Effect.Effect<First, never, Req>,
-          ...Array<
-            Input<Rest[number]> | Effect.Effect<Rest[number], never, Req>
-          >,
+          ...Array<Input<Rest[number]> | Effect.Effect<Rest[number], never, Req>>,
         ]
-      : Array<
-          | Input<Parameters[number]>
-          | Effect.Effect<Parameters[number], never, Req>
-        >
+      : Array<Input<Parameters[number]> | Effect.Effect<Parameters[number], never, Req>>
     : Parameters extends [infer First, ...infer Rest]
-      ? [
-          Input<First> | Effect.Effect<First, never, Req>,
-          ...BindParameters<Rest, Req>,
-        ]
+      ? [Input<First> | Effect.Effect<First, never, Req>, ...BindParameters<Rest, Req>]
       : // Optional head (e.g. `(bus?: EventBus)`) — `[infer F, ...R]` does
         // not match a tuple with an optional first element, which used to
         // collapse the whole parameter list to `[]` (`PutEvents(bus)` failed
         // with "Expected 0 arguments").
         Parameters extends [(infer First)?, ...infer Rest]
-        ? [
-            (Input<First> | Effect.Effect<First, never, Req>)?,
-            ...BindParameters<Rest, Req>,
-          ]
+        ? [(Input<First> | Effect.Effect<First, never, Req>)?, ...BindParameters<Rest, Req>]
         : [];
 
 /**
@@ -98,11 +84,7 @@ export interface Service<
    */
   execute<Req = never>(
     ...args: BindParameters<Parameters<Shape>, Req>
-  ): Effect.Success<ReturnType<Shape>> extends () => Effect.Effect<
-    infer A,
-    infer _E,
-    infer R2
-  >
+  ): Effect.Success<ReturnType<Shape>> extends () => Effect.Effect<infer A, infer _E, infer R2>
     ? Output.ToOutput<A, Self | Effect.Services<ReturnType<Shape>> | R2 | Req>
     : never;
 }
@@ -120,13 +102,14 @@ export const Service = <
 >(
   id: Self["key"],
 ): Self => {
+  // Tag key is the caller-supplied `id`, so it can't be a class declaration.
+  // oxlint-disable-next-line effecttsgo/service-not-as-class
   const tag = Context.Service<Self, (...args: any[]) => Effect.Effect<any>>(id);
   const callable = (...args: any[]) =>
     tag.use((f: (...a: any[]) => Effect.Effect<any>) =>
-      Effect.all(
-        args.map((arg) => (Effect.isEffect(arg) ? arg : Effect.succeed(arg))),
-        { concurrency: "unbounded" },
-      ).pipe(
+      Effect.forEach(args, (arg) => (Effect.isEffect(arg) ? arg : Effect.succeed(arg)), {
+        concurrency: "unbounded",
+      }).pipe(
         Effect.flatMap((resolved) =>
           f(...resolved).pipe(
             // Deploy-time data-plane routing: the client's calls must target
@@ -185,11 +168,7 @@ const routeClientDataPlane = (
     // scan the top level plus one array level (multi-resource bindings like
     // ExecuteTransaction take tuples of resources).
     const resources = resolvedArgs.flatMap((arg): ResourceLike[] =>
-      Array.isArray(arg)
-        ? arg.filter(isResource)
-        : isResource(arg)
-          ? [arg]
-          : [],
+      Array.isArray(arg) ? arg.filter(isResource) : isResource(arg) ? [arg] : [],
     );
     // Account-scoped clients (no resource among the args) need no routing:
     // the ambient environment is already mode-aware — a dev run's ambient IS
@@ -200,11 +179,7 @@ const routeClientDataPlane = (
       for (const resource of resources) {
         planes.push(yield* describeDataPlane(resource));
       }
-      const local = [
-        ...new Set(
-          planes.flatMap((p) => (p.kind === "local" ? [p.layer] : [])),
-        ),
-      ];
+      const local = [...new Set(planes.flatMap((p) => (p.kind === "local" ? [p.layer] : [])))];
       if (local.length > 0) {
         if (local.length > 1 || planes.some((p) => p.kind !== "local")) {
           // Say exactly where each resource lands: a dual provider that never
@@ -230,9 +205,7 @@ const routeClientDataPlane = (
       // closest (the inverse of the local wrap above).
       const live = [
         ...new Set(
-          planes.flatMap((p) =>
-            p.kind === "live" && p.layer !== undefined ? [p.layer] : [],
-          ),
+          planes.flatMap((p) => (p.kind === "live" && p.layer !== undefined ? [p.layer] : [])),
         ),
       ];
       if (live.length === 1) return wrapClientInvocations(client, live[0]!);
@@ -263,19 +236,13 @@ const describeResolution = (plane: DataPlaneResolution): string => {
  * passes through untouched. Proxies preserve identity, extra properties,
  * and method names.
  */
-const wrapClientInvocations = (
-  client: unknown,
-  layer: Layer.Layer<any, any, never>,
-): unknown => {
+const wrapClientInvocations = (client: unknown, layer: Layer.Layer<any, any, never>): unknown => {
   const provide = (value: unknown): unknown =>
-    Effect.isEffect(value)
-      ? Effect.provide(value as Effect.Effect<any, any, any>, layer)
-      : value;
+    Effect.isEffect(value) ? Effect.provide(value as Effect.Effect<any, any, any>, layer) : value;
   if (Effect.isEffect(client)) return provide(client);
   if (typeof client === "function") {
     return new Proxy(client, {
-      apply: (target, thisArg, argArray) =>
-        provide(Reflect.apply(target, thisArg, argArray)),
+      apply: (target, thisArg, argArray) => provide(Reflect.apply(target, thisArg, argArray)),
     });
   }
   if (typeof client === "object" && client !== null) {
@@ -283,8 +250,7 @@ const wrapClientInvocations = (
       get: (target, prop, receiver) => {
         const value = Reflect.get(target, prop, receiver);
         if (typeof value === "function") {
-          return (...args: any[]) =>
-            provide(Reflect.apply(value, target, args));
+          return (...args: any[]) => provide(Reflect.apply(value, target, args));
         }
         return provide(value);
       },
@@ -303,10 +269,10 @@ const wrapClientInvocations = (
  *
  * Total: resolves to `undefined` when no host is ambient — a plan-time
  * {@link Service.execute} invoke, or a binding client provided directly in a
- * script/test outside any Function. Narrow it with `isWorker`/`isFunction`/
- * `isBindingHost` before calling `host.bind`; the guards reject `undefined`.
+ * script/test outside any Function. Providers narrow it before calling
+ * `host.bind` (e.g. Cloudflare's `isWorker`, or `AWSBindings.runsAsRole`);
+ * both reject `undefined`.
  */
-export const Host: Effect.Effect<ResourceLike | undefined> =
-  Effect.serviceOption(
-    Self as unknown as Context.Service<ResourceLike, ResourceLike>,
-  ).pipe(Effect.map(Option.getOrUndefined));
+export const Host: Effect.Effect<ResourceLike | undefined> = Effect.serviceOption(
+  Self as unknown as Context.Service<ResourceLike, ResourceLike>,
+).pipe(Effect.map(Option.getOrUndefined));
