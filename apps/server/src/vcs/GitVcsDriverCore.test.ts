@@ -6133,7 +6133,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "removes a worktree whose .git file git-annex replaced with a symlink",
+      "removes a worktree whose .git file git-annex replaced with a symlink, keeping the symlink when refused",
       () =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
@@ -6151,6 +6151,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const adminDir = (yield* git(worktreePath, ["rev-parse", "--absolute-git-dir"])).trim();
           NodeFS.rmSync(gitFile);
           NodeFS.symlinkSync(adminDir, gitFile);
+          yield* writeTextFile(worktreePath, "notes.txt", "draft\n");
+
+          const refused = yield* Effect.result(driver.removeWorktree({ cwd, path: worktreePath }));
+
+          assert.isTrue(Result.isFailure(refused));
+          assert.isTrue(NodeFS.lstatSync(gitFile).isSymbolicLink());
+          assert.equal(NodeFS.realpathSync(gitFile), NodeFS.realpathSync(adminDir));
+          NodeFS.rmSync(pathService.join(worktreePath, "notes.txt"));
 
           yield* driver.removeWorktree({ cwd, path: worktreePath });
 

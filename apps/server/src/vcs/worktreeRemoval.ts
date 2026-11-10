@@ -84,6 +84,12 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       Effect.andThen(fileSystem.writeFileString(gitFile, `gitdir: ${annexed.value}\n`)),
       Effect.mapError((cause) => refuse(`failed to restore '${gitFile}'`, cause)),
     );
+    // A refused removal keeps the worktree, whose annexed files resolve through the symlink.
+    yield* Effect.addFinalizer(() =>
+      fileSystem
+        .remove(gitFile)
+        .pipe(Effect.andThen(fileSystem.symlink(annexed.value, gitFile)), Effect.ignore),
+    );
   }
   const linked =
     (yield* HostProcess.isWindows) &&
@@ -196,4 +202,4 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   );
   // The folder is gone, so Git only drops the worktree's metadata.
   return yield* input.run(["worktree", "remove", "--force", "--force", "--", worktreePath]);
-});
+}, Effect.scoped);

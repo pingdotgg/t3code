@@ -1828,8 +1828,12 @@ describe("orphan worktree reports", () => {
           const orphan = `${fixture.config.worktreesDir}/${location === "nested" ? "repository/" : ""}orphan`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
           if (location === "annexed") yield* annexWorktree(fixture, orphan);
-          const sizes = yield* Effect.forEach(yield* fixture.fs.readDirectory(orphan), (name) =>
-            allocatedBytes(fixture.fs, `${orphan}/${name}`),
+          const sizes = yield* Effect.forEach(
+            // Links are not measured, and the annexed `.git` is one.
+            (yield* fixture.fs.readDirectory(orphan)).filter(
+              (name) => location !== "annexed" || name !== ".git",
+            ),
+            (name) => allocatedBytes(fixture.fs, `${orphan}/${name}`),
           );
           const outside = yield* fixture.fs.makeTempDirectoryScoped();
           yield* fixture.fs.writeFileString(`${outside}/external`, "outside data");
