@@ -635,6 +635,48 @@ describe("MessagesTimeline work rows", () => {
       .toBeInTheDocument();
   });
 
+  it("hides Jump to latest once a collapsed work row leaves nothing below", async () => {
+    const runId = RunId.make("thought-run");
+    const thought = (id: string, detail: string) =>
+      work(id, {
+        runId,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        detail,
+        toolLifecycleStatus: "completed",
+      });
+    await using screen = await renderTimeline(
+      [
+        message("Build it", { runId }),
+        thought("thought-1", "Long thought line\n\n".repeat(30)),
+        thought("thought-2", "Second thought"),
+      ],
+      {
+        isWorking: true,
+        activeTurnStartedAt: CREATED_AT,
+        latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
+      },
+    );
+    const history = screen.getByRole("region", { name: "Work history" }).element();
+    const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    const row = history.querySelector<HTMLElement>("[aria-expanded]")!;
+    await click(row);
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+    });
+    viewport.scrollTop = 0;
+    await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+
+    await click(row);
+    await expect.element(row).toHaveAttribute("aria-expanded", "false");
+    expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight);
+    await expect
+      .element(screen.getByRole("button", { name: "Jump to latest" }))
+      .not.toBeInTheDocument();
+  });
+
   it("keeps following the end while the work history opens and collapses", async () => {
     const runId = RunId.make("collapse-run");
     const navigations: TimelineNavigation[] = [];
