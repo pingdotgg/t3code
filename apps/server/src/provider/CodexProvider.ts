@@ -260,7 +260,11 @@ export function mapCodexModelCapabilities(
       id: "cyberAccessProgram",
       label: "Cyber Access",
       type: "select",
-      options: cyberAccessPrograms.map((program) => ({
+      // Standard stays selectable as an opt-out; Codex rejects it visibly if the account can't use it.
+      options: (cyberAccessPrograms.includes("standard")
+        ? cyberAccessPrograms
+        : ["standard", ...cyberAccessPrograms]
+      ).map((program) => ({
         id: program,
         label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
         ...(program === defaultProgram ? { isDefault: true } : {}),

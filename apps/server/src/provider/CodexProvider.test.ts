@@ -1,4 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 
 import {
   appendCustomCodexModels,
@@ -191,7 +195,26 @@ it("defaults cyber access to Standard when the catalog offers it", () => {
     currentValue: "standard",
   });
   assert.deepInclude(cyber(["standard"]), { currentValue: "standard" });
-  assert.deepInclude(cyber(["daybreakBlue"]), { currentValue: "daybreakBlue" });
+  const daybreakOnly = cyber(["daybreakBlue"]);
+  assert.deepInclude(daybreakOnly, {
+    options: [
+      { id: "standard", label: "Standard" },
+      { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
+    ],
+    currentValue: "daybreakBlue",
+  });
+  // Clients normalize selections against these descriptors before dispatch.
+  const selections = [{ id: "cyberAccessProgram", value: "standard" }];
+  assert.deepStrictEqual(
+    buildExplicitProviderOptionSelectionsFromDescriptors(
+      getProviderOptionDescriptors({
+        caps: { optionDescriptors: daybreakOnly ? [daybreakOnly] : [] },
+        selections,
+      }),
+      selections,
+    ),
+    selections,
+  );
 });
 
 it("follows Codex's daybreak setting for the default program", () => {
