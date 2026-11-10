@@ -27,7 +27,6 @@ it.each([
         hasSendableContent={false}
         onPreviousPendingQuestion={() => {}}
         onInterrupt={() => {}}
-        onImplementPlanInNewThread={() => {}}
       />
     </TooltipProvider>,
   );
