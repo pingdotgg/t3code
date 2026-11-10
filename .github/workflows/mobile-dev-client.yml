@@ -83,10 +83,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        # Credentials stay: removing them runs `git submodule foreach`, which fails on
-        # the vendored repositories' gitlinks under .repos (they have no .gitmodules entry).
         with:
           ref: ${{ inputs.ref || github.sha }}
+
+      # The build runs dependency scripts; it gets no token. `persist-credentials: false`
+      # fails here: its cleanup runs `git submodule foreach`, which stops at the vendored
+      # gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
+            | while read -r key; do git config --local --unset-all "$key"; done
+          if git config --local --get-regexp 'extraheader|includeif' ; then
+            echo "::error::checkout credentials are still configured"
+            exit 1
+          fi
 
       - name: Prepare build directories
         run: |
@@ -194,10 +204,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        # Credentials stay: removing them runs `git submodule foreach`, which fails on
-        # the vendored repositories' gitlinks under .repos (they have no .gitmodules entry).
         with:
           ref: ${{ inputs.ref || github.sha }}
+
+      # The build runs dependency scripts; it gets no token. `persist-credentials: false`
+      # fails here: its cleanup runs `git submodule foreach`, which stops at the vendored
+      # gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
+            | while read -r key; do git config --local --unset-all "$key"; done
+          if git config --local --get-regexp 'extraheader|includeif' ; then
+            echo "::error::checkout credentials are still configured"
+            exit 1
+          fi
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
