@@ -40,7 +40,12 @@ import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
-import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+import {
+  bindAudioGrant,
+  readCleanupGrant,
+  subscribeAudioChoice,
+  useAudioChoice,
+} from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -82,18 +87,42 @@ type DraftAccess = {
 
 type DetachedRecording = {
   readonly controller: VoiceInputController;
+  readonly hasAudioConsent: () => boolean;
   readonly snapshot: VoiceDraftSnapshot;
   readonly access: DraftAccess;
   state: VoiceInputState;
   committedText?: string;
 };
 
+const DETACHED_CONSENT_LOST =
+  "Voice input was turned off or changed before the transcript was ready.";
+
+function failDetached(description: string | null) {
+  toastManager.add({
+    type: "error",
+    title: "Dictation couldn't be added to its draft",
+    description,
+  });
+}
+
 // A recording finishing into its owner's draft after its editor moved to another owner or
 // unmounted. Every editor reads it: the owner's shows it, the rest wait for it. The global voice
 // session allows one recording at a time, so one slot is enough.
 let detachedRecording: DetachedRecording | null = null;
+let unwatchDetachedConsent = () => {};
 const detachedListeners = new Set<() => void>();
 function publishDetached(next: DetachedRecording | null) {
+  if (next !== detachedRecording) {
+    unwatchDetachedConsent();
+    // No editor's effect sees a consent change once the recording is detached.
+    unwatchDetachedConsent = next
+      ? subscribeAudioChoice(() => {
+          if (next.hasAudioConsent()) return;
+          failDetached(DETACHED_CONSENT_LOST);
+          next.controller.cancel();
+        })
+      : () => {};
+  }
   detachedRecording = next;
   for (const listener of detachedListeners) listener();
 }
@@ -107,6 +136,7 @@ function subscribeDetached(listener: () => void) {
 /** Finishes an active recording into its owner's draft while the editor shows another owner, or is gone. */
 function detachRecording(
   controller: VoiceInputController,
+  hasAudioConsent: () => boolean,
   snapshot: VoiceDraftSnapshot | null,
   { ownerKey, detachDraft }: HookInput,
 ): boolean {
@@ -119,20 +149,9 @@ function detachRecording(
       state.phase !== "post-processing")
   )
     return false;
-  publishDetached({ controller, snapshot, access: detachDraft(), state });
+  publishDetached({ controller, hasAudioConsent, snapshot, access: detachDraft(), state });
   void controller.stop();
   return true;
-}
-
-const DETACHED_CONSENT_LOST =
-  "Voice input was turned off or changed before the transcript was ready.";
-
-function failDetached(description: string | null) {
-  toastManager.add({
-    type: "error",
-    title: "Dictation couldn't be added to its draft",
-    description,
-  });
 }
 
 function cleanupContext({ text, selection }: DraftInput): DraftInput {
@@ -272,6 +291,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         : INITIAL_STATE);
 
   const controllerRef = useRef<VoiceInputController | null>(null);
+  const audioConsentRef = useRef<() => boolean>(() => false);
   const startRequestRef = useRef(0);
   const pendingSubmissionRef = useRef<{
     ownerKey: string;
@@ -458,7 +478,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       commitDraft: (text, selection) => {
         const detached = detachedSelf();
         if (detached) {
-          // Unmounted, consent changes no longer reach this controller through its effect.
+          // Another window's revocation can land before its storage event reaches the watcher.
           if (!hasAudioConsent()) return failDetached(DETACHED_CONSENT_LOST);
           detached.access.commitDraft(text, selection);
           detached.committedText = text;
@@ -487,19 +507,23 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       },
     });
     controllerRef.current = controller;
+    audioConsentRef.current = hasAudioConsent;
     return () => {
       disposed = true;
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       if (controllerRef.current === controller) controllerRef.current = null;
-      if (detachedSelf()) {
-        if (unmountingRef.current) return;
-        failDetached(DETACHED_CONSENT_LOST);
-        publishDetached(null);
-      } else if (
-        unmountingRef.current &&
-        detachRecording(controller, lastSnapshotRef.current, latestRef.current.input)
+      // A detached recording answers to its own consent watcher, not to this editor's settings.
+      if (
+        detachedSelf() ||
+        (unmountingRef.current &&
+          detachRecording(
+            controller,
+            hasAudioConsent,
+            lastSnapshotRef.current,
+            latestRef.current.input,
+          ))
       )
         return;
       controller.dispose();
@@ -561,7 +585,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!controller || detachedRecording?.controller === controller) return;
     if (
       previousOwner === input.ownerKey ||
-      !detachRecording(controller, lastSnapshotRef.current, previousInputRef.current)
+      !detachRecording(
+        controller,
+        audioConsentRef.current,
+        lastSnapshotRef.current,
+        previousInputRef.current,
+      )
     )
       controller.ownerChanged();
     else setControllerState((current) => ({ ...current, value: INITIAL_STATE }));

@@ -55,6 +55,25 @@ export function useAudioChoice() {
   return activeChoice(choice, marker);
 }
 
+/** Notifies on any change that can move the active audio grant, including a pending choice's save marker. */
+export function subscribeAudioChoice(onChange: () => void) {
+  let unsubscribeMarker = () => {};
+  const watchMarker = () => {
+    unsubscribeMarker();
+    const id = pendingGrant(readChoice())?.id;
+    unsubscribeMarker = id ? subscribeLocalStorageKey(savedKey(id), onChange) : () => {};
+  };
+  watchMarker();
+  const unsubscribeChoice = subscribeLocalStorageKey(AUDIO_KEY, () => {
+    watchMarker();
+    onChange();
+  });
+  return () => {
+    unsubscribeChoice();
+    unsubscribeMarker();
+  };
+}
+
 function replaceChoice(choice: AudioChoice, previous = readChoice()) {
   const old = pendingGrant(previous);
   writeLocalStorageValue(AUDIO_KEY, choice, null, AudioChoice);

@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
+  transcribeSignals: [] as AbortSignal[],
   cleanupCalls: [] as string[],
   cleanupDraft: vi.fn(),
   cleanupOptions: [] as SpeechPostProcessingOptions[],
@@ -183,13 +184,20 @@ vi.mock("./browserVoiceInput", () => ({
           mocks.recordingOptions.push(input.getTranscriptionOptions());
           return {
             locale: "en",
-            transcribe: async () => {
+            transcribe: async (_uri: string, { signal }: { readonly signal: AbortSignal }) => {
+              mocks.transcribeSignals.push(signal);
               mocks.transcribeCalls.push(
                 input.cloudProvider
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
                   : environmentId,
               );
-              const next = await (mocks.transcripts.shift() ?? "dictated");
+              // Like a real request, an aborted transcription settles at once.
+              const next = await Promise.race([
+                mocks.transcripts.shift() ?? "dictated",
+                new Promise<never>((_, reject) =>
+                  signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+                ),
+              ]);
               if (next instanceof Error) throw next;
               return next;
             },
@@ -227,6 +235,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
+  mocks.transcribeSignals = [];
   mocks.cleanupCalls = [];
   mocks.cleanupDraft.mockClear();
   mocks.cleanupOptions = [];
@@ -514,19 +523,34 @@ it.each([
   },
 );
 
-it("discards a detached transcript when voice input is turned off after the editor unmounts", async () => {
-  setup({ destination: "env-a" });
-  const resolveTranscript = pendingTranscript();
-  const drafts: Record<string, string> = { "thread-a": "Fix" };
-  await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
-  await act(() => mocks.voice.start());
-  await screen.rerender(<div />);
-  vi.mocked(toastManager.add).mockClear();
-  setDestination(null);
-  await act(async () => resolveTranscript("the login bug"));
-  await vi.waitFor(() => expect(toastManager.add).toHaveBeenCalled());
-  expect(drafts["thread-a"]).toBe("Fix");
-});
+it.each([
+  ["unmounts", true],
+  ["moves to another thread", false],
+])(
+  "cancels a detached transcription at once when the voice destination changes after the editor %s",
+  async (_, unmount) => {
+    setup({ destination: "env-a" });
+    const resolveTranscript = pendingTranscript();
+    const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "" };
+    await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
+    await act(() => mocks.voice.start());
+    await screen.rerender(unmount ? <div /> : <ThreadProbe owner="thread-b" drafts={drafts} />);
+    await vi.waitFor(() => expect(mocks.transcribeSignals).toHaveLength(1));
+    vi.mocked(toastManager.add).mockClear();
+    setDestination("env-b");
+    expect(mocks.transcribeSignals[0]?.aborted).toBe(true);
+    expect(toastManager.add).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "Dictation couldn't be added to its draft" }),
+    );
+    await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
+    await act(() => mocks.voice.start());
+    expect(mocks.voice.state.phase).toBe("recording");
+    expect(mocks.microphoneRequests).toEqual(["env-a", "env-b"]);
+    await act(async () => resolveTranscript("the login bug"));
+    expect(drafts["thread-a"]).toBe("Fix");
+    expect(toastManager.add).toHaveBeenCalledOnce();
+  },
+);
 
 it("cleans a detached transcript on its own draft's environment", async () => {
   setup({ destination: "env-a" });
