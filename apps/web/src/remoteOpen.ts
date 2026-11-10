@@ -14,6 +14,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
 import { readEnvironmentScope } from "~/state/session";
 
@@ -184,6 +185,9 @@ export async function revealInDesktopShell(
   environmentId: EnvironmentId,
   path: string,
 ): Promise<boolean> {
+  // An unresolved connection defaults to local-exec; it may still turn out to be remote.
+  const resolution = appAtomRegistry.get(remoteOpenResolutionAtom(environmentId));
+  if (!resolution.isResolved || resolution.state.mode !== "local-exec") return false;
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
   try {
     return (await window.desktopBridge?.revealItemInFolder?.(path)) === true;

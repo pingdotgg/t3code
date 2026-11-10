@@ -4,13 +4,31 @@ import {
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import { Option } from "effect";
+import { Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { readEnvironmentScope } = vi.hoisted(() => ({ readEnvironmentScope: vi.fn() }));
+const { readEnvironmentScope, presentations } = vi.hoisted(() => ({
+  readEnvironmentScope: vi.fn(),
+  presentations: new Map<string, unknown>(),
+}));
 vi.mock(import("./state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   readEnvironmentScope,
 }));
+vi.mock(import("./state/presentation"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    environmentPresentations: {
+      ...actual.environmentPresentations,
+      presentationAtom: ((id: EnvironmentId) =>
+        Atom.make(
+          presentations.get(id) ?? null,
+        )) as typeof actual.environmentPresentations.presentationAtom,
+    },
+  };
+});
 
 import { resolveRemoteOpenState, revealInDesktopShell } from "./remoteOpen";
 
@@ -34,16 +52,31 @@ describe("revealInDesktopShell", () => {
     vi.unstubAllGlobals();
   });
 
+  const local = {
+    entry: { target: primaryTarget("http://127.0.0.1:8000"), profile: Option.none() },
+  };
+  const remote = {
+    entry: {
+      target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+      profile: Option.none(),
+    },
+    serverConfig: { remoteOpenTargets: TAILSCALE_TARGETS },
+  };
+
   it.each([
-    ["reveals natively with the operate scope", true, true, true, 1],
-    ["leaves a connection without the operate scope to the server", false, true, false, 0],
-    ["reports a declined reveal so the server can try", true, false, false, 1],
-  ])("%s", async (_name, hasScope, bridgeResult, expected, bridgeCalls) => {
+    ["reveals natively with the operate scope", local, true, true, true, 1],
+    ["leaves a connection without the operate scope to the server", local, false, true, false, 0],
+    ["reports a declined reveal so the server can try", local, true, false, false, 1],
+    ["leaves a connection that has not resolved yet to the server", null, true, true, false, 0],
+    ["leaves a remote connection to the server", remote, true, true, false, 0],
+  ])("%s", async (name, presentation, hasScope, bridgeResult, expected, bridgeCalls) => {
+    const id = EnvironmentId.make(`reveal-${name}`);
+    presentations.set(id, presentation);
     readEnvironmentScope.mockReturnValue(hasScope);
     const revealItemInFolder = vi.fn(async () => bridgeResult);
     vi.stubGlobal("window", { desktopBridge: { revealItemInFolder } });
 
-    await expect(revealInDesktopShell(environmentId, "C:\\repo\\a.ts")).resolves.toBe(expected);
+    await expect(revealInDesktopShell(id, "C:\\repo\\a.ts")).resolves.toBe(expected);
     expect(revealItemInFolder).toHaveBeenCalledTimes(bridgeCalls);
   });
 });
