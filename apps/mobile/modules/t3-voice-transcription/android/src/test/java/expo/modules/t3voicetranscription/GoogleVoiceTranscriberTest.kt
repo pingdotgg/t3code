@@ -4,6 +4,7 @@ import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerOptions
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
+import java.util.Locale
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.flow
@@ -14,6 +15,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleVoiceTranscriberTest {
+  @Test
+  fun dropsRegionalPreferenceExtensionsFromTheSpeechLocale() {
+    for ((system, expected) in listOf(
+      "en-US-u-mu-celsius" to "en-US",
+      "en-GB-u-fw-mon-mu-celsius" to "en-GB",
+      "ar-EG-u-nu-latn" to "ar-EG",
+      "zh-Hant-TW" to "zh-Hant-TW"
+    )) {
+      assertEquals(expected, speechLocale(Locale.forLanguageTag(system)).toLanguageTag())
+    }
+  }
+
   @Test
   fun preservesUtterancesAndTheirSpacingWithoutDuplicatingHypotheses() = runBlocking {
     for ((finals, trailing, expected) in listOf(
