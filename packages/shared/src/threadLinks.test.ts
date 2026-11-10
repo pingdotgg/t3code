@@ -366,8 +366,8 @@ describe("hosted thread links", () => {
     for (const [prefix, refs] of [
       [`Flags [${"``--opt``, ".repeat(18)} see `, [ref("e", "t")]],
       [`[${"``a``".repeat(20)} `, [ref("e", "t")]],
-      // Three or more backticks open a fence that runs to the end.
-      [`[${"`".repeat(80)}\n${"a ".repeat(3000)}`, []],
+      // A preceding bracket prevents these backticks from opening a CommonMark fence.
+      [`[${"`".repeat(80)}\n${"a ".repeat(3000)}`, [ref("e", "t")]],
     ] as const) {
       expect(threadLinkRefs(prefix + bare, local)).toEqual(refs);
     }
