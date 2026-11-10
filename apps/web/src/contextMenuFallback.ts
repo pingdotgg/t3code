@@ -1,6 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
 import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
+import { prepareFocusReturn } from "./components/ui/focus-return";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -24,6 +25,15 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
   clock: [
     { tag: "path", attrs: { d: "M12 6v6l4 2" } },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
+  ],
+  "square-pen": [
+    { tag: "path", attrs: { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" } },
+    {
+      tag: "path",
+      attrs: {
+        d: "M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z",
+      },
+    },
   ],
   pencil: [
     {
@@ -314,6 +324,7 @@ export function showContextMenuFallback<T extends string>(
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
+    let keyboardInteraction = !position;
     let canDismissFromPointer = false;
 
     const dismiss = (restoreFocus = true) => cleanup(null, restoreFocus);
@@ -337,7 +348,9 @@ export function showContextMenuFallback<T extends string>(
         menu.remove();
       }
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
-        previouslyFocusedElement.focus({ preventScroll: true });
+        prepareFocusReturn(document);
+        const focusOptions = { preventScroll: true, focusVisible: keyboardInteraction };
+        previouslyFocusedElement.focus(focusOptions);
       }
       resolve(result);
     };
@@ -355,6 +368,7 @@ export function showContextMenuFallback<T extends string>(
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
       if (level < 0) return;
+      keyboardInteraction = true;
       const menu = menuStack[level]!;
       const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
         (button) => !button.disabled,
@@ -416,6 +430,7 @@ export function showContextMenuFallback<T extends string>(
     const onWindowBlur = () => cleanup(null, false);
 
     const onPointerDown = (event: PointerEvent) => {
+      keyboardInteraction = false;
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
         return;
       }
@@ -590,6 +605,7 @@ export function showContextMenuFallback<T extends string>(
                 : "var(--contrast-foreground)";
           };
           button.addEventListener("mouseenter", () => {
+            keyboardInteraction = false;
             button.focus({ preventScroll: true });
             isHovered = true;
             updateHighlight();

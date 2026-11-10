@@ -227,11 +227,7 @@ import {
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
-import {
-  getComposerPromptLengthValidationMessage,
-  getComposerSubmissionValidationMessage,
-  submitComposerDraft,
-} from "./composerSubmission";
+import { getComposerSubmissionValidationMessage, submitComposerDraft } from "./composerSubmission";
 import { composerPromptLengthBannerItem } from "./ComposerPromptLengthValidation";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
@@ -1006,9 +1002,6 @@ export function ChatComposer(props: ChatComposerProps) {
     targetKey: string;
     position: ComposerPromptHistoryPosition;
   } | null>(null);
-  const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
-    null,
-  );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -1192,14 +1185,9 @@ export function ChatComposer(props: ChatComposerProps) {
     composerTrigger?.kind ?? null,
   ).flatMap((group) => group.items);
   const composerMenuOpen = Boolean(composerTrigger) && isComposerEditorFocused;
-  const composerMenuSearchKey = composerTrigger
-    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
-    : null;
   const activeComposerMenuItemId = resolveComposerMenuActiveItemId({
     items: composerMenuItems,
     highlightedItemId: composerHighlightedItemId,
-    currentSearchKey: composerMenuSearchKey,
-    highlightedSearchKey: composerHighlightedSearchKey,
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
@@ -1212,8 +1200,6 @@ export function ChatComposer(props: ChatComposerProps) {
   });
 
   const isComposerApprovalState = activePendingApproval !== null;
-  // A send declines the approvals shown here to redirect the agent, so it steers the waiting
-  // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
   const followUpBehavior = pendingApprovals.some(
     (approval) => !heldRequestIds.has(approval.requestId),
   )
@@ -1431,7 +1417,11 @@ export function ChatComposer(props: ChatComposerProps) {
   }
 
   if (composerSubmissionError !== null) {
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerSubmissionValidationMessage({
+      prompt,
+      isSendBusy,
+      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+    });
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
@@ -1468,12 +1458,8 @@ export function ChatComposer(props: ChatComposerProps) {
   }, [composerTerminalContexts, composerTerminalContextsRef]);
 
   const resolvedHighlightedItemId = composerMenuOpen ? activeComposerMenuItemId : null;
-  const resolvedHighlightedSearchKey = composerMenuOpen ? composerMenuSearchKey : null;
   if (composerHighlightedItemId !== resolvedHighlightedItemId) {
     setComposerHighlightedItemId(resolvedHighlightedItemId);
-  }
-  if (composerHighlightedSearchKey !== resolvedHighlightedSearchKey) {
-    setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
   const lastSyncedPendingInputRef = useRef<{
@@ -1531,7 +1517,6 @@ export function ChatComposer(props: ChatComposerProps) {
   if (shownComposerSessionKey !== composerSessionKey) {
     setShownComposerSessionKey(composerSessionKey);
     setComposerHighlightedItemId(null);
-    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     const pendingAnswer = activePendingProgress?.customAnswer;
@@ -2115,7 +2100,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const onComposerMenuItemHighlighted = (itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
-    setComposerHighlightedSearchKey(composerMenuSearchKey);
   };
   const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
 
@@ -2205,6 +2189,7 @@ export function ChatComposer(props: ChatComposerProps) {
       return;
     }
     const submission = submitComposerDraft({
+      isSendBusy,
       prompt: promptRef.current,
       submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
       event,
@@ -3329,6 +3314,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerApprovalPanel
         key={activePendingApproval.requestId}
         approval={activePendingApproval}
+        workspaceRoot={gitCwd ?? undefined}
         count={pendingApprovals.length}
         disabled={!canOperateThread}
         isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}

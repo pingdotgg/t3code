@@ -197,7 +197,7 @@ const SIDEBAR_STATUSES: Record<
   input: {
     label: "Input",
     Icon: MessageCircleQuestionIcon,
-    className: "text-indigo-600 dark:text-indigo-300",
+    className: "text-(--sidebar-status-input)",
   },
   request: { label: "Request", Icon: UserRoundIcon, className: "text-guest-foreground" },
   limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
@@ -634,10 +634,6 @@ type SidebarThreadRowProps = {
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
-  /**
-   * The thread shows in a pane on screen (pen r45lm): it takes the selected
-   * fill like the focused one, which alone keeps the strong title.
-   */
   isOnScreen: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
@@ -1020,7 +1016,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
     isRenaming
       ? "bg-transparent sidebar-rename-ring ring-inset ring-ring"
-      : props.isActive || props.isOnScreen
+      : props.isActive
         ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
         : isSelected || props.sweepAction !== null
           ? "surface-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
@@ -1384,18 +1380,25 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                   </span>
                   {variantAction === "unsnooze" ? (
                     !props.snoozeSupported ? null : (
-                      <button
-                        type="button"
-                        aria-label="Wake thread now"
-                        onClick={handleUnsnoozeClick}
-                        onPointerDown={handleActionPointerDown}
-                        className={cn(
-                          "pointer-events-none absolute inset-y-0 right-0 -mr-1.5 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-meta text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                          isWoke && "group-any-hover/sidebar-row:static",
-                        )}
-                      >
-                        <AlarmClockOffIcon className="mb-px size-3" />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-label="Wake thread now"
+                              onClick={handleUnsnoozeClick}
+                              onPointerDown={handleActionPointerDown}
+                              className={cn(
+                                "pointer-events-none absolute inset-y-0 right-0 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-badge bg-transparent text-muted-foreground opacity-0 outline-none transition-[opacity,color] hover:surface-ghost-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                                isWoke && "group-any-hover/sidebar-row:static",
+                              )}
+                            />
+                          }
+                        >
+                          <AlarmClockOffIcon className="size-3.5" />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Wake thread now</TooltipPopup>
+                      </Tooltip>
                     )
                   ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                     <Tooltip>
@@ -1407,13 +1410,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                             onClick={handleUnsettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 -mr-1.5 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.25 text-meta text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              "pointer-events-none absolute inset-y-0 right-0 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-badge bg-transparent text-muted-foreground opacity-0 outline-none transition-[opacity,color] hover:surface-ghost-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
                             )}
                           />
                         }
                       >
-                        <Undo2Icon className="mb-px size-3.5" />
+                        <Undo2Icon className="size-3.5" />
                       </TooltipTrigger>
                       <TooltipPopup side="top">Un-settle thread</TooltipPopup>
                     </Tooltip>
@@ -1497,8 +1500,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {/* Left of the status slot, the pin would slide when hover swaps the
-                label for the wider row controls. */}
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
@@ -1516,7 +1517,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : (
                 <span
                   className={cn(
-                    "group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-meta font-normal",
+                    "group/sidebar-status-slot relative ml-auto flex h-5 min-w-15 shrink-0 items-stretch justify-end text-meta font-normal",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1525,9 +1526,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
-                        : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
+                        : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-dim-foreground transition-opacity",
-                      snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
+                      snoozeMenuOpen && "pointer-events-none opacity-0",
                     )}
                   >
                     {topStatus === null ? (
@@ -1556,8 +1557,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
                         // the status label after the pointer leaves. Use focus-visible instead.
-                        "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
-                        snoozeMenuOpen && "pointer-events-auto static opacity-100",
+                        "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        snoozeMenuOpen && "pointer-events-auto opacity-100",
                       )}
                     >
                       {hasUnsentDraft ? (
@@ -1612,12 +1613,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                                 aria-label="Settle thread"
                                 onClick={handleSettleClick}
                                 onPointerDown={handleActionPointerDown}
-                                className="-me-1.5 inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-badge px-1.5 bg-transparent text-muted-foreground outline-none transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                                className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-badge bg-transparent text-muted-foreground outline-none transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                               />
                             }
                           >
                             <CheckIcon className="size-3.5" />
-                            Settle
                           </TooltipTrigger>
                           <TooltipPopup>Settle thread</TooltipPopup>
                         </Tooltip>

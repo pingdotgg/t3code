@@ -502,7 +502,7 @@ export function ScheduledTasksSettings(target: {
   // New task lives on the first environment group's header; the dialog picks the machine.
   const newTaskButton = (
     <Button
-      size="sm"
+      size="standard"
       variant="secondary"
       disabled={!creationEnvironment}
       onClick={() =>
