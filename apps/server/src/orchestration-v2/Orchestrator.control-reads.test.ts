@@ -1099,6 +1099,24 @@ it.effect("archiving a parent takes its delegated children out of active listing
     });
     const childThreadId = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!
       .childThreadId!;
+    // A native child whose subagent record the provider has not reported yet.
+    const parentThread = yield* projections.getThread(parentThreadId);
+    const nativeChildThreadId = ThreadId.make("thread:archived-parent:native-child");
+    yield* projections.apply({
+      id: EventId.make("native-child-created"),
+      type: "thread.created",
+      threadId: nativeChildThreadId,
+      occurredAt: parentThread.createdAt,
+      payload: {
+        ...parentThread,
+        id: nativeChildThreadId,
+        lineage: {
+          parentThreadId,
+          relationshipToParent: "subagent",
+          rootThreadId: parentThreadId,
+        },
+      },
+    });
 
     yield* orchestrator.dispatch({
       type: "thread.archive",
@@ -1108,6 +1126,7 @@ it.effect("archiving a parent takes its delegated children out of active listing
 
     assert.isNotNull((yield* projections.getThread(parentThreadId)).archivedAt);
     assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), childThreadId);
+    assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), nativeChildThreadId);
     const active = yield* orchestrator.getShellSnapshot({ location: "active" });
     assert.notInclude(
       active.threads.map((thread) => thread.id),

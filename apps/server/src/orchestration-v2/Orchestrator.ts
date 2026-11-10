@@ -1404,31 +1404,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * The live subagent children of `parentIds`. Archive eligibility is not checked here, so an
-   * archived child still leads to its descendants; dispatch checks it under the locks.
+   * The live subagent children of `parentIds` by lineage, so a child whose subagent record is
+   * not persisted yet is still found. Archived children are included to reach their descendants.
    */
   const liveSubagentChildIds = Effect.fn("Orchestrator.liveSubagentChildIds")(
     function* (parentIds: ReadonlyArray<ThreadId>, seen: ReadonlySet<ThreadId>) {
-      const ids: Array<ThreadId> = [];
-      for (const parentId of parentIds) {
-        const { subagents } = yield* projectionStore.getThreadRecords(parentId, ["subagents"]).pipe(
-          Effect.catchTags({
-            ProjectionStoreThreadNotFoundError: () => Effect.succeed({ subagents: [] }),
-          }),
-        );
-        for (const { childThreadId } of subagents) {
-          if (childThreadId === null || seen.has(childThreadId) || ids.includes(childThreadId))
-            continue;
-          const child = yield* projectionStore
-            .getThread(childThreadId)
-            .pipe(
-              Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-            );
-          if (child?.lineage.relationshipToParent === "subagent" && child.deletedAt === null)
-            ids.push(childThreadId);
-        }
-      }
-      return ids;
+      const childIds = yield* projectionStore.listSubagentChildThreadIds(parentIds);
+      return childIds.filter((childId) => !seen.has(childId));
     },
     (effect, parentIds) =>
       effect.pipe(
@@ -13650,11 +13632,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const at = yield* DateTime.now;
         yield* dispatchThreadMutation(command, events, effects, at);
         for (const threadId of cascadeThreadIds) {
-          const { archivedAt } = yield* projectionStore
+          const { archivedAt, deletedAt } = yield* projectionStore
             .getThread(threadId)
             .pipe(mapDispatchError(command));
           if (
-            command.type === "thread.archive"
+            deletedAt !== null || command.type === "thread.archive"
               ? archivedAt !== null
               : archivedAt === null ||
                 rootArchivedAt === null ||
