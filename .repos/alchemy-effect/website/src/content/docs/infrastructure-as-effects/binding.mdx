@@ -9,7 +9,7 @@ to a Worker, Lambda Function, Container, or Server — any
 constructor, you yield the resource and get back a typed client:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -121,7 +121,7 @@ satisfied. Cloudflare shows why that split matters. A Worker binds an
 R2 bucket with the same shape:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Uploads = Cloudflare.R2.Bucket("Uploads");
 
@@ -207,8 +207,13 @@ Binding that runs an Effect or `Stream` in the background, whenever
 something happens on the resource:
 
 ```typescript
-yield* AWS.SQS.consumeQueueMessages(Inbound, (records) =>
-  Stream.runForEach(records, (record) => Effect.log(record.body)),
+yield* AWS.SQS.consumeQueueMessages(
+  Inbound,
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+      yield* Effect.log(record.body);
+    }
+  }),
 );
 ```
 

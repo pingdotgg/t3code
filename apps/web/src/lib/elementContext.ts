@@ -27,10 +27,7 @@ function normalizeText(value: string): string {
   return value.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
 }
 
-/**
- * Trims/clamps every string field so we never persist a 5MB outerHTML blob and
- * silently break `localStorage`.
- */
+/** Clamps string fields to keep large outerHTML payloads within localStorage limits. */
 export function normalizeElementContextSelection(
   raw: PickedElementPayload,
 ): ElementContextSelection | null {

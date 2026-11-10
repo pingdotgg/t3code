@@ -12,7 +12,6 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "muse",
 ];
 
-/** The usage series a provider driver reports under, or null for drivers without one. */
 export function usageProviderKind(driver: string): UsageProviderKind | null {
   if (driver === "claudeAgent") return "claude";
   return PROVIDER_ORDER.find((kind) => kind === driver) ?? null;

@@ -130,6 +130,33 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
   });
 
+  it("sends a later result for a call that had none, without repeating its input", () => {
+    const { host, sent } = setup();
+    initialize(host);
+    sent.length = 0;
+    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
+    host.setToolCall({
+      arguments: { city: "Oslo" },
+      result: { content: [{ type: "text", text: "Sunny" }] },
+    });
+    host.setToolCall({
+      arguments: { city: "Bergen" },
+      result: { content: [{ type: "text", text: "Rain" }] },
+    });
+    expect(sent).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-input",
+        params: { arguments: { city: "Oslo" } },
+      },
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: { content: [{ type: "text", text: "Sunny" }] },
+      },
+    ]);
+  });
+
   it("accepts ui/message as one text block or the SDK's block array", async () => {
     const messages: Array<string> = [];
     const { host, sent } = setup({ sendMessage: async (text) => void messages.push(text) });
@@ -179,7 +206,7 @@ describe("makeMcpAppHost", () => {
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -284,7 +311,7 @@ describe("makeMcpAppHost", () => {
       updateModelContext: async (update) => void contexts.push(update),
       downloadFile: async (files) => {
         downloads.push(files);
-        if (files.length > 1) throw new McpAppHostRefusal("Declined by the user.");
+        if (files.length > 1) throw new McpAppHostRefusal({ message: "Declined by the user." });
       },
     });
     initialize(host);

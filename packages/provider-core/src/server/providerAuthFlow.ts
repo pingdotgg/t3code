@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -69,10 +69,11 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     context: ProviderAuthFlowContext,
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
+  readonly removeMethod?: (methodId: string) => Effect.Effect<void, ProviderSetupError>;
   readonly timeoutMs?: number;
 }) {
   const scope = yield* Scope.Scope;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const timeoutMs = options.timeoutMs ?? 300_000;
   const empty: ProviderAuthState = {
@@ -177,6 +178,27 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       return state;
     }, Effect.uninterruptible),
     refreshMethods,
+    ...(options.removeMethod
+      ? {
+          removeMethod: Effect.fn("providerAuthFlow.removeMethod")(function* (methodId: string) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (operation !== "idle")
+                  return yield* new ProviderSetupError({
+                    instanceId: options.instanceId,
+                    operation: "removeMethod",
+                    detail: "Finish or cancel the existing sign-in first.",
+                  });
+                yield* options.removeMethod!(methodId);
+                const methods = yield* options.methods;
+                const state = { ...empty, methods };
+                yield* SubscriptionRef.set(snapshot, { owner: null, state });
+                return state;
+              }),
+            );
+          }, Effect.uninterruptible),
+        }
+      : {}),
     invalidate: lock.withPermit(
       Effect.gen(function* () {
         if (operation !== "idle") return;
@@ -221,7 +243,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
             Effect.forkIn(child),
           );
           return yield* restore(Fiber.await(fiber)).pipe(
-            Effect.flatMap((result) => result),
+            Effect.flatten,
             Effect.onExit((result) =>
               Exit.isFailure(result) ? Scope.close(child, Exit.void) : Effect.void,
             ),
@@ -238,7 +260,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               operation: "start",
               detail: "Provider setup is already in progress.",
             });
-          const id = yield* crypto.randomUUIDv4().pipe(
+          const id = yield* random.uuidV4().pipe(
             Effect.mapError(
               () =>
                 new ProviderSetupError({
@@ -512,8 +534,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       active = undefined;
       if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
       if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-      // Settings edits rebuild instances; admitted sessions (including those of
-      // peers sharing this binding) end with their own scopes, not this one.
+      // Settings rebuild instances; admitted sessions sharing this binding retain their own scopes.
     }),
   );
   return controller;

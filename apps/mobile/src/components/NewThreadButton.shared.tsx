@@ -4,7 +4,6 @@ import { cn } from "../lib/cn";
 import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 
-/** Shared compose action for the floating button and empty workspace. */
 export function NewThreadButton(props: {
   readonly onPress: () => void;
   readonly extended?: boolean;

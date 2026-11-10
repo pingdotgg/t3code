@@ -54,7 +54,6 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
             id: "legacy" as const,
             title: "Delete the database from before 0.1.0",
             description: `Frees ${formatBytes(status.legacyDatabaseBytes)}. Your threads and settings are already in the current database.\n  Warning: after this, a T3 Code version before 0.1.0 starts with no threads or settings, so you can no longer roll back.`,
-            // Never chosen for you: deleting it gives up rolling back.
             recommended: false,
           },
         ]),
@@ -102,8 +101,7 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   if (selected.includes("database")) {
     const service = yield* BootService.BootService;
     yield* Console.log("\nReclaiming database space. This can take several minutes...");
-    // Report inside the pause: a repair that succeeded is worth knowing about
-    // even when starting the service again fails afterwards.
+    // Report the repair before restarting, which can fail independently.
     yield* service.withStopped(
       maintenance
         .compact(databasePath)
@@ -117,8 +115,7 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
     );
   }
   if (selected.includes("legacy")) {
-    // Only versions before 0.1.0 open this file, so the service keeps running;
-    // the removal itself refuses while one of those still has it open.
+    // Only pre-0.1.0 servers use this file; removal refuses while they hold it open.
     yield* maintenance.removeLegacyDatabase(databasePath);
     yield* Console.log("\nDeleted the database from before 0.1.0.");
   }

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   enrichedLinkVariantPattern,
+  buildEnrichedModelReferences,
+  enrichedModelLinkRegex,
+  enrichedModelReference,
+  enrichedTextLinkRegex,
   enrichedSkillLinkRegex,
   enrichedThreadLinkPresentation,
   ENRICHED_INLINE_FILE_LINK_REGEX,
@@ -42,6 +46,49 @@ describe("Enriched link presentation", () => {
     expect(enrichedSkillLinkRegex([])).toBeNull();
   });
 
+  it("recognizes only complete known models in prose and resolves their display names", () => {
+    const models = buildEnrichedModelReferences([
+      {
+        instanceId: "codex",
+        driver: "codex",
+        models: [
+          { slug: "gpt-6.1", name: "OpenAI GPT-6.1", subProvider: "OpenAI" },
+          { slug: "gpt-6.1-sol[1m]", name: "GPT-6.1 Sol" },
+        ],
+      },
+    ]);
+    const regex = enrichedModelLinkRegex(models);
+    for (const text of [
+      "Try model:codex/gpt-6.1 next",
+      "Try (model:codex/gpt-6.1).",
+      "Try [model:codex/gpt-6.1] next",
+      '"model:codex/gpt-6.1"',
+    ]) {
+      const source = regex?.exec(text)?.[0];
+      expect(source, text).toBe("model:codex/gpt-6.1");
+      expect(enrichedModelReference(source!, models)?.label).toBe("GPT-6.1");
+    }
+    expect(regex?.exec("Try model:codex/gpt-6.1-sol[1m].")?.[0]).toBe(
+      "model:codex/gpt-6.1-sol[1m]",
+    );
+    for (const text of [
+      "model:openai/gpt-4o",
+      "model:codex/gpt-6.1-extra",
+      "model:codex/gpt-6.1.2",
+      "model:codex/gpt-6X1",
+      "premodel:codex/gpt-6.1",
+    ]) {
+      expect(regex?.exec(text), text).toBeNull();
+    }
+    expect(enrichedModelReference("model:openai/gpt-4o", models)).toBeUndefined();
+    expect(enrichedModelLinkRegex([])).toBeNull();
+    expect(enrichedTextLinkRegex([], [])).toBeNull();
+    const combined = enrichedTextLinkRegex([{ name: "review" }], models);
+    expect(
+      "Use $review with (model:codex/gpt-6.1).".match(new RegExp(combined!.source, "gu")),
+    ).toEqual(["$review", "model:codex/gpt-6.1"]);
+  });
+
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));
@@ -51,10 +98,12 @@ describe("Enriched link presentation", () => {
   });
 
   it("presents thread links as thread chips and leaves other links alone", () => {
-    expect(enrichedThreadLinkPresentation("t3-thread://v1/thread%3Aproject%3A1")).toEqual({
-      accent: "#009c96",
-      icon: { kind: "chip", name: "messages-square" },
-    });
+    for (const href of ["t3-thread://v1/thread%3Aproject%3A1", "t3-thread://v2/env/thread_1"]) {
+      expect(enrichedThreadLinkPresentation(href), href).toEqual({
+        accent: "#009c96",
+        icon: { kind: "chip", name: "messages-square" },
+      });
+    }
     for (const href of [
       "https://github.com/example/repo/pull/7",
       "https://example.com",
@@ -70,7 +119,7 @@ describe("Enriched link presentation", () => {
     expect(
       threadChipTargets(
         here,
-        "See [A](t3-thread://v1/thread_a), [A again](t3-thread://v1/thread_a) and [B](t3-thread://v1/thread_b).",
+        "See [A](t3-thread://v1/thread_a), [A again](t3-thread://v1/thread_a), [B](t3-thread://v1/thread_b) and [D](t3-thread://v2/env-there/thread_d).",
         [
           {
             version: 1,
@@ -87,6 +136,12 @@ describe("Enriched link presentation", () => {
       { href: "t3-thread://v1/thread_a", environmentId: here, threadId: "thread_a", link: true },
       { href: "t3-thread://v1/thread_b", environmentId: here, threadId: "thread_b", link: true },
       {
+        href: "t3-thread://v2/env-there/thread_d",
+        environmentId: there,
+        threadId: "thread_d",
+        link: true,
+      },
+      {
         href: "t3-context://v1/thread/thr1",
         environmentId: there,
         threadId: "thread_c",
@@ -94,5 +149,17 @@ describe("Enriched link presentation", () => {
       },
     ]);
     expect(threadChipTargets(here, "No links here.")).toEqual([]);
+  });
+
+  it("finds thread links with angle-bracketed destinations", () => {
+    const here = "env-here" as EnvironmentId;
+    expect(threadChipTargets(here, "See [A](<t3-thread://v2/env-here/thread_a>).")).toEqual([
+      {
+        href: "t3-thread://v2/env-here/thread_a",
+        environmentId: here,
+        threadId: "thread_a",
+        link: true,
+      },
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -18,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -95,6 +97,7 @@ interface HarnessOptions {
   readonly currentBranch?: string | null;
   readonly notARepo?: boolean;
   readonly newWorktreesStartFromOrigin?: boolean;
+  readonly projectNewWorktreesStartFromOrigin?: boolean;
   readonly setupScript?: "started" | "no-script" | "fails" | "dies";
   readonly dispatchFails?: boolean;
   readonly dispatchDies?: boolean;
@@ -113,6 +116,7 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly existsFails?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -232,7 +236,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ),
           ),
   );
-  const listRefs = vi.fn((input: { readonly query?: string | undefined }) =>
+  const listRefs = vi.fn((input: { readonly cwd: string; readonly query?: string | undefined }) =>
     Effect.succeed({
       refs:
         options.existingBranchWorktreePath === undefined
@@ -301,6 +305,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
+          ...(options.projectNewWorktreesStartFromOrigin === undefined
+            ? {}
+            : {
+                projectSettingsOverrides: {
+                  [projectId]: {
+                    newWorktreesStartFromOrigin: options.projectNewWorktreesStartFromOrigin,
+                  },
+                },
+              }),
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           listRefs,
@@ -319,6 +332,20 @@ const makeHarness = (options: HarnessOptions = {}) => {
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
         NodeServices.layer,
+        NodeCrypto.layer,
+        options.existsFails
+          ? FileSystem.layerNoop({
+              exists: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            })
+          : Layer.empty,
       ),
     ),
   );
@@ -326,6 +353,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   return {
     layer,
     scope,
+    listRefs,
     dispatch,
     sendToThread,
     fetchWorktreeBaseCommit,
@@ -348,13 +376,9 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
   expect(reason.error).toMatchObject(expected);
 };
 
-// Resolves the service once from the harness layer; used by tests that must
-// make several calls against the SAME instance (the in-flight guard lives in
-// the layer's closure, so a fresh layer per call would never see it).
+// Resolve once so calls share the in-flight guard.
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
-  Effect.gen(function* () {
-    return yield* WorktreeMcpService.WorktreeMcpService;
-  }).pipe(Effect.provide(harness.layer));
+  WorktreeMcpService.WorktreeMcpService.pipe(Effect.provide(harness.layer));
 
 const runHandoff = (
   harness: ReturnType<typeof makeHarness>,
@@ -371,7 +395,6 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
     return yield* service.status(harness.scope);
   }).pipe(Effect.provide(harness.layer));
 
-// Decodes tool arguments the way the MCP tool does before calling the service.
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
@@ -450,7 +473,7 @@ describe("t3_worktree_handoff", () => {
       Effect.provide(
         GitVcsDriver.layer.pipe(
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "handoff-remote-git-" })),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),
@@ -522,6 +545,15 @@ describe("t3_worktree_handoff", () => {
         expect.objectContaining({ refName: "dev", baseRefName: "dev" }),
       );
       expect(result.startedFromOrigin).toBe(false);
+    });
+  });
+
+  it.effect("defaults startFromOrigin to the project's override", () => {
+    const harness = makeHarness({ projectNewWorktreesStartFromOrigin: true });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/project-origin" });
+      expect(harness.fetchWorktreeBaseCommit).toHaveBeenCalled();
+      expect(result.startedFromOrigin).toBe(true);
     });
   });
 
@@ -682,6 +714,7 @@ describe("t3_worktree_status", () => {
         worktreePath: "/worktrees/project/existing",
         branch: "feature/existing",
       },
+      projectNewWorktreesStartFromOrigin: true,
     });
     return Effect.gen(function* () {
       const result = yield* runStatus(harness);
@@ -689,8 +722,39 @@ describe("t3_worktree_status", () => {
         attached: true,
         worktreePath: "/worktrees/project/existing",
         branch: "feature/existing",
-        defaultStartFromOrigin: false,
+        defaultStartFromOrigin: true,
       });
+    });
+  });
+});
+
+describe("t3_worktree_list", () => {
+  const listRefs = (harness: ReturnType<typeof makeHarness>, worktreePath: string | null) =>
+    Effect.gen(function* () {
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.listRefs({ worktreePath, workspaceRoot });
+    }).pipe(Effect.provide(harness.layer));
+
+  it.effect("lists refs from the thread's worktree, or the project root once it was removed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "worktree-list-" });
+      const harness = makeHarness();
+      yield* listRefs(harness, worktreePath);
+      yield* listRefs(harness, `${worktreePath}/removed`);
+      expect(harness.listRefs.mock.calls.map(([input]) => input.cwd)).toEqual([
+        worktreePath,
+        workspaceRoot,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails instead of falling back when the worktree cannot be checked", () => {
+    const harness = makeHarness({ existsFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(listRefs(harness, "/worktrees/project/unreadable"));
+      expectTypedFailure(exit, { _tag: "PlatformError" });
+      expect(harness.listRefs).not.toHaveBeenCalled();
     });
   });
 });

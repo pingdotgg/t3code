@@ -65,6 +65,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
+// Forge CLIs can take seconds per call; cap them together so git, checkpoints included, keeps slots.
+const NON_GIT_PROCESS_CONCURRENCY = VCS_PROCESS_CONCURRENCY / 2;
 
 /** Shown to users when a Git command fails because another process holds the index lock. */
 export const GIT_INDEX_LOCKED_DETAIL =
@@ -83,8 +85,7 @@ const gitMetricOperations = new Set([
   "GitVcsDriver.checkpoints.resolveGitCommonDir",
   "GitVcsDriver.checkpoints.resolveHeadCommit",
   "GitVcsDriver.checkpoints.restoreCheckpoint",
-  "GitVcsDriver.detectRepository.commonDir",
-  "GitVcsDriver.detectRepository.root",
+  "GitVcsDriver.detectRepository",
   "GitVcsDriver.filterIgnoredPaths",
   "GitVcsDriver.initRepository",
   "GitVcsDriver.isInsideWorkTree",
@@ -94,14 +95,10 @@ const gitMetricOperations = new Set([
 ]);
 
 /**
- * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
- * config, so argv stays the same on every platform and nothing is written to
- * the user's config. The entry goes after any inherited ones. Windows env names
- * are case-insensitive (elsewhere git reads only `GIT_CONFIG_COUNT`), so there the
- * count is found regardless of casing, read from
- * the last spelling (a per-command value spread over process.env), and updated
- * under every spelling so the child sees it whichever one Node keeps. A count
- * git would reject is left alone so git still reports it.
+ * Append after inherited entries without changing argv or the user's config.
+ * Windows env keys ignore case: read the last spelling of the count so command overrides win,
+ * then update every spelling because Node may keep any one.
+ * Leave invalid counts untouched so Git reports them.
  */
 export const gitConfigEnv = (
   env: NodeJS.ProcessEnv,
@@ -117,8 +114,7 @@ export const gitConfigEnv = (
   if (
     inherited !== undefined &&
     inherited !== "" &&
-    // Git parses the count with strtoul: leading whitespace, an optional sign
-    // (only -0 is non-negative), digits, and nothing after them.
+    // Match Git's strtoul count syntax, including whitespace, signs and non-negative -0.
     /^[ \t\r\n\v\f]*(?:\+?\d+|-0+)/.exec(inherited)?.[0] !== inherited
   ) {
     return {};
@@ -132,11 +128,8 @@ export const gitConfigEnv = (
 };
 
 /**
- * Git otherwise opens any folder holding `HEAD`, `objects/` and `refs/` as a
- * bare repository and applies its `config`, including commands such as
- * `core.fsmonitor`. Files saved in a project or checked out from a clone can
- * form one, so git started by T3 (or by a host CLI) only opens a bare
- * repository named with `--git-dir` or `GIT_DIR`. Git before 2.38 ignores it.
+ * A project can contain a fake bare repository whose config runs commands such as `core.fsmonitor`.
+ * Require `--git-dir` or `GIT_DIR` to open bare repositories; Git before 2.38 ignores this setting.
  */
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
@@ -192,6 +185,7 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
+  const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
   const keyedPermit = (concurrency: NonNullable<VcsProcessInput["concurrency"]>) => {
     let semaphore = keyedProcesses.get(concurrency.key);
@@ -216,6 +210,9 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
+          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
           ...input.env,
           ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
         },
@@ -374,9 +371,8 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
-    return yield* input.concurrency === undefined
-      ? bounded
-      : keyedPermit(input.concurrency)(bounded);
+    const shared = input.command === "git" ? bounded : nonGitProcesses.withPermits(1)(bounded);
+    return yield* input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
   });
 
   return VcsProcess.of({ run });
