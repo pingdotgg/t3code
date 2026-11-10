@@ -113,6 +113,18 @@ describe("makeRelayChannels", () => {
     }).pipe(Effect.scoped, Effect.provide(makeLayer())),
   );
 
+  it.live("answers the environment's keepalive pings", () =>
+    Effect.gen(function* () {
+      const socket = yield* connectEnvironment(yield* serveRelay, "good");
+      yield* Effect.callback<void>((resume) => {
+        socket.addEventListener("message", (event) => {
+          if (JSON.parse(String(event.data)).type === "ping") resume(Effect.void);
+        });
+        socket.send(JSON.stringify({ type: "ping" }));
+      });
+    }).pipe(Effect.scoped, Effect.provide(makeLayer())),
+  );
+
   it.live("answers 502 for an environment that has no channel open", () =>
     Effect.gen(function* () {
       const port = yield* serveRelay;

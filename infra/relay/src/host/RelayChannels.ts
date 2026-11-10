@@ -121,6 +121,7 @@ export const makeRelayChannels = () => {
 
   const dispatch = (channel: Channel, chunk: string | Uint8Array) => {
     const frame = Option.getOrNull(parseFrame(chunk));
+    if (frame?.type === "ping") return channel.send({ type: "ping" });
     if (frame?.type === "http-response") {
       const response = channel.responses.get(frame.id);
       return response ? Deferred.succeed(response, frame).pipe(Effect.asVoid) : Effect.void;

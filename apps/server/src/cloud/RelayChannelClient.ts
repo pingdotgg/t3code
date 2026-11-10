@@ -125,6 +125,8 @@ function openChannel(input: RelayChannelInput) {
   });
   const locals = new Map<number, WebSocket>();
   let opened = false;
+  let heard = true;
+  let end: (reason: string) => void = () => {};
   const send = (frame: RelayChannelFrame) => {
     if (channel.readyState === WebSocket.OPEN) channel.send(JSON.stringify(frame));
   };
@@ -136,6 +138,7 @@ function openChannel(input: RelayChannelInput) {
     opened = true;
   });
   channel.addEventListener("message", (event) => {
+    heard = true;
     const frame = parseFrame(event.data);
     switch (frame?.type) {
       case "http-request":
@@ -165,15 +168,23 @@ function openChannel(input: RelayChannelInput) {
         return;
     }
   });
-  const closed = new Promise<string>((resolve) =>
+  const closed = new Promise<string>((resolve) => {
+    end = resolve;
     channel.addEventListener("close", (event) => {
       closeLocals();
       resolve(opened ? `closed with code ${event.code}` : "could not connect");
-    }),
-  );
+    });
+  });
   return {
     send,
     closed,
+    // After a sleep the socket can look open long after the relay dropped it; the relay answers
+    // every ping, so a silent interval means the channel is gone.
+    ping: () => {
+      if (!heard) return end("the relay stopped answering");
+      heard = false;
+      send({ type: "ping" });
+    },
     dispose: () => {
       closeLocals();
       channel.close();
@@ -190,7 +201,7 @@ const connectOnce = Effect.fn("RelayChannelClient.connectOnce")(function* (
     (opened) => Effect.sync(opened.dispose),
   );
   // Proxies drop idle WebSockets; a ping keeps the channel open between requests.
-  yield* Effect.sync(() => channel.send({ type: "ping" })).pipe(
+  yield* Effect.sync(channel.ping).pipe(
     Effect.repeat(Schedule.spaced(KEEPALIVE_INTERVAL)),
     Effect.forkScoped,
   );
