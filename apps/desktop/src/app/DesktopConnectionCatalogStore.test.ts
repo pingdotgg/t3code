@@ -265,6 +265,38 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
+  it.effect(
+    "reads a catalog zero-filled by an interrupted write without failing or losing it",
+    () =>
+      withStore(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+          const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+          assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+          const size = (yield* fileSystem.stat(catalogPath)).size;
+          const zeroed = new Uint8Array(Number(size));
+          yield* fileSystem.writeFile(catalogPath, zeroed);
+
+          yield* store.get;
+
+          const preserved = yield* Effect.forEach(
+            (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+              name.startsWith("connection-catalog"),
+            ),
+            (name) => fileSystem.readFile(path.join(environment.stateDir, name)),
+          ).pipe(
+            Effect.map((files) =>
+              files.some((bytes) => bytes.length === zeroed.length && bytes.every((b) => b === 0)),
+            ),
+          );
+          assert.isTrue(preserved);
+        }),
+      ),
+  );
+
   it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
