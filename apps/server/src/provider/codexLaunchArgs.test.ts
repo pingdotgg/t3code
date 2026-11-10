@@ -5,7 +5,6 @@ import { describe, it } from "vite-plus/test";
 import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
-  // T3 unsubscribes only when it unloads a thread; Codex applies the last repeated -c.
   it.each([
     {
       name: "preserves escaped TOML quotes in config values",
