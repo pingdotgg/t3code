@@ -1774,7 +1774,7 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
 );
 
 // regression: #32891 a restart that Stop already reached is lost
-it.effect("starts a restart sent into a run that Stop reached once the stop settles", () =>
+it.effect("refuses a steer but starts a restart sent into a run that Stop reached", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn } =
@@ -1791,6 +1791,22 @@ it.effect("starts a restart sent into a run that Stop reached once the stop sett
           threadId,
           runId: first.runId,
         });
+        const steerError = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("steer"),
+            threadId,
+            messageId: MessageId.make("message:steer"),
+            text: "steer",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(Effect.flip);
+        assert.equal(steerError._tag, "OrchestratorDispatchError");
+        assert.include(String(steerError.cause), "is stopping and cannot be steered");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("restart"),
