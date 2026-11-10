@@ -13,7 +13,9 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -24,6 +26,7 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
+import { remoteStateKey } from "./command.ts";
 import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
@@ -91,6 +94,73 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
+
+// Emulates `t3 serve`: it takes the home owner lock at startup, then binds
+// once a second server has tried the same home (or after 2s), so a concurrent
+// launch always sees the home still unclaimed. Like the real server, it
+// publishes server-runtime.json after it starts answering HTTP, if at all.
+const fakeT3Serve = (publishDelayMs: number | null) => `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const port = Number(args[args.indexOf("--port") + 1]);
+const userdata = path.join(args[args.indexOf("--base-dir") + 1], "userdata");
+const servers = path.join(process.env.HOME, "servers");
+fs.mkdirSync(userdata, { recursive: true });
+fs.appendFileSync(servers, process.pid + "\\n");
+try {
+  fs.writeFileSync(path.join(userdata, "server.lock"), String(process.pid), { flag: "wx" });
+} catch {
+  console.error("ServerAlreadyRunningError: another server owns " + userdata);
+  process.exit(1);
+}
+setTimeout(() => process.exit(0), 60_000);
+const serve = (tries) => {
+  if (tries > 0 && fs.readFileSync(servers, "utf8").trim().split("\\n").length < 2) {
+    setTimeout(() => serve(tries - 1), 50);
+    return;
+  }
+  http.createServer((_, response) => response.end()).listen(port, "127.0.0.1", () => {
+    const origin = "http://127.0.0.1:" + port;
+    ${publishDelayMs === null ? "return;" : ""}
+    setTimeout(() => {
+      fs.writeFileSync(path.join(userdata, "server-runtime.json"), JSON.stringify({ pid: process.pid, port, origin }));
+    }, ${publishDelayMs});
+  });
+};
+serve(40);
+`;
+
+// Runs the remote half of an SSH command (`sh -l -s -- <key>`) as a local shell
+// whose HOME is the given directory. Every launch after the first starts once
+// a server is running (or after 10s), which lines up the race deterministically.
+const localRemoteShellLayer = (home: string) =>
+  Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let launches = 0;
+      return ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return spawner.spawn(command);
+        const gate =
+          launches++ === 0
+            ? ""
+            : 'i=0; while [ ! -s "$HOME/servers" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done; ';
+        return spawner.spawn(
+          ChildProcess.make(
+            "sh",
+            ["-c", `${gate}exec sh -s -- "$1"`, "sh", ...commandArgs(command).slice(-1)],
+            {
+              ...command.options,
+              env: { ...command.options.env, HOME: home },
+              // Like an SSH session ending, the shell's exit leaves its nohup'd server running.
+              detached: false,
+            },
+          ),
+        );
+      });
+    }),
+  );
 
 describe("ssh tunnel scripts", () => {
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -629,6 +699,74 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.live("concurrent launches on one remote home record the server that owns it", () =>
+    // The second row's server never publishes server-runtime.json.
+    Effect.forEach([1_500, null], (publishDelayMs) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-" });
+        const serversFile = path.join(home, "servers");
+        yield* Effect.addFinalizer(() =>
+          fs.readFileString(serversFile).pipe(
+            Effect.map((pids) => {
+              for (const pid of pids.split("\n").filter(Boolean)) {
+                try {
+                  process.kill(Number(pid), "SIGKILL");
+                } catch {}
+              }
+            }),
+            Effect.ignore,
+          ),
+        );
+        const serverScript = path.join(home, "fake-t3.cjs");
+        yield* fs.writeFileString(serverScript, fakeT3Serve(publishDelayMs));
+        // A launch that died holding the lock must not block or double-admit later ones.
+        const launchLock = path.join(home, ".t3", "ssh-launch", ".launch.lock");
+        yield* fs.makeDirectory(path.dirname(launchLock), { recursive: true });
+        yield* fs.writeFileString(launchLock, "999999999\n");
+        const targets = [
+          { alias: "devbox", hostname: "devbox", username: null, port: null },
+          { alias: "devbox-tailnet", hostname: "devbox-tailnet", username: null, port: null },
+        ];
+
+        const launches = yield* Effect.forEach(
+          targets,
+          (target) =>
+            SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+              nodeScriptPath: serverScript,
+            }),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.provide(localRemoteShellLayer(home)));
+
+        const ownerPid = Number(
+          yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
+        );
+        assert.sameMembers(
+          launches.map((launch) => launch.remoteServerKind),
+          ["managed", "external"],
+        );
+        assert.equal(launches[0]!.remotePort, launches[1]!.remotePort);
+        assert.deepEqual((yield* fs.readFileString(serversFile)).trim().split("\n"), [
+          String(ownerPid),
+        ]);
+        for (const [index, launch] of launches.entries()) {
+          if (launch.remoteServerKind !== "managed") continue;
+          const stateKey = yield* remoteStateKey(targets[index]!);
+          const recordedPid = yield* fs.readFileString(
+            path.join(home, ".t3", "ssh-launch", stateKey, "pid"),
+          );
+          assert.equal(
+            Number(recordedPid.trim()),
+            ownerPid,
+            `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
+          );
+        }
+        assert.isFalse(yield* fs.exists(launchLock));
+      }).pipe(Effect.scoped),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
