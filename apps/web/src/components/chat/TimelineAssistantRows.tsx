@@ -15,7 +15,7 @@ import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-check
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import {
-  readRunSubagents,
+  readResponseSubagents,
   useAssistantMessageText,
   useProject,
   useThreadShell,
@@ -233,7 +233,7 @@ function AssistantReplyButton({ message, itemId }: { message: ChatMessage; itemI
       responseContextRecord({
         citation: { version: 1, ...threadRef, messageId: message.id, ...opening },
         itemId,
-        subagents: readRunSubagents(threadRef, message.runId),
+        subagents: readResponseSubagents(threadRef, itemId),
       }),
     );
   };

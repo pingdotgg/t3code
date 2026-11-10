@@ -23,8 +23,9 @@ import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
-  RunId,
+  NodeId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
@@ -437,42 +438,67 @@ export function useThreadRelationshipShells(
 }
 
 /**
- * The subagents whose results started the run a response belongs to, read once on demand so a
- * timeline row does not subscribe to the thread for it. A result reaches the thread either as a
- * message from the subagent's thread or as a completion notice that names its tasks.
+ * The subagents a response reported on, read once on demand so a timeline row does not subscribe
+ * to the thread for it. A result reaches the thread as a message from the subagent's thread or as
+ * a completion notice, at the start of a run or steered into one, so the inputs just before the
+ * response decide it. Turn items are read because older history loads nothing else.
  */
-export function readRunSubagents(
+export function readResponseSubagents(
   ref: ScopedThreadRef,
-  runId: RunId | null,
+  itemId: TurnItemId,
 ): ReadonlyArray<{ readonly threadId: ThreadId; readonly title: string }> {
   const projection = appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection;
-  if (runId === null || !projection) return [];
-  // Older history loads its items without their runs, so the starting message is found either way.
-  const starterItem = projection.visibleTurnItems.find(
-    ({ item }) => item.type === "user_message" && item.runId === runId,
-  )?.item;
-  const userMessageId =
-    projection.runs.find((run) => run.id === runId)?.userMessageId ??
-    (starterItem?.type === "user_message" ? starterItem.messageId : undefined);
-  const starter = projection.messages.find((message) => message.id === userMessageId);
-  const senderThreadId =
-    starter?.senderThreadId ??
-    (starterItem?.type === "user_message" ? starterItem.senderThreadId : undefined);
-  const taskIds = starter?.delegatedCompletion?.taskIds ?? [];
+  if (!projection) return [];
+  const items = projection.visibleTurnItems;
+  const isInput = (index: number) => {
+    const type = items[index]?.item.type;
+    return type === "user_message" || type === "notification";
+  };
+  let index = items.findIndex((projected) => projected.sourceItemId === itemId) - 1;
+  while (index >= 0 && !isInput(index)) index -= 1;
+
+  const tasks = new Map<NodeId, ThreadId>();
   const titles = new Map<ThreadId, string | null>();
-  // A sender counts only as this thread's subagent: a child's first message comes from its parent.
-  for (const subagent of projection.subagents) {
-    if (
-      subagent.childThreadId !== null &&
-      (taskIds.includes(subagent.id) || subagent.childThreadId === senderThreadId)
-    ) {
-      titles.set(subagent.childThreadId, subagent.title);
+  for (const { item } of items) {
+    if (item.type === "subagent" && item.childThreadId !== null) {
+      tasks.set(item.subagentId, item.childThreadId);
+      titles.set(item.childThreadId, null);
     }
   }
-  return [...titles].map(([threadId, title]) => ({
+  for (const subagent of projection.subagents) {
+    if (subagent.childThreadId === null) continue;
+    tasks.set(subagent.id, subagent.childThreadId);
+    titles.set(subagent.childThreadId, subagent.title);
+  }
+
+  const threadIds = new Set<ThreadId>();
+  for (; index >= 0 && isInput(index); index -= 1) {
+    const item = items[index]!.item;
+    if (item.type === "notification") {
+      // A notice names its child itself, so it counts even when the task is no longer loaded.
+      if ("childThreadId" in item.source && item.source.childThreadId !== undefined) {
+        threadIds.add(item.source.childThreadId);
+      }
+      for (const taskId of "taskIds" in item.source ? item.source.taskIds : []) {
+        const threadId = tasks.get(taskId);
+        if (threadId !== undefined) threadIds.add(threadId);
+      }
+    } else if (item.type === "user_message") {
+      const message = projection.messages.find(({ id }) => id === item.messageId);
+      for (const taskId of message?.delegatedCompletion?.taskIds ?? []) {
+        const threadId = tasks.get(taskId);
+        if (threadId !== undefined) threadIds.add(threadId);
+      }
+      // A sender counts only as this thread's subagent: a child's first message comes from its parent.
+      if (item.senderThreadId !== undefined && titles.has(item.senderThreadId)) {
+        threadIds.add(item.senderThreadId);
+      }
+    }
+  }
+  return [...threadIds].map((threadId) => ({
     threadId,
     title:
-      title?.trim() ||
+      titles.get(threadId)?.trim() ||
       appAtomRegistry
         .get(
           environmentThreadShells.quietThreadShellAtom({
