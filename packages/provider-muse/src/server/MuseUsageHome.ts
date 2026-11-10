@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import { createMuseSdkHostEffect } from "./sdk.ts";
+import { createMuseSdkHostEffect, MuseSdkError } from "./sdk.ts";
 
 export class MuseUsageHome extends Context.Service<
   MuseUsageHome,
@@ -34,7 +34,11 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const host = yield* Effect.acquireRelease(
             createMuseSdkHostEffect({ ...input, readOnly: true, startupTimeoutMs: 5_000 }),
-            (host) => Effect.tryPromise(() => host.close()).pipe(Effect.ignore),
+            (host) =>
+              Effect.tryPromise({
+                try: () => host.close(),
+                catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+              }).pipe(Effect.ignore),
             { interruptible: true },
           );
           return host.initializeResult.museHome;

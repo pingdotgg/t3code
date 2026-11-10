@@ -265,11 +265,13 @@ describe("Muse history discovery", () => {
 
   it.effect("does not guess a directory when initialization fails", () =>
     Effect.gen(function* () {
-      using _create = vi.spyOn(MuseSdk, "createMuseSdkHostEffect").mockReturnValue(
-        Effect.try(() => {
-          throw new Error("not installed");
-        }),
-      );
+      using _create = vi
+        .spyOn(MuseSdk, "createMuseSdkHostEffect")
+        .mockReturnValue(
+          Effect.fail(
+            new MuseSdk.MuseSdkError({ operation: "start", cause: new Error("not installed") }),
+          ),
+        );
       if (museUsageReader.kind !== "transcripts") throw new Error("Expected a transcript reader");
       const directories = yield* museUsageReader.directories(
         {
@@ -442,9 +444,9 @@ describe("Muse history discovery", () => {
       using create = vi
         .spyOn(MuseSdk, "createMuseSdkHostEffect")
         .mockReturnValueOnce(
-          Effect.try(() => {
-            throw new Error("not installed");
-          }),
+          Effect.fail(
+            new MuseSdk.MuseSdkError({ operation: "start", cause: new Error("not installed") }),
+          ),
         )
         .mockReturnValue(
           Effect.succeed({
