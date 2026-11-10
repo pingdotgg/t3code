@@ -126,6 +126,7 @@ import {
   isStackedPullRequestBase,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
+  pullRequestCommentLinkMayLoad,
   pullRequestCommentLinkTarget,
   pullRequestConversationItems,
   pullRequestFindingKey,
@@ -305,7 +306,8 @@ export function PullRequestDetailPanel({
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
   /** A link that may name one of this pull request's comments, waiting to be shown. */
   revealUrl?: string | undefined;
-  onRevealSettled?: (() => void) | undefined;
+  /** Reports the link it was given shown or missing, so a newer link is left pending. */
+  onRevealSettled?: ((revealUrl: string) => void) | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -363,13 +365,14 @@ export function PullRequestDetailPanel({
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(initialTab);
-  const revealCommentId =
+  const revealItems =
     revealUrl === undefined || detail === null
       ? null
-      : (pullRequestCommentLinkTarget(
-          pullRequestConversationItems(detail.comments, detail.reviewThreads),
-          revealUrl,
-        )?.commentId ?? null);
+      : pullRequestConversationItems(detail.comments, detail.reviewThreads);
+  const revealCommentId =
+    revealItems === null || revealUrl === undefined
+      ? null
+      : (pullRequestCommentLinkTarget(revealItems, revealUrl)?.commentId ?? null);
   // A comment link shows the conversation holding it.
   if (revealCommentId !== null && !tabOnPage && selectedTab !== "summary") setTab("summary");
   const reviewGuidesEnabled = useEnvironmentSettings(
@@ -585,6 +588,7 @@ export function PullRequestDetailPanel({
     !activityQuery.isPending
       ? activityQuery.dataUpdatedAt
       : null;
+  const revealReadFailed = revealMissedAt !== null && activityQuery.error !== null;
   const refreshDetail = () => {
     detailQuery.refresh();
     activityQuery.refresh();
@@ -651,27 +655,37 @@ export function PullRequestDetailPanel({
   const revealHostRead = useRef<{ readonly url: string; readonly after: number | null } | null>(
     null,
   );
-  const settleRevealMiss = () => {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a host read outliving the panel must not settle a later link
+  useEffect(
+    () => () => {
+      revealHostRead.current = null;
+    },
+    [],
+  );
+  const settleReveal = (url: string) => {
     revealHostRead.current = null;
-    onRevealSettled?.();
+    onRevealSettled?.(url);
   };
   const showRevealedComment = useEffectEvent(() => {
     if (revealCommentId === null) {
-      if (revealUrl === undefined) return;
+      if (revealUrl === undefined || revealItems === null) return;
       const read = revealHostRead.current;
       if (read?.url !== revealUrl) {
+        if (!pullRequestCommentLinkMayLoad(revealItems, revealUrl)) return settleReveal(revealUrl);
         const request = { url: revealUrl, after: null };
         revealHostRead.current = request;
         void refetchFromHost().then((invalidated) => {
           if (revealHostRead.current !== request) return;
           // Without an invalidation the refetch could only repeat the cached read.
-          if (!invalidated) return settleRevealMiss();
+          if (!invalidated) return settleReveal(request.url);
           revealHostRead.current = { url: request.url, after: Date.now() };
         });
         return;
       }
       // A read that finished before the invalidation cannot show the comment is missing.
-      if (read.after !== null && (revealMissedAt ?? 0) > read.after) settleRevealMiss();
+      if (read.after !== null && (revealReadFailed || (revealMissedAt ?? 0) > read.after)) {
+        settleReveal(revealUrl);
+      }
       return;
     }
     // A later click on the same link gets its own host read.
@@ -682,8 +696,11 @@ export function PullRequestDetailPanel({
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the tab and the pending link live in stores outside the panel
   useEffect(() => {
-    if (revealCommentId !== null || revealMissedAt !== null) showRevealedComment();
-  }, [revealCommentId, revealMissedAt]);
+    if (revealCommentId !== null || revealMissedAt !== null || revealReadFailed) {
+      // oxlint-disable-next-line react/set-state-in-effect -- a missed comment starts a host read, which marks itself refreshing before it awaits
+      showRevealedComment();
+    }
+  }, [revealCommentId, revealMissedAt, revealReadFailed]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
     reportFailure: false,
   });
@@ -1819,7 +1836,9 @@ export function PullRequestDetailPanel({
                   detail={detail}
                   activityPending={activityPending}
                   revealCommentId={tab === "summary" ? revealCommentId : null}
-                  {...(onRevealSettled ? { onCommentRevealed: onRevealSettled } : {})}
+                  {...(onRevealSettled && revealUrl !== undefined
+                    ? { onCommentRevealed: () => onRevealSettled(revealUrl) }
+                    : {})}
                   checksStale={checksStale}
                   activityError={activityError}
                   pendingFinding={handoff}

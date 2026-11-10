@@ -1552,11 +1552,11 @@ export function PullRequestsPage() {
               refreshToken={detailRefreshToken}
               tabOnPage
               revealUrl={renderedPullRequestSurface.revealUrl}
-              onRevealSettled={() => {
+              onRevealSettled={(revealUrl) => {
                 if (rightPanelRef === null) return;
                 useRightPanelStore
                   .getState()
-                  .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id);
+                  .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id, revealUrl);
               }}
               onActed={(action, phase = "done", reply) => {
                 // From every row held, not the ones on screen: a pull request closed from an open

@@ -154,8 +154,8 @@ export function RightPanelSurfaceContent(props: {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}
           revealUrl={surface.revealUrl}
-          onRevealSettled={() => {
-            useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id);
+          onRevealSettled={(revealUrl) => {
+            useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id, revealUrl);
           }}
           context={pullRequestPanelContext(
             {

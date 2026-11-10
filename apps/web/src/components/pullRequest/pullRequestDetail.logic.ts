@@ -651,6 +651,31 @@ export function pullRequestCommentLinkTarget(
   return null;
 }
 
+/** `#issuecomment-1` -> `#issuecomment-`; linear, unlike a backtracking `/\d+$/`. */
+function anchorKind(anchor: string) {
+  let end = anchor.length;
+  while (end > 0 && anchor.charCodeAt(end - 1) >= 48 && anchor.charCodeAt(end - 1) <= 57) end--;
+  return anchor.slice(0, end);
+}
+
+/**
+ * Whether a link no loaded comment matches could name a newer one: its fragment is shaped like a
+ * loaded comment's, so `#diff-…` or `#event-…` never asks the host again.
+ */
+export function pullRequestCommentLinkMayLoad(
+  items: ReadonlyArray<PullRequestConversationItem>,
+  url: string,
+): boolean {
+  const anchor = commentAnchor(url);
+  if (!anchor) return false;
+  const kind = anchorKind(anchor);
+  return items.some((item) =>
+    pullRequestConversationItemComments(item).some(
+      (comment) => comment.url !== null && anchorKind(commentAnchor(comment.url) ?? "") === kind,
+    ),
+  );
+}
+
 export function filterPullRequestConversationItems(
   items: ReadonlyArray<PullRequestConversationItem>,
   filter: { readonly bots: boolean; readonly resolved: boolean },

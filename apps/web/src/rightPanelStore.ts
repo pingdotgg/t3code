@@ -160,7 +160,8 @@ interface RightPanelStoreState {
     surfaceId: string,
     detailTab: PullRequestDetailTab,
   ) => void;
-  settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string) => void;
+  /** Clears the surface's pending link only while it is still `revealUrl`. */
+  settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -297,6 +298,13 @@ export function pullRequestSurface(target: {
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
   };
 }
+
+/** A pending comment link belongs to the click that made it, not to a reload or a reopen. */
+const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
+  if (surface.kind !== "pull-request" || surface.revealUrl === undefined) return surface;
+  const { revealUrl: _pending, ...rest } = surface;
+  return rest;
+};
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -787,20 +795,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
-      settlePullRequestReveal: (ref, surfaceId) =>
+      settlePullRequestReveal: (ref, surfaceId, revealUrl) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const existing = state.byThreadKey[threadKey]?.surfaces.find(
             (surface) => surface.id === surfaceId,
           );
-          if (existing?.kind !== "pull-request" || existing.revealUrl === undefined) return state;
+          if (existing?.kind !== "pull-request" || existing.revealUrl !== revealUrl) return state;
           return automaticUpdate(state, threadKey, (current) => ({
             ...current,
-            surfaces: current.surfaces.map((surface) => {
-              if (surface.id !== surfaceId || surface.kind !== "pull-request") return surface;
-              const { revealUrl: _settled, ...rest } = surface;
-              return rest;
-            }),
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId ? withoutReveal(surface) : surface,
+            ),
           }));
         }),
       openFile: (ref, requestedPath, line) =>
@@ -1186,8 +1192,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       ),
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
-          Object.entries(state.byThreadKey).filter(
-            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
+          Object.entries(state.byThreadKey).flatMap(([threadKey, threadState]) =>
+            isPullRequestsPanelKey(threadKey)
+              ? []
+              : [
+                  [
+                    threadKey,
+                    { ...threadState, surfaces: threadState.surfaces.map(withoutReveal) },
+                  ],
+                ],
           ),
         ),
         threadPanelVisibilityByThreadKey: Object.fromEntries(
@@ -1217,7 +1230,7 @@ useRightPanelStore.subscribe((next, previous) => {
       ...removed.filter((surface) => surface.id !== before.activeSurfaceId),
       ...removed.filter((surface) => surface.id === before.activeSurfaceId),
     ];
-    for (const surface of closedInOrder) {
+    for (const surface of closedInOrder.map(withoutReveal)) {
       if (
         surface.kind === "terminal" ||
         (surface.kind === "preview" && surface.resourceId !== null)

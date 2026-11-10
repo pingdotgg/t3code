@@ -28,6 +28,7 @@ import {
   groupPullRequestTimelineConversations,
   filterPullRequestConversationItems,
   pagePullRequestConversationItems,
+  pullRequestCommentLinkMayLoad,
   pullRequestCommentLinkTarget,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
@@ -582,6 +583,16 @@ describe("review thread conversations", () => {
     expect(
       pullRequestCommentLinkTarget(githubItems, "https://github.com/o/r/pull/1/files#r42"),
     ).toEqual({ item: githubItems[0], commentId: "reply" });
+    const issueComment = { ...reply, url: "https://github.com/o/r/pull/1#issuecomment-1" };
+    const issueItems = pullRequestConversationItems([issueComment], []);
+    const pull = "https://github.com/o/r/pull/1";
+    expect(pullRequestCommentLinkMayLoad(issueItems, `${pull}#issuecomment-999`)).toBe(true);
+    expect(pullRequestCommentLinkMayLoad(githubItems, `${pull}/files#r999`)).toBe(true);
+    for (const fragment of ["#diff-abc", "#issue-1", "#event-1", "#partial-pull-merging", ""]) {
+      expect(pullRequestCommentLinkMayLoad(issueItems, `${pull}/files${fragment}`), fragment).toBe(
+        false,
+      );
+    }
     for (const url of ["https://example.test/pull/1", "https://example.test/pull/1#gone", "#"]) {
       expect(pullRequestCommentLinkTarget(items, url), url).toBeNull();
     }
