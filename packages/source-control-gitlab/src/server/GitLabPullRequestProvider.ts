@@ -324,9 +324,14 @@ export const make = Effect.gen(function* () {
     listChangeRequestsInRepositories: Effect.fn(
       "GitLabPullRequestProvider.listChangeRequestsInRepositories",
     )(function* (input) {
-      if (input.limit > ROWS_PER_PROJECT) return [];
+      const first = input.repositories[0];
+      if (first === undefined || input.limit > ROWS_PER_PROJECT) return [];
       const failed = fail("listChangeRequestsInRepositories");
-      if (!(yield* supportsGraphqlList(input).pipe(Effect.mapError(failed)))) {
+      if (
+        !(yield* supportsGraphqlList({ cwd: first.cwd, host: input.host }).pipe(
+          Effect.mapError(failed),
+        ))
+      ) {
         return yield* new PullRequestProviderError({
           provider: SourceControlProviderKind.make("gitlab"),
           operation: "listChangeRequestsInRepositories",
@@ -336,7 +341,6 @@ export const make = Effect.gen(function* () {
       }
       const pages = yield* cli
         .listMergeRequestsInProjects({
-          cwd: input.cwd,
           host: input.host,
           repositories: input.repositories.slice(0, PROJECTS_PER_READ),
           state: input.state,

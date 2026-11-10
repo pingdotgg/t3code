@@ -3,10 +3,14 @@ import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtil
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import type { PlatformError } from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - checkouts use this platform's paths, and drivers get no Path service.
+import * as NodePath from "node:path";
 import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
 import type {
   PullRequestAction,
@@ -374,15 +378,14 @@ export class GitLabPullRequestCli extends Context.Service<
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
     /**
-     * One GraphQL read of each project's first page of `first` merge requests, as
-     * `listMergeRequests` reads it. A project is absent from the answer when the reader cannot
-     * see it or its merge requests, or when its page lost rows to decoding before more rows.
-     * Needs `supportsGraphqlList`.
+     * One GraphQL read of each project's first page, as `listMergeRequests` reads it from its
+     * checkout. A project is absent when its checkout has its own glab config, when the reader
+     * cannot see it or its merge requests, or when its page lost rows to decoding. Needs
+     * `supportsGraphqlList`.
      */
     readonly listMergeRequestsInProjects: (input: {
-      readonly cwd: string;
       readonly host?: string | undefined;
-      readonly repositories: ReadonlyArray<string>;
+      readonly repositories: ReadonlyArray<{ readonly repository: string; readonly cwd: string }>;
       readonly state: PullRequestListState;
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
@@ -995,6 +998,25 @@ function actionArgs(
 /** @public */
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  // glab layers `<toplevel>/.git/glab-cli/config.yml` over its global config, so a checkout with
+  // one may sign in as another account. An unreadable checkout counts as having one.
+  const hasOwnGlabConfig = (cwd: string): Effect.Effect<boolean> => {
+    const from = (directory: string): Effect.Effect<boolean, PlatformError> =>
+      fileSystem
+        .exists(NodePath.join(directory, ".git"))
+        .pipe(
+          Effect.flatMap((found) =>
+            found
+              ? fileSystem.exists(NodePath.join(directory, ".git", "glab-cli", "config.yml"))
+              : NodePath.dirname(directory) === directory
+                ? Effect.succeed(false)
+                : from(NodePath.dirname(directory)),
+          ),
+        );
+    return from(NodePath.resolve(cwd)).pipe(Effect.orElseSucceed(() => true));
+  };
 
   const api = (input: {
     readonly cwd: string;
@@ -2062,13 +2084,22 @@ export const make = Effect.gen(function* () {
     }),
 
     listMergeRequestsInProjects: Effect.fn("GitLabPullRequestCli.listMergeRequestsInProjects")(
-      (input) =>
-        graphqlRead({
-          cwd: input.cwd,
+      function* (input) {
+        const ownConfig = yield* Effect.forEach(
+          input.repositories,
+          ({ cwd }) => hasOwnGlabConfig(cwd),
+          { concurrency: "unbounded" },
+        );
+        // Every other checkout reads as the global account, so any one of them answers for all.
+        const shared = input.repositories.filter((_, index) => !ownConfig[index]);
+        if (shared.length === 0) return [];
+        return yield* graphqlRead({
+          cwd: shared[0]!.cwd,
           host: input.host,
           operation: "listMergeRequestsInProjects",
           ...graphqlProjectsListQuery({
             ...input,
+            repositories: shared.map(({ repository }) => repository),
             first: Math.max(1, Math.min(input.first, MAX_PAGE_SIZE)),
           }),
           decode: decodeMergeRequestGraphqlProjectsListJson,
@@ -2092,7 +2123,8 @@ export const make = Effect.gen(function* () {
                   ],
             ),
           ),
-        ),
+        );
+      },
     ),
 
     supportsGraphqlList: Effect.fn("GitLabPullRequestCli.supportsGraphqlList")((input) =>

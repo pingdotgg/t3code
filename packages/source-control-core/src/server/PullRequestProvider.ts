@@ -358,14 +358,13 @@ export interface PullRequestProviderApi {
   readonly repositoriesPerRead?: number;
 
   /**
-   * Each repository's first page, as `listChangeRequests` would answer it, from one host read, so
-   * a rate limit fails only that read. The caller reads a repository missing from the answer on
-   * its own.
+   * Each repository's first page, as `listChangeRequests` would answer it from that repository's
+   * checkout, from one host read, so a rate limit fails only that read. The caller reads a
+   * repository missing from the answer on its own.
    */
   readonly listChangeRequestsInRepositories?: (input: {
-    readonly cwd: string;
     readonly host: string;
-    readonly repositories: ReadonlyArray<string>;
+    readonly repositories: ReadonlyArray<{ readonly repository: string; readonly cwd: string }>;
     readonly state: PullRequestListState;
     readonly involvement: PullRequestInvolvement;
     readonly viewer: string;

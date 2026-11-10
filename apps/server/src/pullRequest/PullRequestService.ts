@@ -1581,9 +1581,11 @@ export const make = Effect.gen(function* () {
       const separately = () =>
         Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
       return readInRepositories({
-        cwd: first.project.workspaceRoot,
         host: first.host,
-        repositories: chunk.map((project) => project.repository),
+        repositories: chunk.map((project) => ({
+          repository: project.repository,
+          cwd: project.project.workspaceRoot,
+        })),
         state: input.state,
         involvement,
         viewer: viewers[first.host]!,

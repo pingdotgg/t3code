@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -80,6 +81,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       );
       const cli = yield* GitLabPullRequestCli.make.pipe(
         Effect.provideService(GitLabCli.GitLabCli, native),
+        Effect.provide(FileSystem.layerNoop({})),
       );
       const provider = yield* make.pipe(
         Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
@@ -1018,7 +1020,14 @@ describe("review decisions", () => {
   );
 
   describe("first pages of several projects", () => {
-    const across = { ...listing, repositories: ["acme/web", "acme/docs"], limit: 99 };
+    const across = {
+      ...listing,
+      repositories: [
+        { repository: "acme/web", cwd: "/w/web" },
+        { repository: "acme/docs", cwd: "/w/docs" },
+      ],
+      limit: 99,
+    };
     const readFirstPages = (
       listMergeRequestsInProjects: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestsInProjects"],
     ) =>

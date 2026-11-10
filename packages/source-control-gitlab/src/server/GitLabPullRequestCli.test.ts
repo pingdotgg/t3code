@@ -1,6 +1,7 @@
 import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -8,6 +9,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
+const mockedExists = vi.fn((_path: string) => false);
 
 const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
@@ -15,6 +17,9 @@ const layer = it.layer(
       Layer.mock(GitLabCli.GitLabCli)({
         execute: mockedExecute,
       }),
+    ),
+    Layer.provide(
+      FileSystem.layerNoop({ exists: (path) => Effect.sync(() => mockedExists(path)) }),
     ),
   ),
 );
@@ -149,6 +154,7 @@ function graphqlRequestOf(index: number) {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedExists.mockReset();
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
@@ -410,8 +416,13 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("leaves out a project whose batched page is null or loses rows before more", () =>
+  it.effect("leaves out a project whose batched page is null, loses rows, or signs in apart", () =>
     Effect.gen(function* () {
+      // glab reads /w/own as the account in its own config, so it is read on its own.
+      mockedExists.mockImplementation((path) => {
+        const parts = path.split(/[\\/]/u);
+        return parts.at(-1) === ".git" || (parts.includes("own") && parts.at(-1) === "config.yml");
+      });
       const page = (nodes: ReadonlyArray<unknown>, hasNextPage: boolean) => ({
         pageInfo: { hasNextPage, endCursor: hasNextPage ? "c1" : null },
         nodes,
@@ -438,8 +449,13 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const pages = yield* cli.listMergeRequestsInProjects({
-        cwd: "/w",
-        repositories: ["acme/web", "acme/docs", "acme/api", "acme/ops"],
+        repositories: [
+          { repository: "acme/own", cwd: "/w/own" },
+          ...["acme/web", "acme/docs", "acme/api", "acme/ops"].map((repository) => ({
+            repository,
+            cwd: "/w/shared",
+          })),
+        ],
         state: "open",
         involvement: "all",
         viewer: "bilal",
@@ -449,6 +465,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(pages.map(({ repository, batch }) => [repository, batch.items.length])).toEqual([
         ["acme/web", 1],
         ["acme/ops", 0],
+      ]);
+      const [request] = mockedExecute.mock.calls[0]!;
+      expect(request.cwd).toBe("/w/shared");
+      expect(JSON.parse(request.stdin ?? "{}").variables.fullPaths).toEqual([
+        "acme/web",
+        "acme/docs",
+        "acme/api",
+        "acme/ops",
       ]);
     }),
   );
@@ -481,8 +505,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const pages = yield* cli.listMergeRequestsInProjects({
-        cwd: "/w",
-        repositories,
+        repositories: repositories.map((repository) => ({ repository, cwd: "/w" })),
         state: "open",
         involvement: "all",
         viewer: "bilal",
