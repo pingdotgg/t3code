@@ -49,6 +49,12 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  CloudSpeechApiKey,
+  CloudSpeechError,
+  CloudSpeechKeys,
+  CloudSpeechModelId,
+  CloudSpeechModels,
+  CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
@@ -58,6 +64,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
@@ -516,6 +523,10 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   linkRevoked: Schema.optional(Schema.Boolean),
   /** The latest check the server ran on its own, absent until one finishes. */
   reachability: Schema.optional(EnvironmentConnectReachability),
+  /** The tunnel's public hostname, once cloudflared has connected. Older servers omit it. */
+  tunnelHostname: Schema.optional(Schema.String),
+  /** Whether this is the desktop app's own session, which may link from where it is. */
+  linkableHere: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -642,6 +653,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(HttpApiEndpoint.get("authorize", "/oauth/mcp/authorize"))
   .add(
     HttpApiEndpoint.post("approval", "/oauth/mcp/approval", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpAuthorizationRequest,
       success: [AuthMcpApprovalDetails, AuthMcpApprovalRedirect],
       error: AuthMcpApprovalError,
@@ -649,6 +662,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   )
   .add(
     HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpApprovalDecisionRequest,
       success: AuthMcpApprovalRedirect,
       error: AuthMcpApprovalError,
@@ -775,6 +790,50 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
+      headers: OptionalBearerHeaders,
+      success: CloudSpeechKeys,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setCloudKey", "/api/voice/cloud/:provider/key", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      payload: Schema.Struct({
+        key: Schema.NullOr(
+          Schema.Union([Schema.RedactedFromValue(CloudSpeechApiKey), SecretReference]),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Public catalog; carries no credential and no audio.
+    HttpApiEndpoint.get("cloudModels", "/api/voice/cloud/openrouter/models", {
+      headers: OptionalBearerHeaders,
+      success: CloudSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, CloudSpeechError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribeCloud", "/api/voice/cloud/:provider/transcribe", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: CloudSpeechProvider }),
+      query: Schema.Struct({ model: Schema.optionalKey(CloudSpeechModelId) }),
+      payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      success: EnvironmentSpeechTranscriptionResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        CloudSpeechError,
+      ],
+    })
+      .middleware(EnvironmentVoiceBodyLimit)
+      .middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("status", "/api/voice/status", {
       headers: OptionalBearerHeaders,
