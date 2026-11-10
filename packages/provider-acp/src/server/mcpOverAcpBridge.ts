@@ -160,34 +160,38 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     request: AcpSchema.DisconnectMcpRequest,
   ): Effect.fn.Return<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError> {
     const connection = yield* connectionFor(request.connectionId);
+    connections.delete(request.connectionId);
     const sessionId = connection.sessionId;
     if (sessionId !== null) {
-      const response = yield* Effect.tryPromise({
-        try: (signal) =>
-          fetchImplementation(options.endpoint, {
-            method: "DELETE",
-            signal,
-            headers: {
-              authorization: options.authorization,
-              "mcp-session-id": sessionId,
-              ...(connection.protocolVersion === null
-                ? {}
-                : { "mcp-protocol-version": connection.protocolVersion }),
-            },
-          }),
-        catch: bridgeError,
-      });
-      if (!response.ok && response.status !== 404) {
-        return yield* new AcpMcpOverAcpError({
-          message: `T3 Code MCP endpoint rejected disconnect with HTTP ${response.status}.`,
+      yield* Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: (signal) =>
+            fetchImplementation(options.endpoint, {
+              method: "DELETE",
+              signal,
+              headers: {
+                authorization: options.authorization,
+                "mcp-session-id": sessionId,
+                ...(connection.protocolVersion === null
+                  ? {}
+                  : { "mcp-protocol-version": connection.protocolVersion }),
+              },
+            }),
+          catch: bridgeError,
         });
-      }
-      yield* Effect.promise(
-        () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+        if (!response.ok && response.status !== 404) {
+          return yield* new AcpMcpOverAcpError({
+            message: `T3 Code MCP endpoint rejected disconnect with HTTP ${response.status}.`,
+          });
+        }
+        yield* Effect.promise(
+          () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+        );
+      }).pipe(
+        // Restore a session that failed to close, so a retry or dispose can close it.
+        Effect.onError(() => Effect.sync(() => connections.set(request.connectionId, connection))),
       );
     }
-    // Forget the connection only once the session is closed, so a retry or dispose can close it.
-    connections.delete(request.connectionId);
     return {};
   });
 

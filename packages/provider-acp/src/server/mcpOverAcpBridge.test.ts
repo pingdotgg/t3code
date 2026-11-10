@@ -10,6 +10,8 @@ describe("AcpMcpOverAcpBridge", () => {
       const initializeStarted = Promise.withResolvers<void>();
       const initializeResponse = Promise.withResolvers<void>();
       const listQueued = Promise.withResolvers<void>();
+      const deleteStarted = Promise.withResolvers<void>();
+      const deleteResponse = Promise.withResolvers<void>();
       const requests: Array<{
         readonly method: string;
         readonly headers: Headers;
@@ -25,8 +27,12 @@ describe("AcpMcpOverAcpBridge", () => {
           const headers = new Headers(init?.headers);
           const body = init?.body === undefined ? null : JSON.parse(String(init.body));
           requests.push({ method, headers, body });
-          if (method === "DELETE")
-            return new Response(null, { status: ++deletes === 1 ? 503 : 204 });
+          if (method === "DELETE") {
+            if (++deletes > 1) return new Response(null, { status: 204 });
+            deleteStarted.resolve();
+            await deleteResponse.promise;
+            return new Response(null, { status: 503 });
+          }
           if (body === null || typeof body !== "object") return new Response(null, { status: 202 });
           const request = body as { readonly id?: unknown; readonly method?: unknown };
           if (request.method === "initialize") {
@@ -73,11 +79,17 @@ describe("AcpMcpOverAcpBridge", () => {
         connectionId: connected.connectionId,
         method: "notifications/initialized",
       });
-      // A rejected close keeps the connection, so the session can still be closed.
+      // Calls during a close are refused; a rejected close restores the connection for a retry.
       const rejected = yield* bridge
         .disconnect({ connectionId: connected.connectionId })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Effect.promise(() => deleteStarted.promise);
+      const closing = yield* bridge
+        .message({ connectionId: connected.connectionId, method: "tools/list" })
         .pipe(Effect.flip);
-      expect(rejected.message).toContain("HTTP 503");
+      expect(closing.message).toContain("Unknown MCP-over-ACP connection");
+      deleteResponse.resolve();
+      expect((yield* Fiber.join(rejected)).message).toContain("HTTP 503");
       yield* bridge.disconnect({ connectionId: connected.connectionId });
       expect(deletes).toBe(2);
 
