@@ -494,6 +494,7 @@ describe("Android delivery routing", () => {
     cards: true,
     notificationOnly: true,
   };
+  const cardsOn = { name: "with activity cards on", cards: true, notificationOnly: false };
   it.effect.each([
     {
       ...cardsOff,
@@ -543,6 +544,30 @@ describe("Android delivery routing", () => {
       hiddenDelivery: false,
       order: "new replay stale pending",
     },
+    {
+      ...cardsOn,
+      queued: "before disable",
+      hiddenDelivery: false,
+      order: "stale new pending replay",
+    },
+    {
+      ...cardsOn,
+      queued: "while hidden",
+      hiddenDelivery: false,
+      order: "stale new pending replay",
+    },
+    {
+      ...cardsOn,
+      queued: "before disable",
+      hiddenDelivery: true,
+      order: "stale new pending replay",
+    },
+    {
+      ...cardsOn,
+      queued: "while hidden",
+      hiddenDelivery: true,
+      order: "stale new pending replay",
+    },
   ] as const)(
     "re-enabling $name silences an alert queued $queued (hidden delivery: $hiddenDelivery, order: $order)",
     (config) =>
@@ -556,7 +581,6 @@ describe("Android delivery routing", () => {
             threadTitle: "Stale approval",
             phase: "waiting_for_approval",
           } as const;
-          const fresh = { ...stale, threadId: ThreadId.make("new-thread"), threadTitle: "New" };
           const pending = {
             ...stale,
             environmentId: EnvironmentId.make("pending-env"),
@@ -581,6 +605,11 @@ describe("Android delivery routing", () => {
           const visible = { ...preferences, liveActivitiesEnabled: config.cards };
 
           yield* register(visible);
+          if (config.cards && !config.notificationOnly) {
+            h.current.otherStates = [{ ...stale, phase: "running" }, pending];
+            yield* delivery.process({ ...h.job, state: null, replay: true });
+            h.current.otherStates = [stale, pending];
+          }
           yield* enqueue("pending", pending);
           if (config.queued === "before disable") yield* enqueue("stale", stale);
           yield* TestClock.adjust("1 second");
@@ -593,6 +622,12 @@ describe("Android delivery routing", () => {
           yield* enqueue("replay", null);
           // A new event after the re-enable alerts even if the re-enable replay is still queued.
           yield* TestClock.adjust("1 second");
+          const fresh = {
+            ...stale,
+            threadId: ThreadId.make("new-thread"),
+            threadTitle: "New",
+            updatedAt: DateTime.formatIso(yield* DateTime.now),
+          };
           h.current.otherStates = [stale, fresh, pending];
           yield* enqueue("new", fresh);
 

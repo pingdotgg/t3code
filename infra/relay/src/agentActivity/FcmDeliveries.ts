@@ -248,7 +248,7 @@ const make = Effect.gen(function* () {
         if (
           deliveryUser?.liveActivitiesEnabled &&
           preferences.value.liveActivitiesEnabled &&
-          previousAggregate &&
+          (previousAggregate || target.environment_revealed_at) &&
           aggregate
         ) {
           const environmentIds = [...new Set(aggregate.activities.map((row) => row.environmentId))];
@@ -268,13 +268,20 @@ const make = Effect.gen(function* () {
             }
           }
           alert = androidAlertForAggregate({
-            previousAggregate,
-            previousHiddenEnvironmentIds: target.last_hidden_environment_ids,
+            previousAggregate: previousAggregate ?? {
+              ...aggregate,
+              activities: [],
+              activeCount: 0,
+            },
             nextAggregate: {
               ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
-              ),
+              activities: aggregate.activities.filter((row) => {
+                const revealedAt = target.environment_revealed_at?.[row.environmentId];
+                return (
+                  allowedEnvironments.has(row.environmentId) &&
+                  (revealedAt === undefined || Date.parse(row.updatedAt) > revealedAt)
+                );
+              }),
             },
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
