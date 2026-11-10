@@ -1575,12 +1575,23 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
   /** Under the overview: a chat not rendered yet draws its thumbnail at once. */
   thumbnail: boolean;
 }) {
-  // Navigation stays urgent; superseded chat renders may yield to the next jump.
+  const [paintedTarget, setPaintedTarget] = useState(target);
+  const [request, setRequest] = useState({ target, deferred: false });
+  if (request.target !== target) {
+    setRequest({
+      target,
+      deferred: paintedTarget !== request.target,
+    });
+  }
+  // An isolated switch renders immediately; only a chat already behind navigation yields.
   const deferredTarget = useDeferredValue(target);
   const [inputTarget, setInputTarget] = useState(target);
   // Draft handoffs retain their synchronous editor lifetime.
   const shownTarget =
-    inputTarget === target || target.kind === "draft" || deferredTarget.kind === "draft"
+    !request.deferred ||
+    inputTarget === target ||
+    target.kind === "draft" ||
+    deferredTarget.kind === "draft"
       ? target
       : deferredTarget;
   // Panel motion holds off for this chat's own first frame and thread swaps.
@@ -1598,6 +1609,12 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
   const [rendered, setRendered] = useState(
     () => !documentFirstFrameDrawn && wanted && (paneState.focused || paneState.related),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A committed chat must reach a browser frame before the next jump counts as isolated.
+  useLayoutEffect(() => {
+    if (!rendered) return;
+    const frame = window.requestAnimationFrame(() => setPaintedTarget(shownTarget));
+    return () => window.cancelAnimationFrame(frame);
+  }, [rendered, shownTarget]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the document's first frame as committed so later panes keep the stand-in.
   useEffect(() => {
     documentFirstFrameDrawn = true;
