@@ -5,6 +5,7 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +26,7 @@ import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import {
   antigravityAccountFingerprint,
   antigravitySummaryWindows,
+  antigravityUserAgent,
 } from "../provider/antigravityUsageLimits.ts";
 import {
   makeUnavailableUsageLimits,
@@ -199,7 +201,11 @@ type HubCall = (
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
-  readonly header: (account: AuthFile) => Record<string, string>;
+  readonly header: (
+    account: AuthFile,
+    platform: NodeJS.Platform,
+    architecture: NodeJS.Architecture,
+  ) => Record<string, string>;
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
@@ -357,7 +363,11 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
     "antigravity",
     {
       driver: ProviderDriverKind.make("antigravity"),
-      header: () => ({ Authorization: "Bearer $TOKEN$", "Content-Type": "application/json" }),
+      header: (_account, platform, architecture) => ({
+        Authorization: "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": antigravityUserAgent(platform, architecture),
+      }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
         const project = account.project_id?.trim();
         if (!project) {
@@ -390,6 +400,8 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const digest = yield* Digest.Digest;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     hub: CliproxyHub,
@@ -455,7 +467,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const call: HubCall = (url, data) => apiCall(hub, account, provider.header(account), url, data);
+    const call: HubCall = (url, data) =>
+      apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.orElseSucceed(() => ({
@@ -505,7 +518,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const body = yield* apiCall(
         hub,
         account,
-        CODEX_HUB.header(account),
+        CODEX_HUB.header(account, platform, architecture),
         `${CREDIT_URL}/consume`,
         {
           redeem_request_id: yield* creditRedeemRequestId(

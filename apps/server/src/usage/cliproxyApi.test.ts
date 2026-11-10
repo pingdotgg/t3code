@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -509,6 +510,16 @@ describe("CLIProxyAPI built-in management API", () => {
         "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
       );
       expect(summary?.data).toBe(encodeJson({ project: "project-7" }));
+      expect(summary).toMatchObject({
+        auth_index: "g",
+        method: "POST",
+        header: {
+          Authorization: "Bearer $TOKEN$",
+          "Content-Type": "application/json",
+          "User-Agent":
+            "antigravity/hub/2.24.0 (aidev_client; os_type=linux; arch=x64; cl=963137146)",
+        },
+      });
       const identityCalls = test.requests.filter((request) =>
         request.body?.url?.endsWith("/userinfo"),
       );
@@ -518,7 +529,10 @@ describe("CLIProxyAPI built-in management API", () => {
         url: "https://www.googleapis.com/oauth2/v2/userinfo",
         header: { Authorization: "Bearer $TOKEN$" },
       });
-    }),
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Architecture, "x64"),
+    ),
   );
 
   it.effect("keeps Antigravity limits and listing email when its identity read fails", () =>

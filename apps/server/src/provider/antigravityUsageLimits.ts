@@ -15,6 +15,10 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
+export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
+  return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
+}
+
 const ENDPOINTS = [
   "https://daily-cloudcode-pa.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
@@ -293,7 +297,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
                   Authorization: `Bearer ${accessToken}`,
-                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                  "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
                 HttpClientRequest.bodyJsonUnsafe(
                   token.project_id ? { project: token.project_id } : {},
