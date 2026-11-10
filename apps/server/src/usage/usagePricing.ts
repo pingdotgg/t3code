@@ -125,7 +125,10 @@ export function parseRateTable(document: unknown): RateTable {
   }
 
   const aliasCandidates = new Map<string, { rate: ModelRate | null; firstParty: boolean }>();
+  const bedrockAliases = new Map<string, ModelRate>();
   for (const [key, rate] of table) {
+    const bedrockAlias = bedrockModelName(key);
+    if (bedrockAlias !== null && !table.has(bedrockAlias)) bedrockAliases.set(bedrockAlias, rate);
     const alias = bareModelName(key);
     if (alias.length === 0 || alias === key || table.has(alias)) continue;
     const firstParty = FIRST_PARTY_PROVIDERS.has(key.slice(0, key.indexOf("/")));
@@ -139,8 +142,23 @@ export function parseRateTable(document: unknown): RateTable {
   for (const [alias, { rate }] of aliasCandidates) {
     if (rate !== null) table.set(alias, rate);
   }
+  for (const [alias, rate] of bedrockAliases) {
+    if (!aliasCandidates.has(alias)) table.set(alias, rate);
+  }
 
   return table;
+}
+
+// Bedrock names a model `anthropic.<model>` and has no bare row for models LiteLLM lists only there.
+// Region prefixes (`us.`, `eu.`, `global.`, `us-gov.`, or a `bedrock/<region>/` path) mark cross-region or
+// regional endpoints that can carry a premium, so only the in-region ID backs the bare name, and only
+// when no qualified entry already provides it.
+const BEDROCK_ANTHROPIC_PREFIX = "anthropic.";
+
+function bedrockModelName(key: string): string | null {
+  if (key.includes("/") || !key.startsWith(BEDROCK_ANTHROPIC_PREFIX)) return null;
+  const name = key.slice(BEDROCK_ANTHROPIC_PREFIX.length);
+  return name.length === 0 ? null : name;
 }
 
 function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {

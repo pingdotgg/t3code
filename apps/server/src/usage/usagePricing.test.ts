@@ -286,4 +286,39 @@ describe("usage pricing", () => {
 
     expect(lookupRate(table, "example-model")).toBeNull();
   });
+
+  it("prices a model listed only on Bedrock at its in-region rate", () => {
+    const inRegion = rate(8e-6, 2e-7);
+    const table = parseRateTable({
+      "anthropic.claude-example-5-2": inRegion,
+      "us.anthropic.claude-example-5-2": rate(8.8e-6, 2.2e-7),
+      "eu.anthropic.claude-example-5-2": rate(8.8e-6, 2.2e-7),
+      "global.anthropic.claude-example-5-2": inRegion,
+      "us-gov.anthropic.claude-example-5-2": rate(9.6e-6, 2.4e-7),
+      "bedrock/us-gov-west-1/anthropic.claude-example-5-2": rate(9.6e-6, 2.4e-7),
+      "us.anthropic.claude-regional-only": rate(1),
+    });
+
+    expect(lookupRate(table, "claude-example-5-2")).toEqual(
+      lookupRate(table, "anthropic.claude-example-5-2"),
+    );
+    expect(lookupRate(table, "claude-example-5-2[1m]")?.inputCostPerToken).toBe(8e-6);
+    expect(lookupRate(table, "claude-regional-only")).toBeNull();
+  });
+
+  it("prefers direct and qualified entries over the Bedrock name", () => {
+    const table = parseRateTable({
+      "claude-direct": rate(1),
+      "anthropic.claude-direct": rate(2),
+      "vertex_ai/claude-qualified": rate(3),
+      "anthropic.claude-qualified": rate(4),
+      "provider-a/claude-ambiguous": rate(5),
+      "provider-b/claude-ambiguous": rate(6),
+      "anthropic.claude-ambiguous": rate(5),
+    });
+
+    expect(lookupRate(table, "claude-direct")?.inputCostPerToken).toBe(1);
+    expect(lookupRate(table, "claude-qualified")?.inputCostPerToken).toBe(3);
+    expect(lookupRate(table, "claude-ambiguous")).toBeNull();
+  });
 });
