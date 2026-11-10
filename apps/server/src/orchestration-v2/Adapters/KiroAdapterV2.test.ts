@@ -852,11 +852,13 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("advertises secret storage and answers Kiro's secret reads from its secrets file", () =>
+  it.effect("advertises secret storage and serves Kiro's secrets from its secrets file", () =>
     Effect.gen(function* () {
       const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
+      const refreshed = JSON.stringify({ access_token: "refreshed", token_type: "Bearer" });
+      const otherKey = "kiro.mcp.other.tokens";
       yield* runKiroScript({
-        scenario: "secret-get",
+        scenario: "secret-storage",
         environment: kiroHome.environment,
         frames: [
           // Kiro reads stored MCP OAuth tokens from the client only when it opts in.
@@ -879,10 +881,18 @@ describe("KiroAdapterV2", () => {
           kiroSecretResponse("_kiro/secret/get", { value: MCP_TOKENS }),
           kiroSecretRequest("_kiro/secret/get", { key: "kiro.mcp.missing.tokens" }),
           kiroSecretResponse("_kiro/secret/get", { value: null }),
+          kiroSecretRequest("_kiro/secret/store", { key: otherKey, value: refreshed }),
+          kiroSecretResponse("_kiro/secret/store", { success: true }),
+          kiroSecretRequest("_kiro/secret/delete", { key: MCP_TOKENS_KEY }),
+          kiroSecretResponse("_kiro/secret/delete", { success: true }),
           answer("session/new", sessionSetup([modeOption])),
           ...closeSession,
         ],
         drive: () => Effect.void,
+      });
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.deepStrictEqual(JSON.parse(yield* fileSystem.readFileString(kiroHome.secretsPath)), {
+        [otherKey]: refreshed,
       });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
@@ -910,36 +920,6 @@ describe("KiroAdapterV2", () => {
         ],
         drive: ({ rollbackToStart }) => rollbackToStart,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  it.effect("stores and deletes Kiro's secrets in its secrets file", () =>
-    Effect.gen(function* () {
-      const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
-      const refreshed = JSON.stringify({ access_token: "refreshed", token_type: "Bearer" });
-      const otherKey = "kiro.mcp.other.tokens";
-      yield* runKiroScript({
-        scenario: "secret-store-delete",
-        environment: kiroHome.environment,
-        frames: [
-          outbound("initialize"),
-          answer("initialize", KIRO_V3_INITIALIZE),
-          outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
-          kiroSecretRequest("_kiro/secret/store", { key: otherKey, value: refreshed }),
-          kiroSecretResponse("_kiro/secret/store", { success: true }),
-          kiroSecretRequest("_kiro/secret/delete", { key: MCP_TOKENS_KEY }),
-          kiroSecretResponse("_kiro/secret/delete", { success: true }),
-          answer("session/new", sessionSetup([modeOption])),
-          ...closeSession,
-        ],
-        drive: () => Effect.void,
-      });
-      const fileSystem = yield* FileSystem.FileSystem;
-      assert.deepStrictEqual(
-        JSON.parse(yield* fileSystem.readFileString(kiroHome.secretsPath)),
-        { [otherKey]: refreshed },
-        "Kiro's stored and deleted secrets must land in <KIRO_HOME>/secrets.json",
-      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
