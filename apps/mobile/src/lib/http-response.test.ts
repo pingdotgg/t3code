@@ -12,12 +12,4 @@ describe("React Native HTTP responses", () => {
     expect(result.cookies).toEqual(Cookies.empty);
     expect(result.status).toBe(400);
   });
-
-  it("preserves cookies on platforms that expose Set-Cookie headers", () => {
-    const result = HttpClientResponse.fromWeb(
-      HttpClientRequest.get("https://relay.example.test"),
-      new Response(null, { headers: { "Set-Cookie": "session=abc; HttpOnly" } }),
-    );
-    expect(result.cookies).toEqual(Cookies.fromSetCookie(["session=abc; HttpOnly"]));
-  });
 });

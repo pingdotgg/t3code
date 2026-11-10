@@ -7,11 +7,11 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { fnv1a32, resolveFileDiffPath } from "~/lib/diffRendering";
+import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -72,6 +72,8 @@ function appendAnnotationEntry(
 }
 
 interface AnnotatableCodeViewProps {
+  environmentId?: EnvironmentId | undefined;
+  projectId?: ProjectId | null | undefined;
   codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
@@ -80,6 +82,7 @@ interface AnnotatableCodeViewProps {
     fileVersion: number;
     collapsed: boolean;
   }>;
+  pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -103,8 +106,11 @@ interface DiffSelectionContext {
 }
 
 export function AnnotatableCodeView({
+  environmentId,
+  projectId,
   codeViewKey,
   files,
+  pendingFiles,
   sectionId,
   sectionTitle,
   composerDraftTarget,
@@ -129,11 +135,27 @@ export function AnnotatableCodeView({
   } | null>(null);
   const [draft, setDraft] = useState<{
     fileKey: string;
+    filePath: string;
+    previousFilePath: string;
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
+  if (
+    draft !== null &&
+    !filesByKey.has(draft.fileKey) &&
+    // Lazy placeholders have provisional change types, so match both paths instead.
+    !pendingFiles.some(
+      (file) =>
+        resolveFileDiffPath(file) === draft.filePath &&
+        resolveFileDiffPreviousPath(file) === draft.previousFilePath,
+    )
+  ) {
+    setDraft(null);
+    setDraftText("");
+    setSelectedLines(null);
+  }
   const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
     ({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
       const persisted = reviewComments
@@ -207,14 +229,13 @@ export function AnnotatableCodeView({
     if (!range) return;
     const item = context.item;
     if (item.type !== "diff") return;
-    // Read from the item, not the file list, so the compiled callback keeps its identity
-    // as patches arrive; the viewer re-applies its options whenever it changes.
     const id = nextFileCommentId();
+    const filePath = resolveFileDiffPath(item.fileDiff);
     const comment = buildDiffReviewComment({
       id,
       sectionId,
       sectionTitle,
-      filePath: resolveFileDiffPath(item.fileDiff),
+      filePath,
       fileDiff: item.fileDiff,
       range,
       text: "",
@@ -223,6 +244,8 @@ export function AnnotatableCodeView({
     setDraftText("");
     setDraft({
       fileKey: item.id,
+      filePath,
+      previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
       annotation: {
         side: annotationSide(range),
         lineNumber: range.end,
@@ -233,7 +256,6 @@ export function AnnotatableCodeView({
     });
   };
 
-  const hasOpenComment = draft !== null;
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
@@ -250,12 +272,12 @@ export function AnnotatableCodeView({
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}
-      onRevealSearchMatch={(item) => onRevealSearchMatch(item.id)}
       options={{
         ...options,
-        enableGutterUtility: !hasOpenComment,
-        enableLineSelection: !hasOpenComment,
+        enableGutterUtility: draft === null,
+        enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
+        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
@@ -265,7 +287,7 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
-      renderAnnotation={(annotation) => {
+      renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div
@@ -274,6 +296,14 @@ export function AnnotatableCodeView({
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
+                environmentId={environmentId}
+                projectId={projectId}
+                ownerKey={JSON.stringify([
+                  environmentId,
+                  composerDraftTarget,
+                  codeViewKey,
+                  entry.id,
+                ])}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}
                 text={entry.kind === "draft" ? draftText : entry.text}

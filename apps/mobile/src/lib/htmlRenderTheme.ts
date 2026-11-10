@@ -9,9 +9,7 @@ import {
   type MobileThemeVariables,
 } from "./mobileTheme";
 
-/**
- * WebViews cannot load the app's bundled fonts, so renders use system stacks.
- */
+/** WebViews cannot load bundled app fonts; use system stacks. */
 export function mobileHtmlRenderTheme(input: {
   readonly themeId: MobileThemeId;
   readonly appearance: MobileThemeAppearance;

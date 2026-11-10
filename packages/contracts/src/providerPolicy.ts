@@ -31,6 +31,17 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
+const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
+  "approval-required": 0,
+  "auto-accept-edits": 1,
+  auto: 2,
+  "full-access": 3,
+};
+
+/** Whether `mode` grants the agent more than `ceiling`; no ceiling allows every mode. */
+export const isRuntimeModeAbove = (mode: RuntimeMode, ceiling: RuntimeMode | undefined): boolean =>
+  ceiling !== undefined && RUNTIME_MODE_RANK[mode] > RUNTIME_MODE_RANK[ceiling];
+
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
@@ -44,9 +55,6 @@ export const ProviderRequestKind = Schema.Literals([
 ]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 
-export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
-export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
-
 export const ProviderApprovalDecision = Schema.Literals([
   "accept",
   "acceptForSession",
@@ -55,6 +63,11 @@ export const ProviderApprovalDecision = Schema.Literals([
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+
+// Why an approval reached the user although the thread runs with full access:
+// the user's own ask rule, or a check the provider enforces even when bypassed.
+export const ProviderApprovalFullAccessOverride = Schema.Literals(["ask_rule", "provider_check"]);
+export type ProviderApprovalFullAccessOverride = typeof ProviderApprovalFullAccessOverride.Type;
 
 export const ProviderApprovalOption = Schema.Struct({
   decision: ProviderApprovalDecision,

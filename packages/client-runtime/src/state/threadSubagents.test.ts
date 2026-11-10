@@ -41,15 +41,47 @@ function subagent(
   };
 }
 
-const run = (id: string, status: "running" | "completed" | "rolled_back") =>
-  ({ id: RunId.make(id), status }) as never;
+const run = (
+  id: string,
+  status: "queued" | "running" | "completed" | "cancelled" | "rolled_back",
+  overrides: { readonly ordinal?: number; readonly started?: boolean } = {},
+) =>
+  ({
+    id: RunId.make(id),
+    status,
+    ordinal: overrides.ordinal ?? Number(id.slice("run-".length)),
+    startedAt: overrides.started === false ? null : at("2026-06-20T00:00:00.000Z"),
+  }) as never;
 const activeRun = run("run-1", "running");
 const finishedRun = run("run-1", "completed");
 
 describe("deriveThreadTurnSubagents", () => {
-  it("returns null when the thread has never spawned an agent", () => {
-    expect(deriveThreadTurnSubagents({ runs: [activeRun], subagents: [] })).toBeNull();
-  });
+  it.each(["running", "completed"] as const)(
+    "keeps finished workflows after a later %s turn",
+    (status) => {
+      const workflow = subagent({
+        id: "workflow",
+        status: "completed",
+        workflow: { phases: [], agents: [] },
+      });
+      const turn = deriveThreadTurnSubagents({
+        runs: [finishedRun, run("run-2", status)],
+        subagents: [
+          workflow,
+          subagent({ id: "old", status: "completed" }),
+          subagent({
+            id: "recent",
+            runId: RunId.make("run-2"),
+            status,
+            updatedAt: at("2026-06-20T00:00:09.000Z"),
+          }),
+        ],
+      });
+
+      expect(turn?.subagents.map((entry) => entry.id)).toEqual(["recent", "workflow"]);
+      expect(resolveSubagentPillSegment(turn)).not.toBeNull();
+    },
+  );
 
   it("scopes the roster to the active run and orders it by start time", () => {
     const turn = deriveThreadTurnSubagents({
@@ -154,33 +186,6 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.subagents.map((entry) => entry.id)).toEqual(["live"]);
   });
 
-  it("does not pick a rolled-back turn when its agent was updated last", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [run("run-0", "rolled_back"), finishedRun],
-      subagents: [
-        subagent({
-          id: "rolled-back",
-          runId: RunId.make("run-0"),
-          updatedAt: at("2026-06-20T00:00:09.000Z"),
-        }),
-        subagent({
-          id: "done",
-          status: "completed",
-          updatedAt: at("2026-06-20T00:00:05.000Z"),
-        }),
-      ],
-    });
-
-    expect(turn?.runId).toBe("run-1");
-    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["done"]);
-    expect(
-      deriveThreadTurnSubagents({
-        runs: [run("run-0", "rolled_back")],
-        subagents: [subagent({ id: "rolled-back", runId: RunId.make("run-0") })],
-      }),
-    ).toBeNull();
-  });
-
   it("lists a workflow coordinator's members, which carry no run", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [],
@@ -199,67 +204,123 @@ describe("deriveThreadTurnSubagents", () => {
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1/2");
   });
 
+  it("keeps the finished agents reachable while their turn is the latest", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({ id: "a", status: "completed" }),
+        subagent({ id: "b", status: "failed" }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("2 done");
+  });
+
+  it("drops finished agents from the pill once a later turn ran without any", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toBeNull();
+  });
+
+  it("shows finished agents again when the later turn was rolled back", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "rolled_back")],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
+  it("keeps finished agents while a later turn is only queued or was cancelled before starting", () => {
+    for (const later of [
+      run("run-2", "queued", { started: false }),
+      run("run-2", "cancelled", { started: false }),
+    ]) {
+      const turn = deriveThreadTurnSubagents({
+        runs: [finishedRun, later],
+        subagents: [subagent({ id: "a", status: "completed" })],
+      });
+
+      expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+    }
+  });
+
+  it("finds the latest turn by ordinal when a reordered queue left runs out of order", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [run("run-1", "completed", { ordinal: 3 }), run("run-2", "completed", { ordinal: 2 })],
+      subagents: [subagent({ id: "a", status: "completed" })],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
+  it("keeps the latest turn's agents when an earlier turn's background agent finishes later", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun, run("run-2", "completed")],
+      subagents: [
+        subagent({ id: "late", status: "completed", updatedAt: at("2026-06-20T00:00:09.000Z") }),
+        subagent({
+          id: "latest",
+          runId: RunId.make("run-2"),
+          status: "completed",
+          updatedAt: at("2026-06-20T00:00:05.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["latest"]);
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
+  it("counts only terminal agents as done while a held agent remains", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({ id: "a", status: "completed" }),
+        subagent({ id: "b", status: "idle" }),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
+
   it("counts idle as neither working nor done", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [activeRun],
       subagents: [
-        subagent({ id: "a", status: "running" }),
+        subagent({ id: "a", status: "completed" }),
         subagent({ id: "b", status: "idle" }),
         subagent({ id: "c", status: "failed" }),
       ],
     });
 
-    expect(turn?.liveCount).toBe(1);
-    expect(turn?.settledCount).toBe(1);
+    expect(turn?.liveCount).toBe(0);
+    expect(turn?.settledCount).toBe(2);
     expect(turn?.subagents).toHaveLength(3);
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("2 done");
   });
-});
 
-describe("resolveSubagentPillSegment", () => {
-  it("shows how many of the turn's agents are still working", () => {
+  it("keeps settled workflows reachable without counting idle agents as done", () => {
     const turn = deriveThreadTurnSubagents({
-      runs: [activeRun],
+      runs: [finishedRun, run("run-2", "completed")],
       subagents: [
-        subagent({ id: "a", status: "running" }),
-        subagent({ id: "b", status: "waiting" }),
-        subagent({ id: "c", status: "completed" }),
+        subagent({ id: "workflow", status: "completed", workflow: { phases: [], agents: [] } }),
+        subagent({
+          id: "idle",
+          runId: RunId.make("run-2"),
+          status: "idle",
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
       ],
     });
 
-    expect(resolveSubagentPillSegment(turn)).toEqual({
-      label: "2/3",
-      accessibilityLabel: "2 of 3 agents working",
-    });
-  });
-
-  it("reports the finished roster while the turn is still running", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [activeRun],
-      subagents: [subagent({ id: "a", status: "completed" })],
-    });
-
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["idle", "workflow"]);
     expect(resolveSubagentPillSegment(turn)).toEqual({
       label: "1 done",
       accessibilityLabel: "1 agent done",
     });
-  });
-
-  it("hides itself once the turn is over and nothing is working", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [finishedRun],
-      subagents: [subagent({ id: "a", status: "completed" })],
-    });
-
-    expect(resolveSubagentPillSegment(turn)).toBeNull();
-    expect(resolveSubagentPillSegment(null)).toBeNull();
-  });
-
-  it("stays visible after the turn ends while an agent is still working", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [finishedRun],
-      subagents: [subagent({ id: "a", status: "running" })],
-    });
-
-    expect(resolveSubagentPillSegment(turn)?.label).toBe("1/1");
   });
 });

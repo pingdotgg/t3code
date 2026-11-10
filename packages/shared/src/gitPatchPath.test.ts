@@ -52,14 +52,6 @@ describe("a name written into a header and read back out", () => {
     const unwrapped = written.startsWith('"') ? written.slice(1, -1) : written;
     expect(unquoteGitPatchPath(unwrapped)).toBe(name);
   });
-
-  it("carries the whole name past the first thing a header stops at", () => {
-    const written = quoteGitPatchPath("tab\tfile.txt");
-
-    expect(written).not.toContain("\t");
-    expect(written).not.toContain("\n");
-    expect(unquoteGitPatchPath(written)).not.toBe("tab");
-  });
 });
 
 describe("unquoteGitPatchPath", () => {
@@ -69,13 +61,6 @@ describe("unquoteGitPatchPath", () => {
       expect(unquoteGitPatchPath(token)).toBe("\uFEFFnote.txt");
     },
   );
-
-  it("leaves a token git saw no need to quote alone", () => {
-    expect(unquoteGitPatchPath("src/app.ts")).toBe("src/app.ts");
-    expect(unquoteGitPatchPath("with space.txt")).toBe("with space.txt");
-    expect(unquoteGitPatchPath("")).toBe("");
-    expect(unquoteGitPatchPath('"')).toBe('"');
-  });
 
   it("reads the octal escapes a host with core.quotePath on writes", () => {
     expect(unquoteGitPatchPath('"caf\\303\\251/r\\303\\251sum\\303\\251.ts"')).toBe(

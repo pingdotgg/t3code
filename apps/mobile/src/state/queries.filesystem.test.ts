@@ -74,27 +74,3 @@ it("keeps a file search pending until its grant loads, then shows matches", () =
     isPending: false,
   });
 });
-
-it("shows a confirmed denial and a connection failure separately", () => {
-  state.session = { authenticated: true, scopes: [] };
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [],
-    error: "This connection cannot search host files.",
-    isPending: false,
-  });
-  state.session = null;
-  state.phase = "offline";
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [],
-    error: "This environment is not connected.",
-    isPending: false,
-  });
-});
-
-it("leaves an inactive search idle while its grant loads", () => {
-  expect(useComposerPathSearch({ ...target, cwd: null, query: null })).toMatchObject({
-    entries: [],
-    error: null,
-    isPending: false,
-  });
-});

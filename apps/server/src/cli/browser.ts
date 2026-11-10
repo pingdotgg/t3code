@@ -39,10 +39,7 @@ const runStep = Effect.fn("browserSetup.runStep")(function* (
   }
 });
 
-/**
- * Under `sudo` the process home is root's, so an unspecified home falls back to
- * the invoking user's `~/.t3`.
- */
+/** Under sudo, an unspecified home uses the invoking user's ~/.t3. */
 const setupBaseDir = Effect.fn("browserSetup.baseDir")(function* (explicit: Option.Option<string>) {
   const env = yield* HostProcess.Environment;
   const raw = Option.getOrUndefined(explicit) ?? env.T3CODE_HOME;
@@ -84,9 +81,31 @@ const installedBrowser = Effect.fn("browserSetup.installedBrowser")(function* (b
   return Option.none<string>();
 });
 
+/**
+ * Chrome starts without fonts, but pages then render no text. Without
+ * fontconfig there is no `fc-match` at all, which counts as no font.
+ */
+const fontAvailable = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const font = yield* spawner
+    .string(
+      ChildProcess.make("fc-match", ["--format=%{file}", "sans-serif"], {
+        stdin: "ignore",
+        stderr: "ignore",
+      }),
+    )
+    .pipe(
+      Effect.timeout("5 seconds"),
+      Effect.orElseSucceed(() => ""),
+    );
+  return font.trim() !== "";
+}).pipe(Effect.withSpan("browserSetup.fontAvailable"));
+
+const FONT_PACKAGES = ["fontconfig", "fonts-liberation"];
+
 const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
   Command.withDescription(
-    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries.",
+    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts.",
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
@@ -95,22 +114,28 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
       const fs = yield* FileSystem.FileSystem;
       const isRoot = (yield* HostProcess.UserId) === 0;
-      const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
-      // Root, unless sudo came from another user, is likely the server's own account.
       const env = yield* HostProcess.Environment;
+      const baseDirPath = yield* setupBaseDir(baseDir);
+      // sudo resets the environment, so a chosen home has to be on the command line.
+      const setupCommand = yield* resolveRootCliCommand(
+        PreviewBrowserHost.SETUP_SUBCOMMAND,
+        Option.isSome(baseDir) || env.T3CODE_HOME !== undefined ? ["--base-dir", baseDirPath] : [],
+      );
+      // Root, unless sudo came from another user, is likely the server's own account.
       const rootWarning =
         isRoot && (env.SUDO_USER ?? "root") === "root" && !PreviewBrowserHost.sandboxDisabled(env)
           ? new PreviewBrowserHost.PreviewBrowserRootError().message
           : undefined;
 
       const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
-      const browser = yield* installedBrowser(yield* setupBaseDir(baseDir));
+      const browser = yield* installedBrowser(baseDirPath);
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
+      const needsFonts = !(yield* fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
-      if (!needsProfile && missing.length === 0) {
+      if (!needsProfile && missing.length === 0 && !needsFonts) {
         return yield* Console.log(
           rootWarning ??
             (Option.isSome(browser)
@@ -127,6 +152,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         }
         if (missing.length > 0) {
           yield* Console.log(`T3's browser is missing ${missing.join(", ")}; setup installs them.`);
+        }
+        if (needsFonts) {
+          yield* Console.log(
+            "T3's browser needs fontconfig and system fonts; setup installs them.",
+          );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
       }
@@ -153,13 +183,24 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Allowed Chrome's sandbox for T3's browser.");
       }
 
-      if (missing.length > 0) {
-        if (!hasApt) {
-          return yield* Console.log(
+      if ((missing.length > 0 || needsFonts) && !hasApt) {
+        if (missing.length > 0) {
+          yield* Console.log(
             `T3's browser is missing ${missing.join(", ")}. Install them with your package manager, then run this again.`,
           );
         }
+        if (needsFonts) {
+          yield* Console.log(
+            "T3's browser needs fontconfig and system fonts. Install them with your package manager, then run this again.",
+          );
+        }
+        return;
+      }
+      if (missing.length > 0 || needsFonts) {
         yield* runStep("refresh the package lists", "apt-get", ["update"]);
+      }
+
+      if (missing.length > 0) {
         const packages = yield* Effect.forEach(PreviewBrowserHost.DEBIAN_PACKAGES, (names) =>
           Effect.findFirst(names, aptOffers).pipe(Effect.map(Option.getOrElse(() => names[0]!))),
         );
@@ -170,6 +211,23 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           ...packages,
         ]);
         yield* Console.log("Installed the browser's libraries.");
+      }
+
+      if (needsFonts) {
+        yield* runStep("install the browser's fonts", "apt-get", [
+          "install",
+          "-y",
+          "--no-install-recommends",
+          ...FONT_PACKAGES,
+        ]);
+        if (!(yield* fontAvailable)) {
+          return yield* Console.log(
+            "Font packages are installed, but Fontconfig still finds no system font. Check its configuration and run setup again.",
+          );
+        }
+        yield* Console.log(
+          "Installed the browser's fonts. Restart the T3 server if browser tabs were already open.",
+        );
       }
 
       yield* Console.log(rootWarning ?? "This host is ready for T3's browser.");

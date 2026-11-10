@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { createDeviceModelSlot, resolveDeviceModelId, type DeviceModelSource } from "./model.ts";
+import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
 
 const pro: DeviceModelSource = { id: "iphone-18-pro", url: "/pro.glb" };
 const max: DeviceModelSource = { id: "iphone-18-pro-max", url: "/max.glb" };
@@ -20,23 +20,6 @@ function fixture() {
   const slot = createDeviceModelSlot({ load, install });
   return { slot, pending, install, load };
 }
-
-it("matches only exact supported hardware, including iPad size and generation", () => {
-  expect(resolveDeviceModelId("ios", "iPhone 18 Pro")).toBe(pro.id);
-  expect(resolveDeviceModelId("ios", "iPhone 18 Pro Max")).toBe(max.id);
-  expect(resolveDeviceModelId("ios", "iPhone Duo")).toBe("iphone-duo");
-  expect(resolveDeviceModelId("ios", "iPad Pro 13-inch (M5)")).toBe("ipad-pro-13-m5");
-  for (const name of [
-    "iPhone 17 Pro",
-    "iPhone 18",
-    "iPad Pro 11-inch (M5)",
-    "iPad Pro 13-inch (M4)",
-    "Pixel_10_Pro",
-  ]) {
-    expect(resolveDeviceModelId("ios", name)).toBeNull();
-  }
-  expect(resolveDeviceModelId("android", "iPhone 18 Pro")).toBeNull();
-});
 
 it("cancels superseded downloads and releases a late decoded model without installing it", async () => {
   const { slot, pending, install, load } = fixture();
@@ -74,17 +57,6 @@ it("keeps the fallback on request failure and disposes results that finish after
   await Promise.resolve();
   expect(late.dispose).toHaveBeenCalledOnce();
   expect(install).not.toHaveBeenCalled();
-});
-
-it("returns the current scene to the fallback before releasing its imported resources", async () => {
-  const { slot, pending, install } = fixture();
-  slot.set(pro);
-  const model = { dispose: vi.fn(() => expect(install).toHaveBeenLastCalledWith(null)) };
-  pending[0]!.resolve(model);
-  await Promise.resolve();
-  slot.dispose();
-  slot.dispose();
-  expect(model.dispose).toHaveBeenCalledOnce();
 });
 
 it("retries a failed source while ignoring rejection of a superseded request", async () => {

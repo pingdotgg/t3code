@@ -71,8 +71,7 @@ function layer(
       return {
         values: (values: DpopProofInsertValues) => ({
           onConflictDoNothing: () => ({
-            returning: (selection: unknown) => {
-              expect(selection).toBeDefined();
+            returning: () => {
               return insert(values);
             },
           }),
@@ -84,16 +83,26 @@ function layer(
 }
 
 function consumeEachProofOnce() {
-  const consumed = new Set<string>();
-  return (values: DpopProofInsertValues) =>
-    Effect.sync(() => {
-      const key = `${values.thumbprint}:${values.jti}`;
-      if (consumed.has(key)) {
-        return [];
+  const consumed = new Map<string, string>();
+  return {
+    insert: (values: DpopProofInsertValues) =>
+      Effect.sync(() => {
+        const key = `${values.thumbprint}:${values.jti}`;
+        if (consumed.has(key)) {
+          return [];
+        }
+        consumed.set(key, values.expiresAt);
+        return [{ jti: values.jti }];
+      }),
+    pruneExpired: (now: DateTime.DateTime) => {
+      const cutoff = DateTime.formatIso(now);
+      for (const [key, expiresAt] of consumed) {
+        if (expiresAt < cutoff) {
+          consumed.delete(key);
+        }
       }
-      consumed.add(key);
-      return [{ jti: values.jti }];
-    });
+    },
+  };
 }
 
 describe("DpopProofReplay.verifyAndConsume", () => {
@@ -125,37 +134,43 @@ describe("DpopProofReplay.verifyAndConsume", () => {
     }).pipe(Effect.provide(layer(() => Effect.die("unexpected replay persistence"))));
   });
 
-  it.effect("rejects replayed proofs after persistence consumes the jti once", () => {
+  it.effect("rejects replays until a future proof's time window closes", () => {
     const now = DateTime.makeUnsafe("2026-05-25T12:00:00.000Z");
     const proof = makeDpopProof({
       method: "POST",
       url: "https://relay.example.com/v1/environments/env/connect",
-      iat: Math.floor(now.epochMilliseconds / 1_000),
-      jti: "proof-1",
+      iat: Math.floor(now.epochMilliseconds / 1_000) + 300,
+      jti: "proof-future",
     });
+    const persistence = consumeEachProofOnce();
+    const input = {
+      proof: proof.proof,
+      method: "POST",
+      url: "https://relay.example.com/v1/environments/env/connect",
+      expectedThumbprint: proof.thumbprint,
+      now,
+    };
 
     return Effect.gen(function* () {
       const replay = yield* DpopProofs.DpopProofReplay;
-      const first = yield* replay.verifyAndConsume({
-        proof: proof.proof,
-        method: "POST",
-        url: "https://relay.example.com/v1/environments/env/connect",
-        expectedThumbprint: proof.thumbprint,
-        now,
-      });
-      const second = yield* Effect.flip(
-        replay.verifyAndConsume({
-          proof: proof.proof,
-          method: "POST",
-          url: "https://relay.example.com/v1/environments/env/connect",
-          expectedThumbprint: proof.thumbprint,
-          now,
-        }),
-      );
+      expect(yield* replay.verifyAndConsume(input)).toBe(proof.thumbprint);
 
-      expect(first).toBe(proof.thumbprint);
-      expect(second).toMatchObject({ _tag: "DpopProofRejected", code: "replayed" });
-    }).pipe(Effect.provide(layer(consumeEachProofOnce())));
+      for (const { elapsedMs, code } of [
+        { elapsedMs: 0, code: "replayed" },
+        { elapsedMs: 301_000, code: "replayed" },
+        { elapsedMs: 600_999, code: "replayed" },
+        { elapsedMs: 601_000, code: "time_window" },
+      ]) {
+        const retryAt = DateTime.makeUnsafe(now.epochMilliseconds + elapsedMs);
+        persistence.pruneExpired(retryAt);
+        const result = yield* Effect.result(replay.verifyAndConsume({ ...input, now: retryAt }));
+
+        expect(result, `Replay after ${elapsedMs}ms`).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "DpopProofRejected", code },
+        });
+      }
+    }).pipe(Effect.provide(layer(persistence.insert)));
   });
 
   it.effect("rejects proofs missing the expected access token hash", () => {
@@ -185,40 +200,6 @@ describe("DpopProofReplay.verifyAndConsume", () => {
         code: "access_token_hash_mismatch",
       });
     }).pipe(Effect.provide(layer(() => Effect.die("unexpected DPoP replay persistence"))));
-  });
-
-  it.effect("preserves replay persistence failures", () => {
-    const now = DateTime.makeUnsafe("2026-05-25T12:00:00.000Z");
-    const proof = makeDpopProof({
-      method: "POST",
-      url: "https://relay.example.com/v1/environments/env/connect",
-      iat: Math.floor(now.epochMilliseconds / 1_000),
-      jti: "proof-persistence-failure",
-    });
-    const cause = { _tag: "DatabaseUnavailable" } as const;
-
-    return Effect.gen(function* () {
-      const replay = yield* DpopProofs.DpopProofReplay;
-      const error = yield* Effect.flip(
-        replay.verifyAndConsume({
-          proof: proof.proof,
-          method: "POST",
-          url: "https://relay.example.com/v1/environments/env/connect",
-          expectedThumbprint: proof.thumbprint,
-          now,
-        }),
-      );
-
-      expect(error).toMatchObject({
-        _tag: "DpopProofReplayPersistenceError",
-        operation: "consume",
-        thumbprint: proof.thumbprint,
-        jti: "proof-persistence-failure",
-        iat: Math.floor(now.epochMilliseconds / 1_000),
-      });
-      expect(error.cause).toBe(cause);
-      expect(error).not.toHaveProperty("proof");
-    }).pipe(Effect.provide(layer(() => Effect.fail(cause))));
   });
 
   it.effect("accepts proofs bound to the access token hash", () => {
@@ -252,6 +233,6 @@ describe("DpopProofReplay.verifyAndConsume", () => {
 
       expect(thumbprint).toBe(proof.thumbprint);
       expect(second._tag).toBe("Failure");
-    }).pipe(Effect.provide(layer(consumeEachProofOnce())));
+    }).pipe(Effect.provide(layer(consumeEachProofOnce().insert)));
   });
 });

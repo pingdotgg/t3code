@@ -11,7 +11,7 @@ function oneLine(text: string): string {
   return flat.length > SETTLED_REMARK_CHARS ? `${flat.slice(0, SETTLED_REMARK_CHARS)}…` : flat;
 }
 
-export function settledReviewSummary(activity: PullRequestActivity): string {
+function settledReviewSummary(activity: PullRequestActivity): string {
   return activity.reviewThreads
     .filter((thread) => thread.isResolved || thread.isOutdated)
     .flatMap((thread) => {

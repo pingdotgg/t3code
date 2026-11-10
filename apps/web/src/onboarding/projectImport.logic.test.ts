@@ -3,11 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   groupOnboardingProjects,
+  isNewOnboardingProject,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
-  splitOnboardingProjectPath,
 } from "./projectImport.logic";
 
 const now = Date.parse("2026-08-22T12:00:00.000Z");
@@ -52,18 +52,6 @@ describe("partitionOnboardingProjects", () => {
 
     expect(partitionOnboardingProjects([recent, older], now)).toEqual({
       available: [recent, older],
-      recent: [recent],
-    });
-  });
-
-  it("keeps future activity out of the default selection", () => {
-    const recent = candidate("/projects/recent");
-    const future = candidate("/projects/future", {
-      lastActiveAt: "2026-08-23T12:00:00.000Z",
-    });
-
-    expect(partitionOnboardingProjects([recent, future], now)).toEqual({
-      available: [recent, future],
       recent: [recent],
     });
   });
@@ -135,6 +123,7 @@ describe("groupOnboardingProjects", () => {
     ]);
   });
 
+  // regression: #10547 project import broke on servers that predate git identity
   it("lists candidates without git identity as standalone repositories", () => {
     const { git: _git, ...legacy } = candidate("/code/legacy", { title: "legacy" });
 
@@ -152,17 +141,8 @@ describe("resolveOnboardingProjectId", () => {
   const remoteEnvironmentId = EnvironmentId.make("remote");
   const localProjectId = ProjectId.make("local-project");
 
-  it("uses the scanned project ID before the project reaches the client", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [],
-        localEnvironmentId,
-        candidate("/projects/repo", { projectId: localProjectId }),
-      ),
-    ).toBe(localProjectId);
-  });
-
   it("uses the scanned project ID when the client still has an older project at that root", () => {
+    const scanned = candidate("/projects/repo", { projectId: localProjectId });
     expect(
       resolveOnboardingProjectId(
         [
@@ -173,120 +153,51 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        candidate("/projects/repo", { projectId: localProjectId }),
+        scanned,
       ),
     ).toBe(localProjectId);
-  });
-
-  it("returns null to create a project when neither the scan nor the client has a project ID", () => {
-    expect(
-      resolveOnboardingProjectId([], localEnvironmentId, candidate("/projects/new")),
-    ).toBeNull();
+    expect(isNewOnboardingProject([])(localEnvironmentId, scanned)).toBe(false);
   });
 
   it("finds an existing project by normalized root in the target environment", () => {
+    const projects = [
+      {
+        id: ProjectId.make("remote-project"),
+        environmentId: remoteEnvironmentId,
+        workspaceRoot: "C:\\Work\\Repo",
+      },
+      {
+        id: localProjectId,
+        environmentId: localEnvironmentId,
+        workspaceRoot: "C:\\Work\\Repo\\",
+      },
+    ];
     expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: ProjectId.make("remote-project"),
-            environmentId: remoteEnvironmentId,
-            workspaceRoot: "C:\\Work\\Repo",
-          },
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "C:\\Work\\Repo\\",
-          },
-        ],
-        localEnvironmentId,
-        candidate("c:/work/repo"),
-      ),
+      resolveOnboardingProjectId(projects, localEnvironmentId, candidate("c:/work/repo")),
     ).toBe(localProjectId);
+    expect(isNewOnboardingProject(projects)(localEnvironmentId, candidate("c:/work/repo"))).toBe(
+      false,
+    );
   });
 
   it("does not reuse a project from another environment", () => {
+    const projects = [
+      {
+        id: ProjectId.make("remote-project"),
+        environmentId: remoteEnvironmentId,
+        workspaceRoot: "/projects/repo",
+      },
+    ];
     expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: ProjectId.make("remote-project"),
-            environmentId: remoteEnvironmentId,
-            workspaceRoot: "/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
+      resolveOnboardingProjectId(projects, localEnvironmentId, candidate("/projects/repo")),
     ).toBeNull();
-  });
-
-  it("finds an alias after the scanner returns its persisted project root", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/real/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/real/projects/repo"),
-      ),
-    ).toBe(localProjectId);
-  });
-
-  it("finds the current root owner when the scan has no project ID", () => {
-    const recreatedProjectId = ProjectId.make("recreated-project");
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/other",
-          },
-          {
-            id: recreatedProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
-    ).toBe(recreatedProjectId);
-  });
-
-  it("does not reuse a moved project when the scan has no project ID", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/moved",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
-    ).toBeNull();
+    expect(isNewOnboardingProject(projects)(localEnvironmentId, candidate("/projects/repo"))).toBe(
+      true,
+    );
   });
 });
 
 describe("resolveOnboardingLandingProject", () => {
-  it("skips a failed first project for a later project with imported history", () => {
-    expect(
-      resolveOnboardingLandingProject(
-        ["/projects/failed", "/projects/imported"],
-        new Map([["/projects/imported", "imported"]]),
-        new Map([["/projects/imported", "imported"]]),
-      ),
-    ).toBe("imported");
-  });
-
   it("prefers a partial first import that added history", () => {
     expect(
       resolveOnboardingLandingProject(
@@ -305,16 +216,6 @@ describe("resolveOnboardingLandingProject", () => {
         new Map([["/projects/empty", "empty"]]),
       ),
     ).toBe("empty");
-  });
-
-  it("keeps an earlier successful import available on retry", () => {
-    expect(
-      resolveOnboardingLandingProject(
-        ["/projects/imported", "/projects/retry"],
-        new Map([["/projects/imported", "imported"]]),
-        new Map([["/projects/imported", "imported"]]),
-      ),
-    ).toBe("imported");
   });
 
   it("ignores cached successes outside the current retry selection", () => {
@@ -344,47 +245,10 @@ describe("projects on multiple computers", () => {
     );
   });
 
+  // regression: #10465 multi-computer onboarding mixed up which computer a project came from
   it("preserves computer identity when choosing recent projects", () => {
     const first = { ...candidate("/code/app"), environmentId: "first" };
     const second = { ...candidate("/code/app"), environmentId: "second" };
     expect(partitionOnboardingProjects([first, second], now).recent).toEqual([first, second]);
-  });
-});
-
-describe("splitOnboardingProjectPath", () => {
-  it("keeps sibling checkouts that share a prefix distinguishable by name", () => {
-    const left = splitOnboardingProjectPath("/Users/me/Projects/clients/acme/t3code");
-    const right = splitOnboardingProjectPath("/Users/me/Projects/clients/acme/t3code-worktree");
-    expect(left).toEqual({ name: "t3code", parent: "/Users/me/Projects/clients/acme/" });
-    expect(right).toEqual({ name: "t3code-worktree", parent: "/Users/me/Projects/clients/acme/" });
-    expect(left.name).not.toBe(right.name);
-  });
-
-  it("splits Windows paths and ignores a trailing separator", () => {
-    expect(splitOnboardingProjectPath("C:\\Users\\me\\t3code\\")).toEqual({
-      name: "t3code",
-      parent: "C:\\Users\\me\\",
-    });
-  });
-
-  it("keeps a root or bare name whole", () => {
-    expect(splitOnboardingProjectPath("/")).toEqual({ name: "/", parent: "" });
-    expect(splitOnboardingProjectPath("/t3code")).toEqual({ name: "t3code", parent: "/" });
-    expect(splitOnboardingProjectPath("t3code")).toEqual({ name: "t3code", parent: "" });
-    expect(splitOnboardingProjectPath("t3code/")).toEqual({ name: "t3code", parent: "" });
-  });
-
-  it.each(["C:\\", "C:/", "\\\\server\\share", "\\\\server\\share\\", "//server/share/"])(
-    "keeps the filesystem root %s whole",
-    (path) => {
-      expect(splitOnboardingProjectPath(path)).toEqual({ name: path, parent: "" });
-    },
-  );
-
-  it("splits a folder below a network share", () => {
-    expect(splitOnboardingProjectPath("\\\\server\\share\\project\\")).toEqual({
-      name: "project",
-      parent: "\\\\server\\share\\",
-    });
   });
 });

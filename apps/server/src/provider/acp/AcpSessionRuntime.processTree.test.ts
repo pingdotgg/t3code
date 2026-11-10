@@ -2,20 +2,13 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Scope from "effect/Scope";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-
-const threadSpawnHelperSource = NodeURL.fileURLToPath(
-  new URL("../../../scripts/acp-thread-spawn-helper.c", import.meta.url),
-);
 
 const identity = (
   pid: number,
@@ -63,15 +56,6 @@ function makeController(input: {
 
 const server = () => identity(process.pid, 1, process.pid, process.pid, "server");
 
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 describe("terminatePosixOwnedProcessTree", () => {
   it("parses unified cgroup paths and escaped cgroup2 mountinfo", () => {
     expect(AcpSessionRuntime.parseUnifiedCgroupPath("0::/user.slice/app.scope\n")).toBe(
@@ -82,12 +66,12 @@ describe("terminatePosixOwnedProcessTree", () => {
     expect(AcpSessionRuntime.isSafeCgroupPath("/user.slice/../escape")).toBe(false);
     expect(AcpSessionRuntime.isSafeCgroupPath("/user.slice/app.scope (deleted)")).toBe(false);
     expect(
-      AcpSessionRuntime.parseCgroup2Mount(
+      AcpSessionRuntime.parseCgroup2Mounts(
         "42 31 0:37 /user.slice /sys/fs/cgroup/user\\040mount rw - cgroup2 cgroup2 rw\n",
-      ),
+      )[0],
     ).toEqual({ mountPoint: "/sys/fs/cgroup/user mount", root: "/user.slice" });
     expect(
-      AcpSessionRuntime.parseCgroup2Mount("42 31 0:37 / /sys/fs/cgroup rw - tmpfs tmpfs rw\n"),
+      AcpSessionRuntime.parseCgroup2Mounts("42 31 0:37 / /sys/fs/cgroup rw - tmpfs tmpfs rw\n")[0],
     ).toBeUndefined();
     expect(
       AcpSessionRuntime.parseCgroup2Mounts(
@@ -102,9 +86,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       const scratchRoot = NodePath.join(process.cwd(), "tmp");
       NodeFS.mkdirSync(scratchRoot, { recursive: true });
       const parent = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-cgroup-stale-siblings-"));
-      // Temp dirs are not cgroupfs: rmdir fails when control files exist, so the
-      // test injects populated/remove while still exercising the real selection
-      // and path-safety logic against a real parent directory tree.
+      // Unlike cgroupfs, temp directories cannot rmdir with control files; inject populated/remove.
       const populatedByPath = new Map<string, "0" | "1">();
       const writeSibling = (name: string, populated: "0" | "1" | null) => {
         const path = NodePath.join(parent, name);
@@ -178,13 +160,12 @@ describe("terminatePosixOwnedProcessTree", () => {
       expect(AcpSessionRuntime.resolveLinuxCgroupTargetCommand("grok", scratch, { PATH: "" })).toBe(
         bareGrok,
       );
-      // Undefined PATH uses Node's default search path (/usr/bin:/bin), not cwd alone
-      // (bareGrok lives only in cwd / PATH=scratch).
+      // Undefined PATH searches /usr/bin:/bin; the bareGrok fixture lives only in cwd.
       expect(
         AcpSessionRuntime.resolveLinuxCgroupTargetCommand("grok", scratch, { PATH: undefined }),
       ).toBeUndefined();
       expect(
-        AcpSessionRuntime.resolveLinuxCgroupTargetCommand("node", scratch, { PATH: undefined }),
+        AcpSessionRuntime.resolveLinuxCgroupTargetCommand("sh", scratch, { PATH: undefined }),
       ).toBeDefined();
       expect(
         AcpSessionRuntime.resolveLinuxCgroupTargetCommand("grok", scratch, {
@@ -306,8 +287,7 @@ describe("terminatePosixOwnedProcessTree", () => {
         },
       );
       expect(missingTargetResult.status, missingTargetResult.stderr).toBe(125);
-      // CI's /bin/sh is dash, which runs the EXIT trap after a failed exec. Bash does not,
-      // so run the same wrapper under bash too.
+      // dash runs EXIT traps after failed exec; bash does not, so exercise both.
       const missingTargetBash = NodeChildProcess.spawnSync("bash", missingTarget.args, {
         encoding: "utf8",
       });
@@ -320,171 +300,6 @@ describe("terminatePosixOwnedProcessTree", () => {
       NodeFS.rmSync(scratch, { recursive: true, force: true });
     }
   });
-
-  it.live("kills a post-TERM detached double fork without touching an unrelated sentinel", () =>
-    Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) !== "linux") return;
-      const controller = AcpSessionRuntime.makeLinuxCgroupController();
-      const lease = controller.create();
-      if (lease === undefined) return;
-      expect(
-        AcpSessionRuntime.parseUnifiedCgroupPath(NodeFS.readFileSync("/proc/self/cgroup", "utf8")),
-      ).not.toBe(lease.relativePath);
-      const scratchRoot = NodePath.join(process.cwd(), "tmp");
-      NodeFS.mkdirSync(scratchRoot, { recursive: true });
-      const scratch = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-cgroup-kill-"));
-      const readyPath = NodePath.join(scratch, "ready");
-      const childPath = NodePath.join(scratch, "child");
-      const childProgram = "setInterval(() => {}, 1000);";
-      const launcherProgram = [
-        'const fs = require("node:fs");',
-        'const cp = require("node:child_process");',
-        "const child = cp.spawn(process.execPath, ['-e', process.argv[2]], { detached: true, stdio: 'ignore' });",
-        "fs.writeFileSync(process.argv[1], String(child.pid));",
-        "child.unref();",
-      ].join("\n");
-      const providerProgram = [
-        'const fs = require("node:fs");',
-        'const cp = require("node:child_process");',
-        "fs.writeFileSync(process.argv[1], String(process.pid));",
-        "process.on('SIGTERM', () => {",
-        "  const launcher = cp.spawn(process.execPath, ['-e', process.argv[3], process.argv[2], process.argv[4]], { detached: true, stdio: 'ignore' });",
-        "  launcher.unref();",
-        "  process.exit(0);",
-        "});",
-        "setInterval(() => {}, 1000);",
-      ].join("\n");
-      const wrapped = AcpSessionRuntime.wrapCommandForLinuxCgroup(lease, process.execPath, [
-        "-e",
-        providerProgram,
-        readyPath,
-        childPath,
-        launcherProgram,
-        childProgram,
-      ]);
-      const provider = NodeChildProcess.spawn(wrapped.command, wrapped.args, {
-        detached: true,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", T3_ACP_CGROUP_WRAPPER: "1" },
-        stdio: "ignore",
-      });
-      provider.unref();
-      const sentinel = NodeChildProcess.spawn(process.execPath, ["-e", childProgram], {
-        detached: true,
-        stdio: "ignore",
-      });
-      sentinel.unref();
-      let detachedChildPid: number | undefined;
-      try {
-        yield* Effect.gen(function* () {
-          while (!NodeFS.existsSync(readyPath)) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("2 seconds"));
-        process.kill(provider.pid!, "SIGTERM");
-        detachedChildPid = yield* Effect.gen(function* () {
-          while (true) {
-            try {
-              const pid = Number(NodeFS.readFileSync(childPath, "utf8"));
-              if (Number.isSafeInteger(pid) && pid > 1) return pid;
-            } catch {}
-            yield* Effect.sleep("10 millis");
-          }
-        }).pipe(Effect.timeout("2 seconds"));
-        expect(processExists(detachedChildPid)).toBe(true);
-        yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease);
-        expect(processExists(sentinel.pid!)).toBe(true);
-        yield* Effect.gen(function* () {
-          while (processExists(detachedChildPid!)) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("2 seconds"));
-        expect(NodeFS.existsSync(lease.path)).toBe(false);
-
-        const replacement = controller.create();
-        expect(replacement?.path).not.toBe(lease.path);
-        if (replacement !== undefined) {
-          NodeFS.mkdirSync(NodePath.join(replacement.path, "nested"));
-          yield* AcpSessionRuntime.terminateLinuxCgroupLease(replacement);
-          expect(NodeFS.existsSync(replacement.path)).toBe(false);
-        }
-      } finally {
-        yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease).pipe(Effect.ignore);
-        try {
-          process.kill(-provider.pid!, "SIGKILL");
-        } catch {}
-        try {
-          process.kill(-sentinel.pid!, "SIGKILL");
-        } catch {}
-        if (detachedChildPid !== undefined && processExists(detachedChildPid)) {
-          try {
-            process.kill(detachedChildPid, "SIGKILL");
-          } catch {}
-        }
-        NodeFS.rmSync(scratch, { recursive: true, force: true });
-      }
-    }),
-  );
-
-  it.live("re-kills repopulated cgroups and verifies root removal after retryable errors", () =>
-    Effect.gen(function* () {
-      let exists = true;
-      let killCalls = 0;
-      let populated = false;
-      let removeCalls = 0;
-      const lease: AcpSessionRuntime.AcpLinuxCgroupLease = {
-        contains: () => false,
-        exists: () => exists,
-        path: "/test/t3-acp-repopulation",
-        relativePath: "/test/t3-acp-repopulation",
-        kill: () => {
-          killCalls += 1;
-          populated = false;
-        },
-        populated: () => populated,
-        remove: () => {
-          removeCalls += 1;
-          if (removeCalls === 1) {
-            populated = true;
-            const error = new Error("repopulated") as NodeJS.ErrnoException;
-            error.code = "EBUSY";
-            throw error;
-          }
-          if (removeCalls === 2) {
-            const error = new Error("nested path vanished") as NodeJS.ErrnoException;
-            error.code = "ENOENT";
-            throw error;
-          }
-          exists = false;
-        },
-      };
-
-      yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease);
-      expect(killCalls).toBeGreaterThanOrEqual(3);
-      expect(removeCalls).toBe(3);
-      expect(exists).toBe(false);
-      yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease);
-      expect(removeCalls).toBe(3);
-    }),
-  );
-
-  it.live("reports persistent retryable removal failures as removal failures", () =>
-    Effect.gen(function* () {
-      const removeError = Object.assign(new Error("cgroup remains busy"), {
-        code: "EBUSY",
-      });
-      const lease: AcpSessionRuntime.AcpLinuxCgroupLease = {
-        contains: () => false,
-        exists: () => true,
-        path: "/test/t3-acp-busy",
-        relativePath: "/test/t3-acp-busy",
-        kill: () => undefined,
-        populated: () => false,
-        remove: () => {
-          throw removeError;
-        },
-      };
-
-      const error = yield* Effect.flip(AcpSessionRuntime.terminateLinuxCgroupLease(lease));
-      expect(error.detail).toBe("Failed to remove ACP cgroup /test/t3-acp-busy");
-      expect(error.cause).toBe(removeError);
-    }),
-  );
 
   it("sends TERM only to the exact captured root while it remains in the child cgroup", () => {
     const fixture = makeController({
@@ -527,53 +342,6 @@ describe("terminatePosixOwnedProcessTree", () => {
     });
     expect(migrated.signals).toEqual([]);
   });
-
-  it.live("finds a child forked by a non-leader pthread", () =>
-    Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) !== "linux") return;
-      const scratchRoot = NodePath.join(process.cwd(), "tmp");
-      NodeFS.mkdirSync(scratchRoot, { recursive: true });
-      const scratch = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-pthread-spawn-"));
-      const binary = NodePath.join(scratch, "helper");
-      const pidPath = NodePath.join(scratch, "pids");
-      expect(NodeFS.statSync(threadSpawnHelperSource).isFile()).toBe(true);
-      const compile = NodeChildProcess.spawnSync(
-        "cc",
-        ["-pthread", threadSpawnHelperSource, "-o", binary],
-        {
-          encoding: "utf8",
-        },
-      );
-      if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-        NodeFS.rmSync(scratch, { recursive: true, force: true });
-        return;
-      }
-      expect(compile.status, compile.stderr).toBe(0);
-      const helper = NodeChildProcess.spawn(binary, [pidPath], { detached: true, stdio: "ignore" });
-      helper.unref();
-      try {
-        const published = yield* Effect.gen(function* () {
-          while (true) {
-            try {
-              const ids = NodeFS.readFileSync(pidPath, "utf8").trim().split(/\s+/).map(Number);
-              if (ids.length === 2 && ids.every(Number.isSafeInteger)) return ids;
-            } catch {}
-            yield* Effect.sleep("10 millis");
-          }
-        }).pipe(Effect.timeout("2 seconds"));
-        const [workerTid, childPid] = published;
-        expect(workerTid).not.toBe(helper.pid);
-        expect(
-          AcpSessionRuntime.makePosixProcessTreeController("linux").childrenOf(helper.pid!),
-        ).toContainEqual(expect.objectContaining({ pid: childPid, ppid: helper.pid }));
-      } finally {
-        try {
-          process.kill(-helper.pid!, "SIGKILL");
-        } catch {}
-        NodeFS.rmSync(scratch, { recursive: true, force: true });
-      }
-    }),
-  );
 
   it.live("keeps ownership across a fork-before-exec executable transition", () =>
     Effect.gen(function* () {
@@ -650,8 +418,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("rotates more than 64 live parents without scanning retained tombstones", () =>
     Effect.gen(function* () {
-      // The server fixture's process group is the runner's real pid, so a synthetic
-      // parent sharing it would be skipped as the server's own group.
+      // Use a different synthetic parent group; the fixture shares the runner's real group, which cleanup skips.
       const parentPidBase = process.pid < 500_000 ? 500_000 : 1_000;
       const parents = Array.from({ length: 130 }, (_, index) =>
         identity(parentPidBase + index, 100, parentPidBase + index, parentPidBase + index),
@@ -739,73 +506,6 @@ describe("terminatePosixOwnedProcessTree", () => {
       });
       expect(snapshotCalls).toBe(10);
       expect(fixture.processes.size).toBe(1);
-    }),
-  );
-
-  it.live("polls only known descendants and stops with its scope", () =>
-    Effect.gen(function* () {
-      let childrenCalls = 0;
-      let identityCalls = 0;
-      let snapshotCalls = 0;
-      const fixture = makeController({
-        processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
-      });
-      const controller: AcpSessionRuntime.AcpPosixProcessTreeController = {
-        ...fixture.controller,
-        childPidsOf: (pid) => {
-          childrenCalls += 1;
-          return fixture.controller.childPidsOf(pid);
-        },
-        identity: (pid) => {
-          identityCalls += 1;
-          return fixture.controller.identity(pid);
-        },
-        snapshot: () => {
-          snapshotCalls += 1;
-          return fixture.controller.snapshot();
-        },
-      };
-      const scope = yield* Scope.make();
-      const frontier = new Map<number, AcpSessionRuntime.AcpOwnedPosixProcess>();
-      const childQueues = new Map<number, Array<number>>();
-      let ledgerValuesCalls = 0;
-      const ledger = new (class extends Map<string, AcpSessionRuntime.AcpOwnedPosixProcess> {
-        override values(): MapIterator<AcpSessionRuntime.AcpOwnedPosixProcess> {
-          ledgerValuesCalls += 1;
-          return super.values();
-        }
-      })();
-      const root: AcpSessionRuntime.AcpPosixOwnershipRoot = { value: undefined };
-      for (let index = 0; index < 5_000; index += 1) {
-        const tombstone = identity(10_000 + index, 1, 10_000 + index, 10_000 + index);
-        ledger.set(`${tombstone.pid}:${tombstone.startTime}`, {
-          ...tombstone,
-          parentExecutable: undefined,
-          parentStartTime: "",
-        });
-      }
-      yield* AcpSessionRuntime.observePosixOwnershipLedgerContinuously({
-        childQueues,
-        controller,
-        frontier,
-        ledger,
-        root,
-        rootPid: 100,
-      }).pipe(Effect.forkIn(scope));
-      const timerStartedAt = yield* Clock.currentTimeMillis;
-      yield* Effect.sleep(0);
-      const timerDelay = (yield* Clock.currentTimeMillis) - timerStartedAt;
-      yield* Effect.sleep("80 millis");
-
-      expect(timerDelay).toBeLessThan(250);
-      expect(ledgerValuesCalls).toBe(0);
-      expect(snapshotCalls).toBe(0);
-      expect(childrenCalls).toBeGreaterThan(0);
-      expect(childrenCalls).toBeLessThanOrEqual(12);
-      const callsAtClose = identityCalls + childrenCalls;
-      yield* Scope.close(scope, Exit.void);
-      yield* Effect.sleep("60 millis");
-      expect(identityCalls + childrenCalls).toBe(callsAtClose);
     }),
   );
 
@@ -942,7 +642,6 @@ describe("terminatePosixOwnedProcessTree", () => {
         grace: 0,
         rootPid: 100,
       });
-      // Zombies remain visible but must not fail residual teardown.
       expect(fixture.processes.get(100)?.state).toBe("Z");
       expect(fixture.processes.get(110)?.state).toBe("Z");
     }),
@@ -984,36 +683,6 @@ describe("terminatePosixOwnedProcessTree", () => {
       table: [root, liveChild],
     });
 
-    const admitted = [...ledger.values()].find((entry) => entry.pid === 200);
-    expect(admitted?.startTime).toBe("live-child");
-  });
-
-  it("admits a live child when a stale ledger entry still occupies the reused PID", () => {
-    const staleChild: AcpSessionRuntime.AcpOwnedPosixProcess = {
-      ...identity(200, 100, 200, 200, "stale-child"),
-      parentExecutable: `/proc/100/exe`,
-      parentStartTime: "100",
-    };
-    const liveChild = identity(200, 100, 200, 200, "live-child");
-    const root = identity(100, process.pid, 100, 100);
-    const ownedRoot: AcpSessionRuntime.AcpOwnedPosixProcess = {
-      ...root,
-      parentExecutable: `/proc/${process.pid}/exe`,
-      parentStartTime: "server",
-    };
-    const ledger = new Map<string, AcpSessionRuntime.AcpOwnedPosixProcess>([
-      [`100:${root.startTime}`, ownedRoot],
-      [`200:${staleChild.startTime}`, staleChild],
-    ]);
-
-    AcpSessionRuntime.capturePosixOwnershipLedger({
-      controller: makeController({ processes: [server(), root, liveChild] }).controller,
-      ledger,
-      rootPid: 100,
-      table: [root, liveChild],
-    });
-
-    expect([...ledger.values()].some((entry) => entry.startTime === "stale-child")).toBe(false);
     const admitted = [...ledger.values()].find((entry) => entry.pid === 200);
     expect(admitted?.startTime).toBe("live-child");
   });

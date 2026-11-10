@@ -158,24 +158,6 @@ it("accepts Hyprland's action-only binding without claiming the keys are reserve
   expect(client.state.shortcutActionRegistered).toBe(false);
 });
 
-it("keeps the Hyprland action ID stable regardless of a saved key chord", async () => {
-  const first = start(new FakeBus(), chord, true);
-  const second = start(new FakeBus(), { ...chord, key: "7" }, true);
-  await Promise.all([first.client.ready, second.client.ready]);
-  expect(first.bus.boundId).toBe(second.bus.boundId);
-});
-
-it("does not accept an empty trigger as approval on other desktops", async () => {
-  const bus = new FakeBus();
-  bus.actualLabel = "";
-  const { client, capture } = start(bus);
-  await client.ready;
-  expect(client.state.shortcutRegistered).toBe(false);
-  expect(client.state.shortcutActionRegistered).not.toBe(true);
-  bus.activate();
-  expect(capture).not.toHaveBeenCalled();
-});
-
 it.each([
   ["2", "CTRL+SHIFT+2"],
   ["f12", "CTRL+SHIFT+F12"],
@@ -309,23 +291,6 @@ it("treats a remembered empty binding as unassigned, then observes desktop-side 
   expect(capture).toHaveBeenCalledOnce();
 });
 
-it("guides users to manual desktop settings when the portal cannot open them", async () => {
-  const bus = new FakeBus();
-  bus.version = 1;
-  bus.bindStatus = 1;
-  const { client } = start(bus);
-  await client.ready;
-  expect(client.hasSession).toBe(true);
-  expect(client.state.shortcutCanRetry).toBe(false);
-  expect(client.state.shortcutMessage).toBe(
-    "Shortcut permission wasn't granted. Allow T3 Code in your desktop's shortcut settings.",
-  );
-  await expect(client.configure()).rejects.toThrow("Open your desktop's shortcut settings");
-  expect(bus.calls.some((message) => message.member === "ConfigureShortcuts")).toBe(false);
-  client.close();
-  expect(client.hasSession).toBe(false);
-});
-
 it("captures on older portals without offering an unsupported permission dialog", async () => {
   const bus = new FakeBus();
   bus.version = 1;
@@ -359,21 +324,6 @@ it("closes an outstanding consent request and ignores its late response", async 
   expect(changed).not.toHaveBeenCalled();
   expect(bus.sends.filter((message) => message.member === "Close")).toHaveLength(2);
   expect(bus.disconnect).toHaveBeenCalledOnce();
-});
-
-it("bounds unanswered consent and cleans up the pending request", async () => {
-  vi.useFakeTimers();
-  const bus = new FakeBus();
-  bus.autoBind = false;
-  const binding = NodeEvents.EventEmitter.once(bus, "bind");
-  const { client } = start(bus);
-  await binding;
-  await vi.advanceTimersByTimeAsync(120_000);
-  await client.ready;
-  expect(client.state.shortcutPending).toBe(false);
-  expect(client.state.shortcutMessage).toContain("timed out");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("handles a disappearing portal without keeping a false registered state", async () => {

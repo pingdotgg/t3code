@@ -82,7 +82,7 @@ export function checkStatus(check: PullRequestCheck) {
     case "cancelled":
       return { label: "Cancelled", icon: "minus", tint: "accent-icon-muted" } as const;
     case "skipped":
-      return { label: "Skipped", icon: "minus", tint: "accent-icon-muted" } as const;
+      return { label: "Skipped", icon: "slash.circle", tint: "accent-icon-muted" } as const;
     case "neutral":
       return { label: "Neutral", icon: "minus", tint: "accent-icon-muted" } as const;
   }
@@ -135,6 +135,11 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   } as const;
 }
 
+// GitHub and Forgejo send uppercase review states; Bitbucket and GitCafe send lowercase.
+export function normalizedReviewState(reviewState: string | null) {
+  return reviewState?.toUpperCase().replaceAll("-", "_");
+}
+
 export function pullRequestReviewSummary(
   pr: Pick<PullRequestDetail, "reviewers">,
   activity: Pick<PullRequestActivity, "comments" | "commits"> | null,
@@ -142,8 +147,8 @@ export function pullRequestReviewSummary(
   const latest = new Map<string, PullRequestActivity["comments"][number]>();
   const comments = new Map<string, PullRequestActivity["comments"][number]>();
   for (const review of activity?.comments ?? []) {
-    if (review.kind !== "review" || !review.reviewState) continue;
-    const state = review.reviewState.toUpperCase().replaceAll("-", "_");
+    const state = normalizedReviewState(review.reviewState);
+    if (review.kind !== "review" || !state) continue;
     const key = review.author?.login ?? review.id;
     if (state === "COMMENTED") {
       const previous = comments.get(key);

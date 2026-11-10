@@ -1,88 +1,65 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { LIVE_REFRESH_IDLE_AFTER_MS, useLiveRefresh } from "./useLiveRefresh";
+import { act, fakeTimers, render } from "../../test/render";
+import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "./useLiveRefresh";
 
-let root: Root;
-let visibility: DocumentVisibilityState;
-const refresh = vi.fn();
-
-function setVisibility(next: DocumentVisibilityState) {
-  visibility = next;
-  document.dispatchEvent(new Event("visibilitychange"));
+function Probe(props: {
+  readonly refresh: () => void;
+  readonly viewKey: string;
+  readonly enabled?: boolean;
+  readonly intervalMs?: number | null;
+  readonly refreshOnShow?: boolean;
+}) {
+  useLiveRefresh(props.refresh, {
+    key: props.viewKey,
+    enabled: props.enabled ?? true,
+    ...(props.intervalMs !== undefined ? { intervalMs: props.intervalMs } : {}),
+    ...(props.refreshOnShow !== undefined ? { refreshOnShow: props.refreshOnShow } : {}),
+  });
+  return null;
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  visibility = "visible";
-  vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-  refresh.mockReset();
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
-
-describe("live refresh cadence", () => {
-  it("polls every 45 seconds, pauses while hidden or busy, respects disabling, and cleans up", () => {
-    vi.setSystemTime(0);
-    function Probe({ pending = false, enabled = true }) {
-      useLiveRefresh(pending ? null : refresh, { intervalMs: 45_000, enabled });
-      return null;
-    }
-    act(() => root.render(<Probe />));
-    act(() => vi.advanceTimersByTime(44_999));
-    expect(refresh).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(1));
+describe("useLiveRefresh", () => {
+  it("with refreshOnShow, reads on every show unless it read within the floor", async () => {
+    const refresh = vi.fn();
+    // The first enable reads the clock.
+    using _timers = fakeTimers({ now: 1_000_000 });
+    const probe = (enabled: boolean) => (
+      <Probe refresh={refresh} viewKey="show" enabled={enabled} refreshOnShow intervalMs={null} />
+    );
+    // A bare hook probe; nothing here navigates.
+    await using screen = await render(probe(true), { router: false });
     expect(refresh).toHaveBeenCalledTimes(1);
-    act(() => vi.advanceTimersByTime(45_000));
+
+    await screen.rerender(probe(false));
+    await act(() => vi.advanceTimersByTime(LIVE_REFRESH_MIN_INTERVAL_MS - 1));
+    await screen.rerender(probe(true));
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await screen.rerender(probe(false));
+    await act(() => vi.advanceTimersByTime(1));
+    await screen.rerender(probe(true));
     expect(refresh).toHaveBeenCalledTimes(2);
-    setVisibility("hidden");
-    act(() => vi.advanceTimersByTime(90_000));
-    expect(refresh).toHaveBeenCalledTimes(2);
-    setVisibility("visible");
-    window.dispatchEvent(new Event("focus"));
-    expect(refresh).toHaveBeenCalledTimes(3);
-    act(() => root.render(<Probe pending />));
-    act(() => vi.advanceTimersByTime(45_000));
-    expect(refresh).toHaveBeenCalledTimes(3);
-    act(() => root.render(<Probe />));
-    act(() => vi.advanceTimersByTime(45_000));
-    expect(refresh).toHaveBeenCalledTimes(4);
-    act(() => root.render(<Probe enabled={false} />));
-    act(() => vi.advanceTimersByTime(90_000));
-    window.dispatchEvent(new Event("focus"));
-    expect(refresh).toHaveBeenCalledTimes(4);
-    act(() => root.render(null));
-    act(() => vi.advanceTimersByTime(45_000));
-    expect(refresh).toHaveBeenCalledTimes(4);
   });
 
-  it.each(["focus", "visibilitychange"])(
-    "keeps an idle view paused after %s until input",
-    (event) => {
-      vi.setSystemTime(1_000_000);
-      function Probe() {
-        useLiveRefresh(refresh, { intervalMs: 45_000 });
-        return null;
-      }
-      act(() => root.render(<Probe />));
-      act(() => vi.advanceTimersByTime(LIVE_REFRESH_IDLE_AFTER_MS));
-      refresh.mockClear();
-      act(() => (event === "focus" ? window : document).dispatchEvent(new Event(event)));
-      expect(refresh).not.toHaveBeenCalled();
-      act(() => vi.advanceTimersByTime(90_000));
-      expect(refresh).not.toHaveBeenCalled();
-      act(() => document.dispatchEvent(new Event("pointerdown")));
-      expect(refresh).toHaveBeenCalledTimes(1);
-      act(() => vi.advanceTimersByTime(45_000));
-      expect(refresh).toHaveBeenCalledTimes(2);
-    },
-  );
+  it("with intervalMs null, never refreshes on a timer", async () => {
+    const periodic = vi.fn();
+    const untimed = vi.fn();
+    // The interaction clock starts when the first view mounts.
+    using _timers = fakeTimers({ now: 1_000_000 });
+    await using _screen = await render(
+      <>
+        <Probe refresh={periodic} viewKey="periodic" intervalMs={60_000} />
+        <Probe refresh={untimed} viewKey="untimed" intervalMs={null} />
+      </>,
+      // A bare hook probe; nothing here navigates.
+      { router: false },
+    );
+
+    // Past the default 5 minute interval, but inside the 6 minute idle cutoff.
+    await act(() => vi.advanceTimersByTime(5.5 * 60_000));
+
+    expect(periodic).toHaveBeenCalledTimes(5);
+    expect(untimed).not.toHaveBeenCalled();
+  });
 });

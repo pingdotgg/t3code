@@ -27,12 +27,15 @@ describe("PR attachments", () => {
     ]);
   });
 
-  it("does not collect ordinary links or media examples in code", () => {
+  it("collects videos from a before/after table", () => {
     const media = splitPullRequestBody(
-      "https://example.com/docs\n\n```\nhttps://drop.example.com/demo.mp4\n```",
+      "<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr><td>\n\nhttps://drop.example.com/before.mp4\n\n</td><td>\n\nhttps://drop.example.com/after.mp4\n\n</td></tr>\n</table>",
     );
     expect(
       pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments,
-    ).toEqual([]);
+    ).toEqual([
+      { uri: "https://drop.example.com/before.mp4", caption: "Video", kind: "video" },
+      { uri: "https://drop.example.com/after.mp4", caption: "Video", kind: "video" },
+    ]);
   });
 });

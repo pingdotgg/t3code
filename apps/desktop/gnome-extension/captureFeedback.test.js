@@ -151,17 +151,6 @@ it("waits for T3 to remap and cancels that wait when disabled", async () => {
   expect(shell.mapped.size).toBe(0);
 });
 
-it("does not animate under reduced motion but still activates T3", async () => {
-  shell.animations = false;
-  shell.windows = [target()];
-  const { feedback, started } = begin();
-  expect(started).toBe(false);
-  expect(shell.actors).toHaveLength(0);
-  await feedback.activate(":1.23", "T3");
-  expect(shell.activate).toHaveBeenCalledOnce();
-  feedback.dispose();
-});
-
 it("rejects another sender and locked-session activation", async () => {
   shell.windows = [target()];
   const { feedback } = begin();

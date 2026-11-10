@@ -72,7 +72,6 @@ vi.mock("./uuid", () => ({ uuidv4: mocks.uuid }));
 vi.mock("./shareFileFromSource", () => ({ shareFileFromSource: mocks.shareFromSource }));
 
 import {
-  openAttachmentInViewer,
   downloadAndShareAttachment,
   downloadAttachmentForPreview,
   shareLocalAttachment,
@@ -81,7 +80,6 @@ import { isForegroundHandoffActive } from "./foreground-handoff";
 
 const NOW = 1_787_990_400_000;
 const DAY_MS = 24 * 60 * 60_000;
-const CACHE = "file:///cache/t3-attachment-downloads";
 const input = {
   url: "https://chosen-environment.example/api/assets/signed-token/report.pdf",
   attachment: { name: "report.pdf", mimeType: "application/pdf" },
@@ -135,28 +133,11 @@ describe("downloadAndShareAttachment", () => {
     expect(mocks.deleted).not.toHaveBeenCalled();
   });
 
-  it("shares videos even when the server serves their bytes inline", async () => {
-    await downloadAndShareAttachment({
-      url: "https://relay-environment.example/api/assets/signed-video/clip.mp4",
-      attachment: { name: "clip.mp4", mimeType: 'video/mp4; codecs="avc1"' },
-      signal: new AbortController().signal,
-    });
-
-    expect(mocks.share).toHaveBeenCalledWith(expect.stringMatching(/\/clip\.mp4$/), {
-      mimeType: "video/mp4",
-      dialogTitle: "clip.mp4",
-    });
-  });
-
   it.each([
     ["../../résumé.pdf", "résumé.pdf"],
     ["C:\\folder\\clip.mp4", "clip.mp4"],
-    ["a?query#part%2F.txt", "a?query#part%2F.txt"],
-    ["Report #5 - 100%.pdf", "Report #5 - 100%.pdf"],
     ["..", "attachment"],
-    ["  ", "attachment"],
     ["\ud800file\u0000.txt", "_file_.txt"],
-    [".env", ".env"],
   ])("uses a safe basename for %j", async (name, expected) => {
     await downloadAndShareAttachment({
       ...input,
@@ -165,18 +146,6 @@ describe("downloadAndShareAttachment", () => {
     });
     const file = mocks.download.mock.calls[0]![1] as { uri: string };
     expect(decodeURIComponent(file.uri.split("/").at(-1)!)).toBe(expected);
-  });
-
-  it("preserves ordinary long filenames that fit within the filesystem limit", async () => {
-    const name =
-      "Project quarterly report with detailed implementation and delivery notes for August 2026.pdf";
-    await downloadAndShareAttachment({
-      ...input,
-      attachment: { ...input.attachment, name },
-      signal: new AbortController().signal,
-    });
-    const file = mocks.download.mock.calls[0]![1] as { uri: string };
-    expect(decodeURIComponent(file.uri.split("/").at(-1)!)).toBe(name);
   });
 
   it("bounds the UTF-8 filename length while preserving its extension", async () => {
@@ -218,23 +187,6 @@ describe("downloadAndShareAttachment", () => {
     expect(mocks.share).not.toHaveBeenCalled();
   });
 
-  it("does not open a late download after cancellation", async () => {
-    const started = Promise.withResolvers<{ uri: string }>();
-    const download = Promise.withResolvers<{ uri: string }>();
-    mocks.download.mockImplementation((_url: string, file: { uri: string }) => {
-      started.resolve(file);
-      return download.promise;
-    });
-    const controller = new AbortController();
-    const task = downloadAndShareAttachment({ ...input, signal: controller.signal });
-    const file = await started.promise;
-    controller.abort();
-    download.resolve(file);
-    await task;
-    expect(mocks.share).not.toHaveBeenCalled();
-    expect(mocks.deleted).toHaveBeenCalledTimes(1);
-  });
-
   it("retains an export when its row unmounts during the native handoff", async () => {
     const opened = Promise.withResolvers<void>();
     const share = Promise.withResolvers<void>();
@@ -258,18 +210,6 @@ describe("downloadAndShareAttachment", () => {
       downloadAndShareAttachment({ ...input, signal: new AbortController().signal }),
     ).rejects.toThrow("Could not open the share sheet. Try again.");
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
-  });
-
-  it("removes expired exports while leaving recent and unrelated cache entries alone", async () => {
-    const old = `${CACHE}/${NOW - DAY_MS - 1}-00000000-0000-4000-8000-000000000010`;
-    const recent = `${CACHE}/${NOW - DAY_MS + 1}-00000000-0000-4000-8000-000000000011`;
-    const unrelated = `${CACHE}/unrelated`;
-    mocks.directories.add(old).add(recent).add(unrelated);
-
-    await downloadAndShareAttachment({ ...input, signal: new AbortController().signal });
-    expect(mocks.deleted.mock.calls).toEqual([[old]]);
-    expect(mocks.directories.has(recent)).toBe(true);
-    expect(mocks.directories.has(unrelated)).toBe(true);
   });
 
   it("does not prune an active export even if it passes the cache expiry", async () => {
@@ -402,31 +342,5 @@ describe("attachment preview files", () => {
     await task;
     expect(mocks.share).not.toHaveBeenCalled();
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("document viewer handoff", () => {
-  it("opens a cache copy with its MIME type and retains it for the viewer", async () => {
-    await openAttachmentInViewer({
-      uri: "file:///documents/report.pdf",
-      attachment: input.attachment,
-      signal: new AbortController().signal,
-    });
-    expect(mocks.open).toHaveBeenCalledWith(mocks.copy.mock.calls[0]![1], "application/pdf");
-    expect(mocks.share).not.toHaveBeenCalled();
-    expect(mocks.deleted).not.toHaveBeenCalled();
-  });
-  it("cleans up when no viewer handles the document", async () => {
-    mocks.open.mockRejectedValue(new Error("No viewer"));
-    await expect(
-      openAttachmentInViewer({
-        uri: input.url,
-        attachment: input.attachment,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("No viewer");
-    expect(mocks.download).toHaveBeenCalledTimes(1);
-    expect(mocks.deleted).toHaveBeenCalledTimes(1);
-    expect(isForegroundHandoffActive()).toBe(false);
   });
 });

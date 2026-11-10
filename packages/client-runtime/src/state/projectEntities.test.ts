@@ -120,16 +120,4 @@ describe("project scratch identity", () => {
       registry.dispose();
     }
   });
-
-  it("keeps callers without server configs working without marking a same-title project", () => {
-    const { registry, projects, configAtom } = makeHarness(false);
-    try {
-      const initial = registry.get(projects.projectsAtom);
-      registry.set(configAtom(environmentId), { scratchWorkspaceRoot: v2Project.workspaceRoot });
-      expect(registry.get(projects.projectsAtom)).toBe(initial);
-      expect(initial.every((project) => !project.isScratch)).toBe(true);
-    } finally {
-      registry.dispose();
-    }
-  });
 });

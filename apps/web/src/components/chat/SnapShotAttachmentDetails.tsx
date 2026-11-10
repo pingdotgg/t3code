@@ -2,7 +2,7 @@ import type { SnapShotSource } from "@t3tools/contracts";
 import { ImageIcon, TextIcon } from "lucide-react";
 import { Suspense } from "react";
 
-import { useTheme } from "../../hooks/useTheme";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
@@ -13,7 +13,7 @@ import { HighlightedTokens } from "./HighlightedTokens";
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
 
-export interface SnapShotAccessibilityDetails {
+interface SnapShotAccessibilityDetails {
   content: string;
   format: "json" | "text";
 }
@@ -25,7 +25,7 @@ export function SnapShotAccessibilityData({
   details: SnapShotAccessibilityDetails;
   className?: string;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const content =
     details.format === "json" ? (
       <RenderErrorBoundary fallback={details.content}>
@@ -67,7 +67,7 @@ export function snapShotAccessibilityDetails(
   return text ? { content: text, format: "text" } : undefined;
 }
 
-export function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
+function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
   return Boolean(source.accessibility || source.accessibleText?.trim());
 }
 

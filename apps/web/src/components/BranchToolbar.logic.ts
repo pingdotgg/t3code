@@ -7,12 +7,9 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { toSortableTimestamp } from "../lib/threadSort";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-  sanitizeNewRefName,
-} from "@t3tools/shared/git";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
@@ -21,6 +18,10 @@ export interface EnvironmentOption {
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
 }
+
+/** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
+export const ADD_TO_MACHINE_LABEL_CLASS =
+  "flex min-w-0 items-center gap-1.5 opacity-55 in-data-highlighted:opacity-100 in-data-popup-open:opacity-100";
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
@@ -66,17 +67,16 @@ export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
-  hostsRestingComposerControls: boolean;
 }): boolean {
+  // A new thread always shows the strip, since it names the permissions the first send uses.
   return (
     input.hasActiveProject &&
-    (input.isDraftHeroState || input.persistInActiveThreads) &&
-    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
+    (input.isDraftHeroState ||
+      (input.persistInActiveThreads && (input.isGitRepo || input.showEnvironmentIndicator)))
   );
 }
 
-// Labels collapse to icons when the strip's content no longer fits. A small
-// hysteresis on the way back out keeps the boundary from flapping.
+// Hysteresis prevents labels and icons from flapping at the width boundary.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
 export function resolveContextStripLabelsCompact(input: {
@@ -215,11 +215,10 @@ export function resolveBranchTriggerLabel(input: {
     return "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    const baseRef =
-      startFromOrigin && resolvedActiveBranchIsRemote === false
-        ? `origin/${resolvedActiveBranch}`
-        : resolvedActiveBranch;
-    return `From ${baseRef}`;
+    // Only the server can determine a local branch's configured remote.
+    return startFromOrigin && resolvedActiveBranchIsRemote === false
+      ? `From ${resolvedActiveBranch} (remote)`
+      : `From ${resolvedActiveBranch}`;
   }
   return resolvedActiveBranch;
 }
@@ -249,6 +248,7 @@ export function resolveLocalCheckoutBranchMismatch(input: {
 
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
+  activeProjectCheckoutRoot?: string | undefined;
   activeWorktreePath: string | null;
   refName: Pick<VcsRef, "isDefault" | "worktreePath">;
 }): {
@@ -259,9 +259,14 @@ export function resolveBranchSelectionTarget(input: {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
+    // Until the project's checkout root loads, a checkout containing the project counts as its own.
+    const isProjectCheckout =
+      input.activeProjectCheckoutRoot === undefined
+        ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
+        : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
     return {
       checkoutCwd: refName.worktreePath,
-      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
+      nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
       reuseExistingWorktree: true,
     };
   }

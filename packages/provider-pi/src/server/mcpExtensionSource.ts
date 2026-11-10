@@ -1,7 +1,4 @@
-/**
- * Do not import t3code modules from the string body. The Pi process resolves
- * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
- */
+// No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -10,11 +7,9 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 
-/**
- * Pi tools whose confirmations the bridge raises as file-change approvals.
- * Auto-accept edits skips them; the adapter keys the approval kind off them.
- */
+// These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
@@ -28,6 +23,7 @@ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -91,7 +87,13 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
-    return unsafe(schema);
+    // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
+    // servers reject. Declare it, as Pi does for its own MCP tools.
+    return unsafe({
+      ...schema,
+      type: schema.type ?? "object",
+      ...(schema.properties === undefined ? { properties: {} } : {}),
+    });
   }
   return Type.Object({}, { additionalProperties: true });
 }
@@ -241,6 +243,20 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
+  // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
+  // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
+  let projectTrustChecked = false;
+  pi.on("before_agent_start", (_event, ctx) => {
+    if (projectTrustChecked) return;
+    projectTrustChecked = true;
+    if (ctx.isProjectTrusted() || process.argv.some((arg) => arg === "--no-approve" || arg === "-na")) return;
+    ctx.ui.notify(
+      \`Pi did not load project settings, extensions, skills, prompts, MCP servers or system prompt files for \${ctx.cwd} because the folder is not trusted. To load them, run the configured Pi binary there with the same PI_CODING_AGENT_DIR (if set), trust the folder or its parent with /trust, then start a new thread in that same worktree. To trust every project, add --approve to Pi's launch arguments in T3 Code settings; to keep them off without this notice, add --no-approve.\`,
+      "warning",
+    );
+  });
+
   // Keep skill chips in the request. Pi expands only one leading /skill:
   // command, so use its own frontmatter loader for every selected chip here.
   pi.on("input", async (event, ctx) => {
@@ -273,23 +289,43 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     };
   });
 
-  // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
-  // previous response's usage even when a fork's instructions/tools differ,
-  // then reserves almost all remaining context for output. OpenRouter can
-  // reject even a short conversation. Remove this cap when Pi accounts for
-  // the current request prefix reliably (api/simple-options + utils/estimate).
+  // Pi has no service tier setting, so T3 sets one through this command before each turn.
+  // Only a tier the active model advertises is sent; Standard sends none.
+  let serviceTier: string | undefined;
+  pi.registerCommand(SERVICE_TIER_COMMAND, {
+    description: "Set the service tier T3 Code sends with provider requests",
+    handler: async (args) => {
+      serviceTier = args.trim() || undefined;
+    },
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
-    if (ctx.model?.provider !== "openrouter") return;
     const payload = event.payload;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
     const replacement = { ...payload } as Record<string, unknown>;
     let changed = false;
-    for (const key of ["max_tokens", "max_completion_tokens"]) {
-      const limit = replacement[key];
-      if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
-        replacement[key] = 32_768;
-        changed = true;
+    // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
+    // previous response's usage even when a fork's instructions/tools differ,
+    // then reserves almost all remaining context for output. OpenRouter can
+    // reject even a short conversation. Remove this cap when Pi accounts for
+    // the current request prefix reliably (api/simple-options + utils/estimate).
+    if (ctx.model?.provider === "openrouter") {
+      for (const key of ["max_tokens", "max_completion_tokens"]) {
+        const limit = replacement[key];
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
+          replacement[key] = 32_768;
+          changed = true;
+        }
       }
+    }
+    const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
+    if (
+      serviceTier !== undefined &&
+      Array.isArray(tiers) &&
+      tiers.some((tier) => tier?.id === serviceTier)
+    ) {
+      replacement.service_tier = serviceTier;
+      changed = true;
     }
     if (changed) return replacement;
   });
@@ -448,11 +484,15 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Deliver orchestration guidance through pi's real system-prompt channel.
-  // Wrapping the first user message instead would stop it from starting
-  // with "/" and silently break slash-command expansion.
+  // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
+    const sections = event.systemPromptOptions?.sections;
+    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
+      // A full prompt override bypasses Pi's later section rendering.
+      sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
+      return undefined;
+    }
     return { systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS };
   });
 }

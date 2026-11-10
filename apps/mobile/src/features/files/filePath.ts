@@ -1,13 +1,10 @@
+import type { FilesystemEntryMetadata } from "@t3tools/contracts";
+import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
+import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
-
-export interface FileBreadcrumb {
-  readonly label: string;
-  readonly path: string;
-  readonly kind: "project" | "directory" | "file";
-}
 
 function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
@@ -24,14 +21,6 @@ export function fileRoutePathSegments(path: string): string[] {
 
 function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /^[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
 export function basename(path: string): string {
@@ -66,16 +55,26 @@ function normalizeRelativePath(value: string): string | null {
   return segments.length > 0 ? segments.join("/") : null;
 }
 
+export function resolveFileLinkPath(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): string | null {
+  if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    if (!workspaceRoot) return null;
+    const expanded = resolvePathLinkTarget(targetPath, workspaceRoot);
+    return isAbsolutePath(expanded) ? expanded : null;
+  }
+  return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,
 ): string | null {
-  if (!isAbsolutePath(targetPath)) {
-    if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
-      return null;
-    }
-    return normalizeRelativePath(targetPath);
-  }
+  const resolved = resolveFileLinkPath(workspaceRoot, targetPath);
+  if (resolved === null) return null;
+  targetPath = resolved;
+  if (!isAbsolutePath(targetPath)) return targetPath;
   if (!workspaceRoot) {
     return null;
   }
@@ -112,16 +111,21 @@ export function isMarkdownPreviewFile(path: string): boolean {
   return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 }
 
-export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
-  const parts = relativePath.split("/").filter(Boolean);
-  return [
-    { label: projectName, path: "", kind: "project" },
-    ...parts.map((part, index) => ({
-      label: part,
-      path: parts.slice(0, index + 1).join("/"),
-      kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
-    })),
-  ];
+export function needsWorkspaceFileContents(input: {
+  readonly relativePath: string | null;
+  readonly metadataKind: FilesystemEntryMetadata["kind"] | undefined;
+  readonly activeMode: "preview" | "source";
+}): boolean {
+  const path = input.relativePath;
+  return (
+    input.metadataKind !== "directory" &&
+    path !== null &&
+    !isVideoPreviewFile(path) &&
+    !isAudioPreviewFile(path) &&
+    (input.activeMode === "source" ||
+      isMarkdownPreviewFile(path) ||
+      filePreviewDelimiter({ name: path }) !== null)
+  );
 }
 
 export function fileHeaderSubtitle(projectName: string, relativePath: string): string {
