@@ -317,7 +317,7 @@ const colorForm = {
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
-    readonly version?: "2.2.5";
+    readonly version?: "2.2.5" | "2.2.6";
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
@@ -335,7 +335,7 @@ const resumed = (
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
-        ...(options?.version === "2.2.5"
+        ...(options?.version !== undefined
           ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
           : []),
         ...withInstructions([
@@ -2887,6 +2887,214 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepEqual(
           toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
           toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["completed", "error", "cancelled"] as const)(
+    "retains native image job %s after its launch returns",
+    (outcome) =>
+      Effect.gen(function* () {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-image" };
+        const notice = (sessionID: string) =>
+          event("session.inbox.enqueued", {
+            sessionID,
+            inboxID: `msg_image_${sessionID}`,
+            item: {
+              type: "synthetic",
+              delivery: "steer",
+              payload: {
+                description: "Image generation",
+                text:
+                  outcome === "completed"
+                    ? "Image outcome retained. Saved image: /work/opencode2/image.png (test/image)."
+                    : "Image outcome retained",
+                metadata: {
+                  source: "experimental_image_generate",
+                  jobID: "image_test",
+                  state: outcome,
+                  path: "/work/opencode2/image",
+                },
+              },
+            },
+          });
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.tool.input.started", { ...tool, name: "experimental_image_generate" }),
+            event("session.tool.called", { ...tool, input: { prompt: "A tree" }, executed: false }),
+            event(
+              "session.tool.success",
+              {
+                ...tool,
+                content: [{ type: "text", text: "Job launched" }],
+                metadata: {
+                  jobID: "image_test",
+                  path: "/work/opencode2/image",
+                  model: "test/image",
+                },
+                executed: false,
+              },
+              undefined,
+              2,
+            ),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            notice("ses_other"),
+            notice(SESSION),
+            ...(outcome === "completed"
+              ? [
+                  out("image.read", {
+                    path: "/api/fs/read/image.png",
+                    "location[directory]": WORK,
+                  }),
+                  reply("image.read", { imageBase64: "iVBORw0KGgo=" }),
+                ]
+              : []),
+          ],
+          { external: true },
+        );
+        let launched = false;
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => {
+            if (e.type !== "provider_thread.updated") return false;
+            if (
+              e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_test")
+            )
+              launched = true;
+            return launched && e.pendingBackgroundWork === false;
+          }),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const collected = yield* Fiber.join(events);
+        const items = collected.flatMap((e) =>
+          e.type === "turn_item.updated" && e.turnItem.nativeItemRef?.nativeId === "call-image"
+            ? [e.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((item) => item.status),
+          [
+            "running",
+            "running",
+            "running",
+            outcome === "error" ? "failed" : outcome === "cancelled" ? "interrupted" : "completed",
+          ],
+        );
+        assert.include(JSON.stringify(items.at(-1)), "Image outcome retained");
+        if (outcome === "completed") {
+          const item = items.at(-1);
+          assert.deepEqual(item?.type === "dynamic_tool" ? toolOutputImages(item.output) : [], [
+            { mimeType: "image/png", data: "iVBORw0KGgo=" },
+          ]);
+        }
+        const rosters = collected.flatMap((e) =>
+          e.type === "provider_thread.updated"
+            ? [e.providerThread.pendingBackgroundTasks ?? []]
+            : [],
+        );
+        assert.isTrue(rosters.some((tasks) => tasks.some((task) => task.taskId === "image_test")));
+        assert.deepEqual(rosters.at(-1), []);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["history", "list"] as const)(
+    "recovers native image job outcomes from %s after reconnect",
+    (source) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            ...(() => {
+              const frames: Array<ProviderReplayEntry> = reconnected({}, "succeeded", {
+                content: [
+                  {
+                    type: "tool",
+                    id: "call-image-gap",
+                    name: "experimental_image_generate",
+                    executed: false,
+                    state: {
+                      status: "completed",
+                      input: { prompt: "A tree" },
+                      content: [{ type: "text", text: "Job launched" }],
+                      metadata: { jobID: "image_gap", path: "/tmp/image", model: "test/image" },
+                    },
+                    time: { created: 2, ran: 2, completed: 2 },
+                  },
+                ],
+              });
+              if (source === "list")
+                frames.splice(2, 0, out("rpc.call", "<any>"), reply("rpc.call", { output: null }));
+              return frames;
+            })(),
+            out("message.list", { sessionID: SESSION, type: "synthetic", limit: "100" }),
+            reply("message.list", {
+              data:
+                source === "list"
+                  ? []
+                  : [
+                      {
+                        id: "msg_image_gap",
+                        time: { created: 3 },
+                        type: "synthetic",
+                        text: "Recovered image failure",
+                        description: "Image generation",
+                        metadata: {
+                          source: "experimental_image_generate",
+                          jobID: "image_gap",
+                          state: "error",
+                          path: "/tmp/image",
+                        },
+                      },
+                    ],
+              cursor: {},
+            }),
+            ...(source === "list"
+              ? [
+                  out("imageJobs", { sessionID: SESSION, kind: "image" }),
+                  reply("imageJobs", {
+                    data: [
+                      {
+                        kind: "image",
+                        id: "image_gap",
+                        sessionID: SESSION,
+                        status: "error",
+                        path: "/tmp/image",
+                        model: "test/image",
+                        time: { started: 2, completed: 3 },
+                      },
+                    ],
+                  }),
+                ]
+              : []),
+          ],
+          source === "list" ? { version: "2.2.6" } : undefined,
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.nativeItemRef?.nativeId === "call-image-gap" &&
+              e.turnItem.status === "failed",
+          ),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const collected = yield* Fiber.join(events);
+        assert.include(
+          JSON.stringify(collected.at(-1)),
+          source === "list" ? "Image generation error" : "Recovered image failure",
+        );
+        assert.isTrue(
+          collected.some(
+            (e) =>
+              e.type === "provider_thread.updated" &&
+              e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_gap"),
+          ),
         );
       }).pipe(Effect.scoped),
   );

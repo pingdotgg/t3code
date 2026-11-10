@@ -1,3 +1,4 @@
+import * as Path from "effect/Path";
 import { OpenCode, type OpenCodeClient } from "@opencode/client/effect";
 import { OpenCodeEvent } from "@opencode/protocol/groups/event";
 import * as Context from "effect/Context";
@@ -50,9 +51,34 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
+export class OpenCode2ImageError extends Schema.TaggedError<OpenCode2ImageError>()(
+  "OpenCode2ImageError",
+  { cause: Schema.Defect() },
+) {}
+
+const NativeImageJob = Schema.Struct({
+  kind: Schema.Literal("image"),
+  id: Schema.String,
+  sessionID: Schema.String,
+  status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+  path: Schema.String,
+  model: Schema.String,
+});
+const decodeJobs = Schema.decodeUnknownEffect(
+  Schema.Struct({ data: Schema.Array(Schema.Unknown) }),
+);
+const decodeImageJob = Schema.decodeUnknownOption(NativeImageJob);
+
 /** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
+  readonly imageJobs: (
+    sessionID: string,
+  ) => Effect.Effect<ReadonlyArray<typeof NativeImageJob.Type>, OpenCode2ImageError>;
+  readonly readImage: (
+    path: string,
+    directory: string,
+  ) => Effect.Effect<{ uri: string; mime: string }, OpenCode2ImageError>;
   readonly events: Effect.Effect<
     Stream.Stream<
       OpenCode2StreamEvent,
@@ -202,6 +228,7 @@ const fillCompactionRecents = HttpClient.transformResponse(
 /** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
+  const paths = yield* Path.Path.pipe(Effect.provide(Path.layer));
   return OpenCode2Client.of({
     connect: Effect.fn("OpenCode2Client.connect")(function ({ baseUrl, password }) {
       const authenticated = HttpClient.mapRequest(
@@ -212,6 +239,59 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, fillCompactionRecents(authenticated)),
         Effect.map((client) => ({
           client,
+          imageJobs: (sessionID: string) =>
+            authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, kind: "image" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap((response) => response.json),
+                Effect.flatMap(decodeJobs),
+                Effect.map((page) =>
+                  page.data.flatMap((item) => {
+                    const job = decodeImageJob(item);
+                    return Option.isSome(job) && job.value.sessionID === sessionID
+                      ? [job.value]
+                      : [];
+                  }),
+                ),
+                Effect.mapError((cause) => new OpenCode2ImageError({ cause })),
+              ),
+          readImage: Effect.fn("OpenCode2Client.readImage")(
+            function* (path: string, directory: string) {
+              const mime = (
+                {
+                  ".png": "image/png",
+                  ".jpg": "image/jpeg",
+                  ".jpeg": "image/jpeg",
+                  ".webp": "image/webp",
+                  ".gif": "image/gif",
+                } as Record<string, string>
+              )[paths.extname(path).toLowerCase()];
+              if (mime === undefined)
+                return yield* new OpenCode2ImageError({ cause: "Unsupported image format" });
+              const relative = paths.relative(directory, path);
+              // OpenCode confines reads to the requested location, including its own temp images.
+              const outside =
+                relative === ".." ||
+                relative.startsWith(`..${paths.sep}`) ||
+                paths.isAbsolute(relative);
+              const location = outside ? paths.dirname(path) : directory;
+              const file = outside ? paths.basename(path) : relative;
+              const response = yield* authenticated
+                .get(`${baseUrl}/api/fs/read/${encodeURIComponent(file)}`, {
+                  urlParams: { "location[directory]": location },
+                })
+                .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+              const bytes = yield* response.arrayBuffer;
+              if (bytes.byteLength > 20 * 1024 * 1024)
+                return yield* new OpenCode2ImageError({ cause: "Image exceeds preview limit" });
+              return { uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`, mime };
+            },
+            Effect.timeout("10 seconds"),
+            Effect.mapError((cause) => new OpenCode2ImageError({ cause })),
+          ),
           events: readEvents.pipe(
             Effect.provideService(
               HttpClient.HttpClient,
