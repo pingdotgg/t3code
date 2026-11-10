@@ -5,6 +5,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 /**
  * Every window stops at the byte budget. A window that holds a user turn also
@@ -84,11 +85,12 @@ export type BoundedProjectionResult = {
   readonly latestLocalTurnOrdinal: number | null;
 };
 
-export class InvalidThreadHistoryCursorError extends Error {
-  readonly _tag = "InvalidThreadHistoryCursorError";
-  constructor(message = "Invalid thread history cursor.") {
-    super(message);
-    this.name = "InvalidThreadHistoryCursorError";
+export class InvalidThreadHistoryCursorError extends Schema.TaggedError<InvalidThreadHistoryCursorError>()(
+  "InvalidThreadHistoryCursorError",
+  {},
+) {
+  override get message(): string {
+    return "Invalid thread history cursor.";
   }
 }
 
@@ -331,16 +333,16 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
     turnLimit === undefined ? policy.maxItems : (policy.maxTurnItems ?? policy.maxItems);
   for (let index = end - 1; index >= 0; index -= 1) {
     const row = input.items[index]!;
-    const rowBytes = rowCost(row);
     if (
       selected.length > 0 &&
       (selected.length >= maxItems ||
-        encodedBytes + rowBytes > policy.maxEncodedBytes ||
         (turnLimit !== undefined &&
           (userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)))
     ) {
       break;
     }
+    const rowBytes = rowCost(row);
+    if (selected.length > 0 && encodedBytes + rowBytes > policy.maxEncodedBytes) break;
     selected.push(row);
     encodedBytes += rowBytes;
     if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
@@ -501,6 +503,29 @@ function isLocalProjectedRow(
   return row.visibility === "local" || String(row.sourceThreadId) === String(projection.thread.id);
 }
 
+function pendingRequestIdsOf(
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
+): ReadonlySet<string> {
+  return new Set(
+    projection.runtimeRequests
+      .filter((request) => request.status === "pending")
+      .map((request) => String(request.id)),
+  );
+}
+
+// Clients build the answer panel of an open question or approval from its row,
+// and a run that kept working pushes that row out of the newest turns.
+function isRetainedDependency(
+  item: OrchestrationV2TurnItem,
+  pendingRequestIds: ReadonlySet<string>,
+): boolean {
+  return (
+    item.type === "run_interrupt_request" ||
+    ((item.type === "user_input_request" || item.type === "approval_request") &&
+      pendingRequestIds.has(String(item.requestId)))
+  );
+}
+
 /** Retain small requests outside the visible window; later result pages still need them for attempt/run reducers. */
 function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
@@ -513,9 +538,10 @@ function retainedInterruptRequestTurnItems(
     }
   }
 
+  const pendingRequestIds = pendingRequestIdsOf(projection);
   const retained: OrchestrationV2TurnItem[] = [];
   for (const item of projection.turnItems) {
-    if (item.type !== "run_interrupt_request") {
+    if (!isRetainedDependency(item, pendingRequestIds)) {
       continue;
     }
     if (visibleLocalIds.has(String(item.id))) {
@@ -635,8 +661,9 @@ export function buildBoundedThreadProjection(input: {
 
   const dependencyReserve = (() => {
     let reserve = 0;
+    const pendingRequestIds = pendingRequestIdsOf(controlProjection);
     for (const item of controlProjection.turnItems) {
-      if (item.type === "run_interrupt_request") {
+      if (isRetainedDependency(item, pendingRequestIds)) {
         reserve += bytesOfJson(item);
       }
     }
@@ -648,10 +675,9 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
-  // Control state (checkpoint file lists, the latest task list) cannot be paged, so it may claim at most
-  // half the budget; past that the window would shrink to the one row every page admits.
+  // Control state cannot be paged, so the window keeps half the budget; dependency cards take their reserve from that half.
   const windowBudget = Math.max(
-    policy.maxEncodedBytes / 2,
+    Math.max(policy.maxEncodedBytes / 2 - dependencyReserve, 0),
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = { ...policy, maxEncodedBytes: windowBudget };
