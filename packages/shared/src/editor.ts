@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPath } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
 
@@ -48,6 +48,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
   const candidates: string[] = [];
+  // OpenZFS installs its event daemon as zed, in sbin or beside zpool. Nix links both into one bin.
+  const isZfsEventDaemon = Effect.fn("editor.isZfsEventDaemon")(function* (resolved: string) {
+    if (path.basename(resolved) !== "zed") return false;
+    const dir = path.dirname(
+      yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
+    );
+    if (path.basename(dir) === "sbin") return true;
+    return yield* fs.exists(path.join(dir, "zpool")).pipe(Effect.orElseSucceed(() => false));
+  });
 
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
@@ -143,13 +152,21 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   }
 
   if (preferBundle) candidates.push(...editor.commands);
+  const found = (command: string) =>
+    Option.some({
+      command,
+      baseArgs:
+        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+    });
   for (const candidate of candidates) {
-    if (yield* isCommandAvailable(candidate, { env })) {
-      return Option.some({
-        command: candidate,
-        baseArgs:
-          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-      });
+    const resolved = yield* resolveCommandPath(candidate, { env });
+    if (resolved === null) continue;
+    if (editor.id !== "zed" || !(yield* isZfsEventDaemon(resolved))) return found(candidate);
+    if (candidate !== "zed") continue;
+    // OpenZFS zed can shadow the editor's zed in a later PATH entry.
+    for (const dir of (env.PATH ?? "").split(":")) {
+      const later = dir ? yield* resolveCommandPath(path.join(dir, "zed"), { env }) : null;
+      if (later !== null && !(yield* isZfsEventDaemon(later))) return found(later);
     }
   }
   return Option.none();

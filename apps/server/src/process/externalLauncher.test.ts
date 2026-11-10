@@ -504,24 +504,33 @@ for (const { layout, pathNames, fallbackNames, expected } of [
   );
 }
 
-it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directory", () =>
+it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Zed", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-fallback-" });
     const localBin = path.join(home, ".local/bin");
+    const zedApp = path.join(home, ".local/zed.app/bin");
     const systemBin = path.join(home, "system-bin");
+    const sbin = path.join(home, "sbin");
+    const optZed = path.join(home, "opt/zed/bin");
+    // Arch keeps OpenZFS zed beside zpool, Debian keeps it in sbin, and Nix links zpool beside Zed.
     for (const [dir, name] of [
-      [localBin, "zed"],
+      [zedApp, "zed"],
+      [localBin, "zpool"],
       [systemBin, "zeditor"],
+      [systemBin, "zed"],
+      [systemBin, "zpool"],
+      [sbin, "zed"],
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
       yield* fs.writeFileString(executable, "#!/bin/sh\n");
       yield* fs.chmod(executable, 0o755);
     }
+    yield* fs.symlink(path.join(zedApp, "zed"), path.join(localBin, "zed"));
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: "" }).pipe(
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: `${sbin}:${optZed}` }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, {
         ...path,
@@ -542,6 +551,51 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
       yield* resolve,
       Option.some({ command: path.join(localBin, "zed"), baseArgs: [] }),
     );
+    yield* fs.remove(path.join(localBin, "zed"));
+    assert.deepEqual(yield* resolve, Option.none());
+    yield* fs.makeDirectory(optZed, { recursive: true });
+    yield* fs.writeFileString(path.join(optZed, "zed"), "#!/bin/sh\n");
+    yield* fs.chmod(path.join(optZed, "zed"), 0o755);
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(optZed, "zed"), baseArgs: [] }),
+    );
+    yield* fs.remove(path.join(optZed, "zed"));
+    yield* fs.remove(path.join(systemBin, "zpool"));
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(systemBin, "zed"), baseArgs: [] }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("never launches the OpenZFS zed for Zed", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-launch-" });
+    const sbin = path.join(home, "sbin");
+    yield* fs.makeDirectory(sbin, { recursive: true });
+    yield* fs.writeFileString(path.join(sbin, "zed"), "#!/bin/sh\n");
+    yield* fs.chmod(path.join(sbin, "zed"), 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" }).pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: home, PATH: sbin },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    // A host with Zed in /usr/bin may launch it; only the OpenZFS zed is wrong.
+    assert.notInclude(["zed", path.join(sbin, "zed")], spawned?.command);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
