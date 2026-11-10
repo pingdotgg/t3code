@@ -1,4 +1,4 @@
-import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { ProviderInstanceId, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -227,7 +227,9 @@ function withOpenCodeTextGeneration<A, E, R>(
     const serverOwner = yield* OpenCodeServerOwner.make({
       binaryPath: settings.binaryPath,
       directory: process.cwd(),
-      ...(settings.serverPassword ? { serverPassword: settings.serverPassword } : {}),
+      ...(settingsSecretLiteral(settings.serverPassword)
+        ? { serverPassword: settingsSecretLiteral(settings.serverPassword) }
+        : {}),
       ...(environment ? { environment } : {}),
     });
     const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings).pipe(
