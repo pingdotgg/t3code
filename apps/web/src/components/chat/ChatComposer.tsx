@@ -102,6 +102,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  resolvePromotedComposerDraftTarget,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1821,6 +1822,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
+    detachDraft: questionAttachmentTarget
+      ? undefined
+      : () => ({
+          readDraft: () => {
+            const target = resolvePromotedComposerDraftTarget(composerDraftTarget);
+            const text = getComposerDraft(target)?.prompt ?? "";
+            return { text, selection: { start: text.length, end: text.length } };
+          },
+          commitDraft: (text) =>
+            setComposerDraftPrompt(resolvePromotedComposerDraftTarget(composerDraftTarget), text),
+        }),
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   const voiceSendDisabledReason =

@@ -73,6 +73,11 @@ macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
 five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
+Switching threads while dictating in the composer finishes the recording into
+the draft of the thread you started in; dictation in another thread can start
+once it is done. If that transcript cannot be added, a notification says why and
+the recording is discarded. A spoken answer to an agent's question is discarded
+instead.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In

@@ -4439,6 +4439,14 @@ export function useComposerDraftModelState(
   );
 }
 
+/** A finalized draft's content lives under the server thread it was promoted to. */
+export function resolvePromotedComposerDraftTarget(
+  target: ComposerThreadTarget,
+): ComposerThreadTarget {
+  if (typeof target !== "string") return target;
+  return useComposerDraftStore.getState().getPromotedDraftRedirect(target) ?? target;
+}
+
 export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
   const draftStore = useComposerDraftStore.getState();
   for (const [draftId, draftThread] of Object.entries(draftStore.draftThreadsByThreadKey)) {
