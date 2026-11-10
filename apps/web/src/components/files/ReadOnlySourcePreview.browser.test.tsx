@@ -55,10 +55,13 @@ describe("ReadOnlySourcePreview", () => {
     await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
     expect(copiedText(rows()[0]!)).toBe(text);
 
-    // A selection that ends inside the mounted rows stays the browser's to copy.
+    // A selection that stops inside the mounted rows at either end stays the browser's to copy.
+    const pre = root.querySelector("pre")!;
     const firstText = rows()[0]!.querySelector("span")!.firstChild!;
     const lastText = rows()[rows().length - 1]!.querySelector("span")!.firstChild!;
-    document.getSelection()!.setBaseAndExtent(firstText, 0, lastText, 4);
+    document.getSelection()!.setBaseAndExtent(pre, 0, lastText, 4);
+    expect(copiedText(rows()[0]!)).toBeNull();
+    document.getSelection()!.setBaseAndExtent(firstText, 4, pre, pre.childNodes.length);
     expect(copiedText(rows()[0]!)).toBeNull();
   });
 });
