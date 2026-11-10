@@ -217,6 +217,8 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const [task] = projection.subagents;
       assert.equal(task?.childThreadId, null);
       assert.deepEqual(task?.remoteChild, remoteChild);
+      // Clients name the task's model and effort from the selection it was started with.
+      assert.deepEqual(task?.modelSelection, modelSelection);
       assert.equal(task?.status, "running");
       const item = projection.turnItems.find((candidate) => candidate.type === "subagent");
       assert.deepEqual(item?.type === "subagent" ? item.remoteChild : undefined, remoteChild);

@@ -347,6 +347,30 @@ export function selectLayoutPaneSlots(
   return { slots, stripWidth, fits, unitWidth };
 }
 
+/**
+ * A top pane starting this close to the strip's left edge shares its row with
+ * the collapsed sidebar's toggle and arrows, so its header makes room for them.
+ */
+const WINDOW_START_EDGE_PX = 160;
+
+export function selectWindowStartPaneId(
+  slots: readonly LayoutPaneSlot[],
+  scrollLeft: number,
+  stripPx: number,
+): string | null {
+  let startPaneId: string | null = null;
+  let startPx = Number.POSITIVE_INFINITY;
+  for (const slot of slots) {
+    if (slot.hasAbove) continue;
+    const screenLeft = slot.rect.left * stripPx - scrollLeft;
+    if (screenLeft > -1 && screenLeft < WINDOW_START_EDGE_PX && screenLeft < startPx) {
+      startPx = screenLeft;
+      startPaneId = slot.paneId;
+    }
+  }
+  return startPaneId;
+}
+
 /** The pane with this id and where it sits, or null. */
 export function findLayoutPane(
   state: LayoutState,
@@ -881,16 +905,15 @@ export function focusLayoutWorkspaceStep(state: LayoutState, delta: 1 | -1): Lay
 
 /**
  * Move the focused tab to the end of the workspace below or above; focus
- * follows. Below the last
- * workspace is the empty one, so this is also how a thread gets a new
- * workspace of its own.
+ * follows. Below the last workspace is the empty one, and above the first a
+ * new one opens, so this is also how a thread gets a workspace of its own.
  */
 export function moveLayoutTabToWorkspace(state: LayoutState, delta: 1 | -1): LayoutState {
   const chat = selectFocusedChatTab(state);
   if (!chat) return state;
   const index = state.workspaces.indexOf(chat.workspace);
   const target = state.workspaces[index + delta];
-  if (!target) return state;
+  if (!target) return delta === -1 ? moveLayoutTabToNewWorkspace(state, chat.tab.id, 0) : state;
   // A workspace's only chat moving into the empty one would just trade places.
   const tabsInWorkspace = chat.workspace.columns
     .flatMap((column) => column.panes)
@@ -1006,16 +1029,11 @@ export function renameLayoutWorkspace(
   );
 }
 
-/** The chat tab a workspace is named after when it has no name of its own. */
+/** The tab a workspace is named after when it has no name of its own. */
 export function selectLayoutWorkspaceLeadTab(workspace: LayoutWorkspace): LayoutTab | null {
-  for (const column of workspace.columns) {
-    for (const pane of column.panes) {
-      const tab =
-        pane.tabs.find((candidate) => candidate.id === pane.activeTabId) ?? pane.tabs[0] ?? null;
-      if (tab?.content.kind === "chat") return tab;
-    }
-  }
-  return null;
+  const panes = workspace.columns.flatMap((column) => column.panes);
+  const pane = panes.find((candidate) => candidate.id === workspace.focusedPaneId) ?? panes[0];
+  return pane?.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane?.tabs[0] ?? null;
 }
 
 /** Scoped keys of every server thread a chat tab holds, in any workspace, sorted. */
@@ -1058,6 +1076,7 @@ function insertTabIntoPane(
   paneId: string,
   tab: LayoutTab,
   index: number | "after-current" | "end",
+  focus = true,
 ): LayoutState {
   const inserted = mapPanes(state, (pane) => {
     if (pane.id !== paneId) return pane;
@@ -1071,7 +1090,7 @@ function insertTabIntoPane(
     tabs.splice(at, 0, tab);
     return { ...pane, tabs, activeTabId: tab.id };
   });
-  return focusLayoutPane(inserted, paneId);
+  return focus ? focusLayoutPane(inserted, paneId) : inserted;
 }
 
 function insertColumn(
@@ -1079,6 +1098,7 @@ function insertColumn(
   workspaceId: string,
   index: number,
   column: LayoutColumn,
+  focus = true,
 ): LayoutState {
   const inserted = mapWorkspaces(state, (workspace) => {
     if (workspace.id !== workspaceId) return workspace;
@@ -1086,7 +1106,8 @@ function insertColumn(
     columns.splice(Math.max(0, Math.min(index, columns.length)), 0, column);
     return { ...workspace, columns };
   });
-  return focusLayoutPane(normalizeLayout(inserted), column.panes[0]!.id);
+  const normalized = normalizeLayout(inserted);
+  return focus ? focusLayoutPane(normalized, column.panes[0]!.id) : normalized;
 }
 
 /**
@@ -1125,6 +1146,7 @@ function splitPaneWithTab(
   paneId: string,
   side: LayoutDirection,
   tab: LayoutTab,
+  focus = true,
 ): LayoutState {
   const found = findPane(state, paneId);
   if (!found) return state;
@@ -1138,7 +1160,13 @@ function splitPaneWithTab(
             ? companionRunEnd(found.workspace, columnIndex)
             : columnIndex) + 1;
     // A horizontal split adds a full-width column without resizing its source.
-    return insertColumn(state, found.workspace.id, insertIndex, createColumn(createPane(tab)));
+    return insertColumn(
+      state,
+      found.workspace.id,
+      insertIndex,
+      createColumn(createPane(tab)),
+      focus,
+    );
   }
   const size = found.pane.size / 2;
   const newPane = createPane(tab, size);
@@ -1158,7 +1186,7 @@ function splitPaneWithTab(
           }),
         },
   );
-  return focusLayoutPane(split, newPane.id);
+  return focus ? focusLayoutPane(split, newPane.id) : split;
 }
 
 /**
@@ -1656,10 +1684,16 @@ export function placeLayoutTabs(
   let next: LayoutState;
   if (destination.kind === "pane") {
     if (!findPane(state, destination.paneId)) return state;
-    next = insertTabIntoPane(state, destination.paneId, first, destination.index ?? "end");
+    next = insertTabIntoPane(
+      state,
+      destination.paneId,
+      first,
+      destination.index ?? "end",
+      options.focus,
+    );
   } else if (destination.kind === "split") {
     if (!findPane(state, destination.paneId)) return state;
-    next = splitPaneWithTab(state, destination.paneId, destination.side, first);
+    next = splitPaneWithTab(state, destination.paneId, destination.side, first, options.focus);
   } else {
     if (!state.workspaces.some((workspace) => workspace.id === destination.workspaceId)) {
       return state;
@@ -1669,6 +1703,7 @@ export function placeLayoutTabs(
       destination.workspaceId,
       destination.index,
       createColumn(createPane(first)),
+      options.focus,
     );
   }
   const pane = findLayoutTab(next, (tab) => tab.id === first.id)?.pane;
@@ -1777,6 +1812,61 @@ export function resizeLayoutColumn(
       ),
     };
   });
+}
+
+export function resizeLayoutColumnEdge(
+  state: LayoutState,
+  columnId: string,
+  width: number,
+  mode: LayoutWhenNoRoom,
+  cameraWidth: number,
+  drawnUnitWidth = cameraWidth,
+): LayoutState {
+  const scale = drawnUnitWidth / cameraWidth;
+  const rebased =
+    scale === 1
+      ? state
+      : mapWorkspaces(state, (workspace) =>
+          workspace.columns.some((column) => column.id === columnId)
+            ? {
+                ...workspace,
+                columns: workspace.columns.map((column) => ({
+                  ...column,
+                  width: column.width * scale,
+                })),
+              }
+            : workspace,
+        );
+  const workspace = rebased.workspaces.find((candidate) =>
+    candidate.columns.some((column) => column.id === columnId),
+  );
+  const index = workspace?.columns.findIndex((column) => column.id === columnId) ?? -1;
+  const neighbor = workspace?.columns[index + 1];
+  if (mode !== "always-shrink" || !workspace || !neighbor || !Number.isFinite(width)) {
+    return arrangeLayoutWorkspaces(
+      state,
+      resizeLayoutColumn(rebased, columnId, width),
+      cameraWidth,
+    );
+  }
+  const pair = workspace.columns[index]!.width + neighbor.width;
+  const floor = Math.min(LAYOUT_MIN_COLUMN_WIDTH, pair / 2);
+  const resized = Math.min(pair - floor, Math.max(floor, width));
+  const shared = mapWorkspaces(rebased, (candidate) =>
+    candidate === workspace
+      ? {
+          ...candidate,
+          columns: candidate.columns.map((column, columnIndex) =>
+            columnIndex === index
+              ? { ...column, width: resized }
+              : columnIndex === index + 1
+                ? { ...column, width: pair - resized }
+                : column,
+          ),
+        }
+      : candidate,
+  );
+  return arrangeLayoutWorkspaces(state, shared, cameraWidth);
 }
 
 /** Step to the next width preset, wrapping from 2/3 back to 1/3. A lone column keeps filling the window. */

@@ -168,6 +168,7 @@ function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?:
 }
 
 const compactWorkEntryHeight = 24;
+const expandedWorkEntryHeight = 28;
 
 function ExpandedWorkGroupEntries({
   anchorKey,
@@ -259,7 +260,9 @@ function ExpandedWorkGroupEntries({
   }, [updateScrollFades]);
 
   const renderEntry = ({ item }: { item: TimelineWorkEntry }) => (
-    <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    <div className="min-h-7">
+      <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    </div>
   );
 
   const updateExpandedContentHeight = () => {
@@ -269,7 +272,7 @@ function ExpandedWorkGroupEntries({
       if (state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+        (state.sizes.get(entryId) ?? expandedWorkEntryHeight) - expandedWorkEntryHeight,
       );
     }
     setExpandedContentHeight(height);
@@ -287,7 +290,7 @@ function ExpandedWorkGroupEntries({
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={compactWorkEntryHeight}
+          estimatedItemSize={expandedWorkEntryHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -399,10 +402,11 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
         </WorkFoldToggle>
-        {backgroundWorktreeSetup ? (
-          <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
-        ) : null}
-        <div className="ms-auto flex min-w-0 items-center justify-end">
+        {/* One trailing group: two auto margins would split the free space and center the chip. */}
+        <div className="ms-auto flex min-w-0 items-center justify-end gap-2">
+          {backgroundWorktreeSetup ? (
+            <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
+          ) : null}
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
       </div>
@@ -426,7 +430,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
           <Button
             variant="ghost-muted"
             size="micro"
-            className="ml-auto min-w-0 shrink-0"
+            className="min-w-0 shrink-0"
             aria-label={`Background setup is still running: ${scriptName}. Show setup progress.`}
           />
         }
@@ -699,20 +703,22 @@ function WorkGroupHeader(props: {
   onToggle: () => void;
 }) {
   return (
-    <WorkLogButton
-      aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
-      aria-expanded={props.expanded}
-      onClick={props.onToggle}
-      icon={
-        <ToolActivityIconView
-          icon={props.toolIcon}
-          fallbackName={props.iconName}
-          className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
-          muted
-        />
-      }
-      label={<span className="block truncate text-secondary-label">{props.label}</span>}
-    />
+    <div className="pb-2">
+      <WorkLogButton
+        aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+        aria-expanded={props.expanded}
+        onClick={props.onToggle}
+        icon={
+          <ToolActivityIconView
+            icon={props.toolIcon}
+            fallbackName={props.iconName}
+            className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
+            muted
+          />
+        }
+        label={<span className="block truncate text-secondary-label">{props.label}</span>}
+      />
+    </div>
   );
 }
 
@@ -826,7 +832,7 @@ function WorkingWindowText({
   const textRef = useCarriedTextFade(item.message.id);
   if (text.trim().length === 0) return null;
   return (
-    <div ref={textRef} className="min-w-0 py-2">
+    <div ref={textRef} className="min-w-0 px-1 py-2">
       <AssistantCitationSource
         messageId={item.message.id}
         {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}

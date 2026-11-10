@@ -15,7 +15,7 @@ workspaces stacked vertically, with an overview to move between them.
   new column. Inside a terminal, `mod+d` and `mod+shift+d` split the terminal.
 - **Terminal and surfaces:** a diff, files, a browser, a terminal or a pull request is a
   tab of its own, named after its thread, and moves like any tab.
-  `mod+j` puts the thread's terminal below its chat, `mod+d` its diff beside it, and
+  `mod+j` puts the thread's terminal below its chat, `mod+d` its diff beside it, `mod+l` its linked pull requests beside it, and
   `mod+alt+b` its other tabs beside it, or a new tab there when it has nothing open yet;
   the same keys hide them again, still running. A hidden terminal stays in the chat's
   notch. Closing a chat leaves its surface tabs open.

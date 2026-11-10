@@ -40,6 +40,7 @@ vi.mock(import("../../state/entities"), () => ({
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
+  useEnvironmentMachines: (() => new Map()) as never,
   useEnvironmentProviders: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
