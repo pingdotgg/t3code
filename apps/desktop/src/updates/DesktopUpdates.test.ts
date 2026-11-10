@@ -465,23 +465,8 @@ describe("DesktopUpdates", () => {
   });
 
   // regression: #19291 an install that did apply was still flagged as not applied
-  it.effect("does not flag an install that applied", () => {
-    const harness = makeHarness({
-      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        assert.isUndefined((yield* updates.getState).notAppliedVersion);
-        assert.isUndefined(harness.previousInstallRecord());
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   // regression: #32554 the downloaded copy of the applied build stayed in the updater cache
-  it.effect("removes the updater's pending download once an install applied", () => {
+  it.effect("does not flag an install that applied", () => {
     const harness = makeHarness({
       installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
       appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
@@ -492,6 +477,8 @@ describe("DesktopUpdates", () => {
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
+        assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        assert.isUndefined(harness.previousInstallRecord());
         assert.deepInclude(
           harness.removedPaths,
           { path: `${updaterCacheDir}/pending`, recursive: true },
@@ -504,6 +491,32 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("keeps an applied install's record until its download is removed", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+        appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+      });
+      const pendingPath = `${harness.homeDirectory}/Library/Caches/t3code-updater/pending`;
+      const launch = Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+
+      harness.pendingRemoval.fails = true;
+      yield* launch;
+      assert.isDefined(harness.previousInstallRecord());
+
+      harness.pendingRemoval.fails = false;
+      yield* launch;
+      assert.deepInclude(harness.removedPaths, { path: pendingPath, recursive: true });
+      assert.isUndefined(harness.previousInstallRecord());
+    }),
+  );
 
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {

@@ -241,6 +241,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const updateRestartMarkers = new Set<string>();
   const removedPaths: Array<{ readonly path: string; readonly recursive: boolean }> = [];
   const installRecords = new Map<string, string>();
+  const pendingRemoval = { fails: false };
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
@@ -271,12 +272,21 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         else updateRestartMarkers.add(path);
       }),
     remove: (path, removeOptions) =>
-      Effect.sync(() => {
-        removedPaths.push({ path, recursive: removeOptions?.recursive === true });
-        updateRestartMarkers.delete(path);
-        installRecords.delete(path);
-        if (isInstallRecord(path)) previousInstallRecord = undefined;
-      }),
+      pendingRemoval.fails && path.endsWith("/pending")
+        ? Effect.fail(
+            PlatformError.systemError({
+              module: "FileSystem",
+              method: "remove",
+              _tag: "Busy",
+              pathOrDescriptor: path,
+            }),
+          )
+        : Effect.sync(() => {
+            removedPaths.push({ path, recursive: removeOptions?.recursive === true });
+            updateRestartMarkers.delete(path);
+            installRecords.delete(path);
+            if (isInstallRecord(path)) previousInstallRecord = undefined;
+          }),
   });
 
   const layer = DesktopUpdates.layer.pipe(
@@ -308,6 +318,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     installRecords,
     homeDirectory,
     removedPaths,
+    pendingRemoval,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,

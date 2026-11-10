@@ -687,7 +687,7 @@ export const make = Effect.gen(function* () {
     Effect.map(Option.flatMap((config) => Option.fromNullishOr(config.updaterCacheDirName))),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.void,
+        onNone: () => Effect.succeed(true),
         onSome: (updaterCacheDirName) =>
           fileSystem
             .remove(
@@ -695,33 +695,32 @@ export const make = Effect.gen(function* () {
               { recursive: true, force: true },
             )
             .pipe(
+              Effect.as(true),
               Effect.catch((error) =>
                 logUpdaterWarning("Could not remove the applied update's download.", {
                   errorTag: error._tag,
-                }),
+                }).pipe(Effect.as(false)),
               ),
             ),
       }),
     ),
   );
 
-  const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
-    Effect.flatMap(decodeInstallRecord),
-    Effect.option,
-    Effect.tap((record) =>
+  // Windows' installer can still hold pending/ at first launch; the kept record retries next launch.
+  const readNotAppliedInstallVersion = Effect.gen(function* () {
+    const record = yield* fileSystem
+      .readFileString(installRecordPath)
+      .pipe(Effect.flatMap(decodeInstallRecord), Effect.option);
+    const cleanedUp =
       Option.isSome(record) && record.value.targetVersion === environment.appVersion
-        ? removeAppliedUpdateDownload
-        : Effect.void,
-    ),
-    Effect.map((record) =>
-      Option.flatMap(record, (value) =>
-        Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
-      ),
-    ),
-    Effect.tap((notAppliedVersion) =>
-      Option.isNone(notAppliedVersion) ? removeInstallRecord : Effect.void,
-    ),
-  );
+        ? yield* removeAppliedUpdateDownload
+        : true;
+    const notAppliedVersion = Option.flatMap(record, (value) =>
+      Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
+    );
+    if (Option.isNone(notAppliedVersion) && cleanedUp) yield* removeInstallRecord;
+    return notAppliedVersion;
+  });
 
   const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: Option.Option<string>) =>
     Ref.get(notAppliedVersionRef).pipe(
