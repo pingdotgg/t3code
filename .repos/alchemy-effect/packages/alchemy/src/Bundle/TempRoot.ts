@@ -1,8 +1,8 @@
+import * as crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { Stack } from "../Stack.ts";
 import { Stage } from "../Stage.ts";
 
@@ -33,11 +33,7 @@ export const resolveMainPath = Effect.fn(function* (main: string) {
  * nonce) so concurrent bundle operations for the same resource never collide.
  * Stale directories from previous crashed runs are cleaned up best-effort.
  */
-export const createTempBundleDir = (
-  _entry: string,
-  dotAlchemy: string,
-  id: string,
-) =>
+export const createTempBundleDir = (_entry: string, dotAlchemy: string, id: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -59,11 +55,7 @@ export const createTempBundleDir = (
  * Useful for Docker build contexts where keeping the directory stable avoids
  * unnecessary file churn between builds.
  */
-export const getStableContextDir = (
-  _entry: string,
-  dotAlchemy: string,
-  id: string,
-) =>
+export const getStableContextDir = (_entry: string, dotAlchemy: string, id: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

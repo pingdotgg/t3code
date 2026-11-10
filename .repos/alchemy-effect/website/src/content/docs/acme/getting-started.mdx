@@ -9,7 +9,8 @@ limits. The resulting certificate is deliberately **not trusted by browsers**.
 
 ## Prepare the project
 
-Install Alchemy and the matching Effect version using [Cloudflare setup](/cloudflare/setup).
+Install Alchemy and the matching Effect version using [Cloudflare setup](/cloudflare/setup),
+then add `@alchemy.run/acme`.
 You need an active Cloudflare DNS zone, its zone ID, and credentials that can read,
 create, and delete DNS records in that zone. The domain's authoritative nameservers
 must already point to Cloudflare.
@@ -44,8 +45,8 @@ shared deployment runner, use a protected [remote state store](/state-store).
 ## Register the providers
 
 ```diff lang="typescript"
-+import * as ACME from "alchemy/ACME";
-+import * as Cloudflare from "alchemy/Cloudflare";
++import * as ACME from "@alchemy.run/acme";
++import * as Cloudflare from "@alchemy.run/cloudflare";
 
  export default Alchemy.Stack(
    "Certificates",
@@ -56,8 +57,9 @@ shared deployment runner, use a protected [remote state store](/state-store).
 +  },
 ```
 
-`ACME.providers()` manages accounts and certificates. `Cloudflare.providers()`
-registers the Cloudflare DNS solver used to prove control of the domain.
+`ACME.providers()` manages accounts and certificates, and
+`Cloudflare.providers()` includes the Cloudflare DNS solver used to prove
+control of the domain.
 
 ## Connect Cloudflare
 
@@ -101,7 +103,7 @@ reuses on subsequent deployments.
 +  const certificate = yield* ACME.Certificate("Site", {
 +    account,
 +    identifiers: ["example.com"],
-+    solver: Cloudflare.DNS.AcmeSolver({
++    solver: Cloudflare.ACME.ZoneSolver({
 +      zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
 +    }),
 +  });
@@ -140,8 +142,8 @@ The steps above produce this `alchemy.run.ts`:
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as ACME from "alchemy/ACME";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as ACME from "@alchemy.run/acme";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -161,7 +163,7 @@ export default Alchemy.Stack(
     const certificate = yield* ACME.Certificate("Site", {
       account,
       identifiers: ["example.com"],
-      solver: Cloudflare.DNS.AcmeSolver({
+      solver: Cloudflare.ACME.ZoneSolver({
         zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
       }),
     });
