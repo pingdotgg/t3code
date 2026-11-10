@@ -379,36 +379,34 @@ const make = Effect.gen(function* () {
       let entries = 1;
       let bytes = 0;
       while (pending.length > 0) {
-        const target = pending.pop()!;
-        if (target === skipped) continue;
-        // Effect's stat follows links. Probe with readLink first to get lstat
-        // semantics, including skipping dangling links and directory links.
-        const isLink = yield* fs.readLink(target).pipe(
-          Effect.as(true),
-          Effect.catchIf(
-            (error) =>
-              error.cause instanceof Error &&
-              "code" in error.cause &&
-              error.cause.code === "EINVAL",
-            () => Effect.succeed(false),
-          ),
+        const inspected = yield* Effect.forEach(
+          pending.splice(-8),
+          // Untraced: this runs once per entry, and a worktree can hold millions.
+          Effect.fnUntraced(function* (target) {
+            if (target === skipped) return { target, bytes: 0, names: [] };
+            const stat = yield* fs.lstat(target);
+            if (stat.type === "SymbolicLink") return { target, bytes: 0, names: [] };
+            if ((yield* fs.realPath(target)) !== target) return null;
+            if (stat.type === "Directory")
+              return { target, bytes: 0, names: yield* fs.readDirectory(target) };
+            // Removing a shared hardlink leaves its blocks allocated.
+            if (stat.type !== "File" || Option.getOrElse(stat.nlink, () => 1n) !== 1n)
+              return { target, bytes: 0, names: [] };
+            const bytes = Option.match(stat.blocks, {
+              onNone: () => Number(stat.size),
+              onSome: (blocks) => Number(blocks * 512n),
+            });
+            return { target, bytes, names: [] };
+          }),
+          { concurrency: "unbounded" },
         );
-        if (isLink) continue;
-        if ((yield* fs.realPath(target)) !== target) return null;
-        const stat = yield* fs.stat(target);
-        if (stat.type === "File") {
-          // Removing a shared hardlink leaves its blocks allocated.
-          if (Option.getOrElse(stat.nlink, () => 1n) !== 1n) continue;
-          bytes += Option.match(stat.blocks, {
-            onNone: () => Number(stat.size),
-            onSome: (blocks) => Number(blocks * 512n),
-          });
-        } else if (stat.type === "Directory") {
-          const names = yield* fs.readDirectory(target);
-          entries += names.length;
+        for (const result of inspected) {
+          if (result === null) return null;
+          bytes += result.bytes;
+          entries += result.names.length;
           if (entries > 2_000_000) return null;
-          for (const name of names) {
-            const child = path.join(target, name);
+          for (const name of result.names) {
+            const child = path.join(result.target, name);
             if (!inside(root, child)) return null;
             pending.push(child);
           }
