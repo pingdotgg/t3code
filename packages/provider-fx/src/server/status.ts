@@ -29,10 +29,11 @@ import {
   buildServerProvider,
   isCommandMissingCause,
   nonEmptyTrimmed,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   type ProviderProbeResult,
   providerModelsFromSettings,
   type ServerProviderDraft,
+  providerProbeEnvironment,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -297,7 +298,8 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
 
-  const versionResult = yield* runFxCli(settings, ["--version"], environment).pipe(
+  const probeEnvironment = providerProbeEnvironment(environment);
+  const versionResult = yield* runFxCli(settings, ["--version"], probeEnvironment).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
@@ -312,7 +314,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     return snapshot(settings, checkedAt, {
       installed: true,
@@ -324,14 +326,17 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   }
 
   const status = Option.getOrUndefined(
-    Option.flatMap(yield* readFxCli(settings, ["status", "--json"], environment), decodeFxStatus),
+    Option.flatMap(
+      yield* readFxCli(settings, ["status", "--json"], probeEnvironment),
+      decodeFxStatus,
+    ),
   );
   const backends = yield* Effect.forEach(
     [
       ...FX_BUILT_IN_BACKENDS,
       ...(yield* readFxConfiguredBackends(environment)).map((id) => ({ id, name: id })),
     ],
-    (backend) => probeFxBackend(settings, environment, backend),
+    (backend) => probeFxBackend(settings, probeEnvironment, backend),
     { concurrency: "unbounded" },
   );
   const defaultModel = nonEmptyTrimmed(status?.model);
