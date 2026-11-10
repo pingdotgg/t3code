@@ -477,6 +477,9 @@ export const captureViewport = async (
   return data;
 };
 
+export const captureFinalRecordingFrame = (cdp: CDPSession, quality: number) =>
+  answered(captureViewport(cdp, { format: "jpeg", quality }));
+
 /** Runs in the page's own isolated world, as the server has no image library. */
 const SHRINK_PNG = `async function (png, width, height) {
   const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
