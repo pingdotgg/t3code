@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { resolveHandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
@@ -54,5 +55,33 @@ export function ThreadTimeline({
     }
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
-  return <MessagesTimeline {...timelineProps} timelineEntries={displayedEntries} />;
+  const initialSideChatRun = timelineProps.parentThreadLink?.sideChat
+    ? timelineProps.runs.find((run) => run.ordinal === 1)
+    : undefined;
+  const handoffEntry = initialSideChatRun
+    ? displayedEntries.find(
+        (entry) =>
+          entry.kind === "event" &&
+          entry.projectedItem.item.type === "handoff" &&
+          entry.projectedItem.item.status === "completed" &&
+          entry.projectedItem.item.runId === initialSideChatRun.id,
+      )
+    : undefined;
+  const handoff =
+    handoffEntry?.kind === "event" && handoffEntry.projectedItem.item.type === "handoff"
+      ? resolveHandoffEndpoints(handoffEntry.projectedItem.item, timelineProps.runs)
+      : undefined;
+  return (
+    <MessagesTimeline
+      {...timelineProps}
+      timelineEntries={
+        handoffEntry ? displayedEntries.filter((entry) => entry !== handoffEntry) : displayedEntries
+      }
+      parentThreadLink={
+        handoff && timelineProps.parentThreadLink
+          ? { ...timelineProps.parentThreadLink, handoff }
+          : (timelineProps.parentThreadLink ?? null)
+      }
+    />
+  );
 }
