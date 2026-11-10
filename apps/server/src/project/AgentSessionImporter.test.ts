@@ -3,9 +3,11 @@ import {
   type AgentSessionSource,
   type ServerSettingsError,
   EventId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type ApplicationStoredEvent,
   type OrchestrationV2AppThread,
@@ -416,6 +418,118 @@ it.effect("re-imports sessions whose imported threads were deleted with their pr
       "And the tests",
       "Tests added",
     ]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("restores a deleted imported thread continued in T3 Code without rewriting it", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const source = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "8b2e3c74-5b7a-4c65-9d0a-2e8c3b8f4c33",
+      "claudeAgent",
+    );
+    yield* (yield* makeImporter([source])).run;
+    const imported = yield* projections.getThread(importId(source));
+    const runId = RunId.make(`${imported.id}:run:1`);
+    const userMessageId = MessageId.make(`${imported.id}:t3:user`);
+    const message = (id: MessageId, role: "user" | "assistant", text: string, at = now) => ({
+      id: EventId.make(`${id}:event`),
+      type: "message.updated" as const,
+      threadId: imported.id,
+      occurredAt: now,
+      payload: {
+        createdBy: role === "user" ? ("user" as const) : ("agent" as const),
+        creationSource: "web" as const,
+        id,
+        threadId: imported.id,
+        runId,
+        nodeId: null,
+        role,
+        text,
+        attachments: [],
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${runId}:event`),
+          type: "run.updated",
+          threadId: imported.id,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId: imported.id,
+            ordinal: 1,
+            providerInstanceId: imported.providerInstanceId,
+            modelSelection: imported.modelSelection,
+            providerThreadId: imported.activeProviderThreadId,
+            userMessageId,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        message(userMessageId, "user", "And the tests"),
+        message(
+          MessageId.make(`${imported.id}:t3:agent`),
+          "assistant",
+          "Tests added",
+          DateTime.add(now, { seconds: 1 }),
+        ),
+        {
+          id: EventId.make(`${imported.id}:deleted`),
+          type: "thread.deleted",
+          threadId: imported.id,
+          occurredAt: now,
+          payload: { ...imported, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+
+    const readdedProjectId = ProjectId.make("agent-session-import-readded-project");
+    const continued = {
+      ...source,
+      source: { ...source.source, size: 200 },
+      thread: {
+        ...source.thread,
+        messages: [
+          ...source.thread.messages,
+          { role: "user" as const, text: "And the tests", createdAt: timestamp },
+          { role: "assistant" as const, text: "Tests added", createdAt: timestamp },
+        ],
+      },
+    };
+    yield* (yield* makeImporter(
+      [continued],
+      Effect.void,
+      ServerSettings.layerTest(),
+      readdedProjectId,
+    )).run;
+    const { thread, messages } = yield* projections.getThreadRecords(importId(source), [
+      "messages",
+    ]);
+    expect({
+      projectId: thread.projectId,
+      deletedAt: thread.deletedAt,
+      activeProviderThreadId: thread.activeProviderThreadId,
+      texts: messages.map((entry) => entry.text),
+    }).toEqual({
+      projectId: readdedProjectId,
+      deletedAt: null,
+      activeProviderThreadId: imported.activeProviderThreadId,
+      texts: ["Fix it", "Fixed", "And the tests", "Tests added"],
+    });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

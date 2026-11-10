@@ -187,8 +187,9 @@ const make = Effect.gen(function* () {
     thread: OrchestrationV2AppThread,
     projectId: ProjectId,
   ) {
-    if (!isDeletedElsewhere(thread, projectId)) return;
+    if (!isDeletedElsewhere(thread, projectId)) return thread;
     const now = yield* DateTime.now;
+    const restored = { ...thread, projectId, deletedAt: null, updatedAt: now };
     yield* eventSink.write({
       events: [
         {
@@ -197,10 +198,11 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           providerInstanceId: thread.providerInstanceId,
           occurredAt: now,
-          payload: { ...thread, projectId, deletedAt: null, updatedAt: now },
+          payload: restored,
         },
       ],
     });
+    return restored;
   });
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
@@ -334,14 +336,19 @@ const make = Effect.gen(function* () {
             },
             { onConflict: "ignore" },
           );
-          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
-          const restoring = Option.isSome(existing)
-            ? isDeletedElsewhere(existing.value.thread, input.projectId)
+          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, ["runs"]));
+          // A thread continued in T3 Code holds those turns as runs; rewriting would duplicate them.
+          const restoring =
+            Option.isSome(existing) &&
+            existing.value.runs.length === 0 &&
+            isDeletedElsewhere(existing.value.thread, input.projectId)
               ? existing.value.thread
-              : undefined
-            : undefined;
+              : undefined;
           if (Option.isSome(existing) && restoring === undefined) {
-            const existingThread = existing.value.thread;
+            const existingThread = yield* restoreDeletedImport(
+              existing.value.thread,
+              input.projectId,
+            );
             if (existingThread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
