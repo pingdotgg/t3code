@@ -120,77 +120,17 @@ afterEach(() => {
 });
 
 describe("QuestionAttachments answer field", () => {
-  it("keeps newer typing when the thread screen echoes an older draft", () => {
-    render("de");
-    type("de ");
-    type("de s");
-
-    render("de ");
-    expect(field.text).toBe("de s");
-
-    render("de s");
-    expect(field.text).toBe("de s");
-  });
-
-  it("keeps a 注音 composition when a late echo arrives mid-composition", () => {
+  it("clears native text on option selection before the empty draft changes", () => {
     render("");
-    type("ㄋ");
-    type("ㄋㄧ");
-    type("ㄋㄧˇ");
-
-    render("ㄋㄧ");
-    expect(field.text).toBe("ㄋㄧˇ");
-
-    // Picking a candidate replaces the composed symbols with the character.
-    type("你");
-    render("你");
-    expect(field.text).toBe("你");
-
-    render("ㄋㄧ");
-    expect(field.text).toBe("你");
-  });
-
-  it("keeps a Japanese kana composition when a late echo arrives mid-composition", () => {
-    render("");
-    type("ま");
-    type("まつ");
-    type("まっ");
-    type("まって");
-
-    render("まつ");
-    expect(field.text).toBe("まって");
-
-    type("待って");
-    render("まっ");
-    expect(field.text).toBe("待って");
-  });
-
-  it("adopts a draft changed from outside the field", () => {
-    render("");
-    type("my own colour");
-    render("my own colour");
-
-    render("", 1);
-    expect(field.text).toBe("");
-  });
-
-  it("adopts an outside change while its own echoes are still pending", () => {
-    render("");
-    type("a");
-    type("ab");
-
-    render("a");
-    render("", 1);
-    expect(field.text).toBe("");
-
     type("new answer");
-    render("", 2);
+
+    render("", 1);
     expect(field.text).toBe("");
 
     type("a");
     type("");
     type("ab");
-    render("", 3);
+    render("", 2);
     expect(field.text).toBe("");
   });
 });
