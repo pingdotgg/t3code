@@ -114,6 +114,32 @@ const readDecryptedCredentialStore = Effect.fn("ZcodeRequestAuth.readCredentialS
   return entries;
 });
 
+/**
+ * Families the provisioning ladder treats as signed-in OAuth individual coding plans: setting.json
+ * selects the plan, no apiKey override, and the credential store holds a login token for the
+ * family. The provider status probe derives its auth display from this same predicate so the
+ * probe and provisioning cannot drift.
+ */
+export const zcodeOAuthSelectedFamilies = (
+  setting: unknown,
+  store: Record<string, unknown>,
+): ReadonlySet<string> => {
+  if (!Predicate.isObject(setting)) return new Set<string>();
+  const selections = setting["providerFamilyConnectionSelections"];
+  const modes = setting["modelProviderFamilyModes"];
+  const families = new Set<string>();
+  if (!Predicate.isObject(selections)) return families;
+  for (const [family, selection] of Object.entries(selections)) {
+    const kind = Predicate.isObject(selection) ? selection["kind"] : undefined;
+    if (kind !== "individual-coding-plan") continue;
+    if (Predicate.isObject(modes) && modes[family] === "apiKey") continue;
+    const token = store[`oauth:${family}:access_token`];
+    if (typeof token !== "string" || token.length === 0) continue;
+    families.add(family);
+  }
+  return families;
+};
+
 /** Families whose 3.15+ connection is an active OAuth individual coding plan. */
 const readOAuthSelectedFamilies = Effect.fn("ZcodeRequestAuth.readOAuthFamilies")(function* (
   fileSystem: FileSystem.FileSystem,
@@ -122,19 +148,7 @@ const readOAuthSelectedFamilies = Effect.fn("ZcodeRequestAuth.readOAuthFamilies"
 ): Effect.fn.Return<ReadonlySet<string>> {
   const raw = yield* fileSystem.readFileString(settingPath).pipe(Effect.option);
   const parsed = Option.isNone(raw) ? undefined : Option.getOrUndefined(decodeJsonText(raw.value));
-  if (!Predicate.isObject(parsed)) return new Set<string>();
-  const selections = parsed["providerFamilyConnectionSelections"];
-  const modes = parsed["modelProviderFamilyModes"];
-  const families = new Set<string>();
-  if (!Predicate.isObject(selections)) return families;
-  for (const [family, selection] of Object.entries(selections)) {
-    const kind = Predicate.isObject(selection) ? selection["kind"] : undefined;
-    if (kind !== "individual-coding-plan") continue;
-    if (Predicate.isObject(modes) && modes[family] === "apiKey") continue;
-    if (!store[`oauth:${family}:access_token`]) continue;
-    families.add(family);
-  }
-  return families;
+  return zcodeOAuthSelectedFamilies(parsed, store);
 });
 
 export type ZcodeAccountProviderPush = {
@@ -391,6 +405,24 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
   const credentialsPath = `${root}/.zcode/v2/credentials.json`;
   const cache = new Map<string, CachedProjectToken>();
 
+  /** The family's current login with the credential scope digesting it; undefined once gone. */
+  const currentLogin = Effect.fn("ZcodeRequestAuth.currentLogin")(function* (
+    family: string,
+  ): Effect.fn.Return<{ loginToken: string; accountScope: string } | undefined> {
+    const store = yield* readDecryptedCredentialStore(
+      options.fileSystem,
+      credentialsPath,
+      options.environment,
+      yield* HostProcess.Platform,
+    );
+    const loginToken = store[`oauth:${family}:access_token`];
+    if (loginToken === undefined || loginToken.length === 0) return undefined;
+    return {
+      loginToken,
+      accountScope: zcodeAccountScope(family, loginToken, store[ZCODE_JWT_CREDENTIAL_KEY]),
+    };
+  });
+
   const requestJson = (request: HttpClientRequest.HttpClientRequest) =>
     options.httpClient.execute(request).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -414,14 +446,8 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
   const mint = Effect.fn("ZcodeRequestAuth.mint")(function* (
     family: string,
   ): Effect.fn.Return<CachedProjectToken, ZcodeRequestAuthError> {
-    const store = yield* readDecryptedCredentialStore(
-      options.fileSystem,
-      credentialsPath,
-      options.environment,
-      yield* HostProcess.Platform,
-    );
-    const loginToken = store[`oauth:${family}:access_token`];
-    if (loginToken === undefined || loginToken.length === 0) {
+    const login = yield* currentLogin(family);
+    if (login === undefined) {
       return yield* failAuth("no OAuth login for family");
     }
     const origin = FAMILY_ORIGIN[family];
@@ -431,7 +457,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
     const customer = yield* envelopeData(
       yield* requestJson(
         HttpClientRequest.get(`${origin}/api/biz/customer/getCustomerInfo`, {
-          headers: { Authorization: loginToken },
+          headers: { Authorization: login.loginToken },
         }),
       ),
       "getCustomerInfo",
@@ -484,7 +510,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
       yield* requestJson(
         HttpClientRequest.get(keysPath, {
           headers: {
-            Authorization: family === "zai" ? `Bearer ${loginToken}` : loginToken,
+            Authorization: family === "zai" ? `Bearer ${login.loginToken}` : login.loginToken,
           },
         }),
       ),
@@ -501,7 +527,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
     }
     const exchangeRequest = HttpClientRequest.post(
       `${keysPath}/${encodeURIComponent(apiKeyId)}/access_tokens`,
-      { headers: { Authorization: `Bearer ${loginToken}` } },
+      { headers: { Authorization: `Bearer ${login.loginToken}` } },
     ).pipe(
       HttpClientRequest.bodyText(
         zcodeJsonStringify({ clientType: "zcode", clientVersion: options.clientVersion }),
@@ -519,7 +545,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
     const cachedToken: CachedProjectToken = {
       token,
       apiKeyId,
-      accountScope: zcodeAccountScope(family, loginToken, store[ZCODE_JWT_CREDENTIAL_KEY]),
+      accountScope: login.accountScope,
       fingerprint: sha256Hex(token),
       refreshAtMillis:
         DateTime.toEpochMillis(yield* DateTime.now) + TOKEN_TTL_MS - TOKEN_REFRESH_MARGIN_MS,
@@ -533,8 +559,13 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
     readonly rejectedProjectTokenFingerprint?: string;
   }): Effect.fn.Return<ZcodeRecord> {
     const hit = cache.get(input.family);
+    // A CLI login can swap accounts or log out under the same family; the cached scope digests
+    // the credentials, so reread them and drop the hit when they no longer match.
+    const currentScope =
+      hit === undefined ? undefined : (yield* currentLogin(input.family))?.accountScope;
     const cached =
       hit !== undefined &&
+      currentScope === hit.accountScope &&
       DateTime.toEpochMillis(yield* DateTime.now) < hit.refreshAtMillis &&
       (input.rejectedProjectTokenFingerprint === undefined ||
         input.rejectedProjectTokenFingerprint !== hit.fingerprint)
