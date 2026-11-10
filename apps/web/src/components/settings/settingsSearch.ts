@@ -1804,6 +1804,7 @@ export const SETTINGS_SEARCH_TITLE_KEYS = {
   "privacy-policy": "settings.search.items.privacy-policy",
   "telemetry-export": "settings.search.items.telemetry-export",
   diagnostics: "settings.search.items.diagnostics",
+  "tool-call-visibility": "settings.search.items.tool-call-visibility",
   "open-source-licenses": "settings.search.items.open-source-licenses",
   keybindings: "settings.search.items.keybindings",
   "snap-shot-enabled": "settings.search.items.snap-shot-enabled",

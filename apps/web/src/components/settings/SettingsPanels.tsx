@@ -1291,6 +1291,7 @@ function ToolCallVisibilityRow() {
   return (
     <SettingsRow
       {...searchableSetting("tool-call-visibility")}
+      title={t("settings.system.labs.toolCalls.aria")}
       description={t("settings.system.labs.toolCalls.description")}
       resetAction={
         settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility ? (
