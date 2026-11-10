@@ -484,7 +484,7 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
     if (
       contentLengthHeader !== undefined &&
       (!Number.isInteger(Number(contentLengthHeader)) ||
-        Number(contentLengthHeader) !== claims.sizeBytes)
+        Number(contentLengthHeader) !== (claims.gzipSizeBytes ?? claims.sizeBytes))
     ) {
       return HttpServerResponse.text("Content-Length must match the upload size.", {
         status: 400,

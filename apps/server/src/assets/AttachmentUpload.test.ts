@@ -3,6 +3,7 @@ import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -271,6 +272,80 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("decodes gzip uploads under the decoded size and rejects bad bodies", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const store = (sizeBytes: number, wire: Uint8Array, body: Uint8Array = wire) =>
+        Effect.gen(function* () {
+          const issued = yield* issueAttachmentUploadUrl({
+            type: "file",
+            name: "thread.jsonl",
+            mimeType: "application/x-ndjson",
+            sizeBytes,
+            gzipSizeBytes: wire.length,
+          });
+          expect(issued.gzip).toBe(true);
+          const claims = yield* validateAttachmentUploadToken(
+            issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+          );
+          if (!claims) throw new Error("Expected valid upload claims.");
+          const half = Math.floor(body.length / 2);
+          const result = yield* storeAttachmentUpload(
+            claims,
+            Stream.make(body.subarray(0, half), body.subarray(half)),
+          );
+          return {
+            result,
+            path: NodePath.join(config.attachmentsDir, `${issued.attachmentId}.jsonl`),
+          };
+        });
+      const jsonl = new TextEncoder().encode('{"role":"user","text":"crates"}\n'.repeat(500));
+      const gzipped = NodeZlib.gzipSync(jsonl);
+
+      const accepted = yield* store(jsonl.length, gzipped);
+      expect(accepted.result).toEqual({ ok: true });
+      expect(NodeFS.readFileSync(accepted.path)).toEqual(Buffer.from(jsonl));
+      NodeFS.rmSync(accepted.path);
+      NodeFS.rmSync(`${accepted.path}.txt`, { force: true });
+
+      const truncated = gzipped.subarray(0, -8);
+      const bomb = NodeZlib.gzipSync(new Uint8Array(16 * 1024 * 1024));
+      for (const [sizeBytes, wire, body, detail] of [
+        [jsonl.length, truncated, truncated, "Body is not valid gzip."],
+        [
+          jsonl.length,
+          gzipped,
+          truncated,
+          `Body was ${truncated.length} bytes, expected ${gzipped.length}.`,
+        ],
+        [jsonl.length, jsonl, jsonl, "Body is not valid gzip."],
+        [
+          jsonl.length - 1,
+          gzipped,
+          gzipped,
+          `Decoded body was ${jsonl.length} bytes, expected ${jsonl.length - 1}.`,
+        ],
+        [
+          jsonl.length + 1,
+          gzipped,
+          gzipped,
+          `Decoded body was ${jsonl.length} bytes, expected ${jsonl.length + 1}.`,
+        ],
+        [
+          jsonl.length,
+          gzipped,
+          new Uint8Array([...gzipped, 0]),
+          `Body was ${gzipped.length + 1} bytes, expected ${gzipped.length}.`,
+        ],
+        [1024, bomb, bomb, expect.stringMatching(/^Decoded body was \d+ bytes, expected 1024\.$/)],
+      ] as const) {
+        const rejected = yield* store(sizeBytes, wire, body);
+        expect(rejected.result).toEqual({ ok: false, status: 400, detail });
+      }
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("removes partial streamed uploads that exceed their signed size", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -289,34 +364,42 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("removes partial streamed uploads when the upload is interrupted", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const issued = yield* issueAttachmentUploadUrl(uploadInput);
-      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
-      const claims = yield* validateAttachmentUploadToken(token);
-      if (!claims) {
-        throw new Error("Expected valid upload claims.");
-      }
+  it.effect.each([false, true])(
+    "removes partial streamed uploads when the upload is interrupted (gzip: %s)",
+    (gzip) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const gzipped = NodeZlib.gzipSync(new Uint8Array(6));
+        const issued = yield* issueAttachmentUploadUrl(
+          gzip ? { ...uploadInput, type: "file", gzipSizeBytes: gzipped.length } : uploadInput,
+        );
+        const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+        const claims = yield* validateAttachmentUploadToken(token);
+        if (!claims) {
+          throw new Error("Expected valid upload claims.");
+        }
 
-      const nextChunkRequested = yield* Deferred.make<void>();
-      const body = Stream.make(new Uint8Array([1, 2, 3])).pipe(
-        Stream.concat(
-          Stream.fromEffect(
-            Deferred.succeed(nextChunkRequested, undefined).pipe(Effect.andThen(Effect.never)),
+        const nextChunkRequested = yield* Deferred.make<void>();
+        const bodyReleased = yield* Deferred.make<void>();
+        const body = Stream.make(gzip ? gzipped.subarray(0, 12) : new Uint8Array([1, 2, 3])).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Deferred.succeed(nextChunkRequested, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
           ),
-        ),
-      );
-      const upload = yield* storeAttachmentUpload(claims, body).pipe(Effect.forkScoped);
+          Stream.ensuring(Deferred.succeed(bodyReleased, undefined)),
+        );
+        const upload = yield* storeAttachmentUpload(claims, body).pipe(Effect.forkScoped);
 
-      yield* Deferred.await(nextChunkRequested);
-      expect(
-        NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
-      ).toHaveLength(1);
+        yield* Deferred.await(nextChunkRequested);
+        expect(
+          NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
+        ).toHaveLength(1);
 
-      yield* Fiber.interrupt(upload);
-      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
-    }).pipe(Effect.provide(layerTest)),
+        yield* Fiber.interrupt(upload);
+        yield* Deferred.await(bodyReleased);
+        expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("deletes pending uploads without deleting thread-owned copies", () =>

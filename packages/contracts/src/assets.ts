@@ -122,6 +122,30 @@ export const AttachmentCreateUploadUrlResult = Schema.Struct({
 });
 export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;
 
+/**
+ * Clients may offer a gzip body for a file; `sizeBytes` stays the decoded length the claim binds.
+ * Servers that answer without `gzip: true` (including older ones) expect the raw bytes.
+ */
+export const AttachmentCreateUploadUrlRpcInput = Schema.Union([
+  ImageAttachmentCreateUploadUrlInput,
+  Schema.Struct({
+    ...FileAttachmentCreateUploadUrlInput.fields,
+    gzipSizeBytes: Schema.optionalKey(
+      NonNegativeInt.check(
+        Schema.isGreaterThanOrEqualTo(1),
+        Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
+      ),
+    ),
+  }),
+]);
+export type AttachmentCreateUploadUrlRpcInput = typeof AttachmentCreateUploadUrlRpcInput.Type;
+
+export const AttachmentCreateUploadUrlRpcResult = Schema.Struct({
+  ...AttachmentCreateUploadUrlResult.fields,
+  gzip: Schema.optionalKey(Schema.Literal(true)),
+});
+export type AttachmentCreateUploadUrlRpcResult = typeof AttachmentCreateUploadUrlRpcResult.Type;
+
 export const AttachmentDeleteInput = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
 });

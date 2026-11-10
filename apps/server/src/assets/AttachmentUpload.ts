@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
-  type AttachmentCreateUploadUrlInput,
+  type AttachmentCreateUploadUrlRpcInput,
   AttachmentUploadSigningKeyError,
 } from "@t3tools/contracts";
 import { isSvgAttachment } from "@t3tools/shared/image";
@@ -48,6 +48,8 @@ const AttachmentUploadClaims = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
+  /** Present when the body is gzip of `sizeBytes` decoded bytes. */
+  gzipSizeBytes: Schema.optionalKey(Schema.Number),
   expiresAt: Schema.Number,
 });
 export type AttachmentUploadClaims = typeof AttachmentUploadClaims.Type;
@@ -65,7 +67,7 @@ function decodeClaims(encodedPayload: string): AttachmentUploadClaims | null {
 }
 
 export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(function* (
-  input: AttachmentCreateUploadUrlInput,
+  input: AttachmentCreateUploadUrlRpcInput,
 ) {
   const config = yield* ServerConfig.ServerConfig;
   const nowMs = yield* Clock.currentTimeMillis;
@@ -93,6 +95,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     attachmentType === "file" ? attachmentFileExtension(name) : undefined,
   );
   const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
+  const gzipSizeBytes = "gzipSizeBytes" in input ? input.gzipSizeBytes : undefined;
   const encodedPayload = base64UrlEncode(
     encodeAttachmentUploadClaims({
       version: 1,
@@ -102,6 +105,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
       name,
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
+      ...(gzipSizeBytes !== undefined ? { gzipSizeBytes } : {}),
       expiresAt,
     }),
   );
@@ -114,6 +118,7 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     attachmentId,
     relativeUrl: `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/${encodedPayload}.${signature}`,
     expiresAt,
+    ...(gzipSizeBytes !== undefined ? { gzip: true as const } : {}),
   };
 });
 
@@ -143,6 +148,11 @@ export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validat
   return claims;
 });
 
+class InvalidGzipBodyError extends Schema.TaggedError<InvalidGzipBodyError>()(
+  "InvalidGzipBodyError",
+  {},
+) {}
+
 export type StoreAttachmentUploadResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly status: number; readonly detail: string };
@@ -151,11 +161,12 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
   claims: AttachmentUploadClaims,
   body: Uint8Array | HttpServerRequest.HttpServerRequest["stream"],
 ) {
-  if (body instanceof Uint8Array && body.byteLength !== claims.sizeBytes) {
+  const wireSizeBytes = claims.gzipSizeBytes ?? claims.sizeBytes;
+  if (body instanceof Uint8Array && body.byteLength !== wireSizeBytes) {
     return {
       ok: false,
       status: 400,
-      detail: `Body was ${body.byteLength} bytes, expected ${claims.sizeBytes}.`,
+      detail: `Body was ${body.byteLength} bytes, expected ${wireSizeBytes}.`,
     } satisfies StoreAttachmentUploadResult;
   }
 
@@ -181,12 +192,32 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  let receivedWireBytes = 0;
   let receivedBytes = 0;
-  const bodyStream = body instanceof Uint8Array ? Stream.make(body) : body;
+  const wireStream = (body instanceof Uint8Array ? Stream.make(body) : body).pipe(
+    Stream.takeWhile((chunk) => {
+      receivedWireBytes += chunk.byteLength;
+      return receivedWireBytes <= wireSizeBytes;
+    }),
+  );
   return yield* Effect.gen(function* () {
     yield* fileSystem.makeDirectory(path.dirname(finalPath), { recursive: true });
+    const wireReadable =
+      claims.gzipSizeBytes === undefined
+        ? undefined
+        : yield* Stream.toReadableStreamEffect(wireStream);
+    // Decoding is pulled by the sink, so a gzip bomb stops at the cap instead of inflating ahead.
+    const decodedStream: Stream.Stream<
+      Uint8Array,
+      InvalidGzipBodyError | Stream.Error<typeof wireStream>
+    > = wireReadable
+      ? Stream.fromReadableStream<Uint8Array, InvalidGzipBodyError>({
+          evaluate: () => wireReadable.pipeThrough(new DecompressionStream("gzip")),
+          onError: () => new InvalidGzipBodyError(),
+        })
+      : wireStream;
     yield* Stream.run(
-      bodyStream.pipe(
+      decodedStream.pipe(
         Stream.takeWhile((chunk) => {
           receivedBytes += chunk.byteLength;
           return receivedBytes <= claims.sizeBytes;
@@ -194,11 +225,18 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
       ),
       fileSystem.sink(partPath),
     );
+    if (receivedWireBytes !== wireSizeBytes && receivedBytes <= claims.sizeBytes) {
+      return {
+        ok: false,
+        status: 400,
+        detail: `Body was ${receivedWireBytes} bytes, expected ${wireSizeBytes}.`,
+      } satisfies StoreAttachmentUploadResult;
+    }
     if (receivedBytes !== claims.sizeBytes) {
       return {
         ok: false,
         status: 400,
-        detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
+        detail: `Decoded body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
@@ -249,6 +287,17 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     yield* documents.ensure(finalPath);
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
+    Effect.catchTags({
+      InvalidGzipBodyError: () =>
+        Effect.succeed({
+          ok: false,
+          status: 400,
+          detail:
+            receivedWireBytes === wireSizeBytes
+              ? "Body is not valid gzip."
+              : `Body was ${receivedWireBytes} bytes, expected ${wireSizeBytes}.`,
+        } satisfies StoreAttachmentUploadResult),
+    }),
     Effect.catch((cause) =>
       Effect.logError("Failed to persist attachment upload.", {
         attachmentId: claims.attachmentId,

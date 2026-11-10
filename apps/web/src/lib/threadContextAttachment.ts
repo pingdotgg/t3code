@@ -3,6 +3,8 @@ import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextRe
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as DateTime from "effect/DateTime";
 
+export const THREAD_TRANSCRIPT_MIME_TYPE = "application/x-ndjson";
+
 export function threadContextAttachment(
   environmentId: EnvironmentId,
   transcript: OrchestrationV2ThreadTranscript,
@@ -19,6 +21,6 @@ export function threadContextAttachment(
       ...transcript.items.map((row) => `${JSON.stringify(row)}\n`),
     ],
     `${title}-${name.slice(-16)}.jsonl`,
-    { type: "application/x-ndjson" },
+    { type: THREAD_TRANSCRIPT_MIME_TYPE },
   );
 }

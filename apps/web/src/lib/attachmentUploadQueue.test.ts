@@ -65,6 +65,7 @@ import {
   startAttachmentUpload,
   useAttachmentUploadStore,
 } from "./attachmentUploadQueue";
+import { THREAD_TRANSCRIPT_MIME_TYPE } from "./threadContextAttachment";
 
 type ProgressListener = (event: {
   readonly lengthComputable: boolean;
@@ -106,7 +107,11 @@ class TestXmlHttpRequest {
     this.listeners.set(event, listener);
   }
 
-  send(): void {}
+  body: unknown = null;
+
+  send(body: unknown): void {
+    this.body = body;
+  }
 
   abort(): void {
     this.listeners.get("abort")?.();
@@ -295,6 +300,48 @@ describe("attachmentUploadQueue", () => {
       expect.anything(),
     );
   });
+
+  it.each([true, false])(
+    "gzips transcripts only when the environment accepts gzip (accepts: %s)",
+    async (accepts) => {
+      const jsonl = '{"type":"message","text":"crates"}\n'.repeat(200);
+      const file = new File([jsonl], "thread.jsonl", { type: THREAD_TRANSCRIPT_MIME_TYPE });
+      const transcript: ComposerFileAttachment = {
+        type: "file",
+        id: `transcript-${accepts}`,
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        file,
+      };
+      mocks.runAtomCommand.mockResolvedValueOnce({
+        _tag: "Success",
+        value: {
+          attachmentId: "pending-transcript",
+          relativeUrl: "/api/attachments/upload/pending-transcript",
+          expiresAt: 1,
+          ...(accepts ? { gzip: true } : {}),
+        },
+      });
+      startAttachmentUpload({ environmentId: firstEnvironment, image: transcript });
+      await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+
+      const minted = mocks.runAtomCommand.mock.calls[0]![2].input;
+      expect(minted).toMatchObject({ sizeBytes: file.size, gzipSizeBytes: expect.any(Number) });
+      const request = TestXmlHttpRequest.requests[0]!;
+      const sent = request.body as Blob;
+      expect(sent.size).toBe(accepts ? minted.gzipSizeBytes : file.size);
+      expect(
+        await new Response(
+          accepts ? sent.stream().pipeThrough(new DecompressionStream("gzip")) : sent,
+        ).text(),
+      ).toBe(jsonl);
+      const settled = awaitAttachmentUploads([transcript.id]);
+      request.complete();
+      await settled;
+      expect(readAttachmentUpload(transcript.id)).toMatchObject({ status: "ready" });
+    },
+  );
 
   it("uploads images immediately and sends attachment references", async () => {
     const image = {

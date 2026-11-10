@@ -1,8 +1,8 @@
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   WS_METHODS,
-  type AttachmentCreateUploadUrlInput,
-  type AttachmentCreateUploadUrlResult,
+  type AttachmentCreateUploadUrlRpcInput,
+  type AttachmentCreateUploadUrlRpcResult,
   type AttachmentDeleteInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -83,8 +83,8 @@ export async function verifyPersistedAttachmentUpload<A, E>(input: {
 }
 
 type AttachmentCreateUploadUrlCommand<E> = AtomCommand<
-  { readonly environmentId: EnvironmentId; readonly input: AttachmentCreateUploadUrlInput },
-  AttachmentCreateUploadUrlResult,
+  { readonly environmentId: EnvironmentId; readonly input: AttachmentCreateUploadUrlRpcInput },
+  AttachmentCreateUploadUrlRpcResult,
   E
 >;
 
@@ -134,9 +134,12 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
   readonly createUploadUrl: AttachmentCreateUploadUrlCommand<E>;
   readonly remove: AttachmentRemoveCommand<RE>;
   readonly environmentId: EnvironmentId;
-  readonly upload: AttachmentCreateUploadUrlInput;
+  readonly upload: AttachmentCreateUploadUrlRpcInput;
   readonly resolveUploadUrl: (relativeUrl: string) => string | null;
-  readonly transport: (url: string) => AttachmentByteUpload;
+  readonly transport: (
+    url: string,
+    minted: AttachmentCreateUploadUrlRpcResult,
+  ) => AttachmentByteUpload;
   readonly onMinted?: (attachmentId: string) => "continue" | "cancel";
   readonly onTransferStart?: (abort: () => void) => void;
 }): Promise<AttachmentUploadCycleResult> {
@@ -175,7 +178,7 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
     };
   }
 
-  const transfer = input.transport(url);
+  const transfer = input.transport(url, minted.value);
   input.onTransferStart?.(transfer.abort);
   try {
     await transfer.done;

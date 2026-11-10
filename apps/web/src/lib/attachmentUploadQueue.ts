@@ -29,6 +29,7 @@ import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentUploadState";
+import { THREAD_TRANSCRIPT_MIME_TYPE } from "./threadContextAttachment";
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
 const UPLOAD_TIMEOUT_MS = 5 * 60_000;
@@ -134,7 +135,7 @@ function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string)
 
 function uploadBytes(input: {
   readonly url: string;
-  readonly file: File;
+  readonly file: Blob;
   readonly mimeType: string;
   readonly onProgress: (progress: number) => void;
 }): { readonly done: Promise<void>; readonly abort: () => void } {
@@ -251,6 +252,13 @@ async function runUpload(job: UploadJob): Promise<void> {
     return;
   }
 
+  // Generated transcripts compress well; servers that do not answer `gzip` get the raw file.
+  const gzipped =
+    mimeType === THREAD_TRANSCRIPT_MIME_TYPE && typeof CompressionStream === "function"
+      ? await new Response(file.stream().pipeThrough(new CompressionStream("gzip"))).blob()
+      : null;
+  const gzipBody = gzipped && gzipped.size < file.size ? gzipped : null;
+
   let lastStep = -1;
   if (!readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)) {
     setUploadState(job.image.id, {
@@ -271,6 +279,7 @@ async function runUpload(job: UploadJob): Promise<void> {
       name: job.image.name,
       mimeType,
       sizeBytes: file.size,
+      ...(gzipBody ? { gzipSizeBytes: gzipBody.size } : {}),
     },
     resolveUploadUrl: (relativeUrl) => {
       if (
@@ -282,10 +291,10 @@ async function runUpload(job: UploadJob): Promise<void> {
       const connection = readPreparedConnection(job.environmentId);
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
-    transport: (url) =>
+    transport: (url, minted) =>
       uploadBytes({
         url,
-        file,
+        file: gzipBody && minted.gzip ? gzipBody : file,
         mimeType,
         onProgress: (progress) => {
           const step = Math.floor(progress * 20);

@@ -103,8 +103,8 @@ import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetCreateUrlResult,
-  AttachmentCreateUploadUrlInput,
-  AttachmentCreateUploadUrlResult,
+  AttachmentCreateUploadUrlRpcInput,
+  AttachmentCreateUploadUrlRpcResult,
   AttachmentDeleteInput,
   AttachmentUploadSigningKeyError,
 } from "./assets.ts";
@@ -1440,8 +1440,8 @@ const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatA
 });
 
 const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
-  payload: AttachmentCreateUploadUrlInput,
-  success: AttachmentCreateUploadUrlResult,
+  payload: AttachmentCreateUploadUrlRpcInput,
+  success: AttachmentCreateUploadUrlRpcResult,
   error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
 });
 
