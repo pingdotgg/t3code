@@ -1,0 +1,15 @@
+{
+  "name": "alchemy-vinext-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-server-dom-webpack": "catalog:",
+    "vinext": "catalog:"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-rsc": "catalog:",
+    "vite": "catalog:"
+  }
+}

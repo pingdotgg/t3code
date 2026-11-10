@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * Child-process isolation for framework production builds.
  *
@@ -30,11 +31,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
-import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
-import { fileURLToPath } from "node:url";
+import * as Redacted from "effect/Redacted";
+import * as SemVer from "effect/SemVer";
+import * as SemVerRange from "effect/SemVerRange";
+import * as Stream from "effect/Stream";
 import { readBuildOutput } from "./BuildOutput.ts";
 import type { BuildOutput } from "./BuildOutput.ts";
+import { logChildOutput } from "./ChildOutput.ts";
 import { FrameworkError } from "./Framework.ts";
 
 /**
@@ -67,12 +71,14 @@ export interface BuildChildPayload {
  * Node (Bun handles `.ts` natively). Mirrors alchemy's
  * `Util/Node.transformTypesFlags`.
  */
-const transformTypesFlags = (): Array<string> => {
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  return (major === 22 && minor >= 7) || (major >= 23 && major < 26)
+const transformTypesFlags = (): Array<string> =>
+  SemVerRange.matches(
+    SemVerRange.parseUnsafe(">=22.7.0 <26.0.0-0"),
+    SemVer.parseUnsafe(process.versions.node),
+    { includePrerelease: true },
+  )
     ? ["--experimental-transform-types", "--no-warnings=ExperimentalWarning"]
     : [];
-};
 
 export interface BuildChildOptions {
   /** Use Node from PATH for toolchains that cannot build under Bun. Requires native TypeScript support when running source modules. */
@@ -100,20 +106,39 @@ export interface BuildChildOptions {
 }
 
 /**
+ * Resolve a site's raw `env` into the plain strings a build child sees on
+ * `process.env`, so frameworks inline declared public values
+ * (`NEXT_PUBLIC_*`, `PUBLIC_*`, `VITE_*`, ...) at build time. Strings pass
+ * through, `Redacted<string>`s are unwrapped, numbers and booleans are
+ * stringified; bindings and other values are dropped.
+ */
+export const resolveBuildEnv = (
+  env: Record<string, unknown> | undefined,
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (typeof value === "string") {
+      out[key] = value;
+    } else if (Redacted.isRedacted(value) && typeof Redacted.value(value) === "string") {
+      out[key] = Redacted.value(value) as string;
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      out[key] = String(value);
+    }
+  }
+  return out;
+};
+
+/**
  * Run a framework production build in a disposable child process with
  * `cwd = rootDir` and return its {@link BuildOutput}.
  *
- * Build logs are re-emitted through the parent's own `process.stdout` /
- * `process.stderr` JS streams — NOT `stdio: "inherit"` — so in-process
- * capture (a test runner's log file) sees them.
+ * Build output becomes log records — NOT `stdio: "inherit"` — so the
+ * process that renders logs shows it and in-process capture (a test
+ * runner's log file) sees it.
  */
 export const runBuildChild = (
   options: BuildChildOptions,
-): Effect.Effect<
-  BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<BuildOutput, FrameworkError, FileSystem.FileSystem | Path.Path> =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -121,19 +146,11 @@ export const runBuildChild = (
       const fail =
         (message: string) =>
         (cause?: unknown): FrameworkError =>
-          new FrameworkError({
-            framework: options.framework,
-            message,
-            cause,
-          });
+          new FrameworkError({ framework: options.framework, message, cause });
 
       const outputDir = yield* fs
         .makeTempDirectoryScoped({ prefix: "alchemy-framework-build-" })
-        .pipe(
-          Effect.mapError(
-            fail("Failed to create the build child's temp directory"),
-          ),
-        );
+        .pipe(Effect.mapError(fail("Failed to create the build child's temp directory")));
       const outputPath = path.join(outputDir, "build.json");
       const errorPath = path.join(outputDir, "error.txt");
 
@@ -150,8 +167,7 @@ export const runBuildChild = (
         ),
       );
       const isBun =
-        options.runtime !== "node" &&
-        typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+        options.runtime !== "node" && typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
       const executable = options.runtime === "node" ? "node" : process.execPath;
       const payload: BuildChildPayload = {
         module: options.module,
@@ -171,10 +187,7 @@ export const runBuildChild = (
 
       const spawnerLayer = NodeChildProcessSpawner.layer.pipe(
         Layer.provide(
-          Layer.merge(
-            Layer.succeed(FileSystem.FileSystem)(fs),
-            Layer.succeed(Path.Path)(path),
-          ),
+          Layer.merge(Layer.succeed(FileSystem.FileSystem)(fs), Layer.succeed(Path.Path)(path)),
         ),
       );
 
@@ -189,31 +202,27 @@ export const runBuildChild = (
           env: { ...process.env, NODE_ENV: "production", ...options.env },
         }).pipe(
           Effect.mapError(
-            fail(
-              `Failed to spawn the ${options.framework} build child (${executable})`,
-            ),
+            fail(`Failed to spawn the ${options.framework} build child (${executable})`),
           ),
         );
         const forward = (
           stream: Stream.Stream<Uint8Array, PlatformError>,
-          dest: NodeJS.WriteStream,
+          name: "stdout" | "stderr",
         ) =>
-          Stream.runForEach(stream, (chunk) =>
-            Effect.sync(() => dest.write(chunk)),
+          stream.pipe(
+            Stream.decodeText,
+            Stream.splitLines,
+            Stream.runForEach((line) => logChildOutput(line, name)),
           );
         const { code } = yield* Effect.all(
           {
             code: child.exitCode,
-            stdout: forward(child.stdout, process.stdout),
-            stderr: forward(child.stderr, process.stderr),
+            stdout: forward(child.stdout, "stdout"),
+            stderr: forward(child.stderr, "stderr"),
           },
           { concurrency: "unbounded" },
         ).pipe(
-          Effect.mapError(
-            fail(
-              `Failed reading the ${options.framework} build child's output`,
-            ),
-          ),
+          Effect.mapError(fail(`Failed reading the ${options.framework} build child's output`)),
         );
         return code;
       }).pipe(Effect.provide(spawnerLayer));
@@ -224,12 +233,9 @@ export const runBuildChild = (
         const reason = yield* fs
           .readFileString(errorPath)
           .pipe(Effect.orElseSucceed(() => undefined));
-        return yield* Effect.fail(
-          fail(
-            reason ??
-              `The ${options.framework} build child exited with code ${exitCode}`,
-          )(undefined),
-        );
+        return yield* fail(
+          reason ?? `The ${options.framework} build child exited with code ${exitCode}`,
+        )(undefined);
       }
 
       return yield* readBuildOutput(outputPath).pipe(
