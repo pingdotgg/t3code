@@ -349,14 +349,20 @@ describe("file view comments", () => {
     using _style = { [Symbol.dispose]: () => style.remove() };
 
     await using screen = await render(filePreview("long.ts", threadRef, 200));
-    const scrollTop = () =>
-      screen.container.querySelector<HTMLElement>(".file-preview-virtualizer")?.scrollTop ?? 0;
-    await vi.waitFor(() => expect(scrollTop(), "revealed on mount").toBeGreaterThan(0));
+    const lineVisible = (lineNumber: number) => {
+      const scroller = screen.container.querySelector<HTMLElement>(".file-preview-virtualizer");
+      const line = screen.container
+        .querySelector("diffs-container")
+        ?.shadowRoot?.querySelector(`[data-line="${lineNumber}"]`);
+      if (!scroller || !line) return false;
+      const viewport = scroller.getBoundingClientRect();
+      const row = line.getBoundingClientRect();
+      return row.top >= viewport.top && row.bottom <= viewport.bottom;
+    };
+    await vi.waitFor(() => expect(lineVisible(200), "revealed on mount").toBe(true));
 
     await screen.rerender(filePreview("long.ts", otherThreadRef, 200));
 
-    await vi.waitFor(() =>
-      expect(scrollTop(), "revealed after the thread change").toBeGreaterThan(0),
-    );
+    await vi.waitFor(() => expect(lineVisible(200), "revealed after the thread change").toBe(true));
   });
 });
