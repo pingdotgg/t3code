@@ -22,6 +22,32 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
  * bare uuid. The id is never rewritten, so permission checks keyed on it still
  * hold; the miss only names a live thread the caller could read by its full id.
  */
+/**
+ * Reads thread records scoped to the project its shell just reported. A thread
+ * can move to another project between the two reads, so a miss re-reads the
+ * project once before it counts.
+ */
+export const readInCurrentProject = <A, E extends { readonly _tag: string }, R>(
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  read: (projectId: ProjectId) => Effect.Effect<A, E, R>,
+) =>
+  read(projectId).pipe(
+    Effect.catchIf(
+      (error) => error._tag === "ThreadManagementThreadNotFoundError",
+      (error) =>
+        threads.getThreadShell(threadId).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.flatMap((shell) =>
+            shell === null || shell.projectId === projectId
+              ? Effect.fail(error)
+              : read(shell.projectId),
+          ),
+        ),
+    ),
+  );
+
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
   threadId: ThreadId,
@@ -188,20 +214,24 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   if (shell === null || shell.deletedAt !== null) {
     return yield* threadNotFound(context.threads, targetId, "The thread was not found.");
   }
-  const projection = yield* context.threads
-    .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
-      turnItemTypes: ["user_input_request"],
-    })
-    .pipe(
-      Effect.mapError((error) =>
-        error._tag === "ThreadManagementThreadNotFoundError"
-          ? new OrchestratorMcpFailure({
-              code: "thread_not_found",
-              message: "The thread was not found.",
-            })
-          : unavailable(),
-      ),
-    );
+  const projection = yield* readInCurrentProject(
+    context.threads,
+    targetId,
+    shell.projectId,
+    (projectId) =>
+      context.threads.getProjectThreadRecords({ projectId, threadId: targetId }, fields, {
+        turnItemTypes: ["user_input_request"],
+      }),
+  ).pipe(
+    Effect.mapError((error) =>
+      error._tag === "ThreadManagementThreadNotFoundError"
+        ? new OrchestratorMcpFailure({
+            code: "thread_not_found",
+            message: "The thread was not found.",
+          })
+        : unavailable(),
+    ),
+  );
   return { ...context, projection };
 });
 

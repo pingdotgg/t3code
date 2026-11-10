@@ -284,6 +284,19 @@ export const either = <P, A, E, R, A2, E2, R2>(
 const fullAccessRequired =
   "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 
+/** The calling thread picks a folder its next turn can write, so this needs the bar for adding a project. */
+export const actsAsFullAccessCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare(
+    (params: P) =>
+      requireThreadCaller.pipe(
+        Effect.andThen(writingCaller),
+        Effect.tap((caller) => assertNotLinked(caller, "change projects or environment settings")),
+        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+        Effect.flatMap(() => handle(params)),
+      ),
+    undefined,
+  );
+
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
   handle: (

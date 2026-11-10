@@ -46,6 +46,13 @@ const handlers = {
       return yield* service.handoff(scope, input);
     }),
   ),
+  t3_thread_move: McpToolAccess.actsAsFullAccessCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.moveToFolder(scope, input);
+    }),
+  ),
   t3_worktree_status: McpToolAccess.readsAsCaller(() =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

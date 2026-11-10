@@ -7534,6 +7534,77 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       assert.equal(stayed?.projectId, scratchProjectId);
     }),
   );
+
+  it.effect("moves an idle thread to another project and refuses a busy one", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sourceProjectId = ProjectId.make("runtime-layer-move-source");
+      const targetProjectId = ProjectId.make("runtime-layer-move-target");
+      for (const projectId of [sourceProjectId, targetProjectId]) {
+        yield* projects.create({
+          commandId: CommandId.make(`${projectId}-create`),
+          projectId,
+          title: projectId,
+          workspaceRoot: `/tmp/${projectId}`,
+        });
+      }
+      const createThread = (threadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: sourceProjectId,
+          title: "Move me",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/old",
+          worktreePath: "/tmp/runtime-layer-move-worktree",
+        });
+      const move = (threadId: ThreadId, projectId: ProjectId, suffix: string) =>
+        orchestrator.dispatch({
+          type: "thread.project.move",
+          commandId: CommandId.make(`${threadId}-move-${suffix}`),
+          threadId,
+          projectId,
+        });
+      const idleThreadId = ThreadId.make("runtime-layer-move-idle");
+      const busyThreadId = ThreadId.make("runtime-layer-move-busy");
+      yield* createThread(idleThreadId);
+      yield* createThread(busyThreadId);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-move-busy-message"),
+        threadId: busyThreadId,
+        messageId: MessageId.make("runtime-layer-move-busy-message"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      const missing = yield* move(idleThreadId, ProjectId.make("missing"), "missing").pipe(
+        Effect.flip,
+      );
+      assert.equal(missing.cause, `Thread ${idleThreadId} cannot move to missing project missing.`);
+      const busy = yield* move(busyThreadId, targetProjectId, "busy").pipe(Effect.flip);
+      assert.equal(busy.cause, `Thread ${busyThreadId} still has work in progress.`);
+
+      yield* move(idleThreadId, targetProjectId, "target");
+      const shell = yield* orchestrator.getShellSnapshot();
+      const moved = shell.threads.find((thread) => thread.id === idleThreadId);
+      assert.equal(moved?.projectId, targetProjectId);
+      assert.isNull(moved?.branch);
+      assert.isNull(moved?.worktreePath);
+      const stayed = shell.threads.find((thread) => thread.id === busyThreadId);
+      assert.equal(stayed?.projectId, sourceProjectId);
+    }),
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
