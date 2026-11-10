@@ -34,7 +34,6 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
-import { createShellEnvironmentAtoms } from "./shellCommands.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -206,23 +205,35 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([WS_METHODS.scheduledTasksDelete, ORCHESTRATION_V2_WS_METHODS.stopWorkflow])(
-    "uses the target grant for both availability and execution of %s",
-    (method) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const registry = yield* setup;
-          const permissions = createCommandPermissions(runtime, method);
-          registry.set(sessions(env), AsyncResult.success(grant(true)));
-          expect(registry.get(permissions.permissionAtom(env))).toBe(true);
-          expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
-          yield* permissions.authorize(registry, env);
-          registry.set(sessions(other), AsyncResult.success(grant(false)));
-          expect(registry.get(permissions.permissionAtom(other))).toBe(false);
-          const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
-          expect(denied._tag).toBe("EnvironmentAuthorizationError");
-        }),
-      ),
+  it.effect.each([
+    WS_METHODS.scheduledTasksDelete,
+    ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    WS_METHODS.shellOpenInEditor,
+  ])("uses the target grant for both availability and execution of %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const permissions = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+        expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
+        yield* permissions.authorize(registry, env);
+        registry.set(
+          sessions(other),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthFilesystemReadScope],
+            permissions: [AuthFilesystemReadScope],
+          }),
+        );
+        expect(registry.get(permissions.permissionAtom(other))).toBe(false);
+        const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
+        expect(denied).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthOrchestrationOperateScope,
+        });
+      }),
+    ),
   );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
@@ -593,34 +604,4 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
-);
-
-it.effect("requires the destination operate grant to open or reveal a file on its host", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const registry = yield* setup;
-      const { openInEditor } = createShellEnvironmentAtoms(runtime);
-      const authorization = createCommandPermissions(runtime, WS_METHODS.shellOpenInEditor);
-      registry.set(sessions(other), AsyncResult.success(grant(true)));
-      registry.set(
-        sessions(env),
-        AsyncResult.success({
-          ...grant(false),
-          scopes: [AuthFilesystemReadScope],
-          permissions: [AuthFilesystemReadScope],
-        }),
-      );
-      expect(registry.get(openInEditor.permissionAtom(other))).toBe(true);
-      expect(registry.get(openInEditor.permissionAtom(env))).toBe(false);
-      const denied = yield* authorization.authorize(registry, env).pipe(Effect.flip);
-      expect(denied).toMatchObject({
-        _tag: "EnvironmentAuthorizationError",
-        requiredPermission: AuthOrchestrationOperateScope,
-      });
-
-      registry.set(sessions(env), AsyncResult.success(grant(true)));
-      expect(registry.get(openInEditor.permissionAtom(env))).toBe(true);
-      yield* authorization.authorize(registry, env);
-    }),
-  ),
 );

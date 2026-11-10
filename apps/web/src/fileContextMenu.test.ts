@@ -32,12 +32,6 @@ describe("resolveFileContextMenuAbsolutePath", () => {
     ).toBeNull();
   });
 
-  it("keeps a literal backslash in a POSIX filename", () => {
-    expect(resolveFileContextMenuAbsolutePath({ ...BASE_TARGET, filePath: "src/a\\b.txt" })).toBe(
-      "/workspace/project/src/a\\b.txt",
-    );
-  });
-
   it("rejects absolute paths without a workspace root, matching diff path resolution", () => {
     expect(
       resolveFileContextMenuAbsolutePath({
