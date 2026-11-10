@@ -446,6 +446,29 @@ it("retries a recording parked for its thread over the destination's new connect
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
+it("finishes a recording that outlived its thread when the destination reconnects mid-transcription", async () => {
+  setup({ destination: "env-a" });
+  let resolveTranscript!: (text: string) => void;
+  mocks.transcripts = [new Promise<string>((resolve) => (resolveTranscript = resolve))];
+  const commitThreadB = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await screen.rerender(<Probe ownerKey="thread-b" commitDraft={commitThreadB} />);
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe ownerKey="thread-b" commitDraft={commitThreadB} />);
+  expect(mocks.transcriptionSignals[0]?.aborted).toBe(false);
+  expect(mocks.deletedRecordings).toEqual([]);
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  expect(mocks.voice.state.phase).toBe("transcribing");
+  await act(async () => resolveTranscript("the login bug"));
+  await vi.waitFor(() =>
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("the login bug", expect.anything()),
+  );
+  expect(commitThreadB).not.toHaveBeenCalled();
+  expect(mocks.voice.state.phase).toBe("idle");
+});
+
 it("keeps a failed recording for retry when its editor's destination reconnects", async () => {
   setup({ destination: "env-a" });
   mocks.transcripts = [new Error("inference failed"), "second try"];

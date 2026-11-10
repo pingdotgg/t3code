@@ -524,7 +524,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const phase = controller.currentState.phase;
       // A reconnect under unchanged consent hands the failed recording to the next controller.
       if (phase === "error" && (unmountingRef.current || hasAudioConsent())) parkFailedRecording();
-      if (unmountingRef.current) {
+      // A reconnect under unchanged consent keeps audio already sent for transcription.
+      const reconnecting =
+        !unmountingRef.current &&
+        hasAudioConsent() &&
+        (phase === "transcribing" || phase === "post-processing");
+      if (unmountingRef.current || reconnecting) {
         const current = latestRef.current.input;
         const snapshot = lastSnapshotRef.current;
         if (
@@ -535,7 +540,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         ) {
           detachedRef.current = { input: current, revision: snapshot.revision };
         }
-        // The editor is gone, but the recording still finishes into its draft or waits for Retry.
+        // The editor or its connection is gone, but the recording still finishes into its draft
+        // or waits for Retry.
         const detached = detachedRef.current;
         if (detached) {
           const ownerKey = detached.input.ownerKey;
