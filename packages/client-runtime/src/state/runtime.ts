@@ -122,6 +122,8 @@ interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly completeWhen?: (value: A) => boolean;
   readonly idleTtlMs?: number;
+  /** Keeps a completed value this long after its last reader leaves, so reopening skips a resubscribe. */
+  readonly completedTtlMs?: number;
 }
 
 export type SettledAsyncResult<A, E> = AsyncResult.Success<A, E> | AsyncResult.Failure<A, E>;
@@ -477,6 +479,10 @@ export async function settlePromise<A>(
   }
 }
 
+/** Where a query's answer is persisted, so an action's reply can be saved where a read would be. */
+export const queryPersistenceKey = (label: string, input: unknown): string =>
+  JSON.stringify([label, input]);
+
 function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
@@ -765,7 +771,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               );
         if (!options.persistence) return answer();
         const persistence = options.persistence;
-        const cacheKey = JSON.stringify([options.label, target.input]);
+        const cacheKey = queryPersistenceKey(options.label, target.input);
         const previous = Option.flatMap(
           get.self<AsyncResult.AsyncResult<A, unknown>>(),
           AsyncResult.value,
@@ -822,7 +828,12 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
     EnvironmentSupervisor.EnvironmentSupervisor | R
   >,
 ) {
-  const family = Atom.family((key: string) => {
+  const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+  const label = (key: string) =>
+    options.sensitiveInput
+      ? `${options.label}:${parseEnvironmentRpcKey<Input>(key).environmentId}`
+      : `${options.label}:${key}`;
+  const live = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
       .atom(
@@ -830,15 +841,31 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
           followStreamInEnvironment(target.environmentId, options.subscribe(target.input)),
         ).pipe(options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream),
       )
-      .pipe(
-        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(
-          options.sensitiveInput
-            ? `${options.label}:${target.environmentId}`
-            : `${options.label}:${key}`,
-        ),
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key)));
   });
+  const { completeWhen, completedTtlMs } = options;
+  if (completeWhen === undefined || completedTtlMs === undefined) {
+    return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
+      live(environmentRpcKey(target));
+  }
+  const completed = Atom.family((key: string) =>
+    Atom.make(Option.none<A>()).pipe(
+      Atom.setIdleTTL(completedTtlMs),
+      Atom.withLabel(`${label(key)}:completed`),
+    ),
+  );
+  // Reading `completed` first drops the live subscription once its value is final.
+  const family = Atom.family((key: string) =>
+    Atom.make((get) => {
+      const done = get(completed(key));
+      if (Option.isSome(done)) return AsyncResult.success(done.value);
+      const result = get(live(key));
+      if (AsyncResult.isSuccess(result) && !result.waiting && completeWhen(result.value)) {
+        get.set(completed(key), Option.some(result.value));
+      }
+      return result;
+    }).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key))),
+  );
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
     family(environmentRpcKey(target));
 }
@@ -925,6 +952,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     readonly tag: TTag;
     readonly idleTtlMs?: number;
     readonly completeWhen?: (value: B) => boolean;
+    readonly completedTtlMs?: number;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -941,6 +969,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   return createEnvironmentSubscriptionAtomFamily(runtime, {
     label: options.label,
     ...(options.completeWhen === undefined ? {} : { completeWhen: options.completeWhen }),
+    ...(options.completedTtlMs === undefined ? {} : { completedTtlMs: options.completedTtlMs }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
     subscribe: (input: EnvironmentRpcInput<TTag>) => {
       const stream = subscribe(options.tag, input);
@@ -960,11 +989,20 @@ export function createEnvironmentRpcCommand<
   ER,
   TTag extends EnvironmentUnaryRpcTag,
   Input extends EnvironmentRpcInput<TTag> = EnvironmentRpcInput<TTag>,
+  Started = undefined,
 >(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
     readonly tag: TTag;
+    /** Runs once authorized, as the request starts; what it returns reaches `onSuccess`. */
+    readonly onStart?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: NoInfer<Input>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Started;
     readonly execute?: (
       input: Input,
     ) => Effect.Effect<
@@ -984,6 +1022,7 @@ export function createEnvironmentRpcCommand<
       },
       registry: AtomRegistry.AtomRegistry,
       result: EnvironmentRpcSuccess<TTag>,
+      started: Started | undefined,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
@@ -1004,15 +1043,21 @@ export function createEnvironmentRpcCommand<
         environmentId,
         input,
       };
+      let started: Started | undefined;
       // Routing requires consent on the origin as well as the actual destination.
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
-        Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
+        Effect.andThen(() => {
+          started = options.onStart?.(target, registry);
+          return options.execute?.(input) ?? requestGuarded(options.tag, input);
+        }),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>
             createCommandPermissions(runtime, method).authorize(registry, id, payload),
         }),
-        Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
+        Effect.tap(
+          (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
+        ),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );
     },
