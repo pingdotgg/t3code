@@ -127,7 +127,7 @@ export type LayoutDirection = "left" | "right" | "up" | "down";
 
 export type LayoutTabDestination =
   | { kind: "pane"; paneId: string; index?: number }
-  | { kind: "split"; paneId: string; side: LayoutDirection }
+  | { kind: "split"; paneId: string; side: LayoutDirection; exact?: boolean }
   | { kind: "column"; workspaceId: string; index: number };
 
 export type LayoutOpenPlacement = "active-pane" | "new-column" | "split-down";
@@ -1147,16 +1147,17 @@ function splitPaneWithTab(
   side: LayoutDirection,
   tab: LayoutTab,
   focus = true,
+  exact = false,
 ): LayoutState {
   const found = findPane(state, paneId);
   if (!found) return state;
   if (side === "left" || side === "right") {
     const columnIndex = found.workspace.columns.indexOf(found.column);
-    // A chat never lands between another chat and its side pane.
+    // Commands keep a chat beside its side panes; explicit drops use the previewed position.
     const insertIndex =
       side === "left"
         ? columnIndex
-        : (tab.content.kind !== "surface"
+        : (tab.content.kind !== "surface" && !exact
             ? companionRunEnd(found.workspace, columnIndex)
             : columnIndex) + 1;
     // A horizontal split adds a full-width column without resizing its source.
@@ -1580,7 +1581,16 @@ export function moveLayoutTab(
     );
   }
   if (destination.kind === "split") {
-    return normalizeLayout(splitPaneWithTab(detached, destination.paneId, destination.side, tab));
+    return normalizeLayout(
+      splitPaneWithTab(
+        detached,
+        destination.paneId,
+        destination.side,
+        tab,
+        true,
+        destination.exact,
+      ),
+    );
   }
   // As in niri, a moved window keeps its column's width.
   return insertColumn(
@@ -1613,7 +1623,9 @@ export function placeLayoutContent(
     );
   }
   if (destination.kind === "split") {
-    return normalizeLayout(splitPaneWithTab(state, destination.paneId, destination.side, tab));
+    return normalizeLayout(
+      splitPaneWithTab(state, destination.paneId, destination.side, tab, true, destination.exact),
+    );
   }
   if (!state.workspaces.some((workspace) => workspace.id === destination.workspaceId)) {
     return state;
@@ -1693,7 +1705,14 @@ export function placeLayoutTabs(
     );
   } else if (destination.kind === "split") {
     if (!findPane(state, destination.paneId)) return state;
-    next = splitPaneWithTab(state, destination.paneId, destination.side, first, options.focus);
+    next = splitPaneWithTab(
+      state,
+      destination.paneId,
+      destination.side,
+      first,
+      options.focus,
+      destination.exact,
+    );
   } else {
     if (!state.workspaces.some((workspace) => workspace.id === destination.workspaceId)) {
       return state;

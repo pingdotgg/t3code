@@ -8,11 +8,13 @@ import {
   createLayoutState,
   ghostLoneLayoutChats,
   layoutChatSwaps,
+  moveLayoutTab,
   moveLayoutTabToNewWorkspace,
   moveLayoutTabToWorkspace,
   openLayoutGhostChat,
   openLayoutKeptTab,
   openLayoutTab,
+  placeLayoutContent,
   placeLayoutTabs,
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
@@ -299,6 +301,27 @@ describe("openLayoutKeptTab", () => {
   });
 });
 
+describe("placeLayoutContent", () => {
+  it("places exact side splits before companions while commands keep their grouping", () => {
+    const before = openLayoutTab(showLayoutContent(createLayoutState(), chat), diff, {
+      placement: "new-column",
+    });
+    const paneId = before.workspaces[0]!.columns[0]!.panes[0]!.id;
+    const withNext = openLayoutTab(before, next, { placement: "new-column" });
+    const tabId = selectFocusedTab(withNext)!.id;
+    for (const exact of [false, true]) {
+      const destination = { kind: "split", paneId, side: "right", exact } as const;
+      const expected = exact ? [[chat], [next], [diff]] : [[chat], [diff], [next]];
+      const placed = placeLayoutContent(before, next, destination);
+      const moved = moveLayoutTab(withNext, tabId, destination);
+      expect(columnsOf(placed)).toEqual(expected);
+      expect(columnsOf(moved)).toEqual(expected);
+      expect(selectFocusedTab(placed)?.content).toBe(next);
+      expect(selectFocusedTab(moved)?.content).toBe(next);
+    }
+  });
+});
+
 describe("placeLayoutTabs", () => {
   // An app's open (focus: false) leaves the user where they are, an empty workspace included.
   const focusOn = (state: LayoutState, workspaceId: string) => ({
@@ -323,6 +346,12 @@ describe("placeLayoutTabs", () => {
       layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
       placement: { kind: "column", workspaceId: "w3", index: 0 },
       expected: [[[["A"]]], [[["C"]]], [[["X"]]]],
+    },
+    {
+      case: "an exact side split from an empty workspace preserves focus",
+      layout: focusOn(layoutOf([[["A"]], [["t:A"]]], []), "w1"),
+      placement: { kind: "split", paneId: "w0c0p0", side: "right", exact: true },
+      expected: [[[["A"]], [["X"]], [["t:A"]]]],
     },
     {
       case: "into the focused workspace",

@@ -32,10 +32,9 @@ const badgeVariants = cva(
         merged: "bg-merged-tint text-merged-foreground",
         outline: "surface-outline text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
         // Neutral: the quiet fill with a muted label.
-        secondary:
-          "bg-badge-neutral bg-(image:--badge-neutral-fill) text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
+        secondary: "surface-badge text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
         success: "bg-success-tint text-success-foreground",
-        unavailable: "bg-badge-neutral bg-(image:--badge-neutral-fill) text-dim-foreground",
+        unavailable: "surface-badge text-dim-foreground",
         // Quieter than unavailable: the faintest neutral fill with a dim label (snoozed rows).
         quiet: "bg-badge-quiet text-dim-foreground",
         warning: "bg-warning-tint text-warning-foreground",

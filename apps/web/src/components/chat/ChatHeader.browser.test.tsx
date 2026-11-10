@@ -21,6 +21,11 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 }));
 
 import { render } from "../../../test/render";
+import { showLayoutTabMenu } from "../../layout/PaneTabs";
+import { LayoutPaneContext, useLayoutPane } from "../../layout/layoutPaneContext";
+import { findLayoutTab } from "../../layout/layoutModel";
+import { useLayoutStore } from "../../layout/layoutStore";
+import { ensureLocalApi } from "../../localApi";
 import { ChatHeader } from "./ChatHeader";
 
 function header(title: string) {
@@ -73,3 +78,28 @@ it.each(["blur", "Enter"] as const)(
     expect(persisted.title).toBe("My edited title");
   },
 );
+
+it("preserves a concurrent title update when an untouched tab menu rename ends", async () => {
+  persisted.title = "New thread";
+  const content = { kind: "launcher", id: "rename-target", context: null } as const;
+  useLayoutStore.getState().openTab(content, { placement: "active-pane", position: "end" });
+  const tabId = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content === content)!
+    .tab.id;
+  function TabHeader({ title }: { title: string }) {
+    return (
+      <LayoutPaneContext value={{ ...useLayoutPane(), tabId }}>{header(title)}</LayoutPaneContext>
+    );
+  }
+  await using screen = await render(<TabHeader title={persisted.title} />);
+  using _menu = vi.spyOn(ensureLocalApi().contextMenu, "show").mockResolvedValue("rename");
+  await showLayoutTabMenu(tabId, { x: 0, y: 0 }, []);
+  const input = screen.getByRole("textbox", { name: "Thread title" });
+  await expect.element(input).toHaveValue("New thread");
+
+  persisted.title = "Fix login redirect";
+  await screen.rerender(<TabHeader title={persisted.title} />);
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(input).not.toBeInTheDocument();
+  expect(persisted.title).toBe("Fix login redirect");
+});
