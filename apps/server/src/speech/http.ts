@@ -4,7 +4,9 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
+  EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  type EnvironmentSpeechModels,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
 } from "@t3tools/contracts";
@@ -53,6 +55,14 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
       SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
     }),
   );
+
+// A linked model's origin is a path on this machine; only filesystem readers may see it.
+// Untraced: it runs inside each handler's own span.
+const withoutHostPaths = Effect.fnUntraced(function* (result: EnvironmentSpeechModels) {
+  const session = yield* EnvironmentAuthenticatedPrincipal;
+  if (session.scopes.has(AuthFilesystemReadScope)) return result;
+  return { models: result.models.map(({ linkedFrom: _, ...model }) => model) };
+});
 
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -134,35 +144,45 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "models",
         Effect.fn("environment.voice.models")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* speech.models(args.query.benchmarks === "1").pipe(mapSpeechError);
+          return yield* speech
+            .models(args.query.benchmarks === "1")
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "downloadModel",
         Effect.fn("environment.voice.downloadModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.downloadModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .downloadModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "selectModel",
         Effect.fn("environment.voice.selectModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.selectModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .selectModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "cancelModelDownload",
         Effect.fn("environment.voice.cancelModelDownload")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.cancelDownload(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .cancelDownload(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "removeModel",
         Effect.fn("environment.voice.removeModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.removeModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .removeModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(

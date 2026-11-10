@@ -165,7 +165,31 @@ effectIt.effect(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
-          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(
+            Layer.mock(SpeechService.SpeechService)({
+              models: () =>
+                Effect.succeed({
+                  models: [
+                    {
+                      id: "fixture/model",
+                      name: "Fixture",
+                      description: "",
+                      size: 1,
+                      languages: ["en"],
+                      accuracy: 0,
+                      speed: 0,
+                      recommended: false,
+                      supportsStreaming: false,
+                      supportsLanguageDetection: false,
+                      supportsTranslation: false,
+                      active: true,
+                      state: "installed",
+                      linkedFrom: "/home/someone/models/fixture.gguf",
+                    },
+                  ],
+                }),
+            }),
+          ),
           Layer.provide(cloud),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
@@ -241,6 +265,10 @@ effectIt.effect(
         ),
       );
       expect(link.status).toBe(403);
+      const listed = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/models"), context),
+      );
+      expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
     }).pipe(Effect.scoped),
 );
 
