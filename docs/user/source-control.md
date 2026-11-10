@@ -321,7 +321,9 @@ Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_p
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
 check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. To cut wakes on a busy pull request, ask the agent to watch only some of these, such as
-comments, reviews and failed checks. A closed pull request or a watch T3 Code ends still wakes it.
+comments, reviews and failed checks. The agent still wakes when the pull request closes or after 8
+failed reads in a row, and only the comments and reviews a watch includes count toward the
+comment-only wakes that end watching.
 Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
