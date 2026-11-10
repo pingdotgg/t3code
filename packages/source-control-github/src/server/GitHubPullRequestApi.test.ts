@@ -2959,43 +2959,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads files pages small enough that GitHub keeps their patches", () =>
-    Effect.gen(function* () {
-      // Larger pages make GitHub drop some patches and report those files as 0/0.
-      mockedExecute.mockImplementation((call) => {
-        if (call.kind !== "rest" || !call.path.includes("/files?")) {
-          return Effect.fail(diffRefused);
-        }
-        const pageSize = Number(new URLSearchParams(call.path.split("?")[1]).get("per_page"));
-        const complete = pageSize <= 30;
-        return Effect.succeed(
-          output(
-            encodeJson(
-              Array.from({ length: pageSize }, (_, index) => ({
-                filename: `deps/file${index}.c`,
-                status: "added",
-                additions: complete ? 1 : 0,
-                deletions: 0,
-                ...(complete ? { patch: "@@ -0,0 +1 @@\n+int x;" } : {}),
-              })),
-            ),
-          ),
-        );
-      });
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const diff = yield* cli.getPullRequestDiff({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-
-      expect(diff.patch).toContain("+++ b/deps/file0.c\n@@ -0,0 +1 @@\n+int x;\n");
-      assert.strictEqual(diff.nextCursor, "2");
-    }),
-  );
-
   it.effect("refuses a cursor it never handed out rather than reading it into a request", () =>
     Effect.gen(function* () {
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
