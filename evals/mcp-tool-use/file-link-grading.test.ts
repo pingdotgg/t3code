@@ -43,6 +43,14 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
   });
 });
 
+it("grades a workspace outside home directories", () => {
+  const pills = fileLinkPills("`src/main.ts` and `/usr/bin/node`", "/tmp/app", ["src/main.ts"]);
+  assert.deepStrictEqual(
+    pills.map((pill) => [pill.source, pill.works]),
+    [["src/main.ts", true]],
+  );
+});
+
 it("needs a finished answer with enough working pills", () => {
   const passes = (text: string | undefined, minWorking: number) =>
     gradeFileLinks({ minWorking }, text, cwd, files).every((check) => check.pass);

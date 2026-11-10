@@ -71,8 +71,8 @@ export const fileLinkPills = (
     const target = resolveMarkdownFileLinkTarget(source, cwd);
     if (target === null) return [];
     const path = normalizeAbsolutePath(splitFilePathPosition(target).path);
-    // System paths such as /usr/bin/node are not what these cases test.
-    if (!/^\/(?:home|Users)\//.test(path)) return [];
+    // System paths such as /usr/bin/node are not what these cases test; the workspace always is.
+    if (!path.startsWith(`${cwd}/`) && !/^\/(?:home|Users)\//.test(path)) return [];
     const relative = parseMarkdownFileLink(source)?.path ?? path;
     const entries = files.flatMap((file) =>
       file.startsWith(`${cwd}/`)
