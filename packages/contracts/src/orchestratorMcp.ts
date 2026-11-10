@@ -790,6 +790,97 @@ export const OrchestratorMcpListPipelinesResult = Schema.Struct({
 });
 export type OrchestratorMcpListPipelinesResult = typeof OrchestratorMcpListPipelinesResult.Type;
 
+const OrchestratorMcpPipelineKey = TrimmedNonEmptyString.annotate({
+  description: "Pipeline id or exact name, from `list_pipelines`.",
+});
+
+export const OrchestratorMcpGetPipelineInput = Schema.Struct({
+  pipeline: OrchestratorMcpPipelineKey,
+});
+export type OrchestratorMcpGetPipelineInput = typeof OrchestratorMcpGetPipelineInput.Type;
+
+export const OrchestratorMcpPipeline = Schema.Struct({
+  pipelineId: PipelineId,
+  name: Schema.String,
+  updatedAt: IsoDateTime,
+  steps: Schema.Array(
+    Schema.Struct({
+      stepId: PipelineStepId,
+      name: Schema.String,
+      providerInstanceId: ProviderInstanceId,
+      model: Schema.String,
+      options: Schema.Record(Schema.String, ProviderOptionSelectionValue),
+      runtimeMode: RuntimeMode,
+      skills: Schema.Array(Schema.String),
+      promptTemplate: Schema.String,
+      pauseBefore: Schema.Boolean,
+      compactAfterHandoff: Schema.Boolean,
+    }),
+  ),
+});
+export type OrchestratorMcpPipeline = typeof OrchestratorMcpPipeline.Type;
+
+// Every field is optional so an edit names only what it changes; the service enforces the rest.
+const OrchestratorMcpPipelineStepFields = {
+  name: Schema.optional(Schema.String),
+  promptTemplate: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Placeholders: {{input}}, {{previous.output}}, {{steps.<id or name>.output}} (earlier steps only).",
+    }),
+  ),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  model: Schema.optional(Schema.String),
+  options: Schema.optional(OrchestratorMcpTargetOptions),
+  runtimeMode: Schema.optional(RuntimeMode),
+  skills: Schema.optional(Schema.Array(Schema.String)),
+  pauseBefore: Schema.optional(Schema.Boolean),
+  compactAfterHandoff: Schema.optional(Schema.Boolean),
+};
+
+export const OrchestratorMcpSavePipelineInput = Schema.Struct({
+  pipeline: Schema.optional(
+    OrchestratorMcpPipelineKey.annotate({
+      description: "Existing pipeline id or exact name to change. Omit to create one.",
+    }),
+  ),
+  name: Schema.optional(Schema.String),
+  steps: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        stepId: Schema.optional(
+          Schema.String.annotate({
+            description:
+              "An existing step's id: it keeps every field you omit. Without a match, the entry is a new step: `name` and `promptTemplate` are required.",
+          }),
+        ),
+        ...OrchestratorMcpPipelineStepFields,
+      }),
+    ).annotate({ description: "The full ordered step list. It replaces the pipeline's steps." }),
+  ),
+  stepEdits: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        step: TrimmedNonEmptyString.annotate({ description: "Step id or name." }),
+        ...OrchestratorMcpPipelineStepFields,
+      }),
+    ).annotate({ description: "Changes to named steps only. Not with `steps`." }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpSavePipelineInput = typeof OrchestratorMcpSavePipelineInput.Type;
+
+export const OrchestratorMcpDeletePipelineInput = Schema.Struct({
+  pipeline: OrchestratorMcpPipelineKey,
+});
+export type OrchestratorMcpDeletePipelineInput = typeof OrchestratorMcpDeletePipelineInput.Type;
+
+export const OrchestratorMcpDeletePipelineResult = Schema.Struct({
+  pipelineId: PipelineId,
+  deleted: Schema.Boolean,
+});
+export type OrchestratorMcpDeletePipelineResult = typeof OrchestratorMcpDeletePipelineResult.Type;
+
 export const OrchestratorMcpStartPipelineInput = Schema.Struct({
   pipeline: TrimmedNonEmptyString.annotate({
     description: "Pipeline id or exact name, from `list_pipelines`.",

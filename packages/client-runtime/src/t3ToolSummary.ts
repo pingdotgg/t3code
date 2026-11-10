@@ -232,6 +232,19 @@ export function summarizeT3ToolCalls(
     case "pipeline-list":
       label = phrase("Listed", "list", `pipelines ${times}`);
       break;
+    case "pipeline-get":
+      label = phrase("Read", "read", quantity(countEntities(entityIds("pipelineId")), "pipeline"));
+      break;
+    case "pipeline-save":
+      label = phrase("Saved", "save", quantity(countEntities(entityIds("pipelineId")), "pipeline"));
+      break;
+    case "pipeline-delete":
+      label = phrase(
+        "Requested deletion of",
+        "delete",
+        quantity(countEntities(entityIds("pipelineId")), "pipeline"),
+      );
+      break;
     case "pipeline-start":
       label = phrase("Started", "start", quantity(countEntities(entityIds("runId")), "pipeline"));
       break;

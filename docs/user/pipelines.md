@@ -14,11 +14,15 @@ follow-through. Its last step waits until you start it, then merges the pull req
 post-merge work.
 T3 Code adds it once. If you delete it, it stays deleted, and you can recreate it from the
 template. While you have not edited a pipeline made from the template, it is updated to the latest
-template when T3 Code updates. Once you edit it, it is yours and stays as you left it.
+template when T3 Code updates. Once you edit it, or an agent edits it for you, it is yours and
+stays as you left it.
 
 Each step has a name, a provider and model, a prompt template, optional skills, and a
 [permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
 default runtime mode from your settings. You can also make a step wait for you before it starts.
+
+You can also ask an agent to create or edit a pipeline for you. It can't give a step a broader
+permission mode than its own, and it can't change pipelines in plan mode.
 
 Each step can compact its thread once the next step has started (**Compact after handoff**). It is
 on by default, except for the last step, which compacts when the run completes if you switch it
@@ -48,8 +52,8 @@ without skill support can show the mention to the agent as literal text.
 ## Start a pipeline
 
 Pick a pipeline when you start a new thread, or choose **Start pipeline…** in the command palette.
-You can also ask an agent to start one for you. Agents can list your pipelines, start, check on,
-continue, and cancel runs when you ask them to.
+You can also ask an agent to start one for you. When you ask them to, agents can list, show, add,
+change, and delete your pipelines, and start, check on, continue, and cancel runs.
 
 The starting prompt takes what a chat message takes: images, files and added context (terminal output, review comments, preview annotations, threads, environments). They go with the prompt to every step whose template uses `{{input}}`, each time that step starts, including retries, reruns and feedback. Steps that do not use `{{input}}` get none.
 

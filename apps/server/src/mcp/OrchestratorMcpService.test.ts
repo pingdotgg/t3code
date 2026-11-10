@@ -11,6 +11,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   PipelineError,
+  type PipelineUpsertInput,
   PipelineId,
   PipelineRunId,
   PipelineStepId,
@@ -3898,12 +3899,14 @@ describe("OrchestratorMcpService pipelines", () => {
 
   const harness = (
     modes: {
-      readonly runtimeMode: "approval-required" | "full-access";
+      readonly runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
       readonly interactionMode: "default" | "plan";
     },
     extra: {
       readonly run?: Partial<PipelineRun>;
       readonly getRunError?: PipelineError;
+      /** Makes `upsert` fail, as for an edit of a pipeline deleted meanwhile. */
+      readonly upsertError?: PipelineError;
       readonly checkout?: { readonly worktreePath: string; readonly branch: string };
       /** The commit sha a checkout resolves to, or undefined when git cannot resolve it. */
       readonly resolveCommit?: (cwd: string, revision: string) => string | undefined;
@@ -3920,6 +3923,8 @@ describe("OrchestratorMcpService pipelines", () => {
     const handedOff: Array<unknown> = [];
     const revised: Array<unknown> = [];
     const escalated: Array<unknown> = [];
+    const upserted: Array<PipelineUpsertInput> = [];
+    const deleted: Array<unknown> = [];
     const caller = liveThreadShell(callerThreadId, modes);
     const shell = {
       ...caller,
@@ -3931,6 +3936,26 @@ describe("OrchestratorMcpService pipelines", () => {
     };
     const pipelines = Layer.mock(PipelineService.PipelineService)({
       list: () => Effect.succeed({ pipelines: [definition] }),
+      upsert: (input) =>
+        extra.upsertError !== undefined
+          ? Effect.fail(extra.upsertError)
+          : Effect.sync(() => {
+              upserted.push(input);
+              return {
+                pipeline: {
+                  id: input.id ?? PipelineId.make(`pipeline:${input.commandId ?? "new"}`),
+                  name: input.name,
+                  steps: input.steps,
+                  createdAt: at,
+                  updatedAt: at,
+                },
+              };
+            }),
+      delete: (input) =>
+        Effect.sync(() => {
+          deleted.push(input);
+          return { id: input.id };
+        }),
       start: (input, options) =>
         Effect.sync(() => {
           started.push({ input, options });
@@ -3970,9 +3995,11 @@ describe("OrchestratorMcpService pipelines", () => {
           Effect.succeed(extra.shells?.find((candidate) => candidate.id === threadId) ?? shell),
       }),
       ServerSettings.layerTest(),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([{ instanceId: "codex", enabled: true } as never]),
+      }),
       Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-        list: () => Effect.succeed([]),
+        list: () => Effect.succeed([ProviderInstanceId.make("codex")]),
       }),
       Layer.mock(ProjectService.ProjectService)({
         getById: () =>
@@ -4005,6 +4032,8 @@ describe("OrchestratorMcpService pipelines", () => {
       handedOff,
       escalated,
       revised,
+      upserted,
+      deleted,
       scope,
       layer: OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -4138,6 +4167,275 @@ describe("OrchestratorMcpService pipelines", () => {
           },
         ],
       });
+    }),
+  );
+
+  const upsertedOf = (h: ReturnType<typeof harness>) => {
+    const input = h.upserted[0];
+    assert.isDefined(input);
+    return input!;
+  };
+  const claude = ProviderInstanceId.make("claudeAgent");
+
+  it.effect("reads one pipeline in full, by name", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const result = yield* withService(h, (service) =>
+        service.getPipeline(h.scope, { pipeline: "feature delivery" }),
+      );
+      assert.deepEqual(result as unknown, {
+        pipelineId: definition.id,
+        name: "Feature delivery",
+        updatedAt: at,
+        steps: definition.steps.map((entry, index) => ({
+          stepId: entry.id,
+          name: entry.name,
+          providerInstanceId: "codex",
+          model: "gpt-5",
+          options: {},
+          runtimeMode: entry.runtimeMode,
+          skills: [],
+          promptTemplate: "{{input}}",
+          pauseBefore: false,
+          compactAfterHandoff: index === 0,
+        })),
+      });
+      const error = yield* withService(h, (service) =>
+        service.getPipeline(h.scope, { pipeline: "Nightly" }).pipe(Effect.flip),
+      );
+      assert.include(error.message, 'Pipeline "Nightly" was not found');
+    }),
+  );
+
+  it.effect(
+    "creates a pipeline with defaults, generated step ids and an idempotent command id",
+    () =>
+      Effect.gen(function* () {
+        const h = harness({ runtimeMode: "auto-accept-edits", interactionMode: "default" });
+        const saved = yield* withService(h, (service) =>
+          service.savePipeline(h.scope, {
+            name: " Colleague review ",
+            clientRequestId: "save-1",
+            steps: [
+              { name: "Read the diff", promptTemplate: "{{input}}", skills: ["$review"] },
+              { name: "Read the diff!", promptTemplate: " {{previous.output}} ", model: "gpt-6" },
+            ],
+          }),
+        );
+        const input = upsertedOf(h);
+        assert.equal(
+          input.commandId,
+          "command:mcp:provider-session%3Amcp-pipeline:save-pipeline:save-1",
+        );
+        assert.isUndefined(input.id);
+        assert.equal(input.name, "Colleague review");
+        assert.deepEqual(
+          input.steps.map((entry) => [
+            entry.id,
+            entry.skills,
+            entry.pauseBefore,
+            entry.runtimeMode,
+          ]) as ReadonlyArray<unknown>,
+          [
+            ["read-the-diff", ["review"], false, "auto-accept-edits"],
+            ["read-the-diff-2", [], false, "auto-accept-edits"],
+          ],
+        );
+        assert.equal(input.steps[1]!.promptTemplate, "{{previous.output}}");
+        assert.equal(input.steps[1]!.modelSelection.model, "gpt-6");
+        assert.equal(input.steps[0]!.compactAfterHandoff, undefined);
+        assert.equal(saved.steps[0]!.compactAfterHandoff, true);
+      }),
+  );
+
+  it.effect("changes only the named step with stepEdits", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      yield* withService(h, (service) =>
+        service.savePipeline(h.scope, {
+          pipeline: "Feature delivery",
+          stepEdits: [
+            { step: "build", promptTemplate: "Build {{previous.output}}", pauseBefore: true },
+          ],
+        }),
+      );
+      const input = upsertedOf(h);
+      assert.equal(input.id, definition.id);
+      assert.equal(input.requireExisting, true);
+      assert.equal(input.name, "Feature delivery");
+      assert.deepEqual(input.steps[0], definition.steps[0]);
+      assert.deepEqual(input.steps[1], {
+        ...definition.steps[1],
+        promptTemplate: "Build {{previous.output}}",
+        pauseBefore: true,
+      });
+    }),
+  );
+
+  it.effect("replaces the step list, inheriting omitted fields by stepId", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      yield* withService(h, (service) =>
+        service.savePipeline(h.scope, {
+          pipeline: definition.id,
+          steps: [
+            { stepId: "build", name: "Implement" },
+            {
+              name: "Verify",
+              promptTemplate: "{{steps.build.output}}",
+              runtimeMode: "approval-required",
+            },
+            { stepId: "plan" },
+          ],
+        }),
+      );
+      const steps = upsertedOf(h).steps;
+      assert.deepEqual(
+        steps.map((entry) => [entry.id, entry.name]),
+        [
+          ["build", "Implement"],
+          ["verify", "Verify"],
+          ["plan", "Plan"],
+        ],
+      );
+      assert.equal(steps[0]!.runtimeMode, "full-access");
+      assert.equal(steps[0]!.promptTemplate, "{{input}}");
+    }),
+  );
+
+  it.effect("refuses invalid saves with readable messages and writes nothing", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      const save = (
+        input: Parameters<OrchestratorMcpService.OrchestratorMcpServiceShape["savePipeline"]>[1],
+      ) => withService(h, (service) => service.savePipeline(h.scope, input).pipe(Effect.flip));
+      const step = { name: "One", promptTemplate: "{{input}}" };
+      const cases: ReadonlyArray<readonly [Parameters<typeof save>[0], string]> = [
+        [{ pipeline: "Feature delivery", steps: [], stepEdits: [] }, "not both"],
+        [{ name: "New" }, "needs a `name` and `steps`"],
+        [{ name: "New", stepEdits: [{ step: "a" }] }, "`stepEdits` changes an existing pipeline"],
+        [
+          { pipeline: "Feature delivery", stepEdits: [{ step: "nope" }] },
+          'Step "nope" is not in pipeline',
+        ],
+        [{ name: "New", steps: [] }, "Add at least one step"],
+        [{ name: "x".repeat(81), steps: [step] }, "name has at most 80"],
+        [{ name: "New", steps: [{ name: "One" }] }, "needs a name and a promptTemplate"],
+        [{ name: "New", steps: [{ ...step, skills: ["bad skill"] }] }, "invalid character"],
+        [
+          { name: "New", steps: [{ ...step, skills: Array.from({ length: 9 }, () => "a") }] },
+          "at most 8 skills",
+        ],
+        [
+          {
+            name: "New",
+            steps: [
+              { ...step, promptTemplate: "{{steps.two.output}}" },
+              { name: "Two", promptTemplate: "x" },
+            ],
+          },
+          "does not run before it",
+        ],
+        [
+          { name: "New", steps: [{ ...step, options: [{ id: "agent", value: "plan" }] }] },
+          "plan agent",
+        ],
+        [
+          { name: "New", steps: [{ ...step, providerInstanceId: claude, model: "m" }] },
+          "orchestrator_capabilities",
+        ],
+        [
+          { name: "New", steps: [{ ...step, providerInstanceId: claude }] },
+          "pass providerInstanceId and model",
+        ],
+        [
+          {
+            pipeline: "Feature delivery",
+            stepEdits: [{ step: "plan", providerInstanceId: claude }],
+          },
+          "needs a model",
+        ],
+        [
+          { pipeline: "Feature delivery", stepEdits: [{ step: "plan", name: "Build" }] },
+          "used more than once",
+        ],
+      ];
+      for (const [input, message] of cases) {
+        const error = yield* save(input);
+        assert.equal(error.code, "invalid_request", message);
+        assert.include(error.message, message);
+      }
+      assert.equal(h.upserted.length, 0);
+    }),
+  );
+
+  it.effect("does not recheck the provider of a step whose model did not change", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
+      // A saved step on a provider this server no longer has stays editable.
+      yield* withService(h, (service) =>
+        service.savePipeline(h.scope, { pipeline: "Feature delivery", name: "Renamed" }),
+      );
+      assert.equal(upsertedOf(h).name, "Renamed");
+    }),
+  );
+
+  it.effect("refuses steps above the caller's runtime mode, changed or not, and plan mode", () =>
+    Effect.gen(function* () {
+      const low = harness({ runtimeMode: "approval-required", interactionMode: "default" });
+      // The untouched "build" step is full-access, so even a rename of "plan" is refused.
+      const escalation = yield* withService(low, (service) =>
+        service
+          .savePipeline(low.scope, {
+            pipeline: "Feature delivery",
+            stepEdits: [{ step: "plan", name: "Think" }],
+          })
+          .pipe(Effect.flip),
+      );
+      assert.equal(escalation.code, "runtime_mode_escalation_denied");
+      const plan = harness({ runtimeMode: "full-access", interactionMode: "plan" });
+      const planSave = yield* withService(plan, (service) =>
+        service
+          .savePipeline(plan.scope, { pipeline: "Feature delivery", name: "X" })
+          .pipe(Effect.flip),
+      );
+      const planDelete = yield* withService(plan, (service) =>
+        service.deletePipeline(plan.scope, { pipeline: "Feature delivery" }).pipe(Effect.flip),
+      );
+      assert.equal(planSave.code, "interaction_mode_escalation_denied");
+      assert.equal(planDelete.code, "interaction_mode_escalation_denied");
+      assert.equal(low.upserted.length + plan.upserted.length + plan.deleted.length, 0);
+    }),
+  );
+
+  it.effect("does not recreate a pipeline deleted meanwhile", () =>
+    Effect.gen(function* () {
+      const h = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { upsertError: new PipelineError({ message: "Pipeline not found." }) },
+      );
+      const error = yield* withService(h, (service) =>
+        service
+          .savePipeline(h.scope, { pipeline: "Feature delivery", name: "Again" })
+          .pipe(Effect.flip),
+      );
+      assert.include(error.message, "Pipeline not found");
+    }),
+  );
+
+  it.effect("deletes a pipeline by name and errors on an unknown one", () =>
+    Effect.gen(function* () {
+      const h = harness({ runtimeMode: "auto-accept-edits", interactionMode: "default" });
+      const result = yield* withService(h, (service) =>
+        service.deletePipeline(h.scope, { pipeline: "Feature delivery" }),
+      );
+      assert.deepEqual(result, { pipelineId: definition.id, deleted: true });
+      assert.deepEqual(h.deleted, [{ id: definition.id }]);
+      const error = yield* withService(h, (service) =>
+        service.deletePipeline(h.scope, { pipeline: "Nightly" }).pipe(Effect.flip),
+      );
+      assert.include(error.message, "was not found");
+      assert.equal(h.deleted.length, 1);
     }),
   );
 

@@ -138,6 +138,31 @@ const handlers = {
       return yield* service.listPipelines(scope);
     }),
   ),
+  get_pipeline: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.getPipeline(scope, input);
+    }),
+  ),
+  save_pipeline: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.savePipeline(scope, input);
+      }),
+    { refusedWhenLinked: "change this environment's pipelines" },
+  ),
+  delete_pipeline: McpToolAccess.writes(
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.deletePipeline(scope, input);
+      }),
+    { refusedWhenLinked: "change this environment's pipelines" },
+  ),
   start_pipeline: McpToolAccess.startsThreads(
     () => ({}),
     (input) =>

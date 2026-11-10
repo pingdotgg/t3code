@@ -72,5 +72,9 @@ describe("resolveT3McpSummaryAction", () => {
     expect(resolveT3McpSummaryAction("mcp__t3-code__start_pipeline", {})).toBe("pipeline-start");
     expect(resolveT3McpSummaryAction("pipeline_status", {})).toBe("pipeline-status");
     expect(resolveT3McpToolPresentation("list_pipelines")?.displayName).toBe("List pipelines");
+    expect(resolveT3McpSummaryAction("mcp__t3-code__get_pipeline", {})).toBe("pipeline-get");
+    expect(resolveT3McpSummaryAction("save_pipeline", {})).toBe("pipeline-save");
+    expect(resolveT3McpSummaryAction("delete_pipeline", {})).toBe("pipeline-delete");
+    expect(resolveT3McpToolPresentation("delete_pipeline")?.displayName).toBe("Delete a pipeline");
   });
 });

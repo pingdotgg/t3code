@@ -51,10 +51,10 @@ import {
   normalizeSkillName,
   pipelineDraftIssues,
   pipelineToDraft,
-  resolveStepIds,
   type PipelineDraft,
   type PipelineStepDraft,
 } from "@t3tools/client-runtime/pipeline-editor";
+import { resolveStepIds } from "@t3tools/shared/pipelineStepIds";
 import { PIPELINE_STARTERS, type PipelineStarter } from "@t3tools/shared/pipelineStarters";
 import { SettingsSection } from "./components/SettingsSection";
 import {

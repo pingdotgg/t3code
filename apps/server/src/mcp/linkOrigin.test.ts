@@ -374,11 +374,14 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
         assert.equal(failureCode(result), "capability_denied", name);
       }
 
-      // Nor scheduled tasks, which belong to no thread.
-      assert.equal(
-        failureCode(yield* call(laptop, "delete_scheduled_task", { scheduledTaskId: "any" })),
-        "capability_denied",
-      );
+      // Nor scheduled tasks or pipelines, which belong to no thread.
+      for (const [name, args] of [
+        ["delete_scheduled_task", { scheduledTaskId: "any" }],
+        ["save_pipeline", { name: "Review", steps: [{ name: "Look", promptTemplate: "x" }] }],
+        ["delete_pipeline", { pipeline: "any" }],
+      ] as const) {
+        assert.equal(failureCode(yield* call(laptop, name, args)), "capability_denied", name);
+      }
 
       // Reads are not fenced.
       const read = yield* call(laptop, "t3_thread_read", { threadId: users });

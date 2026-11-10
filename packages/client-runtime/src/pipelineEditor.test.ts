@@ -9,6 +9,7 @@ import {
   FEATURE_DELIVERY_PIPELINE,
   withStarterRuntimeMode,
 } from "@t3tools/shared/pipelineStarters";
+import { resolveStepIds, slugifyStepName, uniqueStepId } from "@t3tools/shared/pipelineStepIds";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -23,10 +24,7 @@ import {
   pipelineDraftIssues,
   pipelineStepSummary,
   pipelineToDraft,
-  resolveStepIds,
   starterToDraft,
-  slugifyStepName,
-  uniqueStepId,
   type PipelineDraft,
   type PipelineStepDraft,
 } from "./pipelineEditor.ts";

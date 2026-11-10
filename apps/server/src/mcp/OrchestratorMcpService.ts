@@ -14,9 +14,19 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
+  PIPELINE_MAX_STEPS,
+  PIPELINE_NAME_MAX_LENGTH,
+  PIPELINE_SKILL_NAME_PATTERN,
+  PIPELINE_STEP_SKILLS_MAX,
+  type PipelineDefinition,
   type PipelineError,
   type PipelineRun,
+  type PipelineStep,
+  PipelineStepId,
+  type PipelineUpsertInput,
+  pipelineDefinitionIssues,
   resolvePipelineStepCompaction,
+  resolvePipelineStepKey,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
@@ -37,7 +47,12 @@ import {
   type OrchestratorMcpHandoffPipelineStepResult,
   type OrchestratorMcpRerunPipelineInput,
   type OrchestratorMcpRevisePipelineStepInput,
+  type OrchestratorMcpDeletePipelineInput,
+  type OrchestratorMcpDeletePipelineResult,
+  type OrchestratorMcpGetPipelineInput,
   type OrchestratorMcpListPipelinesResult,
+  type OrchestratorMcpPipeline,
+  type OrchestratorMcpSavePipelineInput,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpPipelineRun,
   type OrchestratorMcpPipelineRunInput,
@@ -145,6 +160,7 @@ import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./t
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import { resolveStepIds } from "@t3tools/shared/pipelineStepIds";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -211,6 +227,18 @@ export interface OrchestratorMcpServiceShape {
   readonly listPipelines: (
     scope: McpInvocationScope,
   ) => Effect.Effect<OrchestratorMcpListPipelinesResult, OrchestratorMcpFailure>;
+  readonly getPipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpGetPipelineInput,
+  ) => Effect.Effect<OrchestratorMcpPipeline, OrchestratorMcpFailure>;
+  readonly savePipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpSavePipelineInput,
+  ) => Effect.Effect<OrchestratorMcpPipeline, OrchestratorMcpFailure>;
+  readonly deletePipeline: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpDeletePipelineInput,
+  ) => Effect.Effect<OrchestratorMcpDeletePipelineResult, OrchestratorMcpFailure>;
   /** Steps run at the caller's runtime mode or narrower. A plan-mode caller is refused. */
   readonly startPipeline: (
     scope: McpInvocationScope,
@@ -321,6 +349,40 @@ function pipelineFailure(error: PipelineError): OrchestratorMcpFailure {
   return error.cause === undefined
     ? failure("invalid_request", error.message)
     : failure("orchestration_error", "The pipeline service failed. Try again, or tell the user.");
+}
+
+function pipelineView(pipeline: PipelineDefinition): OrchestratorMcpPipeline {
+  return {
+    pipelineId: pipeline.id,
+    name: pipeline.name,
+    updatedAt: pipeline.updatedAt,
+    steps: pipeline.steps.map((step, index) => ({
+      stepId: step.id,
+      name: step.name,
+      providerInstanceId: step.modelSelection.instanceId,
+      model: step.modelSelection.model,
+      options: Object.fromEntries(
+        (step.modelSelection.options ?? []).map((option) => [option.id, option.value]),
+      ),
+      runtimeMode: step.runtimeMode,
+      skills: step.skills,
+      promptTemplate: step.promptTemplate,
+      pauseBefore: step.pauseBefore,
+      compactAfterHandoff: resolvePipelineStepCompaction(pipeline.steps, index),
+    })),
+  };
+}
+
+interface PipelineStepFields {
+  readonly name?: string | undefined;
+  readonly promptTemplate?: string | undefined;
+  readonly providerInstanceId?: PipelineStep["modelSelection"]["instanceId"] | undefined;
+  readonly model?: string | undefined;
+  readonly options?: PipelineStep["modelSelection"]["options"] | undefined;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly skills?: ReadonlyArray<string> | undefined;
+  readonly pauseBefore?: boolean | undefined;
+  readonly compactAfterHandoff?: boolean | undefined;
 }
 
 const REVISION_FEEDBACK_PREVIEW_CHARS = 500;
@@ -2099,12 +2161,10 @@ const make = Effect.gen(function* () {
         readonly interactionMode: ProviderInteractionMode;
       },
       steps: ReadonlyArray<Pick<PipelineRun["definition"]["steps"][number], "runtimeMode">>,
+      planModeRefusal = "Pipelines cannot run in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to run the pipeline.",
     ) {
       if (limits.interactionMode === "plan") {
-        return yield* failure(
-          "interaction_mode_escalation_denied",
-          "Pipelines cannot run in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to run the pipeline.",
-        );
+        return yield* failure("interaction_mode_escalation_denied", planModeRefusal);
       }
       for (const step of steps) yield* resolveRuntimeMode(limits.runtimeMode, step.runtimeMode);
     },
@@ -2356,6 +2416,235 @@ const make = Effect.gen(function* () {
           })),
         })),
       };
+    }),
+    getPipeline: Effect.fn("OrchestratorMcpService.getPipeline")(function* (scope, input) {
+      yield* loadCaller(scope);
+      return pipelineView(yield* resolvePipeline(input.pipeline));
+    }),
+    savePipeline: Effect.fn("OrchestratorMcpService.savePipeline")(function* (scope, input) {
+      const { parent, limits } = yield* loadCaller(scope);
+      yield* assertPipelineWithinLimits(
+        limits,
+        [],
+        "Pipelines cannot be changed in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to change the pipeline in Settings.",
+      );
+      const existing =
+        input.pipeline === undefined ? undefined : yield* resolvePipeline(input.pipeline);
+      if (input.steps !== undefined && input.stepEdits !== undefined) {
+        return yield* failure("invalid_request", "Pass `steps` or `stepEdits`, not both.");
+      }
+      if (existing === undefined) {
+        if (input.stepEdits !== undefined) {
+          return yield* failure(
+            "invalid_request",
+            "`stepEdits` changes an existing pipeline. Pass `pipeline`, or give the full `steps` to create one.",
+          );
+        }
+        if (input.name === undefined || input.steps === undefined) {
+          return yield* failure("invalid_request", "A new pipeline needs a `name` and `steps`.");
+        }
+      } else if (
+        input.name === undefined &&
+        input.steps === undefined &&
+        input.stepEdits === undefined
+      ) {
+        return yield* failure("invalid_request", "Pass `name`, `steps` or `stepEdits` to change.");
+      }
+
+      const problems: string[] = [];
+      const problem = (message: string) => void problems.push(message);
+      const callerSelection = parent?.thread.modelSelection;
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const defaultRuntimeMode =
+        runtimeModeRank(settings.defaultRuntimeMode) <= runtimeModeRank(limits.runtimeMode)
+          ? settings.defaultRuntimeMode
+          : limits.runtimeMode;
+
+      const withFields = (base: PipelineStep, fields: PipelineStepFields): PipelineStep => {
+        const instanceId = fields.providerInstanceId ?? base.modelSelection.instanceId;
+        if (instanceId !== base.modelSelection.instanceId && fields.model === undefined) {
+          problem(`Step "${base.name}": a new providerInstanceId needs a model.`);
+        }
+        const options = fields.options ?? base.modelSelection.options;
+        return {
+          ...base,
+          name: fields.name ?? base.name,
+          promptTemplate: fields.promptTemplate ?? base.promptTemplate,
+          modelSelection: {
+            instanceId,
+            model: fields.model ?? base.modelSelection.model,
+            ...(options === undefined || options.length === 0 ? {} : { options }),
+          },
+          runtimeMode: fields.runtimeMode ?? base.runtimeMode,
+          skills: fields.skills ?? base.skills,
+          pauseBefore: fields.pauseBefore ?? base.pauseBefore,
+          ...((fields.compactAfterHandoff ?? base.compactAfterHandoff) === undefined
+            ? {}
+            : { compactAfterHandoff: fields.compactAfterHandoff ?? base.compactAfterHandoff }),
+        };
+      };
+
+      // A new step has no id yet; `lockedId` follows `resolveStepIds`.
+      type Draft = { readonly lockedId: string | null; readonly step: Omit<PipelineStep, "id"> };
+      const newStep = (fields: PipelineStepFields, label: string): Draft["step"] | undefined => {
+        if (fields.name === undefined || fields.promptTemplate === undefined) {
+          problem(`${label}: a new step needs a name and a promptTemplate.`);
+          return undefined;
+        }
+        const sameAsCaller =
+          callerSelection !== undefined &&
+          (fields.providerInstanceId ?? callerSelection.instanceId) === callerSelection.instanceId;
+        const instanceId = fields.providerInstanceId ?? callerSelection?.instanceId;
+        const model = fields.model ?? (sameAsCaller ? callerSelection?.model : undefined);
+        if (instanceId === undefined || model === undefined) {
+          problem(
+            `${label}: pass providerInstanceId and model; this caller has no thread to inherit them from. See orchestrator_capabilities.`,
+          );
+          return undefined;
+        }
+        const options =
+          fields.options ??
+          (sameAsCaller && model === callerSelection?.model ? callerSelection?.options : undefined);
+        return {
+          name: fields.name,
+          promptTemplate: fields.promptTemplate,
+          modelSelection: {
+            instanceId,
+            model,
+            ...(options === undefined || options.length === 0 ? {} : { options }),
+          },
+          runtimeMode: fields.runtimeMode ?? defaultRuntimeMode,
+          skills: fields.skills ?? [],
+          pauseBefore: fields.pauseBefore ?? false,
+          ...(fields.compactAfterHandoff === undefined
+            ? {}
+            : { compactAfterHandoff: fields.compactAfterHandoff }),
+        };
+      };
+
+      const drafts: Draft[] = [];
+      if (input.steps !== undefined) {
+        input.steps.forEach((entry, index) => {
+          const kept = existing?.steps.find((step) => step.id === entry.stepId);
+          if (kept !== undefined) {
+            const { id, ...step } = withFields(kept, entry);
+            drafts.push({ lockedId: id, step });
+            return;
+          }
+          const step = newStep(entry, `Step ${index + 1}`);
+          if (step !== undefined) drafts.push({ lockedId: null, step });
+        });
+      } else if (existing !== undefined) {
+        const edits = new Map<number, PipelineStepFields[]>();
+        for (const { step: key, ...fields } of input.stepEdits ?? []) {
+          const at = resolvePipelineStepKey(existing.steps, key);
+          if (at === -1) {
+            return yield* failure(
+              "invalid_request",
+              `Step "${key}" is not in pipeline "${existing.name}". Its steps: ${existing.steps.map((step) => `${step.id} (${step.name})`).join(", ")}.`,
+            );
+          }
+          edits.set(at, [...(edits.get(at) ?? []), fields]);
+        }
+        existing.steps.forEach((current, index) => {
+          const { id, ...step } = (edits.get(index) ?? []).reduce(withFields, current);
+          drafts.push({ lockedId: id, step });
+        });
+      }
+
+      const name = (input.name ?? existing?.name ?? "").trim();
+      if (name === "") problem("Give the pipeline a name.");
+      else if (name.length > PIPELINE_NAME_MAX_LENGTH) {
+        problem(`The pipeline name has at most ${PIPELINE_NAME_MAX_LENGTH} characters.`);
+      }
+      if (drafts.length === 0 && problems.length === 0) problem("Add at least one step.");
+      else if (drafts.length > PIPELINE_MAX_STEPS) {
+        problem(`A pipeline has at most ${PIPELINE_MAX_STEPS} steps.`);
+      }
+
+      const ids = resolveStepIds(
+        drafts.map(({ lockedId, step }) => ({ lockedId, name: step.name })),
+      );
+      const steps: PipelineStep[] = drafts.map(({ step }, index) => {
+        const label = step.name.trim() || `Step ${index + 1}`;
+        if (step.name.trim() === "") problem(`${label}: give the step a name.`);
+        else if (step.name.trim().length > PIPELINE_NAME_MAX_LENGTH) {
+          problem(`${label}: the name has at most ${PIPELINE_NAME_MAX_LENGTH} characters.`);
+        }
+        if (step.promptTemplate.trim() === "") problem(`${label}: write a prompt template.`);
+        if (step.skills.length > PIPELINE_STEP_SKILLS_MAX) {
+          problem(`${label}: a step has at most ${PIPELINE_STEP_SKILLS_MAX} skills.`);
+        }
+        const skills = step.skills.map((skill) => skill.trim().replace(/^\$/, ""));
+        if (skills.some((skill) => !PIPELINE_SKILL_NAME_PATTERN.test(skill))) {
+          problem(`${label}: a skill name has an invalid character.`);
+        }
+        return {
+          ...step,
+          id: PipelineStepId.make(ids[index]!),
+          name: step.name.trim() || label,
+          promptTemplate: step.promptTemplate.trim(),
+          skills,
+        };
+      });
+      for (const issue of pipelineDefinitionIssues(steps)) problem(issue.message);
+
+      const unchanged = new Set(
+        (existing?.steps ?? []).map(
+          (step) => `${step.id}\n${step.modelSelection.instanceId}\n${step.modelSelection.model}`,
+        ),
+      );
+      const providers = yield* loadProviders;
+      const capableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+      const availableInstanceIds = new Set(
+        providers
+          .filter((provider) => provider.enabled && capableInstanceIds.has(provider.instanceId))
+          .map((provider) => provider.instanceId),
+      );
+      for (const step of steps) {
+        const { instanceId, model } = step.modelSelection;
+        if (
+          !unchanged.has(`${step.id}\n${instanceId}\n${model}`) &&
+          !availableInstanceIds.has(instanceId)
+        ) {
+          problem(
+            `Step "${step.name}": provider ${instanceId} isn't available here. See orchestrator_capabilities for the provider instances.`,
+          );
+        }
+      }
+      if (problems.length > 0) return yield* failure("invalid_request", problems.join(" "));
+
+      yield* assertPipelineWithinLimits(limits, steps);
+      const upsert: PipelineUpsertInput = {
+        ...(existing !== undefined
+          ? { id: existing.id, requireExisting: true }
+          : input.clientRequestId === undefined
+            ? {}
+            : {
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: input.clientRequestId,
+                  operation: "save-pipeline",
+                }),
+              }),
+        name,
+        steps,
+      };
+      const { pipeline } = yield* pipelines.upsert(upsert).pipe(Effect.mapError(pipelineFailure));
+      return pipelineView(pipeline);
+    }),
+    deletePipeline: Effect.fn("OrchestratorMcpService.deletePipeline")(function* (scope, input) {
+      const { limits } = yield* loadCaller(scope);
+      yield* assertPipelineWithinLimits(
+        limits,
+        [],
+        "Pipelines cannot be changed in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to delete the pipeline in Settings.",
+      );
+      const existing = yield* resolvePipeline(input.pipeline);
+      yield* pipelines.delete({ id: existing.id }).pipe(Effect.mapError(pipelineFailure));
+      return { pipelineId: existing.id, deleted: true };
     }),
     startPipeline: Effect.fn("OrchestratorMcpService.startPipeline")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope);

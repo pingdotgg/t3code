@@ -4,7 +4,6 @@ import {
   PIPELINE_MAX_STEPS,
   PIPELINE_NAME_MAX_LENGTH,
   PIPELINE_SKILL_NAME_PATTERN,
-  PIPELINE_STEP_ID_MAX_LENGTH,
   PIPELINE_STEP_SKILLS_MAX,
   type PipelineDefinition,
   PipelineStepId,
@@ -14,6 +13,7 @@ import {
   pipelineDefinitionIssues,
   resolvePipelineStepCompaction,
 } from "@t3tools/contracts";
+import { resolveStepIds } from "@t3tools/shared/pipelineStepIds";
 
 /**
  * Pure pipeline-editor logic shared by the web and mobile settings forms: draft shape, step ids,
@@ -51,38 +51,6 @@ export interface PipelineDraft {
 export interface PipelineStepDefaults {
   readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
-}
-
-export function slugifyStepName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, PIPELINE_STEP_ID_MAX_LENGTH)
-    .replace(/-+$/g, "");
-  return slug || "step";
-}
-
-/** Returns `base`, or `base-2`, `base-3`, ... when `base` is taken; the suffix keeps the id within its length limit. */
-export function uniqueStepId(base: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(base)) return base;
-  for (let n = 2; ; n += 1) {
-    const suffix = `-${n}`;
-    const candidate = `${base.slice(0, PIPELINE_STEP_ID_MAX_LENGTH - suffix.length)}${suffix}`;
-    if (!taken.has(candidate)) return candidate;
-  }
-}
-
-/** Saved ids never change, so references in other templates and old runs keep working. */
-export function resolveStepIds(steps: ReadonlyArray<PipelineStepDraft>): ReadonlyArray<string> {
-  const taken = new Set<string>();
-  for (const step of steps) if (step.lockedId !== null) taken.add(step.lockedId);
-  return steps.map((step) => {
-    if (step.lockedId !== null) return step.lockedId;
-    const id = uniqueStepId(slugifyStepName(step.name), taken);
-    taken.add(id);
-    return id;
-  });
 }
 
 function defaultStepTemplate(index: number): string {

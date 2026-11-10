@@ -49,6 +49,24 @@ it("decodes pipeline tool inputs and refuses empty or stale-shaped ones", () => 
   expect(Exit.isFailure(decodeStart({ pipeline: "Feature delivery", prompt: "  " }))).toBe(true);
   expect(Exit.isFailure(decodeStart({ prompt: "Add dark mode" }))).toBe(true);
 
+  const decodeSave = Schema.decodeUnknownExit(
+    OrchestratorToolkit.tools.save_pipeline.parametersSchema,
+  );
+  expect(
+    Exit.isSuccess(
+      decodeSave({
+        pipeline: "Review",
+        stepEdits: [{ step: "review", promptTemplate: "x", options: { effort: "high" } }],
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    Exit.isSuccess(
+      decodeSave({ name: "New", steps: [{ name: "A", promptTemplate: "{{input}}" }] }),
+    ),
+  ).toBe(true);
+  expect(Exit.isFailure(decodeSave({ stepEdits: [{ promptTemplate: "x" }] }))).toBe(true);
+
   const decodeContinue = Schema.decodeUnknownExit(
     OrchestratorToolkit.tools.continue_pipeline.parametersSchema,
   );
@@ -62,7 +80,10 @@ it("marks only the pipeline reads as read-only", () => {
   const readonly = (name: keyof typeof OrchestratorToolkit.tools) =>
     Context.get(OrchestratorToolkit.tools[name].annotations, Tool.Readonly);
   expect(readonly("list_pipelines")).toBe(true);
+  expect(readonly("get_pipeline")).toBe(true);
   expect(readonly("pipeline_status")).toBe(true);
+  expect(readonly("save_pipeline")).toBe(false);
+  expect(readonly("delete_pipeline")).toBe(false);
   expect(readonly("start_pipeline")).toBe(false);
   expect(readonly("continue_pipeline")).toBe(false);
   expect(readonly("revise_pipeline_step")).toBe(false);
