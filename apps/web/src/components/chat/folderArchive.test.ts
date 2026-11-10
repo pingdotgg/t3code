@@ -76,6 +76,7 @@ describe("collectFolderEntries", () => {
     const root = dirEntry("src", [
       ...manyFiles(250),
       dirEntry(".git", [fileEntry("HEAD")]),
+      dirEntry("output", []),
       dirEntry("lib", [
         fileEntry("index.ts"),
         dirEntry("node_modules", [fileEntry("dep.js")]),
@@ -95,6 +96,12 @@ describe("collectFolderEntries", () => {
         "src/lib/deep/leaf.ts",
       ]),
     );
+    expect(collection.directories.toSorted()).toEqual([
+      "src/",
+      "src/lib/",
+      "src/lib/deep/",
+      "src/output/",
+    ]);
     expect(collection.skipped).toEqual([
       { name: ".git", count: 1 },
       { name: "node_modules", count: 2 },

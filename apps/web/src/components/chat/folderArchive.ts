@@ -16,6 +16,8 @@ export interface FolderCollection {
   readonly folderName: string;
   /** Paths start with `<folderName>/`. */
   readonly entries: ReadonlyArray<FolderArchiveEntry>;
+  /** Every folder path below the root, ending in `/`, so empty folders survive in the ZIP. */
+  readonly directories: ReadonlyArray<string>;
   readonly totalBytes: number;
   /** Skipped names (`.git`, `node_modules`) with how many folders of that name were left out. */
   readonly skipped: ReadonlyArray<{ readonly name: string; readonly count: number }>;
@@ -52,6 +54,11 @@ class FolderCollector {
     return false;
   }
 
+  addDirectory(relativePath: string): void {
+    this.directories.add(`${relativePath}/`);
+    this.checkLimits();
+  }
+
   add(relativePath: string, file: File): void {
     // JSZip writes an entry for every parent folder, and the preview counts those too.
     for (let slash = relativePath.indexOf("/"); slash !== -1;) {
@@ -60,6 +67,10 @@ class FolderCollector {
     }
     this.entries.push({ relativePath, file });
     this.totalBytes += file.size;
+    this.checkLimits();
+  }
+
+  private checkLimits(): void {
     const name = this.folderName;
     if (this.entries.length + this.directories.size > FOLDER_ARCHIVE_MAX_ENTRIES) {
       throw new FolderArchiveError({
@@ -82,6 +93,7 @@ class FolderCollector {
     return {
       folderName: this.folderName,
       entries: this.entries,
+      directories: Array.from(this.directories),
       totalBytes: this.totalBytes,
       skipped: Array.from(this.skipped, ([name, paths]) => ({ name, count: paths.size })),
     };
@@ -119,6 +131,7 @@ export async function collectFolderEntries(
         const childPath = `${path}/${entry.name}`;
         if (collector.skip(childPath)) continue;
         if (entry.isDirectory) {
+          collector.addDirectory(childPath);
           subdirectories.push({ path: childPath, entry: entry as FileSystemDirectoryEntry });
         } else if (entry.isFile) {
           fileEntries.push({ path: childPath, entry: entry as FileSystemFileEntry });
@@ -159,6 +172,7 @@ export async function buildFolderZip(
   const { default: JSZip } = await import("jszip");
   signal?.throwIfAborted();
   const zip = new JSZip();
+  for (const directory of collection.directories) zip.folder(directory);
   for (const { relativePath, file } of collection.entries) {
     zip.file(relativePath, file.arrayBuffer(), { date: new Date(file.lastModified) });
   }

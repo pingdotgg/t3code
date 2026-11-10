@@ -2642,6 +2642,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toastManager.add({ type: "error", title: "This server does not support file attachments." });
       return;
     }
+    if (pendingUserInputs.length > 0 && !questionTakesSnapShots) {
+      toastManager.add({ type: "error", title: "This question cannot accept attachments." });
+      return;
+    }
     const toastId = toastManager.add({ type: "loading", title: `Compressing "${folderName}"…` });
     const targetKey = attachmentTargetKey;
     pendingDraftWork.begin(targetKey);
