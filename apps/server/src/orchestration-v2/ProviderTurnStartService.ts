@@ -875,8 +875,12 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
-      // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
-      const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
+      // Native goal commands go verbatim; handoff history waits a turn.
+      const goalDriver =
+        session.driver === "codex" ||
+        session.driver === "claudeAgent" ||
+        (session.driver === "opencode" &&
+          session.providerSession.capabilities.turns.supportsNativeGoals === true);
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
