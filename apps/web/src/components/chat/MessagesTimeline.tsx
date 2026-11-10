@@ -140,6 +140,7 @@ import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useCopyOnSelect } from "../../hooks/useCopyOnSelect";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -826,6 +827,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useCopyOnSelect(timelineViewportElement);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,

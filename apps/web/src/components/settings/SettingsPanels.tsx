@@ -464,6 +464,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
+    ...(settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect ? ["Copy on select"] : []),
+    ...(settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast
+      ? ["Copy on select toast"]
+      : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? ["Panel animations"]
       : []),
@@ -649,6 +653,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       language: DEFAULT_UNIFIED_SETTINGS.language,
+      copyOnSelect: DEFAULT_UNIFIED_SETTINGS.copyOnSelect,
+      copyOnSelectToast: DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1132,6 +1138,59 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+        <SettingsRow
+          {...setting("copy-on-select")}
+          description={
+            <T>
+              Copy text to the clipboard when you finish selecting it with the mouse in chat or the
+              terminal.
+            </T>
+          }
+          resetAction={
+            settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect ? (
+              <SettingResetButton
+                label="copy on select"
+                onClick={() =>
+                  updateSettings({ copyOnSelect: DEFAULT_UNIFIED_SETTINGS.copyOnSelect })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.copyOnSelect}
+              onCheckedChange={(checked) => updateSettings({ copyOnSelect: Boolean(checked) })}
+              aria-label={gt("Copy on select")}
+            />
+          }
+        />
+        {settings.copyOnSelect ? (
+          <SettingsRow
+            {...setting("copy-on-select-toast")}
+            description={<T>Confirm each automatic copy with a toast.</T>}
+            resetAction={
+              settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast ? (
+                <SettingResetButton
+                  label="copy on select toast"
+                  onClick={() =>
+                    updateSettings({
+                      copyOnSelectToast: DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.copyOnSelectToast}
+                onCheckedChange={(checked) =>
+                  updateSettings({ copyOnSelectToast: Boolean(checked) })
+                }
+                aria-label={gt("Copy on select toast")}
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );
