@@ -446,13 +446,19 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
     >
       {isOpen ? (
         <PanelLeftCloseIcon
-          className="size-4 text-sidebar-toggle"
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+          )}
 
           strokeWidth={2.25}
         />
       ) : (
         <PanelLeftIcon
-          className="size-4 text-sidebar-toggle"
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+          )}
 
           strokeWidth={2.25}
         />
