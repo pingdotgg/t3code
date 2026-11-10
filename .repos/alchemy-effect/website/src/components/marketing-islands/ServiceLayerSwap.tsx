@@ -3,18 +3,14 @@ import { AWS_COLOR, CF_COLOR, tint } from "../marketing/diagrams/_colors";
 
 const tok =
   (color: string) =>
-  ({ children }: { children: ReactNode }) => (
-    <span style={{ color }}>{children}</span>
-  );
+  ({ children }: { children: ReactNode }) => <span style={{ color }}>{children}</span>;
 const K = tok("var(--alc-code-keyword)");
 const S = tok("var(--alc-code-string)");
 const F = tok("var(--alc-code-fn)");
 const V = tok("var(--alc-code-var)");
 const T = tok("var(--alc-code-type)");
 const C = ({ children }: { children: ReactNode }) => (
-  <span style={{ color: "var(--alc-code-comment)", fontStyle: "italic" }}>
-    {children}
-  </span>
+  <span style={{ color: "var(--alc-code-comment)", fontStyle: "italic" }}>{children}</span>
 );
 
 type ResKind = "kv" | "ddb" | "d1";
@@ -64,14 +60,7 @@ function ResourceIcon({ kind, color }: { kind: ResKind; color: string }) {
   if (kind === "kv") {
     return (
       <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden>
-        <circle
-          cx="11"
-          cy="16"
-          r="6"
-          fill={fill}
-          stroke={color}
-          strokeWidth="1.5"
-        />
+        <circle cx="11" cy="16" r="6" fill={fill} stroke={color} strokeWidth="1.5" />
         <circle cx="11" cy="16" r="2.2" fill={color} />
         <path
           d="M17 16 L27 16 M23 16 L23 21 M27 16 L27 12"
@@ -85,48 +74,16 @@ function ResourceIcon({ kind, color }: { kind: ResKind; color: string }) {
   if (kind === "ddb") {
     return (
       <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden>
-        <ellipse
-          cx="16"
-          cy="8"
-          rx="10"
-          ry="3"
-          fill={fill}
-          stroke={color}
-          strokeWidth="1.4"
-        />
-        <ellipse
-          cx="16"
-          cy="16"
-          rx="10"
-          ry="3"
-          fill={fill}
-          stroke={color}
-          strokeWidth="1.4"
-        />
-        <ellipse
-          cx="16"
-          cy="24"
-          rx="10"
-          ry="3"
-          fill={fill}
-          stroke={color}
-          strokeWidth="1.4"
-        />
+        <ellipse cx="16" cy="8" rx="10" ry="3" fill={fill} stroke={color} strokeWidth="1.4" />
+        <ellipse cx="16" cy="16" rx="10" ry="3" fill={fill} stroke={color} strokeWidth="1.4" />
+        <ellipse cx="16" cy="24" rx="10" ry="3" fill={fill} stroke={color} strokeWidth="1.4" />
       </svg>
     );
   }
   // d1
   return (
     <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden>
-      <ellipse
-        cx="16"
-        cy="8"
-        rx="10"
-        ry="3"
-        fill={fill}
-        stroke={color}
-        strokeWidth="1.5"
-      />
+      <ellipse cx="16" cy="8" rx="10" ry="3" fill={fill} stroke={color} strokeWidth="1.5" />
       <path
         d="M6 8 V24 C6 25.7 10.5 27 16 27 C21.5 27 26 25.7 26 24 V8"
         fill={fill}
@@ -150,9 +107,7 @@ export default function ServiceLayerSwap() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
-    const reduced = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const tick = (i: number) => {
       if (cancelled) return;
@@ -186,14 +141,8 @@ export default function ServiceLayerSwap() {
       {/* LEFT — code: Worker that consumes Sessions, Layer name swaps */}
       <div className="alc-code-block">
         <div className="alc-code-block__header">
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-danger)" }}
-          />
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-warn)" }}
-          />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
           <span
             className="alc-code-block__dot"
             style={{ background: "var(--alc-accent-bright)" }}
@@ -203,18 +152,15 @@ export default function ServiceLayerSwap() {
         <pre className="alc-code-block__pre">
           <C>{"// Service interface — defined once."}</C>
           {"\n"}
-          <K>export class</K> <T>Sessions</T> <K>extends</K> <V>Context</V>.
-          <F>Service</F>
+          <K>export class</K> <T>Sessions</T> <K>extends</K> <V>Context</V>.<F>Service</F>
           {"<"}
           <T>Sessions</T>, {"{"}
           {"\n  "}
-          <V>get</V>: (<V>id</V>: <T>string</T>) {"=>"} <V>Effect</V>.
-          <T>Effect</T>
+          <V>get</V>: (<V>id</V>: <T>string</T>) {"=>"} <V>Effect</V>.<T>Effect</T>
           {"<"}
           <T>Session</T>
           {">"};{"\n  "}
-          <V>put</V>: (<V>s</V>: <T>Session</T>) {"=>"} <V>Effect</V>.
-          <T>Effect</T>
+          <V>put</V>: (<V>s</V>: <T>Session</T>) {"=>"} <V>Effect</V>.<T>Effect</T>
           {"<"}
           <T>void</T>
           {">"};{"\n"}
@@ -224,8 +170,7 @@ export default function ServiceLayerSwap() {
           {"\n\n"}
           <C>{"// Worker code never knows which Layer is providing it."}</C>
           {"\n"}
-          <K>export default class</K> <T>Api</T> <K>extends</K>{" "}
-          <V>Cloudflare</V>.<F>Worker</F>
+          <K>export default class</K> <T>Api</T> <K>extends</K> <V>Cloudflare</V>.<F>Worker</F>
           {"<"}
           <T>Api</T>
           {">()("}
@@ -238,16 +183,10 @@ export default function ServiceLayerSwap() {
           {"\n  "}
           {"}).pipe("}
           {"\n    "}
-          <C>
-            {"// Swap one Layer — resources, bindings, IAM all swap with it."}
-          </C>
+          <C>{"// Swap one Layer — resources, bindings, IAM all swap with it."}</C>
           {"\n    "}
           <V>Effect</V>.<F>provide</F>(
-          <span
-            key={idx}
-            className="layer-swap"
-            style={{ color: active.color, fontWeight: 600 }}
-          >
+          <span key={idx} className="layer-swap" style={{ color: active.color, fontWeight: 600 }}>
             {active.layer}
           </span>
           ),
@@ -261,13 +200,7 @@ export default function ServiceLayerSwap() {
       {/* RIGHT — visual: Sessions → Layer → Resource */}
       <div className="service-swap-stage">
         <div className="service-swap-stage__node service-swap-stage__node--accent">
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 32 32"
-            fill="none"
-            aria-hidden
-          >
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden>
             <rect
               x="4"
               y="6"
@@ -309,13 +242,7 @@ export default function ServiceLayerSwap() {
             boxShadow: `0 0 0 2px ${tint(active.color, 0.12)}`,
           }}
         >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 32 32"
-            fill="none"
-            aria-hidden
-          >
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden>
             <path
               d="M16 4 L28 10 L16 16 L4 10 Z"
               fill={tint(active.color, 0.18)}
@@ -340,10 +267,7 @@ export default function ServiceLayerSwap() {
               opacity="0.55"
             />
           </svg>
-          <div
-            className="service-swap-stage__label"
-            style={{ color: active.color }}
-          >
+          <div className="service-swap-stage__label" style={{ color: active.color }}>
             {active.layer}
           </div>
           <div className="service-swap-stage__sub">Layer</div>
@@ -367,9 +291,7 @@ export default function ServiceLayerSwap() {
           style={{ borderColor: active.color }}
         >
           <ResourceIcon kind={active.kind} color={active.color} />
-          <div className="service-swap-stage__label">
-            {active.resourceLabel}
-          </div>
+          <div className="service-swap-stage__label">{active.resourceLabel}</div>
           <div className="service-swap-stage__sub">{active.resourceSub}</div>
         </div>
 
