@@ -135,7 +135,6 @@ it("keeps the caret after the citation when save-and-send is blocked", async () 
   await using screen = await render(
     <Composer question={false} editorRef={editorRef} sendBlocked />,
   );
-  const drafts = () => screen.container.querySelector("output")?.dataset;
 
   const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
   if (!sourceAnchor) throw new Error("Citation source did not resolve");
@@ -154,5 +153,7 @@ it("keeps the caret after the citation when save-and-send is blocked", async () 
   await expect.element(comment).not.toBeInTheDocument();
   await userEvent.keyboard("x");
 
-  await expect.poll(() => drafts()?.prompt).toBe(`See ${serializeAssistantCitation(citation)}x `);
+  await expect
+    .element(screen.getByRole("status"))
+    .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
 });
