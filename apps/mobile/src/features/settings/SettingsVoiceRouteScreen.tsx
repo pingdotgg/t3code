@@ -27,10 +27,9 @@ import {
   cloudVoiceConnectionAtom,
   voiceConnectionAtom,
   voiceGrantAtom,
-  voiceSpeechStatusAtom,
   hasEnvironmentVoiceCapture,
 } from "../voice-input/voiceDestination";
-import { VoiceModelSection } from "./VoiceModelSection";
+import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -179,33 +178,18 @@ function EnvironmentMethodSection({
   onCloudOpenChange: (open: boolean) => void;
 }) {
   const id = environment.environmentId;
-  const local = useAtomValue(voiceConnectionAtom(id)) !== null;
-  const status = AsyncResult.getOrElse(useAtomValue(voiceSpeechStatusAtom(id)), () => null);
   const destination = grant?.destination.environmentId === id ? grant.destination : null;
   const cloudCapable =
     environment.serverConfig?.environment.capabilities.cloudVoiceTranscription === true ||
     destination?.kind === "cloud";
   return (
     <SettingsSection title={`Method on ${environment.label}`}>
-      <ListChoiceRow
-        label="Local model"
-        description={
-          !local
-            ? "Not available on this environment"
-            : status?.supported === false
-              ? status.reason
-              : status?.state === "missing-model"
-                ? "No model installed"
-                : status
-                  ? status.model
-                  : "Runs on the environment"
-        }
+      <LocalModelChoice
+        environmentId={id}
+        label={environment.label}
         selected={destination?.kind === "environment"}
-        disabled={!local}
-        onPress={() => {
-          // The user already agreed to send audio to this environment.
-          if (destination?.kind !== "environment") saveDestination(id);
-        }}
+        // The user already agreed to send audio to this environment.
+        onSelect={() => saveDestination(id)}
       />
       {cloudCapable ? (
         <CloudVoiceChoice
@@ -328,14 +312,6 @@ export function SettingsVoiceRouteScreen() {
             onCloudOpenChange={(open) =>
               setCloudSheet(open ? methodEnvironment.environmentId : null)
             }
-          />
-        ) : null}
-        {grantEnvironment &&
-        methodEnvironment === grantEnvironment &&
-        grant?.destination.kind === "environment" ? (
-          <VoiceModelSection
-            environmentId={grantEnvironment.environmentId}
-            label={grantEnvironment.label}
           />
         ) : null}
         {!grant && transcriber === null ? (
