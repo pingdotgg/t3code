@@ -1,6 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
 import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
+import { prepareFocusReturn } from "./components/ui/focus-return";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -323,6 +324,7 @@ export function showContextMenuFallback<T extends string>(
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
+    let keyboardInteraction = !position;
     let canDismissFromPointer = false;
 
     const dismiss = (restoreFocus = true) => cleanup(null, restoreFocus);
@@ -346,7 +348,9 @@ export function showContextMenuFallback<T extends string>(
         menu.remove();
       }
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
-        previouslyFocusedElement.focus({ preventScroll: true });
+        prepareFocusReturn(document);
+        const focusOptions = { preventScroll: true, focusVisible: keyboardInteraction };
+        previouslyFocusedElement.focus(focusOptions);
       }
       resolve(result);
     };
@@ -364,6 +368,7 @@ export function showContextMenuFallback<T extends string>(
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
       if (level < 0) return;
+      keyboardInteraction = true;
       const menu = menuStack[level]!;
       const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
         (button) => !button.disabled,
@@ -425,6 +430,7 @@ export function showContextMenuFallback<T extends string>(
     const onWindowBlur = () => cleanup(null, false);
 
     const onPointerDown = (event: PointerEvent) => {
+      keyboardInteraction = false;
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
         return;
       }
@@ -599,6 +605,7 @@ export function showContextMenuFallback<T extends string>(
                 : "var(--contrast-foreground)";
           };
           button.addEventListener("mouseenter", () => {
+            keyboardInteraction = false;
             button.focus({ preventScroll: true });
             isHovered = true;
             updateHighlight();

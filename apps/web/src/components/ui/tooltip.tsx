@@ -11,6 +11,7 @@ import {
 
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+import { isReturningFocus } from "./focus-return";
 
 // Base UI's default, restated because a padding object zeroes the sides it omits.
 const COLLISION_PADDING = 5;
@@ -82,16 +83,23 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
   );
 }
 
-function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
+function TooltipTrigger({ onFocus, ...props }: TooltipPrimitive.Trigger.Props) {
+  const handleFocus: TooltipPrimitive.Trigger.Props["onFocus"] = (event) => {
+    onFocus?.(event);
+    if (isReturningFocus(event.currentTarget.ownerDocument)) event.preventBaseUIHandler();
+  };
   const tracker = use(TooltipScrollContext);
   const actionsRef = use(TooltipHoverContext);
   if (!tracker || !actionsRef) {
-    return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+    return (
+      <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} onFocus={handleFocus} />
+    );
   }
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
       {...props}
+      onFocus={handleFocus}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
         tracker.hover(event.currentTarget, actionsRef);
