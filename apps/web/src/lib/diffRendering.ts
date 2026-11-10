@@ -214,7 +214,9 @@ export function getRenderablePatch(
   if (!patch?.trim()) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(patch, buildPatchCacheKey(patch, cacheScope));
+    const parsedPatches = parsePatchFiles(patch, {
+      cacheKeyPrefix: buildPatchCacheKey(patch, cacheScope),
+    });
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;

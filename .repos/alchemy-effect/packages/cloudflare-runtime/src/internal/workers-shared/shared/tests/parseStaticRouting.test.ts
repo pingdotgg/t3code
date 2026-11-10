@@ -12,9 +12,7 @@ describe("parseStaticRouting", () => {
   });
 
   it("throws when given only negative rules", ({ expect }) => {
-    expect(() =>
-      parseStaticRouting(["!/assets"]),
-    ).toThrowErrorMatchingInlineSnapshot(
+    expect(() => parseStaticRouting(["!/assets"])).toThrowErrorMatchingInlineSnapshot(
       `[Error: Only negative \`run_worker_first\` rules were provided; must provide at least 1 non-negative rule]`,
     );
   });
@@ -52,8 +50,7 @@ describe("parseStaticRouting", () => {
       "!/assets/*",
       "/api/*",
     ];
-    expect(() => parseStaticRouting(rulesWithRemainingExcess))
-      .toThrowErrorMatchingInlineSnapshot(`
+    expect(() => parseStaticRouting(rulesWithRemainingExcess)).toThrowErrorMatchingInlineSnapshot(`
 			[Error: Too many \`run_worker_first\` rules were provided; 104 rules provided (102 distinct, 2 duplicate entries) exceeds max of 100. Note: duplicate entries count towards the route limit. Ensure that no duplicate rules are present in your \`run_worker_first\` configuration.
 
 			The duplicated rules found are:
@@ -90,8 +87,7 @@ describe("parseStaticRouting", () => {
   });
 
   it("throws when rule doesn't begin with /", ({ expect }) => {
-    expect(() => parseStaticRouting(["api/*", "!asset"]))
-      .toThrowErrorMatchingInlineSnapshot(`
+    expect(() => parseStaticRouting(["api/*", "!asset"])).toThrowErrorMatchingInlineSnapshot(`
 				[Error: Invalid routes in \`run_worker_first\`:
 				'api/*': rules must start with '/' or '!/'
 				'!asset': negative rules must start with '!/']
@@ -100,12 +96,7 @@ describe("parseStaticRouting", () => {
 
   it("throws when given redundant rules", ({ expect }) => {
     expect(() =>
-      parseStaticRouting([
-        "/api/*",
-        "/oauth/callback",
-        "/api/some/route",
-        "!/api/assets/*",
-      ]),
+      parseStaticRouting(["/api/*", "/oauth/callback", "/api/some/route", "!/api/assets/*"]),
     ).toThrowErrorMatchingInlineSnapshot(
       `
 			[Error: Invalid routes in \`run_worker_first\`:
@@ -131,11 +122,7 @@ describe("parseStaticRouting", () => {
   });
 
   it("correctly parses valid rules", ({ expect }) => {
-    const parsed = parseStaticRouting([
-      "/api/*",
-      "/oauth/callback",
-      "!/api/assets/*",
-    ]);
+    const parsed = parseStaticRouting(["/api/*", "/oauth/callback", "!/api/assets/*"]);
     const expected = {
       user_worker: ["/api/*", "/oauth/callback"],
       asset_worker: ["/api/assets/*"],
