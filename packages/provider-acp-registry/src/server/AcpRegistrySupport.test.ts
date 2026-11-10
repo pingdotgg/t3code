@@ -416,7 +416,7 @@ describe("AcpRegistrySupport", () => {
         const resolved = yield* resolver.resolve(
           decodeAcpRegistrySettings({
             source: "local",
-            commandPath: `${root}${path.sep}link${path.sep}..${path.sep}agent`,
+            commandPath: `${path.relative(process.cwd(), path.join(root, "link"))}${path.sep}..${path.sep}agent`,
           }),
           "/workspace",
         );
