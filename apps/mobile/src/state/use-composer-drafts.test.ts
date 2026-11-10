@@ -2244,13 +2244,26 @@ describe("mobile composer drafts", () => {
 
       composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
       await expect(replace(draftKey)).rejects.toBeInstanceOf(ComposerDraftPersistenceError);
+      // Another owner of the same file and upload releases them while saving still fails.
+      await expect(
+        releaseUnusedComposerAttachmentFiles([
+          {
+            fileUri: "file:///documents/t3-composer-attachments/plan.pdf",
+            uploadEnvironmentId: EnvironmentId.make("environment-1"),
+            uploadedAttachmentId: "pending-plan",
+          },
+        ]),
+      ).rejects.toBeInstanceOf(ComposerDraftPersistenceError);
+      expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual(drafts);
       composerDraftFileMocks.setWriteError(null);
       // A cleanup started by the failed write would finish ahead of this later one.
       await releaseUnusedComposerAttachmentFiles([unrelated]);
 
       expect(composerAttachmentCleanupMocks.remove.mock.calls).toEqual([[unrelated.fileUri]]);
       expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
-      expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual(drafts);
+      expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({
+        [draftKey]: expect.objectContaining({ text: "Recovered" }),
+      });
     },
   );
 

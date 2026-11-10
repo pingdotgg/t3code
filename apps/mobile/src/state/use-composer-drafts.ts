@@ -926,7 +926,7 @@ function unreadableDraftAttachments(raw: unknown): ReadonlyArray<ComposerAttachm
 }
 
 // Release the returned attachments behind a scheduled persist or after an awaited write succeeds;
-// cleanup's flush only retries scheduled persists, so it cannot see a failed direct write.
+// after a failed write they stay on disk, since the saved document may still list them.
 function dropUnreadableDrafts(
   draftKeys: Iterable<string>,
 ): ReadonlyArray<ComposerAttachmentReference> {
@@ -1170,19 +1170,15 @@ export function schedulePersistComposerState(): void {
   }, PERSIST_DEBOUNCE_MS);
 }
 
-function cancelScheduledPersist(): boolean {
-  if (persistTimer === null) return false;
+function cancelScheduledPersist(): void {
+  if (persistTimer === null) return;
   clearTimeout(persistTimer);
   persistTimer = null;
-  return true;
 }
 
-// A write that cancelled a scheduled persist fails like it would have, so cleanup waiting on
-// flushComposerDrafts cannot release attachments the saved document still references.
-function persistComposerDraftsNow(
-  drafts: Record<string, ComposerDraft>,
-  cancelledScheduledPersist: boolean,
-): Promise<void> {
+// A failed write leaves a retry pending, so cleanup waiting on flushComposerDrafts cannot
+// release attachments the saved document still references.
+function persistComposerDraftsNow(drafts: Record<string, ComposerDraft>): Promise<void> {
   return persistenceQueue.run(async () => {
     try {
       await writePersistedComposerState(
@@ -1190,7 +1186,7 @@ function persistComposerDraftsNow(
         appAtomRegistry.get(stickyComposerModelSelectionAtom),
       );
     } catch (error) {
-      if (cancelledScheduledPersist) persistRetryNeeded = true;
+      persistRetryNeeded = true;
       throw error;
     }
   });
@@ -1920,7 +1916,7 @@ export async function mergeComposerDraftContent(
   if (loadPromise !== null) {
     await loadPromise;
   }
-  const cancelledScheduledPersist = cancelScheduledPersist();
+  cancelScheduledPersist();
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = mergeComposerDraftContentState(current, draftKey, content);
   const currentAttachmentIds = new Set(
@@ -1936,7 +1932,7 @@ export async function mergeComposerDraftContent(
   // Publish content and receipt before awaiting disk; concurrent typing then preserves the receipt in later serialized writes.
   if (next !== current) appAtomRegistry.set(composerDraftsAtom, next);
   const replaced = dropReplacedUnreadableDrafts(current, next);
-  await persistComposerDraftsNow(next, cancelledScheduledPersist);
+  await persistComposerDraftsNow(next);
   scheduleUnusedComposerAttachmentCleanup(replaced);
   return { skippedAttachmentCount };
 }
@@ -2016,12 +2012,12 @@ export async function undoComposerDraftMerge(
   if (loadPromise !== null) {
     await loadPromise;
   }
-  const cancelledScheduledPersist = cancelScheduledPersist();
+  cancelScheduledPersist();
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = undoComposerDraftMergeState(current, draftKey, snapshot, merged);
   appAtomRegistry.set(composerDraftsAtom, next);
   const replaced = dropReplacedUnreadableDrafts(current, next);
-  await persistComposerDraftsNow(next, cancelledScheduledPersist);
+  await persistComposerDraftsNow(next);
   scheduleUnusedComposerAttachmentCleanup(replaced);
 }
 
@@ -2178,9 +2174,9 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
       (current[draftKey] !== undefined && next[draftKey] === undefined),
   );
 
-  const cancelledScheduledPersist = cancelScheduledPersist();
+  cancelScheduledPersist();
   appAtomRegistry.set(composerDraftsAtom, next);
-  await persistComposerDraftsNow(next, cancelledScheduledPersist);
+  await persistComposerDraftsNow(next);
   await releaseUnusedComposerAttachmentFiles(removedAttachments);
 }
 
