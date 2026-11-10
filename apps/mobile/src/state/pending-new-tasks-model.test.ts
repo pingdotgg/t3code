@@ -1,11 +1,13 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { CommandId, EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPendingNewTasks,
   type PendingDraftProjectDefaults,
   pendingDraftBranchNeedsRefs,
   resolvePendingDraftBranch,
 } from "./pending-new-tasks-model";
+import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { ComposerDraft, ComposerDraftWorkspaceSelection } from "./use-composer-drafts";
 
 const projectCwd = "/repo";
@@ -80,5 +82,35 @@ describe("resolvePendingDraftBranch", () => {
     const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
     expect(pendingDraftBranchNeedsRefs(chosen, localDefault)).toBe(false);
     expect(resolve({ draft: chosen, branches, projectCwd })).toBe("release");
+  });
+});
+
+function queuedCreation(environmentId: string): QueuedThreadMessage {
+  return {
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(`thread-${environmentId}`),
+    messageId: MessageId.make(`message-${environmentId}`),
+    commandId: CommandId.make(`command-${environmentId}`),
+    text: "Test",
+    attachments: [],
+    creation: {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    },
+    createdAt: "2026-11-10T01:10:00.000Z",
+  };
+}
+
+describe("buildPendingNewTasks", () => {
+  it("lists only creations waiting for their environment to reconnect", () => {
+    const tasks = buildPendingNewTasks({
+      queuedMessages: [queuedCreation("online"), queuedCreation("offline")],
+      drafts: {},
+      connectedEnvironmentIds: new Set([EnvironmentId.make("online")]),
+    });
+
+    expect(tasks.map((task) => task.environmentId)).toEqual(["offline"]);
   });
 });

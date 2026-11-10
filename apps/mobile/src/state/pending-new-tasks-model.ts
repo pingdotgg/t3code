@@ -88,10 +88,12 @@ export function resolvePendingDraftBranch(input: {
 export function buildPendingNewTasks(input: {
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly drafts: Readonly<Record<string, ComposerDraft>>;
+  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
 }): ReadonlyArray<PendingNewTask> {
   const tasks: PendingNewTask[] = [];
   for (const message of input.queuedMessages) {
-    if (!message.creation) {
+    // A connected environment is delivering it now; listing it would flash an "Unsent" row.
+    if (!message.creation || input.connectedEnvironmentIds.has(message.environmentId)) {
       continue;
     }
     tasks.push({
