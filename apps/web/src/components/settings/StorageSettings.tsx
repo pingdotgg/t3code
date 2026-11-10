@@ -79,6 +79,7 @@ export function WorktreesDirectoryRow() {
       }
       control={
         <Input
+          size="settings"
           key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
           aria-label="Worktree location"
           autoCapitalize="none"
@@ -207,7 +208,8 @@ function RetentionControl({
         }}
       >
         <SelectTrigger
-          size="sm"
+          variant="well"
+          size="compact"
           aria-label={label}
           leadingIcon={<CalendarIcon />}
           className="w-auto min-w-36"
@@ -784,7 +786,11 @@ export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }
                           updateWorktree({ worktreeKeepWhen: next });
                       }}
                     >
-                      <SelectTrigger size="sm" aria-label="Keep worktrees with local changes">
+                      <SelectTrigger
+                        variant="well"
+                        size="compact"
+                        aria-label="Keep worktrees with local changes"
+                      >
                         <SelectValue>
                           {ruleStatus("worktreeKeepWhen")
                             ? "Mixed"
