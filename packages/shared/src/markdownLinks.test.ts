@@ -154,6 +154,10 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkTarget(href, "C:\\repo")).toBe(target);
   });
 
+  it("keeps a backslash in a relative link that already names a file", () => {
+    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/./foo\\bar.ts");
+  });
+
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",

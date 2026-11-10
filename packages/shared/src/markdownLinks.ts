@@ -310,15 +310,18 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
     splitMarkdownLinkSearchAndHash(normalized);
-  const decodedPath = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
-  // Only relative paths take `/`: rewriting a rooted `\\host` or `\foo` would change its root.
-  const path =
-    /^[\\/]/.test(decodedPath) || isWindowsAbsolutePath(decodedPath)
-      ? decodedPath
-      : decodedPath.replaceAll("\\", "/");
+  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
+  const position = parseFilePathLink(path, hash);
+  // `src\a.ts` is Windows-relative. A link that already parses keeps its spelling, since POSIX
+  // names may contain `\`; a rooted `\\host` or `\foo` would change root if rewritten.
+  if (position || /^[\\/]/.test(path) || isWindowsAbsolutePath(path)) return position;
+  return path.includes("\\") ? parseFilePathLink(path.replaceAll("\\", "/"), hash) : null;
+}
+
+function parseFilePathLink(path: string, hash: string): FilePathPosition | null {
   const position = splitFilePathPosition(path, hash);
   return looksLikeFilePath(position.path, path) ? position : null;
 }
