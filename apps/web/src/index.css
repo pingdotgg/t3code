@@ -4670,6 +4670,37 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
+/* The hard split belongs to controls; containers carry a quieter two-stop face. */
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
+[data-surface-preview="aqua-gloss-full"],
+[data-surface-preview="aqua-blue"],
+:root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  [data-chrome-scope] {
+  --style-container-fill: linear-gradient(
+    180deg in srgb,
+    light-dark(
+      oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
+      oklch(from var(--ss-background) calc(l + 0.065) c h)
+    ),
+    light-dark(
+      oklch(from var(--ss-background) l c h),
+      oklch(from var(--ss-background) calc(l + 0.04) c h)
+    )
+  );
+  --card-fill: var(--style-container-fill) !important;
+  --card-settings-fill: var(--style-container-fill) !important;
+  --popover-fill: var(--style-container-fill);
+  --style-code-fill: var(--style-container-fill);
+  --command-input-fill: var(--style-container-fill);
+  --command-footer-fill: var(--style-container-fill);
+  --table-header-fill: var(--style-container-fill);
+}
+
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  :is(.chat-markdown-codeblock, .chat-markdown-table-container) {
+  --well-fill: var(--style-container-fill);
+}
+
 :root[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
   [data-sidebar-header-control] {
   @apply surface-raised;
