@@ -465,6 +465,16 @@ function ThreadSettingsSessionProvider(
     const previous = hiddenOverrides.get(option.key);
     const override: HiddenModelOverride = { hidden: !option.isHidden, settledSettings: null };
     setHiddenOverrides((current) => new Map(current).set(option.key, override));
+    const savedHidden = (saved: ServerSettings | undefined) =>
+      saved?.providerModelPreferences?.[option.selection.instanceId]?.hiddenModels.includes(
+        option.selection.model,
+      ) ?? false;
+    // Once a push carries this save, later pushes are newer than its response and must win.
+    let pushObserved = false;
+    const stopWatching = registry.subscribe(environmentServerConfigsAtom, (configs) => {
+      if (savedHidden(configs.get(environmentId)?.settings) === override.hidden)
+        pushObserved = true;
+    });
     void Haptics.selectionAsync();
     void saveSettings({
       environmentId,
@@ -480,16 +490,14 @@ function ThreadSettingsSessionProvider(
         },
       },
     }).then((result) => {
+      stopWatching();
       pendingHidden.current.delete(option.key);
       const confirmed =
-        AsyncResult.isSuccess(result) &&
-        (result.value.providerModelPreferences?.[
-          option.selection.instanceId
-        ]?.hiddenModels.includes(option.selection.model) ?? false) === override.hidden;
+        AsyncResult.isSuccess(result) && savedHidden(result.value) === override.hidden;
       const latest = registry.get(environmentServerConfigsAtom).get(environmentId)?.settings;
       setHiddenOverrides((current) => {
         const next = new Map(current);
-        if (confirmed && latest) {
+        if (confirmed && latest && !pushObserved) {
           next.set(option.key, { ...override, settledSettings: latest });
         } else if (AsyncResult.isFailure(result) && previous) {
           // The earlier save's push may still be on its way; keep showing what it saved.

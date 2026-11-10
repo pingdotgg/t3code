@@ -268,6 +268,21 @@ it("returns the row to the server's state when the saved settings do not hide th
   expect(sheet.button("Hide model: Codex, GPT-6.1-Sol")).not.toBeNull();
 });
 
+it("shows a newer conflicting push that lands before the hide response", async () => {
+  const hide = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValueOnce(hide.promise);
+  using sheet = mountSheet();
+  act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
+
+  act(() => sheet.pushConfig({ ...config, settings: hiddenSettings }));
+  act(() => sheet.pushConfig({ ...config, settings: { ...config.settings } }));
+  await act(async () => hide.resolve(AsyncResult.success(hiddenSettings)));
+  expect(
+    sheet.button("Hide model: Codex, GPT-6.1-Sol"),
+    "another client's later show wins over the older hide response",
+  ).not.toBeNull();
+});
+
 it("keeps a second hidden row through an earlier save's push", async () => {
   const hideSol = Promise.withResolvers<unknown>();
   const hideBase = Promise.withResolvers<unknown>();
