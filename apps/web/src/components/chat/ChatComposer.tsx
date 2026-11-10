@@ -13,6 +13,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
+  changeQuestionAttachmentPreparation,
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
@@ -2630,6 +2631,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const toastId = toastManager.add({ type: "loading", title: `Compressing "${folderName}"…` });
     const targetKey = attachmentTargetKey;
     pendingDraftWork.begin(targetKey);
+    if (questionAttachmentTarget) changeQuestionAttachmentPreparation(questionAttachmentTarget, 1);
     const attach = async () => {
       try {
         const collection = await collect();
@@ -2655,7 +2657,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     };
-    await attach().finally(() => pendingDraftWork.end(targetKey));
+    await attach().finally(() => {
+      pendingDraftWork.end(targetKey);
+      if (questionAttachmentTarget)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+    });
   };
   const addComposerFolders = (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => {
     const target = resolveFolderTarget();
