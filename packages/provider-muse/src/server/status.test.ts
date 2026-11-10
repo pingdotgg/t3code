@@ -9,7 +9,7 @@ import { vi } from "vite-plus/test";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import type { MuseSdkHost } from "./sdk.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import { checkMuseProviderStatus, makePendingMuseProvider } from "./status.ts";
+import { checkMuseProviderStatus } from "./status.ts";
 
 const settings = Schema.decodeSync(MuseSettings);
 const makeHost = (catalog: Record<string, unknown>) => {
@@ -55,13 +55,6 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
   });
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
-  it.effect("does not offer conversation rollback, which the Muse adapter cannot perform", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* makePendingMuseProvider(settings({ enabled: true }));
-      expect(snapshot.supportsConversationRollback).toBe(false);
-    }),
-  );
-
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -98,6 +91,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(snapshot.message).toBeUndefined();
         expect(snapshot.slashCommands).toEqual([COMPACT_SLASH_COMMAND]);
         expect(snapshot.auth).toEqual({ status: "unknown" });
+        expect(snapshot.supportsConversationRollback).toBe(false);
         expect(snapshot.version).toBe("1.0.3-R2198.1");
         expect(snapshot.models.map((model) => model.slug)).toEqual([
           "muse-wonder-1.0",
