@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -58,7 +59,10 @@ function layerResolver(
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
-    TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+    NodeCrypto.layer,
+    TestProviderHost.layer().pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
     Layer.succeed(HostProcess.Platform, "linux"),
     Layer.succeed(HostProcess.Architecture, "x64"),
     Layer.succeed(HostProcess.Environment, environment),
@@ -87,10 +91,12 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
     npmPath,
   );
   yield* fileSystem.chmod(npmPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_NPM_LOG: logPath,
       FAKE_NPM_PREFIX: path.join(rootDirectory, "external-npm-global"),
       FAKE_NPM_MANIFEST: encodeUnknownJson({
@@ -123,10 +129,12 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
     uvPath,
   );
   yield* fileSystem.chmod(uvPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_UV_LOG: logPath,
       FAKE_UV_BIN: path.join(rootDirectory, "external-uv-bin"),
       FAKE_UV_EXECUTABLE: executablePath,
@@ -756,7 +764,10 @@ describe("AcpRegistrySupport", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
-          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+          NodeCrypto.layer,
+          TestProviderHost.layer().pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -1547,6 +1558,76 @@ describe("AcpRegistrySupport", () => {
     });
   });
 
+  it.effect("resolves an installed agent while another agent's download is still running", () => {
+    const slowArchiveUrl = "https://registry.test/slow-agent.bin";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
+    });
+    const slowAgent = {
+      ...agent,
+      distribution: {
+        binary: { "linux-x86_64": { archive: slowArchiveUrl, cmd: "./bin/slow-agent" } },
+      },
+      id: "slow-agent",
+      name: "Slow Agent",
+    };
+    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+    return Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      const releaseDownload = yield* Deferred.make<void>();
+      return yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-parallel-install-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+
+        yield* resolver.resolve(settings(), "/workspace");
+
+        const prepareFiber = yield* resolver
+          .prepare({ agentId: slowAgent.id })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(downloadStarted);
+
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+        expect(resolved.spawn.command).toContain(
+          "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        );
+        expect(prepareFiber.pollUnsafe()).toBeUndefined();
+
+        yield* Deferred.succeed(releaseDownload, undefined);
+        expect(yield* Fiber.join(prepareFiber)).toMatchObject({ prepared: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            if (request.url === registryUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ version: "1.0.0", agents: [slowAgent, agent] })),
+                ),
+              );
+            }
+            const response = HttpClientResponse.fromWeb(
+              request,
+              new Response(binaryBytes.buffer as ArrayBuffer),
+            );
+            if (request.url !== slowArchiveUrl) return Effect.succeed(response);
+            return Deferred.succeed(downloadStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseDownload)),
+              Effect.as(response),
+            );
+          }),
+        ),
+      );
+    });
+  });
+
   it.effect("reserves a prepared binary until a configured instance inspects it", () => {
     const agent = makeAgent({
       binary: {
@@ -1692,6 +1773,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         architecture: "x64",
       });
       expect(missing).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });

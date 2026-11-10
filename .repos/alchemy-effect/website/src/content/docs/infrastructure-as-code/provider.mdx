@@ -240,6 +240,47 @@ Optional. Reserves a physical name (or stub resource) before
 bindings](/infrastructure-as-effects/circular-bindings) — Worker A can know Worker B's
 URL before either is fully created.
 
+### `observe`
+
+Optional, and only useful next to `precreate`. A cycle precreates on
+raw props before they resolve, so `read` can't check ownership yet.
+`observe` gets the same raw props and reports what exists at the
+identity `precreate` would claim, without writing:
+
+```typescript
+observe: Effect.fn(function* ({ id, news }) {
+  if (!isResolved(news.name)) return Unresolved;
+  const live = yield* lookup(news.name);
+  if (!live) return undefined;
+  const attrs = { productId: live.id, name: live.name };
+  return ownsResource(id, live.tags) ? attrs : Unowned(attrs);
+}),
+```
+
+The engine refuses an `Unowned` result before `precreate` runs, unless
+adoption is allowed. Implement it whenever `precreate` can write to a
+resource that already exists.
+
+Return `Unresolved` when the identity isn't known yet. `undefined` would
+say nothing exists there. The engine checks the resolved identity before
+`reconcile` claims it. It refuses a delete-first replacement outright,
+since it can't check the target before deleting the old resource.
+`precreate` must not write to an identity it can't resolve.
+
+During a replacement, `observe` and `read` also get `previous`, the
+attributes of the generation being replaced. A provider that can't tell
+its own resource apart by tags, like an explicitly named Container
+application, reports that generation as owned:
+
+```typescript
+read: Effect.fn(function* ({ olds, previous }) {
+  const live = yield* lookup(olds.name);
+  if (!live) return undefined;
+  const attrs = { productId: live.id, name: live.name };
+  return live.id === previous?.productId ? attrs : Unowned(attrs);
+}),
+```
+
 ### `list`
 
 Enumerates every existing resource of this type in the ambient
