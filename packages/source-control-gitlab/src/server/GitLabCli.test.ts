@@ -178,7 +178,8 @@ layer("GitLabCli.layer", (it) => {
     {
       repository: "https://example.com/gitlab/gitlab/team/app.git",
       projectPath: "gitlab/team/app",
-      configuredHost: "example.com:443",
+      configuredHost: "https://example.com:443",
+      subfolderHost: "example.com:443",
       subfolder: "gitlab",
       webRoot: "https://example.com/gitlab",
     },
@@ -212,7 +213,7 @@ layer("GitLabCli.layer", (it) => {
       // Like glab, unset config keys print nothing.
       const config = {
         host: row.configuredHost,
-        [`subfolder --host ${row.configuredHost}`]: row.subfolder,
+        [`subfolder --host ${row.subfolderHost ?? row.configuredHost}`]: row.subfolder,
       };
       mockedRun.mockImplementation((input) =>
         Effect.succeed(

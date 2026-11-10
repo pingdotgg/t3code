@@ -619,8 +619,8 @@ export const make = Effect.gen(function* () {
                     "get",
                     "subfolder",
                     "--host",
-                    // glab keys hosts by the exact string, default port included.
-                    glabHost.includes("://") ? configuredUrl.host : glabHost,
+                    // glab keys hosts by the exact host string, default port included.
+                    glabHost.replace(/^\w+:\/\/|\/+$/gu, ""),
                   ],
                 }).pipe(
                   Effect.map((result) => result.stdout.trim()),
