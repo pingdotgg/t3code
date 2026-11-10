@@ -521,17 +521,21 @@ const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapter
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
   readonly runtimeMode?: "full-access" | "approval-required";
+  /** A real flavor whose timeout the harness uses instead of its 15 minutes. */
+  readonly timeoutOf?: { readonly promptInactivityTimeout?: Duration.Input | undefined };
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
   const instanceId = ProviderInstanceId.make("acp-prompt-inactivity");
+  const promptInactivityTimeout =
+    input.timeoutOf === undefined ? "15 minutes" : input.timeoutOf.promptInactivityTimeout;
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
-      promptInactivityTimeout: "15 minutes",
+      ...(promptInactivityTimeout === undefined ? {} : { promptInactivityTimeout }),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* path.fromFileUrl(
@@ -4136,6 +4140,34 @@ describe("AcpAdapterV2", () => {
       assert.include(silent?.failure?.message, "15 minutes");
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("retires a Grok prompt left silent for an hour", () =>
+    Effect.gen(function* () {
+      // Grok retries failed or stalled upstream requests inside session/prompt without updates.
+      const grokFlavor = makeGrokAcpAdapterFlavor(
+        {
+          instanceId: ProviderInstanceId.make("grok"),
+          settings: DEFAULT_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: yield* HostProcess.Platform,
+          selfInvocation: yield* resolveSelfInvocation(),
+        },
+        yield* HostProcess.HomeDirectory,
+      );
+      const harness = yield* makePromptInactivityHarness({
+        timeoutOf: grokFlavor,
+        environment: (runtimeOrdinal) =>
+          runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+      });
+      yield* harness.startTurn(1);
+      yield* TestClock.adjust("1 hour");
+      assert.isFalse(yield* harness.nextTurnRejected(2));
+
+      const [silent, next] = yield* harness.terminals(2);
+      assert.equal(silent?.status, "failed");
+      assert.equal(next?.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
