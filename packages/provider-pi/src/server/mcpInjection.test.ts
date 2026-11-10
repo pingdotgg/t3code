@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The reader mirrors the external pi process: raw Node reads observe the file without effect-fs handles that deny the rename on Windows.
 import * as NodeFSn from "node:fs";
 import * as NodePath from "effect/Path";
 import * as NodeFS from "effect/FileSystem";
@@ -190,14 +191,13 @@ describe("materializePiT3McpExtension", () => {
             // async readers hold the destination open in ways that deny the
             // rename on Windows. The torn-read property this asserts is also
             // proven under real two-process contention.
-            let text: Option.Option<string>;
-            try {
-              text = Option.some(
-                NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
-              );
-            } catch {
-              text = Option.none(); // Missing between writes: legitimate.
-            }
+            const text = yield* Effect.try(() =>
+              NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
+            ).pipe(Effect.option);
+            if (Option.isNone(text)) return; // Missing between writes: legitimate.
+            // A production reader (a pi launch) reads once, never in a zero-gap
+            // loop; pace this one so the writer's rename gets realistic gaps.
+            yield* Effect.sleep("1 millis");
             // A read that SUCCEEDS must return the full extension: an empty or
             // partial read means the writer truncated the file mid-write.
             if (text.value.length === 0) {
