@@ -347,6 +347,30 @@ export function selectLayoutPaneSlots(
   return { slots, stripWidth, fits, unitWidth };
 }
 
+/**
+ * A top pane starting this close to the strip's left edge shares its row with
+ * the collapsed sidebar's toggle and arrows, so its header makes room for them.
+ */
+const WINDOW_START_EDGE_PX = 160;
+
+export function selectWindowStartPaneId(
+  slots: readonly LayoutPaneSlot[],
+  scrollLeft: number,
+  stripPx: number,
+): string | null {
+  let startPaneId: string | null = null;
+  let startPx = Number.POSITIVE_INFINITY;
+  for (const slot of slots) {
+    if (slot.hasAbove) continue;
+    const screenLeft = slot.rect.left * stripPx - scrollLeft;
+    if (screenLeft > -1 && screenLeft < WINDOW_START_EDGE_PX && screenLeft < startPx) {
+      startPx = screenLeft;
+      startPaneId = slot.paneId;
+    }
+  }
+  return startPaneId;
+}
+
 /** The pane with this id and where it sits, or null. */
 export function findLayoutPane(
   state: LayoutState,
