@@ -264,14 +264,38 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("keeps the path of a hub served under a prefix", () =>
+  it.effect.each([
+    "https://tools.test/cliproxy",
+    "https://tools.test/cliproxy/",
+    "https://tools.test/cliproxy/management.html",
+    "https://tools.test/cliproxy/management.html/",
+    "https://tools.test/cliproxy/MANAGEMENT.HTML",
+    "https://tools.test/cliproxy/management.html?tab=accounts",
+    "https://tools.test/cliproxy/management.html#accounts",
+    "https://tools.test/cliproxy/management.html/?tab=accounts",
+    "https://tools.test/cliproxy/management.html/#accounts",
+  ])("keeps the path of a hub served under a prefix: %s", (url) =>
     Effect.gen(function* () {
       const test = fixture();
       const api = yield* test.api;
-      yield* api.readAccounts({ ...config, url: "https://tools.test/cliproxy" });
+      yield* api.readAccounts({ ...config, url });
       expect(test.requests.length).toBeGreaterThan(0);
       expect(
         test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("preserves a hub path that only ends with the panel filename", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.readAccounts({ ...config, url: "https://tools.test/team-management.html" });
+      expect(test.requests.length).toBeGreaterThan(0);
+      expect(
+        test.requests.every((request) =>
+          request.path.startsWith("/team-management.html/v0/management/"),
+        ),
       ).toBe(true);
     }),
   );
