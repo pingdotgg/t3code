@@ -327,6 +327,22 @@ export function constrainAuxiliaryPaneWidth(input: {
   return clamp(Math.round(safePreferredWidth), AUXILIARY_PANE_MIN_WIDTH, maxWidth);
 }
 
+export function constrainPrimarySidebarWidth(input: {
+  readonly preferredWidth: number;
+  readonly availableWidth: number;
+  readonly auxiliaryPaneWidth?: number;
+}): number {
+  const minimumContentWidth =
+    input.auxiliaryPaneWidth === undefined
+      ? 320
+      : input.auxiliaryPaneWidth + FILE_INSPECTOR_MIN_MAIN_WIDTH;
+  return clamp(
+    Math.round(input.preferredWidth),
+    SPLIT_SIDEBAR_MIN_WIDTH,
+    Math.max(SPLIT_SIDEBAR_MIN_WIDTH, input.availableWidth - minimumContentWidth),
+  );
+}
+
 export function deriveCenteredContentHorizontalPadding(input: {
   readonly viewportWidth: number;
   readonly maxContentWidth: number | null;

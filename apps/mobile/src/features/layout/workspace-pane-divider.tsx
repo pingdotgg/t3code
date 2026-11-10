@@ -1,5 +1,13 @@
 import { useEffectEvent, useState } from "react";
-import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
+import {
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  type AccessibilityActionEvent,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { cn } from "../../lib/cn";
@@ -13,6 +21,7 @@ interface WorkspacePaneDividerProps {
   readonly onResizeStart?: () => void;
   readonly onResizeBy: (delta: number) => void;
   readonly onResizeEnd?: () => void;
+  readonly style?: StyleProp<ViewStyle>;
 }
 
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
@@ -57,6 +66,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
     <GestureDetector gesture={resizeGesture}>
       <Pressable
         className="relative z-[100] -mx-[22px] w-[44px] self-stretch justify-center"
+        style={props.style}
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },
