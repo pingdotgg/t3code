@@ -7,6 +7,8 @@ outputs:
     value: ${{ steps.detect.outputs.typecheck_packages }}
   build:
     value: ${{ steps.detect.outputs.build }}
+  desktop_launch:
+    value: ${{ steps.detect.outputs.desktop_launch }}
   test:
     value: ${{ steps.detect.outputs.test }}
   test_packages:

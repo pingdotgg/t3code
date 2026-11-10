@@ -17,6 +17,7 @@ export function decide(
     typecheck: boolean;
     typecheck_packages: string;
     build: boolean;
+    desktop_launch: boolean;
     test: boolean;
     test_packages: string;
     test_web: boolean;

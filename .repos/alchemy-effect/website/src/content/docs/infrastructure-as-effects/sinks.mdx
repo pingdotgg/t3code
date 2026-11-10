@@ -7,7 +7,7 @@ A **Sink** is the dual of an [Event Source](/infrastructure-as-effects/event-sou
 a [Binding](/infrastructure-as-effects/binding) for *writing* that
 exposes a resource as an Effect
 [`Sink`](https://effect.website/docs/sink/introduction/). Where an
-Event Source hands you records as a `Stream`, a Sink accepts a
+Event Source hands you records, a Sink accepts a
 `Stream` and drains it into the resource's batch API
 (`SendMessageBatch`, `PublishBatch`, `PutRecords`) — emitting the
 minimal IAM to go with it.
@@ -19,7 +19,7 @@ Like every Binding, a Sink is declared in the
 and used in the interface it returns:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -74,13 +74,15 @@ every Binding follows — see
 Sinks are typed by the element they accept, so the type system stops
 you from feeding the wrong shape in:
 
-| Sink                          | Element                  | Batch API          | IAM emitted                                    |
-| ----------------------------- | ------------------------ | ------------------ | ---------------------------------------------- |
-| `SQS.QueueSink(queue)`        | `string`                 | `SendMessageBatch` | `sqs:SendMessage`, `sqs:SendMessageBatch`      |
-| `SNS.TopicSink(topic)`        | `string`                 | `PublishBatch`     | `sns:Publish`                                  |
-| `Kinesis.StreamSink(stream)`  | `PutRecordsRequestEntry` | `PutRecords`       | `kinesis:PutRecords`                           |
+| Sink                                 | Element                       | Batch API          | Grants                                    |
+| ------------------------------------ | ----------------------------- | ------------------ | ----------------------------------------- |
+| `SQS.QueueSink(queue)`               | `string`                      | `SendMessageBatch` | `sqs:SendMessage`, `sqs:SendMessageBatch` |
+| `SNS.TopicSink(topic)`               | `string`                      | `PublishBatch`     | `sns:Publish`                             |
+| `Kinesis.StreamSink(stream)`         | `PutRecordsRequestEntry`      | `PutRecords`       | `kinesis:PutRecords`                      |
+| `Cloudflare.Queues.QueueSink(queue)` | message body (any JSON value) | `sendBatch`        | `queue` binding on the Worker             |
 
-Every policy is scoped to the exact resource ARN.
+Every AWS policy is scoped to the exact resource ARN; the Cloudflare
+sink binds only the one queue into the Worker.
 
 `QueueSink` and `TopicSink` take message bodies as `string`.
 `StreamSink` takes raw `PutRecordsRequestEntry` values, so you keep
@@ -132,10 +134,9 @@ yield* Stream.fromIterable(messages).pipe(
 ## Source → transform → sink
 
 Where the model pays off is when you compose a Sink with an
-[Event Source](/infrastructure-as-effects/event-sources). Because
-every step is just `Stream` / `Sink`, the whole
-pipe-and-transform pipeline is one expression inside the
-constructor:
+[Event Source](/infrastructure-as-effects/event-sources). Lift the
+batch into a `Stream` and the whole pipe-and-transform pipeline is one
+expression inside the constructor:
 
 ```typescript
 export default class OrderRelay extends AWS.Lambda.Function<OrderRelay>()(
@@ -144,19 +145,20 @@ export default class OrderRelay extends AWS.Lambda.Function<OrderRelay>()(
   Effect.gen(function* () {
     const sink = yield* AWS.SQS.QueueSink(OutboundQueue);
 
-    yield* AWS.DynamoDB.consumeTableChanges<Order>(
+    yield* AWS.DynamoDB.consumeTableChanges(
       OrdersTable,
       {
         streamViewType: "NEW_AND_OLD_IMAGES",
         startingPosition: "LATEST",
       },
-      (records) =>
-        records.pipe(
+      Effect.fn(function* (event: AWS.DynamoDB.StreamEvent<Order>) {
+        yield* Stream.fromIterable(event.Records).pipe(
           Stream.filterMap((r) => Option.fromNullable(r.dynamodb.NewImage)),
           Stream.filter((order) => order.status === "PAID"),
           Stream.map((order) => JSON.stringify({ orderId: order.id })),
           Stream.run(sink),
-        ),
+        );
+      }),
     );
   }).pipe(
     Effect.provide(
@@ -178,6 +180,73 @@ event-source mapping.
 Drop in `Effect.retry`, `Stream.throttle`, `Stream.groupedWithin`,
 or `Stream.mapEffect` anywhere along the chain — they're all the
 same `Stream` you'd write in a plain Effect program.
+
+## Cloudflare Queues
+
+`Cloudflare.Queues.QueueSink(queue)` is the same shape on a Worker.
+Each element is one message body, and each stream chunk becomes one
+`sendBatch` call. Chunks over Cloudflare's batch limits (100
+messages / 256 KB) are split into consecutive batches, in order:
+
+```typescript
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Clicks } from "./queues.ts";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const sink = yield* Cloudflare.Queues.QueueSink(Clicks);
+    // → Sink<void, unknown, never, SendError, RuntimeContext>
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* Stream.fromIterable(events).pipe(Stream.run(sink));
+        return HttpServerResponse.empty({ status: 202 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Queues.QueueSinkBinding)),
+);
+```
+
+`QueueSinkBinding` layers the sink over the native producer binding
+(`WriteQueueBinding`), so there is nothing else to provide. It also
+works under `alchemy dev`, where the binding targets the local queue
+broker. `QueueSinkHttp` (scoped API token) and `QueueSinkLocal`
+(current credentials, for Actions) layer it over the matching
+`WriteQueue` implementations.
+
+Paired with `consumeQueueMessages`, a queue-to-queue pipeline is one
+expression:
+
+```typescript
+Effect.gen(function* () {
+  const enriched = yield* Cloudflare.Queues.QueueSink(EnrichedClicks);
+
+  yield* Cloudflare.Queues.consumeQueueMessages<Click>(Clicks, (messages) =>
+    messages.pipe(
+      Stream.map((message) => message.body),
+      Stream.filter((click) => click.button === "buy"),
+      Stream.map((click) => ({ ...click, receivedAt: Date.now() })),
+      Stream.run(enriched),
+    ),
+  );
+}).pipe(
+  Effect.provide(
+    Layer.mergeAll(
+      Cloudflare.Queues.EventSourceLive,
+      Cloudflare.Queues.QueueSinkBinding,
+    ),
+  ),
+);
+```
+
+A failed `sendBatch` fails the handler, so Cloudflare retries the
+whole consumed batch. Messages already forwarded before the failure
+are sent again, which fits the queue's at-least-once delivery.
 
 ## Where next
 
