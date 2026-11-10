@@ -223,6 +223,10 @@ describe("GitHubGraphQlAuth", () => {
     const answers = [
       json({ message: "You have exceeded a secondary rate limit." }, { status: 403 }),
       json({ message: "Bad credentials" }, { status: 401 }),
+      json(
+        { data: null, errors: [{ message: "You have exceeded a secondary rate limit." }] },
+        { status: 403, headers: { "retry-after": "60" } },
+      ),
     ];
     const { layer, invalidations } = harness(() => answers.shift()!);
     return Effect.gen(function* () {
@@ -231,6 +235,10 @@ describe("GitHubGraphQlAuth", () => {
       expect((yield* Effect.flip(readStats("github.example")))._tag).toBe(
         "GitHubApiAuthenticationError",
       );
+      expect(yield* Effect.flip(readStats("github.acme.test"))).toMatchObject({
+        _tag: "GitHubApiRateLimitError",
+        retryAt: NOW + 60_000,
+      });
       expect(invalidations()).toBe(1);
     }).pipe(Effect.provide(layer));
   });
