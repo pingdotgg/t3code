@@ -17,12 +17,13 @@ import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 const LINE_COUNT = 301;
 const text = `${Array.from({ length: LINE_COUNT }, (_, index) => `line ${index + 1}`).join("\n")}\n`;
 
+// The browser ignores a copy event's data unless the event is cancelled, and copies the selection itself.
 function copiedText(target: Element) {
   const clipboardData = new DataTransfer();
-  target.dispatchEvent(
+  const handled = !target.dispatchEvent(
     new ClipboardEvent("copy", { clipboardData, bubbles: true, cancelable: true, composed: true }),
   );
-  return clipboardData.getData("text/plain");
+  return handled ? clipboardData.getData("text/plain") : null;
 }
 
 describe("ReadOnlySourcePreview", () => {
@@ -30,7 +31,7 @@ describe("ReadOnlySourcePreview", () => {
     // File paints nothing until the shared highlighter has loaded; once it has, mount renders synchronously.
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
+      <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );
@@ -49,10 +50,15 @@ describe("ReadOnlySourcePreview", () => {
     await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
     expect(copiedText(rows()[0]!)).toBe(text);
 
+    document.getSelection()!.removeAllRanges();
+    await userEvent.click(rows()[rows().length - 1]!);
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    expect(copiedText(rows()[0]!)).toBe(text);
+
     // A selection that ends inside the mounted rows stays the browser's to copy.
     const firstText = rows()[0]!.querySelector("span")!.firstChild!;
     const lastText = rows()[rows().length - 1]!.querySelector("span")!.firstChild!;
     document.getSelection()!.setBaseAndExtent(firstText, 0, lastText, 4);
-    expect(copiedText(rows()[0]!)).toBe("");
+    expect(copiedText(rows()[0]!)).toBeNull();
   });
 });
