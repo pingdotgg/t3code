@@ -224,10 +224,21 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 /** Column-major view and projection matrices for WebGL. */
 export function cameraMatrices(camera: OrbitCamera, aspect: number, bounds: ModelBounds) {
   const { toward, right, up } = cameraAxes(camera);
+  const radius = boundsRadius(bounds);
+  // Orthographic zoom scales only the extent; the eye stays outside the model so the near plane
+  // cannot cut its front away.
+  const offCenter = Math.hypot(
+    camera.target[0] - (bounds.min[0] + bounds.max[0]) / 2,
+    camera.target[1] - (bounds.min[1] + bounds.max[1]) / 2,
+    camera.target[2] - (bounds.min[2] + bounds.max[2]) / 2,
+  );
+  const eyeDistance = camera.orthographic
+    ? Math.max(camera.distance, offCenter + radius * 2)
+    : camera.distance;
   const eye: Vec3 = [
-    camera.target[0] + toward[0] * camera.distance,
-    camera.target[1] + toward[1] * camera.distance,
-    camera.target[2] + toward[2] * camera.distance,
+    camera.target[0] + toward[0] * eyeDistance,
+    camera.target[1] + toward[1] * eyeDistance,
+    camera.target[2] + toward[2] * eyeDistance,
   ];
   const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   // prettier-ignore
@@ -237,9 +248,8 @@ export function cameraMatrices(camera: OrbitCamera, aspect: number, bounds: Mode
     right[2], up[2], toward[2], 0,
     -dot(right, eye), -dot(up, eye), -dot(toward, eye), 1,
   ]);
-  const radius = boundsRadius(bounds);
-  const near = Math.max(camera.distance - radius * 4, camera.distance * 1e-3, radius * 1e-4);
-  const far = camera.distance + radius * 4;
+  const near = Math.max(eyeDistance - radius * 4, eyeDistance * 1e-3, radius * 1e-4);
+  const far = eyeDistance + radius * 4;
   const projection = new Float32Array(16);
   if (camera.orthographic) {
     const top = camera.distance * Math.tan(FIELD_OF_VIEW / 2);

@@ -87,6 +87,19 @@ describe("modelViewerCamera", () => {
     const chosen = numpadCommand(initialCamera(BOUNDS), "Numpad5", NO_CTRL, BOUNDS)!;
     expect(chosen.orthographic).toBe(true);
     expect(orbit(axisView(chosen, "top"), 0.1, 0).orthographic).toBe(true);
+    const zoomedIn = zoom(front, 0.05, BOUNDS);
+    const { view, projection } = cameraMatrices(zoomedIn, 1, BOUNDS);
+    for (const x of [BOUNDS.min[0], BOUNDS.max[0]]) {
+      for (const y of [BOUNDS.min[1], BOUNDS.max[1]]) {
+        for (const z of [BOUNDS.min[2], BOUNDS.max[2]]) {
+          const [, , depth] = transform(
+            projection,
+            transform(view, [x, y, z]) as [number, number, number],
+          );
+          expect(Math.abs(depth!)).toBeLessThan(1);
+        }
+      }
+    }
   });
 
   it("keeps the view upright when orbiting past the poles", () => {

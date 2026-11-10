@@ -334,7 +334,14 @@ export function AttachmentFilePreview(props: {
         />
       </Suspense>
     ) : modelPreviewUnavailable ? (
-      <NoFilePreview name={props.name} detail={modelCopy?.unavailable} />
+      <NoFilePreview
+        name={props.name}
+        detail={
+          props.file
+            ? (modelViewerProblem ?? "A preview appears after the message is sent.")
+            : modelCopy?.unavailable
+        }
+      />
     ) : failure ? (
       <FileSurfaceFailure
         message={failure}
@@ -467,7 +474,7 @@ export function AttachmentFilePreview(props: {
             </span>
           ) : null}
         </div>
-        {offersModelViewer && !modelViewerProblem ? (
+        {offersModelViewer && !modelViewerProblem && !props.file ? (
           <FileSurfaceAction
             label={
               showsModelViewer ? (modelCopy?.imageLabel ?? "Show preview image") : "Show 3D view"

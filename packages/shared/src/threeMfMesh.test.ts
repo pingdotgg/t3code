@@ -73,5 +73,17 @@ describe("parseThreeMf", () => {
       await parseThreeMf(await buildZip({ "a.txt": { text: "a" } }), LIMITS, signal),
     ).toBeNull();
     expect(await parseThreeMf(new TextEncoder().encode("solid"), LIMITS, signal)).toBeNull();
+    // Each level fans out to the next ten times: a few kilobytes describing 10^8 placements.
+    const fanOut = Array.from(
+      { length: 8 },
+      (_, level) =>
+        `<object id="${level + 1}"><components>${`<component objectid="${level + 2}"/>`.repeat(10)}</components></object>`,
+    ).join("");
+    const bomb = await buildZip({
+      "3D/3dmodel.model": {
+        text: model(`${fanOut}<object id="9">${TRIANGLE}</object>`, `<item objectid="1"/>`),
+      },
+    });
+    expect(await parseThreeMf(bomb, { maxTriangles: 1e9 }, signal)).toBeNull();
   });
 });

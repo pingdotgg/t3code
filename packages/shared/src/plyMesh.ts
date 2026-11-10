@@ -135,8 +135,18 @@ export async function parsePly(
 ): Promise<Mesh | null> {
   const header = parseHeader(bytes);
   if (!header) return null;
-  // Every item takes at least a byte, so a larger count means a damaged header.
-  if (header.elements.some((element) => element.count > bytes.length)) return null;
+  // Each item takes at least its fixed-size properties (an ASCII value and its separator take two
+  // bytes), so a larger count means a damaged header; reject it before allocating for it.
+  const minItemBytes = (element: Element) =>
+    element.properties.reduce(
+      (sum, property) =>
+        sum + (header.format === "ascii" ? 2 : SCALARS[property.countType ?? property.type]!.bytes),
+      0,
+    );
+  const bodyBytes = bytes.length - header.bodyOffset + 1;
+  if (header.elements.some((element) => element.count * minItemBytes(element) > bodyBytes)) {
+    return null;
+  }
   const faces = header.elements.find((element) => element.name === "face");
   if (!faces || faces.count === 0 || faces.count > limits.maxTriangles) return null;
   const readerFor = valueReaders(bytes, header);

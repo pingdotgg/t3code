@@ -19,6 +19,7 @@ const MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 /** A single tag longer than this means the data is not a model. */
 const MAX_TAG_BYTES = 1024 * 1024;
 const MAX_COMPONENT_DEPTH = 16;
+const MAX_PLACEMENT_VISITS = 100_000;
 const TAGS_PER_SLICE = 200_000;
 const DEFAULT_MODEL_PATH = "3D/3dmodel.model";
 const MODEL_RELATIONSHIP = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
@@ -308,8 +309,12 @@ export async function parseThreeMf(
     // Resolve every placement first, so the result is allocated once at its final size.
     const placements: Placement[] = [];
     let placedTriangles = 0;
+    let visits = 0;
     const place = async (item: Reference, partPath: string, outer: Transform, depth: number) => {
       if (depth > MAX_COMPONENT_DEPTH) return;
+      // Fan-out, not depth, is what a few kilobytes of shared components can blow up.
+      if ((visits += 1) > MAX_PLACEMENT_VISITS) throw new TooLarge();
+      if (budget.spend()) await budget.pause();
       const path = item.path ?? partPath;
       const object = (await loadPart(path))?.objects.get(item.objectId);
       if (!object) return;
