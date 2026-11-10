@@ -337,3 +337,13 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+## Keep a note on a thread
+
+Each thread can hold one private note, for example what to check next or why
+you paused it. Click the note icon next to the thread title, run **Edit thread
+note** from the command palette, or click the note in the thread details panel. The note saves when you click away; press Esc to
+discard your edit. On mobile, tap the note button in the thread header.
+
+The note is never sent to the agent and does not move the thread in your lists.
+A dot on the icon shows that a thread has a note. Clearing the text removes the note.

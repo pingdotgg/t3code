@@ -963,6 +963,18 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                note={
+                  selectedThreadDetail === null
+                    ? undefined
+                    : {
+                        hasNote: (selectedThreadDetail.thread.note ?? "").trim().length > 0,
+                        onOpen: () =>
+                          navigation.navigate("ThreadNote", {
+                            environmentId: selectedThread.environmentId,
+                            threadId: selectedThread.id,
+                          }),
+                      }
+                }
               />
             )
           }

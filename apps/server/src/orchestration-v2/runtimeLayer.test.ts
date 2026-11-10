@@ -2656,6 +2656,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
 
+      const noteEventTypes: Array<string> = [];
+      for (const [step, note, expected] of [
+        ["set", "Remember the flaky login test", "Remember the flaky login test"],
+        ["clear", "  \n ", undefined],
+      ] as const) {
+        const result = yield* orchestrator.dispatch({
+          type: "thread.note.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-note-${step}`),
+          threadId,
+          note,
+        });
+        noteEventTypes.push(...result.storedEvents.map((stored) => stored.event.type));
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.note,
+          expected,
+          step,
+        );
+        const shell = shellOf(yield* orchestrator.getShellSnapshot());
+        // The note travels only with the full thread, and is not activity.
+        assert.notProperty(shell, "note", step);
+        assert.equal(
+          DateTime.toEpochMillis(shell.updatedAt),
+          DateTime.toEpochMillis(untaggedShell.updatedAt),
+          step,
+        );
+      }
+      assert.deepEqual(noteEventTypes, ["thread.note-updated", "thread.note-updated"]);
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({

@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EditorId,
   EnvironmentId,
@@ -19,6 +20,7 @@ import ProjectScriptsControl, {
 import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsNote } from "./ThreadDetailsNote";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -210,6 +212,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                 </ThreadDetailsSection>
+              ) : null}
+
+              {density !== "essential" && props.isServerThread && !props.draftId && visible.note ? (
+                <ThreadDetailsNote
+                  key={scopedThreadKey(activeThreadRef)}
+                  threadRef={activeThreadRef}
+                />
               ) : null}
 
               {props.gitCwd && (show.branch || show.git) ? (

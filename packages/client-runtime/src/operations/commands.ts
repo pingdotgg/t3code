@@ -509,6 +509,20 @@ export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
   });
 });
 
+export interface SetThreadNoteInput extends ThreadCommandInput {
+  readonly note: string | null;
+}
+export const setThreadNote = Effect.fn("EnvironmentCommands.setThreadNote")(function* (
+  input: SetThreadNoteInput,
+) {
+  return yield* dispatch({
+    type: "thread.note.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    note: input.note,
+  });
+});
+
 export interface SetThreadAutoSettleInput extends ThreadCommandInput {
   readonly enabled: boolean;
 }
