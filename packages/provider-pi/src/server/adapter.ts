@@ -100,13 +100,14 @@ const PI_USAGE_LIMIT = /usage[ _]limit/i;
 const PI_USAGE_LIMIT_RESET = /Try again in ~([1-9]\d{0,5}) min\b/;
 const PI_USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
 
-function piModelErrorFailure(message: string, receivedAt: DateTime.Utc) {
+function piModelErrorFailure(message: string, receivedAt: DateTime.Utc, retryable?: boolean) {
   if (!PI_USAGE_LIMIT.test(message))
-    return makeProviderFailure({ message, class: "provider_error" });
+    return makeProviderFailure({ message, class: "provider_error", retryable });
   const minutes = PI_USAGE_LIMIT_RESET.exec(message)?.[1];
   return makeProviderFailure({
     message,
     class: "usage_limit",
+    retryable,
     resetAt:
       minutes === undefined
         ? null
@@ -2163,13 +2164,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.failure = null;
               return;
             }
-            const failure = {
-              ...piModelErrorFailure(
-                recordString(event, "finalError") ?? "Pi auto-retry failed.",
-                emittedAt,
-              ),
-              retryable: false,
-            };
+            const failure = piModelErrorFailure(
+              recordString(event, "finalError") ?? "Pi auto-retry failed.",
+              emittedAt,
+              false,
+            );
             const attempt = Math.max(1, Math.trunc(recordNumber(event, "attempt") ?? 1));
             const current = turn.activeProviderRetry;
             const providerRetry = {

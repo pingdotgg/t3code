@@ -4744,11 +4744,12 @@ describe("PiAdapterV2", () => {
         assert.isUndefined(terminal.failure.resetAt);
         return;
       }
-      const latestRealReset =
-        DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000 + 30_000;
-      const resetAt = Date.parse(terminal.failure.resetAt ?? "");
-      assert.isAtLeast(resetAt, latestRealReset);
-      assert.isAtMost(resetAt, latestRealReset + 30_000);
+      assert.strictEqual(
+        terminal.failure.resetAt,
+        new Date(
+          DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000 + 30_000,
+        ).toISOString(),
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
