@@ -7876,6 +7876,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a running turn's catalog through a refresh and a steer", () =>
+    Effect.gen(function* () {
+      let catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG;
+      const harness = yield* makeWakeHarnessWithOptions({
+        modelCatalog: Effect.sync(() => catalog),
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-catalog-refresh"),
+        text: "Hello",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      const startWindow = harness.runtime.getModelContextWindow?.(CLAUDE_TEST_MODEL_SELECTION);
+      assert.isNumber(startWindow);
+      catalog = { models: [] };
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        }),
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("catalog-refresh-steer"),
+          text: "Keep going",
+          attachments: [],
+        },
+      });
+      const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 2 };
+      const frames = [
+        usageStreamFrame({ type: "message_start", message: { id: "msg_refresh", usage } }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: CLAUDE_TEST_MODEL_SELECTION.model,
+            id: "msg_refresh",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-catalog-refresh",
+                name: "Agent",
+                input: { description: "Check", subagent_type: "general-purpose", prompt: "Check." },
+              },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000690",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-catalog-refresh",
+          tool_use_id: "toolu-catalog-refresh",
+          description: "Check",
+          task_type: "local_agent",
+          uuid: "00000000-0000-4000-8000-000000000691",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000692", result: "OK" }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      yield* Queue.take(harness.terminalReceipts);
+
+      assert.deepEqual(
+        harness.offeredMessages.map((message) => message.message.content),
+        ["Ultrathink:\nHello", "Ultrathink:\nKeep going"],
+      );
+      const windows = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [event.providerTurn.tokenUsage.maxTokens]
+          : [],
+      );
+      assert.deepEqual(windows, [startWindow]);
+      const subagent = harness.events.find((event) => event.type === "subagent.updated");
+      assert.equal(
+        subagent?.type === "subagent.updated"
+          ? getModelSelectionStringOptionValue(subagent.subagent.modelSelection, "effort")
+          : undefined,
+        "high",
+      );
+      assert.isUndefined(harness.runtime.getModelContextWindow?.(CLAUDE_TEST_MODEL_SELECTION));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["root", "mcp", "subagent", "remote"] as const)(
     "asks Claude for suggestions only on threads a person drives (%s)",
     (lineage) =>
