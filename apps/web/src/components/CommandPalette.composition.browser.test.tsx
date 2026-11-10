@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -14,6 +15,10 @@ const addProject = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<unknown>,
   openedProjectIds: [] as string[],
 }));
+const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
+const setup = (deniedScope?: string) => {
+  scopes.denied = deniedScope;
+};
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -81,6 +86,7 @@ vi.mock("../state/environments", async (original) => ({
             capabilities: { projectCloneTracking: true, projectCheckoutInspection: true },
           },
           settings: { addProjectBaseDirectory: "/workspace/" },
+          newProjectsRoot: "/workspace/",
         },
       },
     ],
@@ -109,7 +115,7 @@ vi.mock("../state/queries", async (original) => ({
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  useEnvironmentScope: () => true,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/filesystem", async (original) => ({
@@ -130,6 +136,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     { isComposing: true, keyCode: 13 },
     { isComposing: false, keyCode: 229 },
   ])("keeps Enter in the input during composition: %j", async (composition) => {
+    setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
@@ -159,7 +166,44 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
   });
 });
 
+it.each([
+  { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
+  {
+    step: "highlighted folder",
+    source: "Local folder",
+    keys: "{ArrowDown}",
+    description: /Add.*(Ctrl|⌘) Enter/,
+  },
+  { step: "repository", source: "Git URL", keys: "", description: /Continue.*Enter/ },
+  { step: "new project", source: "New project", keys: "", description: /Create.*Enter/ },
+  {
+    step: "permission-blocked folder",
+    source: "Local folder",
+    keys: "",
+    deniedScope: AuthOrchestrationOperateScope,
+    description: "This connection cannot add projects.",
+  },
+  {
+    step: "permission-blocked destination",
+    source: "Git URL",
+    keys: "https://example.com/team/project.git{Enter}",
+    deniedScope: AuthSourceControlWriteScope,
+    description: "This connection needs permission to write source control and add projects.",
+  },
+])(
+  "tells screen readers how to submit the $step step",
+  async ({ source, keys, deniedScope, description }) => {
+    setup(deniedScope);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText(source, { exact: true }).click();
+    if (keys) await userEvent.keyboard(keys);
+    await expect.element(page.getByRole("combobox")).toHaveAccessibleDescription(description);
+  },
+);
+
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Local folder", { exact: true }).click();
@@ -243,4 +287,19 @@ describe("add-project checkout choice", () => {
     expect(addProject.createdRoots).toEqual(["/workspace/repo/apps"]);
     expect(addProject.openedProjectIds).not.toContain("root-project");
   });
+});
+
+it.each([
+  { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
+  { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
+])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText(step.flow, { exact: true }).click();
+  const input = page.getByRole("combobox");
+  await input.fill(step.value);
+  const submit = page.getByRole("button", { name: step.submit });
+  await expect.element(submit).toBeEnabled();
+  await userEvent.keyboard("{Tab}");
+  await expect.element(submit).toHaveFocus();
 });
