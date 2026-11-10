@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import type { NativeAppIconReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -95,7 +96,8 @@ const resolveApplicationPath = Effect.fn("NativeAppIconResolver.resolveApplicati
 ) {
   const path = yield* Path.Path;
   if (app._tag === "app-path") {
-    return path.isAbsolute(app.path) && app.path.endsWith(".app") ? app.path : null;
+    const appPath = expandHomePath(app.path, yield* HostProcess.HomeDirectory);
+    return path.isAbsolute(appPath) && appPath.endsWith(".app") ? appPath : null;
   }
   const query =
     app._tag === "app-id"

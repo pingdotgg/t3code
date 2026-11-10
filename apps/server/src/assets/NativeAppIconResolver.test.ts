@@ -41,6 +41,9 @@ it.effect("resolves the exact bundle path without Spotlight and caches the conve
       if (icon === null) return;
       expect(yield* fs.readFileString(icon)).toBe("converted icon");
       expect(yield* resolver.resolve(reference)).toBe(icon);
+      expect(yield* resolver.resolve({ _tag: "app-path", path: "~/Build Output/My App.app" })).toBe(
+        icon,
+      );
       expect(commands.filter((command) => command === "/usr/bin/sips")).toHaveLength(1);
       expect(commands).not.toContain("/usr/bin/mdfind");
       expect(yield* resolver.resolve({ _tag: "app-path", path: "relative.app" })).toBeNull();
@@ -53,6 +56,7 @@ it.effect("resolves the exact bundle path without Spotlight and caches the conve
         ),
       ),
       Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.HomeDirectory, root),
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
