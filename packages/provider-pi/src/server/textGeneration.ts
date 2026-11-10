@@ -13,7 +13,7 @@ import type { PiSettings } from "../settings.ts";
 import { makePiRpcConnection, parsePiModelSlug, piRecordString } from "./rpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
-import { isPiThinkingLevel } from "./thinkingCapabilities.ts";
+import { isPiThinkingLevel } from "./modelCapabilities.ts";
 import { MINIMUM_PI_VERSION, runPiVersionCommand } from "./status.ts";
 
 const PI_TIMEOUT_MS = 180_000;
@@ -69,6 +69,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         mcpSession: undefined,
         extensionPath: undefined,
         ephemeral: true,
+        shortLived: true,
         disableExtensions: true,
         // Background naming/content helpers must never mutate the workspace.
         disableTools: true,

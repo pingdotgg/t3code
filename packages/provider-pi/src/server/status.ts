@@ -29,6 +29,7 @@ import {
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   buildServerProvider,
+  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -39,10 +40,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import {
-  EMPTY_PI_MODEL_CAPABILITIES,
-  thinkingCapabilitiesForPiModel,
-} from "./thinkingCapabilities.ts";
+import { EMPTY_PI_MODEL_CAPABILITIES, piModelCapabilities } from "./modelCapabilities.ts";
 import {
   parsePiDiscoveredCommands,
   withPiBuiltinSlashCommands,
@@ -56,7 +54,7 @@ const PI_PRESENTATION = {
   reportsContextWindow: true,
 } as const;
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 // Earlier releases persist background set_thinking_level requests as the user's global default.
 export const MINIMUM_PI_VERSION = "0.84.3";
@@ -123,7 +121,7 @@ function parseDiscoveredModels(
       name: recordString(model, "name") ?? slug,
       subProvider: provider,
       isCustom: false,
-      capabilities: thinkingCapabilitiesForPiModel(
+      capabilities: piModelCapabilities(
         model,
         provider === activeProvider && id === activeModelId
           ? recordString(state, "thinkingLevel")
@@ -146,6 +144,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     mcpSession: undefined,
     extensionPath: undefined,
     ephemeral: true,
+    shortLived: true,
   });
   const connection = yield* makePiRpcConnection({
     command: piSettings.binaryPath || "pi",
@@ -277,7 +276,7 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
           }),
         ),
       ),
-      Effect.timeout(VERSION_PROBE_TIMEOUT_MS),
+      Effect.timeout(DEFAULT_TIMEOUT_MS),
       Effect.option,
     );
     const missingCredentials = Option.exists(

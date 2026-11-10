@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -22,6 +23,7 @@ import {
   sendsTokenInClear,
   usableRoutes,
 } from "./routes.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -141,6 +143,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
 
   // The descriptor is public, so this sends no credential to whatever
@@ -150,10 +153,15 @@ export const make = Effect.gen(function* () {
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
     }).pipe(
+      Effect.option,
+      // The connect this check leads to skips its own read. Every answer, even a
+      // failure, replaces what an older check remembered.
+      Effect.tap((descriptor) => remote.rememberCheckedDescriptor(httpBaseUrl, descriptor)),
       Effect.map((descriptor): RouteCheck =>
-        descriptor.environmentId === environmentId ? "answered" : "silent",
+        Option.exists(descriptor, (value) => value.environmentId === environmentId)
+          ? "answered"
+          : "silent",
       ),
-      Effect.orElseSucceed((): RouteCheck => "silent"),
       // A cached descriptor would answer for a host that cannot be reached.
       Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -196,6 +204,20 @@ export const make = Effect.gen(function* () {
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
+        // The server closes a socket when its session expires, unless the same key renewed it.
+        if (prepared.httpAuthorization?._tag === "Dpop") {
+          yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: prepared.environmentId,
+              expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not renew the connection's credential.", { error }),
+              ),
+              Effect.forkScoped,
+            );
+        }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
     );
