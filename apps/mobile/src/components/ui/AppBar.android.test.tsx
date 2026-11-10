@@ -13,7 +13,7 @@ vi.mock("@react-navigation/native", () => ({
     throw new Error("Couldn't find a navigation object.");
   },
 }));
-vi.mock("./AndroidScreenHeader", () => ({
+vi.mock("./AndroidScreenHeader.android", () => ({
   AndroidScreenHeader: (props: { readonly title: string }) => <h1>{props.title}</h1>,
 }));
 vi.mock("./WorkspaceAppBar.android", () => ({
