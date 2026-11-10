@@ -147,6 +147,7 @@ describe("OrchestratorMcpService", () => {
         turnItems: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
@@ -290,6 +291,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -395,6 +397,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: pendingRequest
             ? [
                 {
@@ -551,6 +554,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -642,6 +646,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: [],
           turnItems: [],
         } as unknown as OrchestrationV2ThreadProjection;
@@ -745,6 +750,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -829,6 +835,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -919,6 +926,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -1043,6 +1051,7 @@ describe("OrchestratorMcpService", () => {
               appOwnedTask("node:mcp-cancel-grandchild-below", childThreadId, grandchildThreadId),
             ],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
             turnItems: [],
           },
@@ -1068,6 +1077,7 @@ describe("OrchestratorMcpService", () => {
             messages: [],
             subagents: [],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
             turnItems: [],
           },
@@ -1305,6 +1315,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     messages: [],
     subagents: [],
     providerThreads: [],
+    providerTurns: [],
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -3258,9 +3269,18 @@ describe("OrchestratorMcpService provider resolution", () => {
                               ordinal: 1,
                               status: "running",
                               modelSelection: runSelection,
+                              activeAttemptId: "attempt:mcp-restarted-child",
                             },
                           ]
                         : [],
+                      // Claude ran the requested Opus on Sonnet.
+                      providerTurns: [
+                        {
+                          runAttemptId: "attempt:mcp-restarted-child",
+                          ordinal: 1,
+                          model: "claude-sonnet-4-6",
+                        },
+                      ],
                     } as unknown as OrchestrationV2ThreadProjection),
               ),
           }),
@@ -3274,11 +3294,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         yield* Effect.gen(function* () {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          for (const selection of [runSelection, threadSelection]) {
+          for (const [selection, executedModel] of [
+            [runSelection, "claude-sonnet-4-6"],
+            [threadSelection, null],
+          ] as const) {
             const result = yield* service.taskStatus(scope, taskId);
             assert.equal(result.providerInstanceId, selection.instanceId);
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
+            assert.equal(result.executedModel, executedModel);
             hasRun = false;
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
