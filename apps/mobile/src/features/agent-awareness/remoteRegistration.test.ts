@@ -106,13 +106,17 @@ const catalogMock = vi.hoisted(() => ({
   atom: Symbol("catalogValueAtom"),
   value: { isReady: true, entries: new Map<string, { readonly enabled: boolean }>() },
   listeners: new Set<(value: unknown) => void>(),
+  reads: 0,
 }));
 
 // Avoid importing the native connection stack; registration only reads these atoms.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: (atom: unknown) =>
-      atom === catalogMock.atom ? catalogMock.value : environmentConfigsMock.configs,
+    get: (atom: unknown) => {
+      if (atom !== catalogMock.atom) return environmentConfigsMock.configs;
+      catalogMock.reads++;
+      return catalogMock.value;
+    },
     subscribe: (_atom: unknown, listener: (value: unknown) => void) => {
       catalogMock.listeners.add(listener);
       return () => catalogMock.listeners.delete(listener);
@@ -297,6 +301,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     environmentConfigsMock.configs.clear();
     catalogMock.value = { isReady: true, entries: new Map() };
     catalogMock.listeners.clear();
+    catalogMock.reads = 0;
   });
 
   it("disables push features in Personal Team relay registrations", () => {
@@ -731,6 +736,79 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
+
+  it.effect("a toggle during a preference update registers after it with both changes", () => {
+    const landed: Array<{ readonly preferences: unknown }> = [];
+    let openUpdate: (() => void) | undefined;
+    const updateGate = new Promise<void>((resolve) => {
+      openUpdate = resolve;
+    });
+    let markUpdateArrived: (() => void) | undefined;
+    const updateArrived = new Promise<void>((resolve) => {
+      markUpdateArrived = resolve;
+    });
+    let requests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      const body = await request.json();
+      if (++requests === 2) {
+        markUpdateArrived?.();
+        await updateGate;
+      }
+      landed.push(body);
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    catalogMock.value = { isReady: true, entries: new Map([["env-a", { enabled: true }]]) };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      const update = yield* Effect.forkChild(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+      yield* Effect.promise(() => updateArrived);
+      catalogMock.value = { isReady: true, entries: new Map([["env-a", { enabled: false }]]) };
+      for (const listener of catalogMock.listeners) listener(catalogMock.value);
+      const toggle = backgroundRuntime.pending.shift()!;
+      const readsBefore = catalogMock.reads;
+      const toggleFiber = yield* Effect.forkChild(
+        toggle.operation as Effect.Effect<
+          unknown,
+          AgentAwarenessRegistrationError,
+          ManagedRelay.ManagedRelayClient
+        >,
+        { startImmediately: true },
+      );
+      // A snapshot taken now would be older than the update still in flight.
+      expect(catalogMock.reads).toBe(readsBefore);
+      openUpdate?.();
+      yield* Fiber.join(update);
+      toggle.resolve(yield* Fiber.await(toggleFiber));
+      yield* runBackgroundOperations();
+
+      expect(landed.map((body) => body.preferences)).toEqual([
+        expect.objectContaining({ liveActivitiesEnabled: false, disabledEnvironmentIds: [] }),
+        expect.objectContaining({ liveActivitiesEnabled: true, disabledEnvironmentIds: [] }),
+        expect.objectContaining({
+          liveActivitiesEnabled: true,
+          disabledEnvironmentIds: ["env-a"],
+        }),
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
 
   it.effect.each(["ios", "android"] as const)(
     "does not enable %s notifications when a token rotates after permission is revoked",

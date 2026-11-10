@@ -683,9 +683,36 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
   startPendingDeviceRegistration();
 }
 
+let deviceRegistrationSession = {
+  generation: deviceRegistrationGeneration,
+  lock: Semaphore.makeUnsafe(1),
+  // Settings persists a preference only after its registration, so later ones must keep it.
+  preferencesOverride: {} as Partial<Preferences>,
+};
+
+// Each registration snapshots the catalog and preferences, so one at a time keeps the newest last.
 const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* (
   input: RegisterDeviceInput = {},
   expectedGeneration = deviceRegistrationGeneration,
+): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
+  if (expectedGeneration !== deviceRegistrationGeneration) return;
+  if (deviceRegistrationSession.generation !== expectedGeneration) {
+    deviceRegistrationSession = {
+      generation: expectedGeneration,
+      lock: Semaphore.makeUnsafe(1),
+      preferencesOverride: {},
+    };
+  }
+  const session = deviceRegistrationSession;
+  if (input.preferencesOverride) {
+    session.preferencesOverride = { ...session.preferencesOverride, ...input.preferencesOverride };
+  }
+  yield* session.lock.withPermits(1)(registerDeviceNow(input, session));
+});
+
+const registerDeviceNow = Effect.fn("remoteRegistration.registerDeviceNow")(function* (
+  input: DeviceRegistrationInput,
+  session: typeof deviceRegistrationSession,
 ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
   if (!canRegisterPushNotifications()) {
     return;
@@ -716,8 +743,9 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   ]);
   const preferences = mergeAgentAwarenessRegistrationPreferences(
     storedPreferences,
-    input.preferencesOverride,
+    session.preferencesOverride,
   );
+  const expectedGeneration = session.generation;
   if (expectedGeneration !== deviceRegistrationGeneration) return;
   if (relayTokenProvider && relayTokenProviderIdentity) {
     configureAndroidAgentNotifications(
