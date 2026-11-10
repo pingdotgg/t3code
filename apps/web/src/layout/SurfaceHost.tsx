@@ -56,6 +56,7 @@ import { useLayoutBehavior } from "./layoutBehavior";
 import { useSyncLayoutBehavior } from "./useSyncLayoutBehavior";
 import { ChatPaneStandIn } from "./ChatPaneStandIn";
 import {
+  DeferredChatContext,
   chatHoldsLiveWork,
   queueChatRender,
   registerWaitingChat,
@@ -1682,13 +1683,15 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <LayoutPaneContext value={paneState}>
         {rendered ? (
-          <ThreadRouteView
-            target={shownTarget}
-            tabId={paneState.tabId}
-            background={background}
-            // The URL stays on the chat while its surface tab has focus.
-            focused={paneState.focused || paneState.related}
-          />
+          <DeferredChatContext value={request.deferred}>
+            <ThreadRouteView
+              target={shownTarget}
+              tabId={paneState.tabId}
+              background={background}
+              // The URL stays on the chat while its surface tab has focus.
+              focused={paneState.focused || paneState.related}
+            />
+          </DeferredChatContext>
         ) : null}
         {/* Near on the strip it is about to render: its stand-in, as before. */}
         {drawn && (thumbnail || !near) ? (
