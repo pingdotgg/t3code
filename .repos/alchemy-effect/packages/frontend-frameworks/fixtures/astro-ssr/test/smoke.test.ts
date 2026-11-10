@@ -9,10 +9,7 @@ for (const mode of Playwright.SERVER_METHODS) {
   test.describe(mode, () => {
     const it = Playwright.make(mode);
 
-    it("renders the SSR page per request: binding + fresh request id", async ({
-      page,
-      server,
-    }) => {
+    it("renders the SSR page per request: binding + fresh request id", async ({ page, server }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
       await expect(page.locator("#mode")).toHaveText("on-demand");
@@ -40,17 +37,12 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await second.text()).toContain("Hello, another-visitor!");
     });
 
-    it("handles a form POST server-side (browser submission)", async ({
-      page,
-      server,
-    }) => {
+    it("handles a form POST server-side (browser submission)", async ({ page, server }) => {
       await page.goto(new URL("/feedback", server.url).toString());
       await expect(page.locator("#feedback-result")).toHaveCount(0);
       await page.locator("#message").fill("hello from playwright");
       await page.locator("#submit").click();
-      await expect(page.locator("#feedback-result")).toHaveText(
-        "received: hello from playwright",
-      );
+      await expect(page.locator("#feedback-result")).toHaveText("received: hello from playwright");
     });
 
     it("handles a direct form POST (checkOrigin: false from the user config)", async ({
@@ -69,9 +61,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await response.text()).toContain("received: direct-post");
     });
 
-    it("round-trips Astro.session across requests (zero-config sessions)", async ({
-      server,
-    }) => {
+    it("round-trips Astro.session across requests (zero-config sessions)", async ({ server }) => {
       const first = await fetch(new URL("/session", server.url));
       expect(first.status).toBe(200);
       expect(await first.text()).toContain('<p id="count">1</p>');
@@ -85,9 +75,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await second.text()).toContain('<p id="count">2</p>');
     });
 
-    it("renders the streaming page (early + late chunks)", async ({
-      server,
-    }) => {
+    it("renders the streaming page (early + late chunks)", async ({ server }) => {
       const response = await server.fetch("/stream");
       expect(response.status).toBe(200);
       const html = await response.text();
@@ -97,9 +85,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(late).toBeGreaterThan(early);
     });
 
-    it("serves the single prerendered exception (hybrid)", async ({
-      server,
-    }) => {
+    it("serves the single prerendered exception (hybrid)", async ({ server }) => {
       const response = await server.fetch("/about/");
       expect(response.status).toBe(200);
       const html = await response.text();
@@ -134,21 +120,15 @@ for (const mode of Playwright.SERVER_METHODS) {
     it("returns binary data from an endpoint", async ({ server }) => {
       const response = await server.fetch("/api/binary");
       expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toBe(
-        "application/octet-stream",
-      );
+      expect(response.headers.get("content-type")).toBe("application/octet-stream");
       const bytes = new Uint8Array(await response.arrayBuffer());
       expect([...bytes]).toEqual([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x04, 0x05, 0x06, 0x07,
       ]);
-      expect(response.headers.get("x-binary-length")).toBe(
-        String(bytes.length),
-      );
+      expect(response.headers.get("x-binary-length")).toBe(String(bytes.length));
     });
 
-    it("runs middleware on on-demand routes: locals + response headers", async ({
-      server,
-    }) => {
+    it("runs middleware on on-demand routes: locals + response headers", async ({ server }) => {
       const response = await server.fetch("/greet/middleware-check");
       expect(response.status).toBe(200);
       expect(response.headers.get("x-middleware")).toBe("hit");
@@ -158,9 +138,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await response.text()).toContain(requestId!);
     });
 
-    it("serves the redirect declared in astro.config.mjs", async ({
-      server,
-    }) => {
+    it("serves the redirect declared in astro.config.mjs", async ({ server }) => {
       // The redirect target (/greet/astro) is an on-demand route, so the
       // redirect must be handled dynamically by the worker in BOTH modes —
       // there is no prerendered target for the asset layer to serve.
