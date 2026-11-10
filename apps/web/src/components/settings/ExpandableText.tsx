@@ -1,6 +1,7 @@
 import { InlineButton } from "../ui/button";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 
+import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "../../lib/utils";
 
@@ -29,14 +30,27 @@ function ExpandableTextBody({
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
   const hasHiddenText = collapsedText !== text;
+  const sansFont = useClientSettings((settings) => settings.fontFamilySans);
+  const codeFont = useClientSettings((settings) => settings.fontFamilyCode);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- only the laid-out DOM knows whether the clamp hides a line; refit on resize
   useLayoutEffect(() => {
     const element = textRef.current;
     if (!element || expanded || hasHiddenText) return;
     const measure = () => setClamped(element.scrollHeight > element.clientHeight);
     measure();
-    return observeResize(element, measure);
-  }, [expanded, hasHiddenText]);
+    document.fonts.addEventListener("loadingdone", measure);
+    const stopObserving = observeResize(element, measure);
+    return () => {
+      document.fonts.removeEventListener("loadingdone", measure);
+      stopObserving();
+    };
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A font swap rewraps the text inside an unchanged three-line box, so it re-measures.
+    sansFont,
+    codeFont,
+    expanded,
+    hasHiddenText,
+  ]);
   const canExpand = hasHiddenText || clamped;
 
   return (
