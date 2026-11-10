@@ -55,7 +55,7 @@ import { startWorkspaceFocus } from "./lib/workspaceFocus";
 import { startI18n } from "./i18n/runtime";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
-import { environmentThreadShells } from "./state/threads";
+import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
@@ -207,6 +207,7 @@ export function startAppServices(): AppRouter {
     threadShellAtom: environmentThreadShells.threadShellAtom,
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
+    pendingThreadIdsAtom: threadEnvironment.pendingThreadIdsAtom,
   });
   startMainAppLocationTracking(router);
   startWorkspaceFocus(router);
