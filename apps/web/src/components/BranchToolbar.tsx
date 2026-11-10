@@ -270,6 +270,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
           render={
             <MenuTrigger
               render={<ComposerControl size="xs" />}
+              data-pressed={open ? "" : undefined}
               className={branch ? "min-w-0 max-w-full" : envModeLocked ? "ps-2 pe-0.5" : "ps-2"}
               aria-label={
                 branch ? `Branch and workspace: ${branch.label}` : `Workspace: ${workspaceLabel}`
@@ -284,7 +285,11 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
           {envModeLocked && !branch ? null : (
             <>
               <ComposerContextLabel compact={branch ? "truncate" : "hide"}>
-                {branch?.label ?? workspaceLabel}
+                {branch ? (
+                  <MiddleTruncate value={branch.label} variant="cap-aligned" className="w-full" />
+                ) : (
+                  workspaceLabel
+                )}
               </ComposerContextLabel>
               <ChevronDownIcon
                 aria-hidden
