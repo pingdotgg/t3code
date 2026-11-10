@@ -46,6 +46,10 @@ interface PaneLayoutStoreState extends PaneLayout {
   reset: () => void;
 }
 
+// Above the store: persist hydrates synchronously while the store is created.
+const isEnvironmentId = Schema.is(EnvironmentId);
+const isThreadId = Schema.is(ThreadId);
+
 let paneIdCounter = 0;
 function newPaneId(): string {
   paneIdCounter += 1;
@@ -115,9 +119,6 @@ export const usePaneLayoutStore = create<PaneLayoutStoreState>()(
     },
   ),
 );
-
-const isEnvironmentId = Schema.is(EnvironmentId);
-const isThreadId = Schema.is(ThreadId);
 
 /** Storage is user-editable and survives upgrades, so keep only well-formed panes. */
 export function sanitizePersistedLayout(value: unknown): PaneLayout {
