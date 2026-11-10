@@ -1,6 +1,6 @@
 ---
 title: Kinesis
-description: Add a Kinesis Data Stream, publish records from one Lambda, and consume them in order from another — wired through the same Stream-shaped event source.
+description: Add a Kinesis Data Stream, publish records from one Lambda, and consume them in order from another — wired through the same batch event source as SQS.
 ---
 
 **Kinesis Data Streams** are the tool for **ordered**, sharded,
@@ -10,8 +10,8 @@ consumers reading the same records. In Alchemy it's the `Stream`
 resource plus producer bindings (`PutRecord`, `PutRecords`, and
 the sink-shaped `StreamSink`) and a consumer side:
 `Kinesis.consumeStreamRecords` subscribes a Lambda to the stream
-as a typed Effect `Stream`, creating the event source mapping
-and granting the read permissions for you. Reach for
+and hands each batch of records to your Effect, creating the event
+source mapping and granting the read permissions for you. Reach for
 [SQS](/aws/messaging/sqs) instead when the work is unordered.
 
 The walkthrough below builds on the [Lambda](/aws/compute/lambda),
@@ -27,7 +27,7 @@ import the same handle:
 
 ```typescript
 // src/stream.ts
-import * as Kinesis from "alchemy/AWS/Kinesis";
+import * as Kinesis from "@alchemy.run/aws/Kinesis";
 
 export const Events = Kinesis.Stream("Events", {
   streamMode: "ON_DEMAND",
@@ -42,10 +42,10 @@ fine for the example. Switch to `"PROVISIONED"` with an explicit
 
 ```diff lang="typescript"
 // src/api.ts
-import * as DynamoDB from "alchemy/AWS/DynamoDB";
-+import * as Kinesis from "alchemy/AWS/Kinesis";
-import * as S3 from "alchemy/AWS/S3";
-import * as SQS from "alchemy/AWS/SQS";
+import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
++import * as Kinesis from "@alchemy.run/aws/Kinesis";
+import * as S3 from "@alchemy.run/aws/S3";
+import * as SQS from "@alchemy.run/aws/SQS";
 import { Jobs } from "./queue.ts";
 +import { Events } from "./stream.ts";
 // ...
@@ -109,13 +109,13 @@ handle:
 
 ```typescript
 // src/audit.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import { Events } from "./stream.ts";
 
 export default class Audit extends AWS.Lambda.Function<Audit>()(
   "Audit",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     const events = yield* Events;
     return {};
@@ -132,28 +132,26 @@ partition key:
 
 ```diff lang="typescript"
 // src/audit.ts
-import * as AWS from "alchemy/AWS";
-+import * as Kinesis from "alchemy/AWS/Kinesis";
+import * as AWS from "@alchemy.run/aws";
++import * as Kinesis from "@alchemy.run/aws/Kinesis";
 +import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-+import * as Stream from "effect/Stream";
 import { Events } from "./stream.ts";
 
 export default class Audit extends AWS.Lambda.Function<Audit>()(
   "Audit",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     const events = yield* Events;
 +
-+    yield* Kinesis.consumeStreamRecords(events, {
-+      startingPosition: "LATEST",
-+      batchSize: 100,
-+    }, (stream) =>
-+      stream.pipe(
-+        Stream.runForEach((record) =>
-+          Console.log(`[${record.kinesis.partitionKey}]`),
-+        ),
-+      ),
++    yield* Kinesis.consumeStreamRecords(
++      events,
++      { startingPosition: "LATEST", batchSize: 100 },
++      Effect.fn(function* (event) {
++        for (const record of event.Records) {
++          yield* Console.log(`[${record.kinesis.partitionKey}]`);
++        }
++      }),
 +    );
 
     return {};
@@ -162,8 +160,8 @@ export default class Audit extends AWS.Lambda.Function<Audit>()(
 ```
 
 `batchSize: 100` lets Lambda gather up to 100 records per
-invocation; the whole batch is delivered as one stream emission
-sequence, then the stream completes and Lambda checkpoints.
+invocation; the whole batch arrives as one `KinesisStreamEvent`, and
+Lambda checkpoints once the handler succeeds.
 `startingPosition: "LATEST"` skips history — switch to
 `"TRIM_HORIZON"` to replay the 24-hour retention window.
 
@@ -172,27 +170,45 @@ sequence, then the stream completes and Lambda checkpoints.
 Kinesis record data arrives base64-encoded inside the Lambda
 envelope (an artifact of the event shape, not the stream
 itself). Decode it back to bytes and on to a string, and run
-the work as an Effect per record:
+log it alongside the partition key:
 
 ```diff lang="typescript"
-yield* Kinesis.consumeStreamRecords(events, {
-  startingPosition: "LATEST",
-  batchSize: 100,
-}, (stream) =>
-  stream.pipe(
--    Stream.runForEach((record) =>
--      Console.log(`[${record.kinesis.partitionKey}]`),
--    ),
-+    Stream.mapEffect((record) =>
-+      Effect.gen(function* () {
-+        const text = new TextDecoder().decode(
-+          Buffer.from(record.kinesis.data, "base64"),
-+        );
-+        yield* Console.log(`[${record.kinesis.partitionKey}] ${text}`);
-+      }),
-+    ),
-+    Stream.runDrain,
-  ),
+yield* Kinesis.consumeStreamRecords(
+  events,
+  { startingPosition: "LATEST", batchSize: 100 },
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+-      yield* Console.log(`[${record.kinesis.partitionKey}]`);
++      const text = new TextDecoder().decode(Buffer.from(record.kinesis.data, "base64"));
++      yield* Console.log(`[${record.kinesis.partitionKey}] ${text}`);
+    }
+  }),
+);
+```
+
+## Checkpoint at the first failure
+
+Records in a shard are ordered, so report the first record that
+failed. Lambda checkpoints everything before it and retries from
+there:
+
+```diff lang="typescript"
+yield* Kinesis.consumeStreamRecords(
+  events,
+  { startingPosition: "LATEST", batchSize: 100 },
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+      const text = new TextDecoder().decode(Buffer.from(record.kinesis.data, "base64"));
+-      yield* Console.log(`[${record.kinesis.partitionKey}] ${text}`);
++      const ok = yield* doSomethingWith(text).pipe(
++        Effect.as(true),
++        Effect.catchCause(() => Effect.succeed(false)),
++      );
++      if (!ok) {
++        return { batchItemFailures: [{ itemIdentifier: record.kinesis.sequenceNumber }] };
++      }
+    }
+  }),
 );
 ```
 
@@ -256,25 +272,6 @@ same shard and arrive in order at the same `Audit` invocation
 context — that's the ordering guarantee Kinesis provides per
 partition key.
 
-## Bonus: in-order side effects
-
-Because each batch is delivered as a `Stream`, **per-shard ordering
-is preserved end-to-end**. If you need strict ordering for side
-effects, drop the concurrency to 1 and let the stream do the work:
-
-```typescript
-stream.pipe(
-  Stream.mapEffect(
-    (record) => persistInOrder(record).pipe(Effect.orDie),
-    { concurrency: 1 },
-  ),
-  Stream.runDrain,
-);
-```
-
-Or fan out per-partition with `Stream.groupByKey(record => record.kinesis.partitionKey)`
-when ordering only matters within a key.
-
 ## What you've built
 
 If you followed the whole section, you've gone from a single
@@ -282,10 +279,9 @@ Lambda to a small event-driven system: a public HTTP API backed
 by S3 blobs and a DynamoDB table, table change events on a
 stream, an SQS work queue, and a high-throughput Kinesis
 pipeline — all wired through the same binding pattern, with IAM
-policies that match exactly the operations you call. The same
-`Stream`-shaped consumer surface drives every event source, so
-adding more is a matter of declaring the resource and pointing
-the matching `consume*` helper at it.
+policies that match exactly the operations you call. Adding
+another event source is a matter of declaring the resource and
+pointing the matching `consume*` helper at it.
 
 ## Where next
 
