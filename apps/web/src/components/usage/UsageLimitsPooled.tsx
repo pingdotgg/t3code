@@ -406,7 +406,13 @@ function SegmentTriggers({
             </span>
           ) : null}
           {resetsIn || credits ? (
-            <span className="ms-auto flex shrink-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
+            <span
+              className={cn(
+                "ms-auto flex items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums",
+                // A lone account's long name truncates before its reset/credit pill.
+                showPercent ? "min-w-0" : "shrink-0",
+              )}
+            >
               {resetsIn?.replace("resets in ", "↻ ") ?? ""}
               {credits ? (
                 <>
