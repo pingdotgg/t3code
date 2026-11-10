@@ -2646,7 +2646,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ?.getLocalEnvironmentBootstraps()
           .some(
             (bootstrap) =>
-              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID && bootstrap.runningDistro !== null,
+              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID &&
+              typeof bootstrap.runningDistro === "string",
           ) === true,
     });
     if (target === "remote") {
