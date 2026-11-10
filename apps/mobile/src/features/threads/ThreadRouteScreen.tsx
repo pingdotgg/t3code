@@ -12,7 +12,15 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -30,7 +38,6 @@ import {
   projectScriptTerminalInput,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Platform } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
@@ -89,8 +96,11 @@ import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  Inspector,
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
@@ -104,7 +114,7 @@ import { resumeThread } from "./resume-thread";
 import {
   useAndroidWorkspaceBack,
   useWorkspaceBackNavigation,
-} from "../workspace/useAndroidWorkspaceNavigation";
+} from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { openSettings } from "../settings/settings-navigation";
 import {
   InspectorContentScope,
@@ -112,37 +122,33 @@ import {
   ThreadInspectorPreview,
   type ThreadInspectorPresentation,
 } from "./thread-inspector-preview";
+import { useStartSideChat } from "./useStartSideChat";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+
+// The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
+const InspectorHeaderShownContext = createContext(false);
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const { themeVariables } = useAppearancePreferences();
-  if (Platform.OS !== "android")
-    return <ThreadScreenFallback>{props.children}</ThreadScreenFallback>;
-
+  const inspectorHeaderShown = use(InspectorHeaderShownContext);
   return (
-    <>
-      <AppBar
-        title="Thread"
-        options={{ contentStyle: { backgroundColor: themeVariables["--color-header"] } }}
-        onBack={layout.usesSplitView ? undefined : goBack}
-        hideBottomBorder
-      />
-      <ThreadScreenFallback>{props.children}</ThreadScreenFallback>
-    </>
+    <ThreadScreenFallback
+      header={
+        inspectorHeaderShown ? undefined : (
+          <AppBar title="Thread" onBackToList={goBack} hideBottomBorder />
+        )
+      }
+    >
+      {props.children}
+    </ThreadScreenFallback>
   );
 }
 
 function OpeningThreadLoadingScreen() {
   return (
     <ThreadRouteFallbackLayout>
-      <LoadingScreen
-        message="Opening thread…"
-        messagePlacement="above-spinner"
-        embedded={Platform.OS === "android"}
-      />
+      <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" embedded />
     </ThreadRouteFallbackLayout>
   );
 }
@@ -260,17 +266,18 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
     setErrorBeforeConnected(detailError);
   }
-  const withInspectorHeader = (content: ReactNode) => (
-    <>
-      {props.inspectorPresentation ? (
+  const withInspectorHeader = (content: ReactNode) =>
+    props.inspectorPresentation ? (
+      <InspectorHeaderShownContext value>
         <ThreadInspectorHeader
           title={selectedThread?.title ?? "Thread"}
           {...props.inspectorPresentation}
         />
-      ) : null}
-      {content}
-    </>
-  );
+        {content}
+      </InspectorHeaderShownContext>
+    ) : (
+      content
+    );
 
   if (environmentId === null || threadIdRaw === null) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
@@ -335,10 +342,7 @@ function ThreadRouteContent(
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
   },
 ) {
-  const { themeVariables } = useAppearancePreferences();
-  const headerColor = themeVariables["--color-header"];
-  const { fileInspector, layout, panes, showInspector, toggleAuxiliaryPane } =
-    useAdaptiveWorkspaceLayout();
+  const { layout, showInspector, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
   const {
@@ -364,7 +368,8 @@ function ThreadRouteContent(
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const composer = useThreadComposerState();
+  const startSideChat = useStartSideChat();
+  const composer = useThreadComposerState({ startSideChat });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -552,13 +557,6 @@ function ThreadRouteContent(
     setChosenInspectorMode(props.renderInspector === undefined ? "files" : "route");
     showInspector();
   };
-  const handleToggleInspector = () => {
-    if (inspectorMode === null) {
-      handleOpenFilesInspector();
-      return;
-    }
-    toggleAuxiliaryPane();
-  };
   const handleSelectInspectorFile = (path: string) => {
     if (selectedThread === null) {
       return;
@@ -595,8 +593,8 @@ function ThreadRouteContent(
       </InspectorSheetContext.Consumer>
     ) : null;
   const renderPreviewInspector = () =>
-    previewTarget && panes.auxiliaryPaneVisible ? (
-      <ThreadInspectorPreview
+    previewTarget ? (
+      <ThreadInspectorPreviewWhileVisible
         target={previewTarget}
         renderThread={(screen) => <ThreadRouteScreen {...screen} />}
         onClose={toggleAuxiliaryPane}
@@ -625,8 +623,6 @@ function ThreadRouteContent(
                   {
                     key: "preview",
                     render: renderPreviewInspector,
-                    // A thread preview runs its own navigator, whose screens draw its bar.
-                    nativeStack: previewTarget?.type === "thread",
                   },
                 ]
               : []),
@@ -763,6 +759,7 @@ function ThreadRouteContent(
         worktreePath: preferredWorktreePath,
         env,
         initialInput: projectScriptTerminalInput(script.command),
+        stopOnSettle: script.stopOnSettle ?? false,
       },
     });
 
@@ -775,13 +772,6 @@ function ThreadRouteContent(
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
-    auxiliaryPaneControl:
-      !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
-        ? {
-            accessibilityLabel: "Toggle inspector",
-            onPress: handleToggleInspector,
-          }
-        : undefined,
     onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
     onOpenGitInspector: handleOpenGitInspector,
     onMergeBack:
@@ -802,7 +792,6 @@ function ThreadRouteContent(
         )
       : [],
     terminalSessions: terminalMenuSessions,
-    showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -965,15 +954,9 @@ function ThreadRouteContent(
               <ThreadHeader
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
-                headerColor={headerColor}
-                usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
-                hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
-                fileInspectorSupported={fileInspector.supported}
                 inspectorMode={inspectorMode}
-                onToggleInspector={handleToggleInspector}
-                onOpenGitInspector={handleOpenGitInspector}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
               />
@@ -999,6 +982,7 @@ function ThreadRouteContent(
           }
           isCompacting={composer.isCompacting}
           runlessWorkActive={composer.runlessWorkActive}
+          extensionStatuses={composer.extensionStatuses}
           providerSubagentStatus={composer.providerSubagentStatus}
           creationState={creationState}
           setupWorkingStartedAt={
@@ -1066,9 +1050,9 @@ function ThreadRouteContent(
             composer.queueHeld || composer.resumableRunId !== null ? handleResumeQueue : null
           }
           onSendMessage={composer.onSendMessage}
+          offersSideChat={composer.sideChatUnavailableReason === null}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
-          onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
@@ -1113,4 +1097,10 @@ export function FullscreenThreadRouteScreen(
       />
     </InspectorContentScope>
   );
+}
+
+/** Reads the pane state itself, so a sidebar toggle doesn't re-render the whole thread screen. */
+function ThreadInspectorPreviewWhileVisible(props: Parameters<typeof ThreadInspectorPreview>[0]) {
+  const { panes } = useWorkspacePaneState();
+  return panes.auxiliaryPaneVisible ? <ThreadInspectorPreview {...props} /> : null;
 }
