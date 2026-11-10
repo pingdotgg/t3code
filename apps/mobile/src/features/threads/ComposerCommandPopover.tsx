@@ -148,7 +148,7 @@ function groupLabel(
     case "skill":
       return "Skills";
     case "path":
-      return items.every((item) => item.type === "path") ? "Files" : "Mentions";
+      return items.length > 0 && items.every((item) => item.type === "path") ? "Files" : "Mentions";
     default:
       return null;
   }
@@ -156,13 +156,13 @@ function groupLabel(
 
 function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path" ? "Searching…" : "Loading…";
   }
   switch (triggerKind) {
     case "pull-request":
       return "No matching pull requests.";
     case "path":
-      return "No matching files or folders.";
+      return "No matches.";
     case "skill":
       return "No skills found.";
     case "slash-command":
