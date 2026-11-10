@@ -4970,7 +4970,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+          // A post-settle agent can ask after its run settled; the request opens a continuation.
+          if (!followsAgentWorkState && !postSettleContinuationEnabled) return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,

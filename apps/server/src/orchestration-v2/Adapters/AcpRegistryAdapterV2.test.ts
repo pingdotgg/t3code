@@ -2397,6 +2397,74 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("opens a continuation for a Factory Droid question asked after its run settled", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["question"]);
+      const session = yield* openClaudeReplaySession(
+        [
+          ...droidFirstTurn(),
+          {
+            type: "emit_inbound",
+            label: "question",
+            frame: {
+              kind: "request",
+              method: "elicitation/create",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                mode: "form",
+                message: "Which file?",
+                requestedSchema: {
+                  type: "object",
+                  properties: {
+                    question_1: {
+                      type: "string",
+                      title: "File",
+                      oneOf: [{ const: "option_0", title: "a.ts" }],
+                    },
+                  },
+                  required: ["question_1"],
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "elicitation/create",
+              result: { action: "accept", content: { question_1: "option_0" } },
+            },
+          },
+          claudeMarker("answered"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        true,
+        "factory-droid",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("question");
+      yield* Queue.take(session.offered);
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const pending = (yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      )).at(-1);
+      if (pending?.type !== "runtime_request.updated") throw new Error("Missing question");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        answers: { question_1: "option_0" },
+      });
+      yield* session.throughMarker("answered");
+      const settled = yield* Effect.forkScoped(session.terminal);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(yield* Fiber.join(settled), { runOrdinal: 2, status: "completed" });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["error", "end_turn"])(
     "hands live Claude child tools to the next run after %s and keeps nested output in the child",
     (stopReason) =>
