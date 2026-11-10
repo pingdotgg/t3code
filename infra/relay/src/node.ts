@@ -21,6 +21,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import { composeRelay } from "./composition.ts";
 import { makeNodeHost, withPublicOrigin } from "./host/node.ts";
+import { withRelayChannels } from "./host/RelayChannels.ts";
 
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -28,6 +29,12 @@ const program = Effect.gen(function* () {
     fs.readFileString(path).pipe(Effect.map((text) => text.trim()));
 
   const relayPublicOrigin = yield* Config.String("RELAY_PUBLIC_ORIGIN");
+  const channelHost = Option.getOrUndefined(
+    Option.filter(
+      yield* Config.option(Config.String("RELAY_CHANNEL_HOST")),
+      (value) => value.trim().length > 0,
+    ),
+  )?.trim();
   const migrationsFolder = yield* Config.String("RELAY_MIGRATIONS_FOLDER").pipe(
     Config.withDefault("migrations/postgres"),
   );
@@ -54,6 +61,7 @@ const program = Effect.gen(function* () {
   const host = yield* makeNodeHost({
     relayPublicOrigin,
     stage: "selfhost",
+    channelHost,
     mintKeyPair: {
       privateKey: Redacted.make(mintPrivateKey),
       publicKey: mintPublicKey,
@@ -75,9 +83,14 @@ const program = Effect.gen(function* () {
   const context = yield* Layer.build(relay.runtime);
   const handler = yield* relay.fetch.pipe(Effect.provideContext(context));
   yield* HttpServer.serveEffect(
-    handler.pipe(withPublicOrigin(relayPublicOrigin), Effect.provideContext(context)),
+    handler.pipe(
+      withPublicOrigin(relayPublicOrigin),
+      // Outermost, so channel hosts are matched against the Host the proxy forwarded.
+      channelHost ? withRelayChannels(channelHost) : (effect) => effect,
+      Effect.provideContext(context),
+    ),
   );
-  yield* Effect.logInfo("Self-hosted relay is serving", { relayPublicOrigin });
+  yield* Effect.logInfo("Self-hosted relay is serving", { relayPublicOrigin, channelHost });
   // Serving is scoped to this program; keep it alive until the process is stopped.
   return yield* Effect.never;
 });

@@ -14,13 +14,16 @@ import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import { validateManualEndpoint } from "./EnvironmentConnector.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import { channelEndpoint, channelHostname, channelKey } from "./RelayChannelEndpoint.ts";
 import * as RelayConfiguration from "../Config.ts";
 
 export class EnvironmentLinkProofExpired extends Schema.TaggedError<EnvironmentLinkProofExpired>()(
@@ -312,7 +315,21 @@ const make = Effect.gen(function* () {
             origin: verified.origin,
           })
         : null;
-      const endpoint = provisioned?.endpoint ?? verified.endpoint;
+      // A publish-only link with no address the relay may contact is carried over a relay channel.
+      const channel =
+        !input.request.managedTunnelsEnabled &&
+        config.channelHost !== undefined &&
+        Result.isFailure(
+          validateManualEndpoint({
+            endpoint: verified.endpoint,
+            manualEndpoints: config.manualEndpoints ?? "off",
+          }),
+        )
+          ? channelEndpoint(
+              channelHostname(config.channelHost, yield* channelKey(verified.environmentId)),
+            )
+          : null;
+      const endpoint = provisioned?.endpoint ?? channel ?? verified.endpoint;
       // Only advertised managed endpoints need secure URLs; publish-only links route out of band.
       if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
         return yield* new EnvironmentLinkProofInvalid({
@@ -330,7 +347,15 @@ const make = Effect.gen(function* () {
       return {
         environmentId: verified.environmentId,
         endpoint,
-        endpointRuntime: provisioned?.runtime ?? null,
+        endpointRuntime:
+          provisioned?.runtime ??
+          (channel
+            ? {
+                providerKind: "t3_relay" as const,
+                connectorToken: environmentCredential,
+                channelUrl: `${normalizeRelayIssuer(config.relayIssuer)}/v1/environments/${encodeURIComponent(verified.environmentId)}/channel`,
+              }
+            : null),
         environmentCredential,
       };
     }),

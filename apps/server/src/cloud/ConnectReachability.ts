@@ -21,7 +21,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
@@ -272,8 +272,14 @@ const make = Effect.gen(function* () {
   );
 
   const gatherFacts = Effect.gen(function* () {
-    const managedTunnelConfigured = Option.isSome(
+    // A relay channel dials out with no local tunnel connector to inspect.
+    const managedTunnelConfigured = Option.exists(
       yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(Effect.orElseSucceed(Option.none)),
+      (bytes) =>
+        !Option.exists(
+          decodeRuntimeConfig(new TextDecoder().decode(bytes)),
+          (config) => config.providerKind === "t3_relay",
+        ),
     );
     const connector = managedTunnelConfigured ? yield* runtime.inspectConnector : null;
     const endpoint =

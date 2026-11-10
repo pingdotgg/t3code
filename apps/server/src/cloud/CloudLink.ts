@@ -305,6 +305,11 @@ const rollbackFailed = (cause: unknown) =>
 // Where a publish-only link says this machine can be reached; unset keeps the local placeholder.
 const publicEndpointConfig = Config.option(Config.NonEmptyString("T3CODE_PUBLIC_URL"));
 
+function localOriginUrl(origin: RelayManagedEndpointOrigin): string {
+  const host = origin.localHttpHost;
+  return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${origin.localHttpPort}`;
+}
+
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     (cause) => new CloudLinkInternalError({ operation: "relay-url-unconfigured", cause }),
@@ -724,6 +729,17 @@ const make = Effect.gen(function* () {
         ]);
         if (Option.isNone(runtimeBytes)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
+        if (config?.providerKind === "t3_relay") {
+          // The channel dials out and forwards to whatever port this server listens on now.
+          const status = yield* endpointRuntime.applyConfig(config, localOrigin);
+          if (status.status !== "running") {
+            return yield* new CloudLinkEndpointUnavailableError({
+              reason: "runtime-not-started",
+              endpointRuntimeStatus: status,
+            });
+          }
+          return true;
+        }
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
         // Require the relay-confirmed port unless falling back after the relay stayed unreachable.
         if (requireConfirmedOrigin) {
@@ -764,7 +780,8 @@ const make = Effect.gen(function* () {
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
         payload.endpointRuntime !== null &&
-        payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
+        payload.endpointRuntime.providerKind !== "cloudflare_tunnel" &&
+        payload.endpointRuntime.providerKind !== "t3_relay"
       ) {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
@@ -804,7 +821,10 @@ const make = Effect.gen(function* () {
           endpointRuntimeStatus: { status: "disabled" },
         } satisfies EnvironmentCloudRelayConfigResult;
       }
-      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(payload.endpointRuntime);
+      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(
+        payload.endpointRuntime,
+        localOriginUrl(options.confirmedOrigin),
+      );
       if (endpointRuntimeStatus.status !== "running") {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
@@ -1178,6 +1198,16 @@ const make = Effect.gen(function* () {
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
       const result = yield* applyCloudRelayConfig(payload);
+      if (payload.endpointRuntime?.providerKind === "t3_relay") {
+        const address = httpServer.address;
+        if (typeof address === "string" || !("port" in address)) {
+          return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
+        }
+        yield* startManagedTunnelIfOriginConfirmed(
+          `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
+        );
+        return result;
+      }
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {

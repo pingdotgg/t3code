@@ -109,7 +109,57 @@ const makeRequest = Effect.gen(function* () {
   };
 });
 
+const makePublishOnlyRequest = Effect.gen(function* () {
+  const now = yield* DateTime.now;
+  const expiresAt = DateTime.add(now, { minutes: 5 });
+  const relayTokens = yield* RelayTokens.RelayTokens;
+  const challenge = yield* relayTokens.issueLinkChallenge({
+    userId: "user_123",
+    request: {
+      notificationsEnabled: true,
+      liveActivitiesEnabled: true,
+      managedTunnelsEnabled: false,
+    },
+    jti: "publish-only-challenge-jti",
+    issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+    expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
+  });
+  const payload = {
+    iss: "t3-env:env-link-test",
+    aud: "https://relay.example.test",
+    sub: "env-link-test",
+    jti: "publish-only-proof-jti",
+    iat: Math.floor(now.epochMilliseconds / 1_000),
+    exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+    challenge,
+    environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+    descriptor: {
+      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+      label: "Link Test Environment",
+      platform: { os: "darwin", arch: "arm64" },
+      serverVersion: "0.0.0-test",
+      capabilities: { repositoryIdentity: true },
+    },
+    environmentPublicKey: environmentKeyPair.publicKey.trim(),
+    endpoint: {
+      httpBaseUrl: "http://127.0.0.1:3773/",
+      wsBaseUrl: "ws://127.0.0.1:3773/",
+      providerKind: "manual",
+    },
+    origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+    scopes: ["agent_activity_notifications"],
+  } satisfies RelayEnvironmentLinkProofPayload;
+  const request = {
+    proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey),
+    notificationsEnabled: true,
+    liveActivitiesEnabled: true,
+    managedTunnelsEnabled: false,
+  } satisfies RelayEnvironmentLinkRequest;
+  return request;
+});
+
 function layerTest(input?: {
+  readonly channelHost?: string;
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
@@ -118,7 +168,9 @@ function layerTest(input?: {
     Layer.provideMerge(RelayTokens.layer.pipe(Layer.provide(CloudMintSigner.layer))),
     Layer.provide(
       Layer.mergeAll(
-        RelayConfiguration.layer(config),
+        RelayConfiguration.layer(
+          input?.channelHost ? { ...config, channelHost: input.channelHost } : config,
+        ),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),
@@ -185,51 +237,7 @@ describe("EnvironmentLinker", () => {
     let persistedEndpoint: string | null = null;
     let deprovisionedEnvironmentId: string | null = null;
     return Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const expiresAt = DateTime.add(now, { minutes: 5 });
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      const challenge = yield* relayTokens.issueLinkChallenge({
-        userId: "user_123",
-        request: {
-          notificationsEnabled: true,
-          liveActivitiesEnabled: true,
-          managedTunnelsEnabled: false,
-        },
-        jti: "publish-only-challenge-jti",
-        issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
-      });
-      const payload = {
-        iss: "t3-env:env-link-test",
-        aud: "https://relay.example.test",
-        sub: "env-link-test",
-        jti: "publish-only-proof-jti",
-        iat: Math.floor(now.epochMilliseconds / 1_000),
-        exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
-        challenge,
-        environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
-        descriptor: {
-          environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
-          label: "Link Test Environment",
-          platform: { os: "darwin", arch: "arm64" },
-          serverVersion: "0.0.0-test",
-          capabilities: { repositoryIdentity: true },
-        },
-        environmentPublicKey: environmentKeyPair.publicKey.trim(),
-        endpoint: {
-          httpBaseUrl: "http://127.0.0.1:3773/",
-          wsBaseUrl: "ws://127.0.0.1:3773/",
-          providerKind: "manual",
-        },
-        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-        scopes: ["agent_activity_notifications"],
-      } satisfies RelayEnvironmentLinkProofPayload;
-      const request = {
-        proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey),
-        notificationsEnabled: true,
-        liveActivitiesEnabled: true,
-        managedTunnelsEnabled: false,
-      } satisfies RelayEnvironmentLinkRequest;
+      const request = yield* makePublishOnlyRequest;
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const result = yield* linker.link({ userId: "user_123", request });
       expect(result.environmentCredential).toBe("t3env_credential_secret");
@@ -252,6 +260,41 @@ describe("EnvironmentLinker", () => {
       ),
     );
   });
+
+  it.effect(
+    "carries a publish-only environment with no public address over a relay channel",
+    () => {
+      let persistedEndpoint: string | null = null;
+      return Effect.gen(function* () {
+        const request = yield* makePublishOnlyRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const result = yield* linker.link({ userId: "user_123", request });
+        expect(result.endpoint).toEqual({
+          httpBaseUrl: expect.stringMatching(
+            /^https:\/\/t3-[0-9a-f]{32}\.relay\.example\.test\/$/u,
+          ),
+          wsBaseUrl: expect.stringMatching(/^wss:\/\/t3-[0-9a-f]{32}\.relay\.example\.test\/ws$/u),
+          providerKind: "t3_relay",
+        });
+        expect(persistedEndpoint).toBe(result.endpoint.httpBaseUrl);
+        expect(result.endpointRuntime).toEqual({
+          providerKind: "t3_relay",
+          connectorToken: "t3env_credential_secret",
+          channelUrl: "https://relay.example.test/v1/environments/env-link-test/channel",
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            channelHost: "t3-*.relay.example.test",
+            upsert: (input) =>
+              Effect.sync(() => {
+                persistedEndpoint = input.endpoint.httpBaseUrl;
+              }),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("rejects a tampered compact proof before persistence", () => {
     let persisted = false;

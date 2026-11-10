@@ -76,10 +76,12 @@ reads the sign-in provider from the relay, reloads, and asks you to sign in.
 Choose **T3 Connect** there to switch back. Environments you linked through your
 relay stay linked to it until you turn T3 Connect off and on again.
 
-A self-hosted relay has no managed tunnels. Linking an environment still works,
-but your other devices reach it only at an HTTPS address you expose yourself,
-such as a reverse proxy or [Tailscale HTTPS](#tailscale-https). Start the host
-with that address in `T3CODE_PUBLIC_URL`. Tailscale and LAN addresses also need
+A self-hosted relay has no managed tunnels. If the relay sets
+`RELAY_CHANNEL_HOST`, a linked environment with no public address is carried
+through the relay itself, so there is nothing to expose. Otherwise your other
+devices reach it only at an HTTPS address you expose yourself, such as a reverse
+proxy or [Tailscale HTTPS](#tailscale-https): start the host with that address in
+`T3CODE_PUBLIC_URL`. Tailscale and LAN addresses also need
 `RELAY_MANUAL_ENDPOINTS=private` on the relay.
 
 For a command-line host, set the relay before `t3 connect`:

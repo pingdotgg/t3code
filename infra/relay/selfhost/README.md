@@ -97,10 +97,19 @@ them to each app's prefix). A configured OpenID Connect provider replaces Clerk 
 
 ## Reach an environment without a tunnel
 
-With `RELAY_MANUAL_ENDPOINTS=public` (the default here), an environment can publish an HTTPS
-address you already expose (reverse proxy, port forward) and the relay brokers connections to it
-like a managed endpoint. Run `t3 connect --publish-only`, then start the server with
-`T3CODE_PUBLIC_URL` set to that address:
+**Through the relay (no address to expose).** Set `RELAY_CHANNEL_HOST` to a host pattern such as
+`t3-*.example.com`. An environment linked without its own public address then keeps one outbound
+WebSocket open to the relay, and the relay serves it at `https://t3-<key>.example.com`, forwarding
+HTTP and WebSocket traffic over that socket. Nothing to open on the environment's network. Route
+the pattern to the relay at your proxy with a wildcard DNS record and a wildcard certificate (the
+bundled Caddy serves only `RELAY_DOMAIN`; a wildcard certificate needs Caddy's DNS challenge).
+All of that environment's traffic passes through the relay host, and channels live in the relay
+process, so keep a single replica.
+
+**At an address you expose.** With `RELAY_MANUAL_ENDPOINTS=public` (the default here), an
+environment can publish an HTTPS address you already expose (reverse proxy, port forward) and the
+relay brokers connections to it like a managed endpoint. Run `t3 connect --publish-only`, then
+start the server with `T3CODE_PUBLIC_URL` set to that address:
 
 ```sh
 t3 connect --publish-only
@@ -111,20 +120,20 @@ The address must serve the environment's HTTP and WebSocket traffic over HTTPS. 
 refuses loopback, link-local and cloud metadata addresses. `private` also accepts private
 network addresses (LAN, Tailscale) for relays only your own network uses; `off` refuses all of
 them. Host names are checked as written, not resolved, so only point a relay you trust at names
-you control.
+you control. A published address takes precedence over a relay channel.
 
 ## Behind another reverse proxy
 
 Caddy is the bundled proxy. To use your own (nginx, Traefik, a cloud load balancer), drop the
 `caddy` service, point your proxy at the relay's port 8080, and keep `RELAY_PUBLIC_ORIGIN` at
-the public HTTPS address. The relay builds no URLs from request headers, so forwarded `Host` or
-`X-Forwarded-*` values are ignored. `OIDC_ISSUER` must equal the issuer your provider reports
+the public HTTPS address. The relay builds no URLs from request headers, so `X-Forwarded-*`
+values are ignored. It reads `Host` only to match `RELAY_CHANNEL_HOST`, so pass it through. `OIDC_ISSUER` must equal the issuer your provider reports
 publicly, including any path prefix your proxy adds.
 
 ## What this host does not do
 
-- **Managed tunnels.** Cloudflare-managed endpoints are not available; use a manual endpoint
-  (above) or reach environments directly.
+- **Managed tunnels.** Cloudflare-managed endpoints are not available; use a relay channel or
+  a manual endpoint (above), or reach environments directly.
 - **Push notifications.** APNs and FCM need credentials tied to the mobile app's signing
   identity, so this stack turns them off. To enable them, add `APNS_ENABLED=true`, the `APNS_*`
   or `FCM_SERVICE_ACCOUNT` variables and a stable `APNS_DELIVERY_JOB_SIGNING_SECRET` (for

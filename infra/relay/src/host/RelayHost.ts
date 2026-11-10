@@ -31,6 +31,8 @@ export interface RelayHost<R = never> {
   readonly apnsJobSigningSecret: Effect.Effect<Redacted.Redacted<string>>;
   /** Managed tunnel base domain; undefined disables managed endpoints. */
   readonly managedEndpointBaseDomain: string | undefined;
+  /** Host template like `t3-*.example.com` for environments reached over a relay channel; undefined disables them. */
+  readonly channelHost?: string | undefined;
   readonly database: RelayDb.RelayDb["Service"];
   /** Tunnel and DNS clients behind managed endpoints; inert on hosts without managed tunnels. */
   readonly managedEndpointClients: Layer.Layer<

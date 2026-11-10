@@ -912,6 +912,34 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("swaps the Cloudflare connector for a relay channel and stops both", () =>
+    Effect.gen(function* () {
+      const killed: Array<number> = [];
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({ pid: 100, onKill: () => killed.push(100) });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const channel = {
+        providerKind: "t3_relay",
+        connectorToken: "credential",
+        channelUrl: "ws://127.0.0.1:9/v1/environments/env-1/channel",
+      } as const;
+
+      yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token-1" });
+      expect(yield* runtime.applyConfig(channel, "http://127.0.0.1:3773")).toEqual({
+        status: "running",
+        providerKind: "t3_relay",
+      });
+      expect(killed).toEqual([100]);
+      expect((yield* runtime.applyConfig(channel)).status).toBe("failed");
+      expect(yield* runtime.applyConfig(null)).toEqual({ status: "disabled" });
+    }),
+  );
+
   it.effect("supervises the active connector and restarts it after process exit", () =>
     Effect.gen(function* () {
       const spawned: Array<number> = [];

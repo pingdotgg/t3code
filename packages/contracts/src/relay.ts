@@ -180,8 +180,55 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
+  /** `t3_relay` only: the relay WebSocket the environment dials to carry its traffic. */
+  channelUrl: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
+
+const RelayChannelHeaders = Schema.Record(Schema.String, Schema.String);
+
+/**
+ * Frames on a `t3_relay` channel: the relay forwards client HTTP requests and WebSockets to the
+ * environment over one socket the environment opened. Bodies and binary messages are base64.
+ */
+export const RelayChannelFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ping") }),
+  Schema.Struct({
+    type: Schema.Literal("http-request"),
+    id: Schema.Int,
+    method: Schema.String,
+    path: Schema.String,
+    headers: RelayChannelHeaders,
+    body: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("http-response"),
+    id: Schema.Int,
+    status: Schema.Int,
+    headers: RelayChannelHeaders,
+    body: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ws-open"),
+    id: Schema.Int,
+    path: Schema.String,
+    headers: RelayChannelHeaders,
+  }),
+  Schema.Struct({ type: Schema.Literal("ws-opened"), id: Schema.Int }),
+  Schema.Struct({
+    type: Schema.Literal("ws-message"),
+    id: Schema.Int,
+    data: Schema.String,
+    binary: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ws-close"),
+    id: Schema.Int,
+    code: Schema.optional(Schema.Int),
+    reason: Schema.optional(Schema.String),
+  }),
+]);
+export type RelayChannelFrame = typeof RelayChannelFrame.Type;
 
 export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,

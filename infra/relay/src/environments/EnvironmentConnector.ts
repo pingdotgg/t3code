@@ -46,6 +46,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { diagnoseEndpointFailure } from "./endpointFailure.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import { channelEndpoint, channelHostname, channelKey } from "./RelayChannelEndpoint.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
@@ -418,7 +419,17 @@ export function validateConnectEndpoint(input: {
   readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
   readonly baseDomain: string | undefined;
   readonly manualEndpoints: RelayConfiguration.ManualEndpointsMode;
+  /** This environment's relay channel host, or null when the relay carries no channels. */
+  readonly channelHostname?: string | null;
 }): Result.Result<RelayManagedEndpoint, ManagedEndpointValidationFailure> {
+  if (input.link.endpoint.providerKind === "t3_relay") {
+    const expected = input.channelHostname ? channelEndpoint(input.channelHostname) : null;
+    return expected !== null &&
+      input.link.endpoint.httpBaseUrl === expected.httpBaseUrl &&
+      input.link.endpoint.wsBaseUrl === expected.wsBaseUrl
+      ? Result.succeed(expected)
+      : Result.fail({ reason: "endpoint_provider_not_managed" });
+  }
   return input.link.endpoint.providerKind === "manual" && input.manualEndpoints !== "off"
     ? validateManualEndpoint({
         endpoint: input.link.endpoint,
@@ -451,6 +462,10 @@ const make = Effect.gen(function* () {
         allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
         manualEndpoints: settings.manualEndpoints ?? "off",
+        channelHostname:
+          settings.channelHost === undefined
+            ? null
+            : channelHostname(settings.channelHost, yield* channelKey(input.link.environmentId)),
       });
       if (Result.isSuccess(result)) {
         return result.success;

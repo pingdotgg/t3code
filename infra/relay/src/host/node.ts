@@ -34,6 +34,7 @@ export const withPublicOrigin = (relayPublicOrigin: string) => {
 export interface NodeHostOptions {
   readonly relayPublicOrigin: string;
   readonly stage: string;
+  readonly channelHost?: string | undefined;
   readonly mintKeyPair: {
     readonly privateKey: Redacted.Redacted<string>;
     readonly publicKey: string;
@@ -189,6 +190,7 @@ export const makeNodeHost = Effect.fn("relay.node.host")(function* (options: Nod
           )
         : Effect.succeed(options.apnsJobSigningSecret),
     managedEndpointBaseDomain: undefined,
+    channelHost: options.channelHost,
     database: options.database,
     managedEndpointClients: Layer.mergeAll(
       Layer.succeed(ManagedEndpointProvider.ManagedEndpointTunnelClient, inertTunnelClient),
