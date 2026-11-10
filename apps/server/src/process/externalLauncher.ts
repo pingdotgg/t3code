@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
@@ -530,24 +531,25 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
   const wslArgs =
     command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-      ? [yield* resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
+      ? [yield* resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
       : undefined;
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command,
     args:
       wslArgs ??
       (platform === "win32"
         ? // Explorer interprets / as a switch and silently opens a fallback folder.
-          [normalizeWindowsFileManagerPath(input.cwd)]
-        : [input.cwd]),
+          [normalizeWindowsFileManagerPath(target)]
+        : [target]),
   };
 });
 
