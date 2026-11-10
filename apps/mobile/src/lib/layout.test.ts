@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   alignListPaneToHinge,
   deriveLayout,
-  deriveThreadFeedInitialContentInset,
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -47,19 +46,6 @@ describe("thread work-log text sizing", () => {
       expect(resized.estimatedRowHeight).toBe(original.estimatedRowHeight);
       expect(resized.textSizeKey).not.toBe(original.textSizeKey);
     }
-  });
-});
-
-describe("deriveThreadFeedInitialContentInset", () => {
-  // regression: #5585 land the first thread open above the composer on Android
-  it("does not double native iOS insets", () => {
-    expect(
-      deriveThreadFeedInitialContentInset({
-        platform: "ios",
-        usesNativeAutomaticInsets: true,
-        bottomContentInset: 174,
-      }),
-    ).toBeUndefined();
   });
 });
 
@@ -155,24 +141,27 @@ describe("isPrimarySidebarPinned", () => {
 
 describe("deriveWorkspacePaneLayout", () => {
   it.each([
-    { width: 1_194, height: 834, suppressed: false },
-    { width: 1_032, height: 1_376, suppressed: true },
+    { width: 1_194, height: 834, horizontalSafeArea: 0, fraction: 0.4, suppressed: false },
+    { width: 1_032, height: 1_376, horizontalSafeArea: 0, fraction: 0.4, suppressed: true },
+    // The unfolded Duo's system bar leaves no room for the sidebar beside even the narrowest inspector.
+    { width: 951, height: 669, horizontalSafeArea: 76, fraction: 0, suppressed: true },
   ])(
     "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
-    ({ width, height, suppressed }) => {
+    ({ width, height, horizontalSafeArea, fraction, suppressed }) => {
       const layout = deriveLayout({ width, height });
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({
             layout,
             viewportWidth: width,
+            horizontalSafeArea,
             nativeWorkspace: true,
             primarySidebarPreferredVisible,
             auxiliaryPanePreferredVisible: true,
             nativeInspectorWidth: nativeInspectorColumnWidth({
               viewportWidth: width,
-              horizontalSafeArea: 0,
-              fraction: 0.4,
+              horizontalSafeArea,
+              fraction,
             }),
           }),
         ).toMatchObject({
