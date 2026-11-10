@@ -16,6 +16,8 @@
     "tail": "alchemy logs --tail"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
     "@effect/platform-bun": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"

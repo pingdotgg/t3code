@@ -48,8 +48,7 @@ can use under **Custom models** in the instance settings.
 Muse offers three [permission modes](./permission-modes.md): **Supervised** asks
 before commands and edits, **Auto** lets Muse's own auto-review decide eligible
 actions, and **Full access** runs them without asking. Muse has no equivalent of
-**Auto-accept edits**, so it is not offered. Muse does not offer a separate Plan
-mode in T3 Code.
+**Auto-accept edits**, so it is not offered.
 
 Muse can use T3 Code's tools. If Muse cannot reach them, the turn continues
 without them. Switching providers can pass conversation context as a handoff.
