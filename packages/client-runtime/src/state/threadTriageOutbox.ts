@@ -76,8 +76,9 @@ const sameEntries = (a: PendingThreadTriages, b: PendingThreadTriages) =>
 
 /**
  * Settle and snooze for an environment that is not connected: the change is stored on the
- * device, shown at once, and sent when the environment is back. Storage is the truth: memory
- * mirrors what the last write returned, and a change is confirmed there right before it is sent.
+ * device, shown at once, and sent when the environment is back. Storage is the truth, so tabs
+ * sharing it agree: memory mirrors what the last read or write returned, and a change is
+ * confirmed there right before it is sent.
  */
 export function createThreadTriageOutbox<R, E>(input: {
   readonly runtime: Atom.AtomRuntime<SecureRandom.SecureRandom | R, E>;
@@ -195,9 +196,13 @@ export function createThreadTriageOutbox<R, E>(input: {
     environmentId: EnvironmentId,
     lifetime: { readonly ended: boolean },
   ) => {
-    for (const entry of registry.get(entriesAtom) ?? []) {
-      if (lifetime.ended) return;
+    // Read again: another tab may have queued a change this one has not seen.
+    const stored = await write(registry);
+    if (!AsyncResult.isSuccess(stored)) return;
+    for (const entry of stored.value) {
       if (entry.environmentId !== environmentId) continue;
+      // A change is only marked as sent while it can be sent, so Undo can still cancel the rest.
+      if (lifetime.ended || !isLive(registry, environmentId)) return;
       // Marked before sending, so an Undo after a lost reply or a restart asks the server.
       const marked = await write(registry, (current) =>
         current.some((item) => item.commandId === entry.commandId && item.attempted !== true)
@@ -230,8 +235,9 @@ export function createThreadTriageOutbox<R, E>(input: {
   };
   const replayAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
-      const entries = get(environmentEntriesAtom(environmentId));
-      if (entries.length > 0 && get(input.shellStatusAtom(environmentId)) === "live") {
+      // Also runs when this tab's queue changes while the shell is synchronized.
+      get(environmentEntriesAtom(environmentId));
+      if (get(input.shellStatusAtom(environmentId)) === "live") {
         void replay(get.registry, environmentId);
       }
     }),

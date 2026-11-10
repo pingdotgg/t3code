@@ -744,17 +744,19 @@ describe("settle and snooze while the environment is offline", () => {
     "does not send once the shell stops being synchronized while the change is marked",
     () =>
       Effect.gen(function* () {
-        const marking = yield* Queue.unbounded<void>();
+        const flipped = yield* Queue.unbounded<void>();
         const storage: { value: string | null; onModify?: () => void } = { value: null };
         const h = yield* queued("settle", storage);
-        // A reconnect whose shell has not synchronized yet lands during the storage write.
+        let calls = 0;
+        // Replay reads the queue, then marks the change. A reconnect whose shell has not
+        // synchronized yet lands during the mark.
         storage.onModify = () => {
+          if (++calls !== 2) return;
           h.registry.set(h.statusAtom(ENVIRONMENT_ID), "synchronizing");
-          Queue.offerUnsafe(marking, undefined);
+          Queue.offerUnsafe(flipped, undefined);
         };
         yield* h.reconnect();
-        yield* Queue.take(marking);
-        delete storage.onModify;
+        yield* Queue.take(flipped);
         // Undo reads storage after the mark, so its request can only follow a settle that was sent.
         const undone = h.commands.unsettle.run(h.registry, undo);
         const request = yield* Queue.take(h.requests);
@@ -762,6 +764,24 @@ describe("settle and snooze while the environment is offline", () => {
         yield* Deferred.succeed(request.reply, { sequence: 2 });
         expect((yield* Effect.promise(() => undone))._tag).toBe("Success");
       }),
+  );
+
+  it.effect("sends a change another tab queued after this tab loaded", () =>
+    Effect.gen(function* () {
+      const storage = { value: null as string | null };
+      const other = yield* makeHarness({ connected: false, storage });
+      // Store calls run in order, so the other tab's first read is done after this one.
+      yield* other.store.update((entries) => entries);
+      yield* queued("settle", storage);
+      yield* other.reconnect();
+      const request = yield* Queue.take(other.requests);
+      expect(request.command).toMatchObject({
+        type: "thread.settle",
+        commandId: stored(storage)[0]!.commandId,
+      });
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      yield* nothingPending(other);
+    }),
   );
 
   it.effect("sends a queued change again when the first send got no answer", () =>
