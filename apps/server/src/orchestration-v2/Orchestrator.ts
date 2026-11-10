@@ -457,6 +457,9 @@ export interface OrchestratorV2Shape {
   readonly listAppOwnedChildThreadIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
+  readonly readCommandEvents: (
+    commandId: CommandId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -15995,6 +15998,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
+    readCommandEvents: Effect.fn("OrchestratorV2.readCommandEvents")(function (commandId) {
+      return eventSink.readByCommandId({ commandId }).pipe(
+        Stream.runCollect,
+        Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId,
+              commandType: "delegated_task.request",
+              cause,
+            }),
+        ),
+      );
+    }),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore
         .getThreadProjection(threadId)

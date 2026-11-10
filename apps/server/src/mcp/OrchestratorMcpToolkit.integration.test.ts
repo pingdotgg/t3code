@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpTaskReceiptResult,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadReadResult,
@@ -83,6 +84,7 @@ const queuedFollowupResult = "Queued delegated follow-up completed.";
 const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const longFollowupResult = "Long delegated follow-up line. ".repeat(1_500);
 
+const decodeTaskReceiptResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskReceiptResult);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
@@ -366,6 +368,21 @@ describe("orchestrator MCP toolkit", () => {
           delegatedCall.structuredContent,
         ).pipe(Effect.orDie);
         expect(delegatedStart.childRunId).not.toBeNull();
+        const receiptCall = yield* invoke("task_receipt", {
+          clientRequestId: "delegate-codex-replay-1",
+        });
+        const receipt = yield* decodeTaskReceiptResult(receiptCall.structuredContent).pipe(
+          Effect.orDie,
+        );
+        expect(receipt).toMatchObject({
+          acceptance: "accepted",
+          binding: {
+            taskId: delegatedStart.taskId,
+            childThreadId: delegatedStart.childThreadId,
+            childRunId: delegatedStart.childRunId,
+          },
+          costCoverage: "unknown",
+        });
         yield* orchestrator
           .streamStoredEventsFrom({
             threadId: parentThreadId,

@@ -2081,6 +2081,115 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("recovers an accepted delegation without a live parent or projection", () => {
+    let childRun: OrchestrationV2ThreadProjection["runs"][number] | undefined;
+    const layerDependencies = Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getDelegationReceipt: (commandId, threadId) =>
+          Effect.succeed(
+            commandId ===
+              CommandId.make(
+                "command:mcp:provider-session%3Amcp-providers:delegate-task:lost-response",
+              ) && threadId === parentThreadId
+              ? {
+                  status: "accepted" as const,
+                  acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+                  binding: { taskId, childThreadId, childRunId: RunId.make("run:child") },
+                }
+              : commandId ===
+                    CommandId.make(
+                      "command:mcp:provider-session%3Amcp-providers:delegate-task:rejected",
+                    ) && threadId === parentThreadId
+                ? {
+                    status: "rejected" as const,
+                    acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+                    binding: null,
+                  }
+                : null,
+          ),
+        getReceiptChildRun: () =>
+          childRun === undefined ? Effect.fail({} as never) : Effect.succeed(childRun),
+      }),
+      providerRegistryLayer([]),
+      adapterRegistryLayer([]),
+      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      ServerSettings.layerTest(),
+    );
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const result = yield* service.taskReceipt(scope, { clientRequestId: "lost-response" });
+      assert.equal(result.acceptance, "accepted");
+      assert.equal(result.status, "unknown");
+      assert.equal(result.binding?.taskId, taskId);
+      const rejected = yield* service.taskReceipt(scope, { clientRequestId: "rejected" });
+      assert.equal(rejected.acceptance, "rejected");
+      assert.equal(rejected.status, "failed");
+      assert.isNull(rejected.binding);
+      childRun = {
+        id: RunId.make("run:child"),
+        status: "completed",
+        requestedAt: DateTime.makeUnsafe("2026-01-01T00:00:01Z"),
+        startedAt: DateTime.makeUnsafe("2026-01-01T00:00:02Z"),
+        completedAt: DateTime.makeUnsafe("2026-01-01T00:00:03Z"),
+      } as OrchestrationV2ThreadProjection["runs"][number];
+      const completed = yield* service.taskReceipt(scope, { clientRequestId: "lost-response" });
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.completedAt, "2026-01-01T00:00:03.000Z");
+      assert.equal(completed.costCoverage, "unknown");
+      assert.isNull(completed.deliveredAt);
+      assert.equal(
+        (yield* service.taskReceipt(scope, { clientRequestId: "not-accepted" })).acceptance,
+        "unknown",
+      );
+      assert.equal(
+        (yield* service.taskReceipt(
+          { ...scope, requestNamespace: "other-session" },
+          { clientRequestId: "lost-response" },
+        )).acceptance,
+        "unknown",
+      );
+      assert.equal(
+        (yield* service.taskReceipt(
+          { ...scope, thread: { ...scope.thread!, threadId: ThreadId.make("thread:other") } },
+          { clientRequestId: "lost-response" },
+        )).acceptance,
+        "unknown",
+      );
+      const override = yield* Effect.flip(
+        service.taskReceipt(scope, { clientRequestId: "lost-response", parentThreadId }),
+      );
+      assert.equal(override.code, "capability_denied");
+      const external = {
+        ...scope,
+        thread: undefined,
+        requestNamespace: "new-session",
+        client: { sessionId: "oauth", label: "client", access: "read-only" as const },
+      };
+      const recovered = yield* service.taskReceipt(external, {
+        clientRequestId: "lost-response",
+        parentThreadId,
+        requestNamespace: scope.requestNamespace,
+      });
+      assert.equal(recovered.binding?.taskId, taskId);
+      const linked = yield* Effect.flip(
+        service.taskReceipt(
+          { ...external, client: { ...external.client, linked: true } },
+          {
+            clientRequestId: "lost-response",
+            parentThreadId,
+            requestNamespace: scope.requestNamespace,
+          },
+        ),
+      );
+      assert.equal(linked.code, "capability_denied");
+    }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+  });
+
   it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>

@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderThread,
@@ -87,11 +88,13 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  (dispatched: Array<string>, events: ReadonlyArray<OrchestrationV2StoredEvent> = []) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
+          readCommandEvents: () => Effect.succeed(events),
           getThreadRecords: () =>
             Effect.succeed({
               thread: {
@@ -114,6 +117,86 @@ const layerDispatchChokepointTest =
       Layer.provide(settingsLayer),
       Layer.provideMerge(layerReceiptsTest),
     );
+
+it.effect("reads only matching delegation receipts and recovers retained event bindings", () => {
+  const commandId = CommandId.make("command:receipt");
+  const threadId = ThreadId.make("thread:receipt");
+  const childThreadId = ThreadId.make("thread:receipt-child");
+  const childRunId = RunId.make("run:receipt-child");
+  const taskId = NodeId.make("node:receipt");
+  const events = [
+    {
+      event: {
+        type: "subagent.updated",
+        threadId,
+        payload: { id: taskId, origin: "app_owned", childThreadId },
+      },
+    },
+    { event: { type: "run.created", threadId: childThreadId, payload: { id: childRunId } } },
+  ] as unknown as ReadonlyArray<OrchestrationV2StoredEvent>;
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())([], events);
+  return Effect.gen(function* () {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    expect(yield* threads.getDelegationReceipt(commandId, threadId)).toBeNull();
+    const base = {
+      commandId,
+      threadId,
+      commandType: "delegated_task.request",
+      acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+      resultSequence: 1,
+      status: "accepted" as const,
+      error: null,
+    };
+    yield* receipts.upsert({ ...base, resultMetadata: "{broken" });
+    expect((yield* threads.getDelegationReceipt(commandId, threadId))?.binding).toEqual({
+      taskId,
+      childThreadId,
+      childRunId,
+    });
+    expect(
+      yield* threads.getDelegationReceipt(commandId, ThreadId.make("thread:other")),
+    ).toBeNull();
+    yield* receipts.upsert({ ...base, commandType: "message.dispatch" });
+    expect(yield* threads.getDelegationReceipt(commandId, threadId)).toBeNull();
+    yield* receipts.upsert({ ...base, status: "rejected", error: "private cause" });
+    expect(yield* threads.getDelegationReceipt(commandId, threadId)).toMatchObject({
+      status: "rejected",
+      binding: null,
+    });
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("keeps accepted legacy receipts unknown when events are pruned", () => {
+  const commandId = CommandId.make("command:receipt-pruned");
+  const threadId = ThreadId.make("thread:receipt-pruned");
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())([]);
+  return Effect.gen(function* () {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const base = {
+      commandId,
+      threadId,
+      commandType: "delegated_task.request",
+      acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+      resultSequence: 1,
+      status: "accepted" as const,
+      error: null,
+    };
+    yield* receipts.upsert(base);
+    expect(yield* threads.getDelegationReceipt(commandId, threadId)).toMatchObject({
+      status: "accepted",
+      binding: null,
+    });
+    const binding = {
+      taskId: "node:receipt",
+      childThreadId: "thread:child",
+      childRunId: "run:child",
+    };
+    yield* receipts.upsert({ ...base, resultMetadata: JSON.stringify(binding) });
+    expect((yield* threads.getDelegationReceipt(commandId, threadId))?.binding).toEqual(binding);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect(
   "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
