@@ -326,6 +326,13 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings copy on select", () => {
+  it("stays off for existing installs, with its toast on once enabled", () => {
+    expect(decodeClientSettings({}).copyOnSelect).toBe(false);
+    expect(decodeClientSettings({}).copyOnSelectToast).toBe(true);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

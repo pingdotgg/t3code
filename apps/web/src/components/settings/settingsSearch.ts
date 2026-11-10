@@ -705,6 +705,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "copy-on-select",
+    title: msg("Copy on select"),
+    to: "/settings/general",
+    searchTerms: ["clipboard automatic selection highlight drag mouse terminal chat herdr"],
+  },
+  {
+    id: "copy-on-select-toast",
+    title: msg("Copy on select toast"),
+    to: "/settings/general",
+    targetId: "copy-on-select",
+    searchTerms: ["clipboard copied confirmation notification"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/threads",
