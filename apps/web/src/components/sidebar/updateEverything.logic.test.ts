@@ -280,21 +280,11 @@ describe("localSwitchBlockReason", () => {
       ),
     ).toBe("its server is not connected, so its database cannot be checked");
     expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
-  });
-
-  it("does not block an app with Local environment off, which hosts no server", () => {
-    const nightly = {
-      channel: "nightly" as const,
-      version: "0.1.8-nightly.20261029.1",
-      databaseMigration: 72,
-    };
-    const stable = "0.1.7";
-
-    expect(localSwitchBlockReason(stable, nightly, [], 0, false)).toBeNull();
-    // With Local environment on, a primary backend still starting has no entry or bootstrap yet.
-    expect(localSwitchBlockReason(stable, nightly, [], 0, true)).toBe(
+    // A primary backend still starting has no entry or bootstrap yet, unless Local environment is off.
+    expect(localSwitchBlockReason(nightly, stable, [], 0, true)).toBe(
       "its server is not connected, so its database cannot be checked",
     );
+    expect(localSwitchBlockReason(nightly, stable, [], 0, false)).toBeNull();
   });
 });
 
