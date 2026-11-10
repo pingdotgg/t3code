@@ -32,13 +32,13 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
-  queue: "bg-muted-foreground/45",
-  reasoning: "bg-muted-foreground/70",
-  assistant: "bg-foreground/70",
-  tool: "bg-foreground/85",
-  subagent: "bg-foreground/85",
-  wait: "bg-warning",
-  other: "bg-muted-foreground/55",
+  queue: "bg-muted-foreground/45 text-foreground",
+  reasoning: "bg-muted-foreground/70 text-background",
+  assistant: "bg-foreground/70 text-background",
+  tool: "bg-foreground/85 text-background",
+  subagent: "bg-foreground/85 text-background",
+  wait: "bg-warning text-black",
+  other: "bg-muted-foreground/55 text-foreground",
 };
 
 const TURN_ROW_HEIGHT = 28;
@@ -543,7 +543,7 @@ function FlameViewport({
                 "cursor-pointer hover:brightness-110",
                 node.kind === "turn"
                   ? "border-foreground/40 bg-card/90 font-medium text-foreground"
-                  : cn("border-black/10 text-background", SPAN_BAR_CLASS[node.kind]),
+                  : cn("border-black/10", SPAN_BAR_CLASS[node.kind]),
                 selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
               )}
               style={{
