@@ -86,7 +86,7 @@ export function AndroidWorkspaceNavigation(props: {
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useSoftKeyboardShowing();
-  const { layout, keyboardHoldsSidebar } = useAdaptiveWorkspaceLayout();
+  const { layout } = useAdaptiveWorkspaceLayout();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
@@ -107,8 +107,7 @@ export function AndroidWorkspaceNavigation(props: {
     (props.paneWidth ?? window.width) -
     (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
-  // The composer's keyboard slides the sidebar away with the bar on it; other keyboards don't.
-  if (!rail && keyboardVisible && !keyboardHoldsSidebar) return null;
+  if (!rail && keyboardVisible) return null;
 
   return (
     <View
