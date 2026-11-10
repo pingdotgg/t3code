@@ -8,12 +8,14 @@ import {
 
 const working: ThreadNotificationObservation = {
   attention: null,
+  requestId: null,
   settled: false,
   completedAt: null,
   heldAt: null,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
+  requestId: null,
   settled: true,
   completedAt: at,
   heldAt: null,
@@ -63,17 +65,32 @@ describe("createThreadNotificationGate", () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  it("notifies attention once and still notifies the subsequent completion", () => {
+  it("notifies each attention once per stretch and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = { ...working, attention: "run-1:approval" };
+    const attention = { ...working, attention: "run-1:approval:a", requestId: "a" };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
     expect(notify).toHaveBeenCalledTimes(1);
+    observe({ ...attention, attention: "run-1:approval:b", requestId: "b" });
+    observe(attention);
+    expect(notify).toHaveBeenCalledTimes(2);
+    observe(working);
+    observe(attention);
+    expect(notify).toHaveBeenCalledTimes(3);
+    const subagent = { ...attention, attention: "run-1:approval:", requestId: null };
+    observe(subagent);
+    observe(attention);
+    observe(subagent);
+    expect(notify).toHaveBeenCalledTimes(5);
     observe(working);
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
+      ["thread", "input"],
+      ["thread", "input"],
+      ["thread", "input"],
+      ["thread", "input"],
       ["thread", "input"],
       ["thread", "completion"],
     ]);
