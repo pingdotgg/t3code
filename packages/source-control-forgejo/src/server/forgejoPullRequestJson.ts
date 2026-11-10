@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import { forgejoHeadBranch } from "./forgejoPullRequests.ts";
 
 export const ForgejoUser = Schema.Struct({
   login: Schema.String,
@@ -36,6 +37,7 @@ export const ForgejoRepository = Schema.Struct({
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
+  label: Schema.optional(Schema.String),
   sha: Schema.String,
   repo: Schema.NullOr(ForgejoRepository),
 });
@@ -130,7 +132,7 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     title: pr.title,
     url: pr.html_url,
     author: forgejoActor(pr.user),
-    headBranch: pr.head.ref,
+    headBranch: forgejoHeadBranch(pr.head),
     baseBranch: pr.base.ref,
     headRepositoryNameWithOwner: pr.head.repo?.full_name ?? null,
     state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",

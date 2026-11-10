@@ -9,9 +9,18 @@ const Repository = Schema.Struct({
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
+  label: Schema.optional(Schema.String),
   sha: Schema.String,
   repo: Schema.NullOr(Repository),
 });
+// Once a pull request's head branch is deleted, Forgejo reports `ref` as `refs/pull/<N>/head`
+// and keeps the branch name only in `label`.
+export function forgejoHeadBranch(head: {
+  readonly ref: string;
+  readonly label?: string | undefined;
+}) {
+  return head.ref.startsWith("refs/pull/") && head.label ? head.label : head.ref;
+}
 export const ForgejoPullRequestSchema = Schema.Struct({
   number: Schema.Int,
   title: Schema.String,
@@ -34,7 +43,7 @@ export function toForgejoChangeRequest(raw: typeof ForgejoPullRequestSchema.Type
     state: raw.merged ? "merged" : raw.state === "closed" ? "closed" : "open",
     isDraft: raw.draft ?? /^(?:\[WIP\]|WIP:)/i.test(raw.title),
     baseRefName: raw.base.ref,
-    headRefName: raw.head.ref,
+    headRefName: forgejoHeadBranch(raw.head),
     ...(raw.head.sha.trim().length > 0 ? { headSha: raw.head.sha.trim() } : {}),
     closedAt: raw.closed_at ?? null,
     mergedAt: raw.merged_at ?? null,

@@ -3,12 +3,15 @@ import * as Schema from "effect/Schema";
 
 import {
   ForgejoComment,
+  ForgejoPullRequest,
   ForgejoReview,
+  forgejoChangeRequest,
   forgejoComment,
   forgejoReview,
 } from "./forgejoPullRequestJson.ts";
 
 const decodeForgejoComment = Schema.decodeSync(ForgejoComment);
+const decodeForgejoPullRequest = Schema.decodeSync(ForgejoPullRequest);
 const decodeForgejoReview = Schema.decodeSync(ForgejoReview);
 
 describe("forgejoComment", () => {
@@ -38,6 +41,36 @@ describe("forgejoComment", () => {
     assert.strictEqual(mapped.id, "29061");
     assert.strictEqual(mapped.author?.login, "forgejo-actions");
     assert.strictEqual(mapped.editedAt, "2026-10-10T20:04:50.000Z");
+  });
+});
+
+describe("forgejoChangeRequest", () => {
+  const headBranch = (head: { ref: string; label?: string }) =>
+    forgejoChangeRequest(
+      decodeForgejoPullRequest({
+        number: 7,
+        title: "Merged feature",
+        body: null,
+        html_url: "https://forgejo.test/maria/project/pulls/7",
+        user: null,
+        state: "closed",
+        merged: true,
+        head: { ...head, sha: "head", repo: null },
+        base: { ref: "main", label: "main", sha: "base", repo: null },
+        created_at: "2026-10-10T19:52:40Z",
+        updated_at: "2026-10-12T00:00:00Z",
+        closed_at: "2026-10-12T00:00:00Z",
+        merged_at: "2026-10-12T00:00:00Z",
+        labels: null,
+      }),
+    ).headBranch;
+
+  it("reads a deleted head branch from its label", () => {
+    assert.strictEqual(headBranch({ ref: "refs/pull/7/head", label: "feature" }), "feature");
+  });
+
+  it("keeps the ref when the server sends no label", () => {
+    assert.strictEqual(headBranch({ ref: "feature" }), "feature");
   });
 });
 
