@@ -99,7 +99,7 @@ export type ComposerCommandItem =
       driverKind: ProviderDriverKind;
       providerDisplayName: string;
       acpRegistryAgentId: string | undefined;
-      acpRegistryIconUrl: string | undefined;
+      iconUrl: string | undefined;
       label: string;
       description: string;
     };
@@ -240,7 +240,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           driverKind={props.item.driverKind}
           displayName={props.item.providerDisplayName}
           acpRegistryAgentId={props.item.acpRegistryAgentId}
-          acpRegistryIconUrl={props.item.acpRegistryIconUrl}
+          iconUrl={props.item.iconUrl}
           className="size-4 shrink-0"
           iconClassName="size-4"
         />
