@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { MuseSubscriptionUsage } from "./protocol.ts";
@@ -15,6 +16,7 @@ import {
   nextMuseUsageAccount,
   type MuseUsageAccount,
 } from "./usageLimits.ts";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const decodeUsage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -48,8 +50,17 @@ const readMuseUsage = Effect.fn("MuseUsageProbe.read")(
         ...(cwd ? { cwd } : {}),
       }),
     );
-    if (result.code !== 0) return undefined;
-    const { allowance } = yield* decodeUsage(result.stdout);
+    if (result.code !== 0) {
+      return yield* Effect.fail(
+        `Muse usage refresh failed (exit code ${result.code}). Check Muse Code on this T3 server host.`,
+      );
+    }
+    const { allowance } = yield* decodeUsage(result.stdout).pipe(
+      Effect.mapError(
+        () =>
+          "Muse usage refresh returned an invalid or unsupported response. Update Muse Code on this T3 server host.",
+      ),
+    );
     if (!allowance) return undefined;
     return {
       observedAtMs: allowance.asOfMs,
@@ -60,7 +71,14 @@ const readMuseUsage = Effect.fn("MuseUsageProbe.read")(
     } satisfies MuseSubscriptionUsage;
   },
   Effect.timeout(DEFAULT_TIMEOUT_MS),
-  Effect.orElseSucceed(() => undefined),
+  Effect.mapError((error) =>
+    typeof error === "string"
+      ? error
+      : error._tag === "TimeoutError"
+        ? "Muse usage refresh timed out. Try refreshing again."
+        : "Muse usage refresh could not run. Check its binary path on this T3 server host.",
+  ),
+  Effect.result,
 );
 
 export interface MuseUsageReport {
@@ -102,9 +120,11 @@ export const refreshMuseUsage = Effect.fn("MuseUsageProbe.refresh")(function* (i
     provider.version !== null &&
     compareMuseVersions(provider.version, "1.4.13") >= 0;
   // Network I/O must not hold the permit shared with inline usage notifications.
-  const usage = canRead
+  const result = canRead
     ? yield* readMuseUsage(input.settings, input.environment, input.cwd)
     : undefined;
+  const usage = result && Result.isSuccess(result) ? result.success : undefined;
+  const message = result && Result.isFailure(result) ? result.failure : undefined;
   return yield* state.permit.withPermits(1)(
     Effect.gen(function* () {
       const currentAccount = yield* Ref.get(state.account);
@@ -122,16 +142,36 @@ export const refreshMuseUsage = Effect.fn("MuseUsageProbe.refresh")(function* (i
       if (usage && (!latestUsage || usage.observedAtMs > latestUsage.usage.observedAtMs)) {
         latestUsage = { usage, generation: account.generation };
       }
-      const usageLimits = museStatusUsageLimits({
+      let usageLimits = museStatusUsageLimits({
         auth: provider.auth,
         enabled: provider.enabled,
         observation: latestUsage?.usage,
         dropped,
         nowMs: DateTime.toEpochMillis(yield* DateTime.now),
       });
+      if (message && !latestUsage && !dropped) {
+        usageLimits = makeUnavailableUsageLimits({
+          checkedAt: provider.checkedAt,
+          reason: "probeFailed",
+          message,
+        });
+      }
       yield* Ref.set(state.account, account);
       yield* Ref.set(state.latestUsage, latestUsage);
-      return { account, latestUsage, provider: { ...provider, usageLimits } };
+      return {
+        account,
+        latestUsage,
+        provider: {
+          ...provider,
+          usageLimits,
+          ...(message
+            ? {
+                status: "warning" as const,
+                message: provider.message ? `${provider.message} ${message}` : message,
+              }
+            : {}),
+        },
+      };
     }),
   );
 });

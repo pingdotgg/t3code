@@ -155,7 +155,14 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
         expect(refreshed.provider.usageLimits?.windows.map((w) => w.usedPercent)).toEqual([1, 33]);
         const first = yield* refreshMuseUsage(input);
         expect(first.latestUsage).toBeUndefined();
-        expect(first.provider.usageLimits?.unavailable?.message).toContain("next reply");
+        if (source.includes("allowance:null")) {
+          expect(first.provider.usageLimits?.unavailable?.message).toContain("next reply");
+          expect(first.provider.status).toBe("ready");
+        } else {
+          expect(refreshed.provider.status).toBe("warning");
+          expect(refreshed.provider.message).toContain("Muse usage refresh");
+          expect(first.provider.usageLimits?.unavailable?.message).toBe(first.provider.message);
+        }
       }),
     ),
   );
@@ -367,7 +374,8 @@ it.layer(NodeServices.layer)("Muse CLI usage refresh", (it) => {
         yield* TestClock.adjust("4 seconds");
         const refreshed = yield* Fiber.join(pending);
         expect(refreshed.latestUsage).toBe(report);
-        expect(refreshed.provider.status).toBe("ready");
+        expect(refreshed.provider.status).toBe("warning");
+        expect(refreshed.provider.message).toContain("timed out");
       }),
     ),
   );
