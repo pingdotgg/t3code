@@ -112,7 +112,7 @@ function errorDescriptionClampClass(type: unknown, description: unknown): string
  */
 const toastDismissPositionClass = "absolute z-20 -top-1.5 -right-1.5 flex";
 const toastDismissButtonClass = cn(
-  "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-xs outline-none",
+  "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border surface-dismiss text-muted-foreground outline-none",
   "transition-colors hover:text-foreground",
   "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
 );
