@@ -11910,8 +11910,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Stream.runHead,
               Effect.timeout("15 seconds"),
             );
-            if (Option.isNone(result) || result.value.is_error) {
-              return yield* Effect.fail(result);
+            if (Option.isNone(result)) {
+              return yield* Effect.fail("no result" as const);
+            }
+            // The result's free-text errors can quote the transcript; log only its subtype.
+            if (result.value.is_error) {
+              return yield* Effect.fail(result.value.subtype);
             }
             return uuid;
           },
