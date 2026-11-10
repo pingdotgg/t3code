@@ -964,6 +964,22 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("escapes characters in a file path that would cut the query string", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "x" }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.readItemContent({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        path: "docs/C#/a&b.md",
+        commit: "a".repeat(40),
+      });
+
+      expect(mockedExecute.mock.calls.at(-1)?.[0].args).toContain("path=%2Fdocs%2FC%23%2Fa%26b.md");
+    }),
+  );
+
   it.effect("reports a pull request it cannot place as its own outcome", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
