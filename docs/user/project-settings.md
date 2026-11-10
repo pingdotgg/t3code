@@ -86,6 +86,14 @@ environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
 environment is offline then, the task runs when it is back.
 
+Under **Destination**, choose where runs go. **New thread each run** keeps every
+run separate. The two one-thread choices start a thread on the first run and post
+later runs there: one continues the same conversation, the other starts each run
+in a fresh session that doesn't see earlier runs, so the thread stays readable
+without the agent's context growing. To move a one-thread task, pick another
+thread in its project under **Destination**. Moving such a task to another
+project starts a new thread there on its next run.
+
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
@@ -201,6 +209,19 @@ collisions, symlinks, or ignore rules that would expose the worktrees to `git ad
 Search, file watchers, and builds can see nested checkouts unless they skip ignored folders.
 Relative folders require support on every selected connected server. Changing or clearing the
 setting keeps existing worktrees, their threads, and cleanup working at their original locations.
+
+## Fast worktree checkout on macOS
+
+Fast worktree checkout is a beta. Turn it on for each Mac in **Settings → Labs → Fast worktree
+checkout**. T3 Code then keeps a few recent checkouts of each repository in the `caches` folder of
+the T3 home directory. A new worktree is cloned from one of them with APFS copy-on-write, which is
+about twice as fast as writing every file and makes the first `git status` in it fast as well.
+Turning it off deletes the cache.
+
+The first worktree of a repository uses Git's normal checkout and fills the cache. It needs Git 2.42
+or newer. Git's normal checkout is also used for worktrees on a different drive from the T3 home
+directory, sparse checkouts, repositories whose attributes use filters such as Git LFS, and
+repositories whose checkout settings changed.
 
 ## Storage cleanup
 

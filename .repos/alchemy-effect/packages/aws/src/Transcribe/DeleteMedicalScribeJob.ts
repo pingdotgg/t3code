@@ -1,0 +1,37 @@
+import type * as transcribe from "@distilled.cloud/aws/transcribe";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `transcribe:DeleteMedicalScribeJob` — delete a Medical Scribe job.
+ *
+ * Amazon Transcribe batch actions have no resource-level IAM; the host is
+ * granted `transcribe:DeleteMedicalScribeJob` on `*`.
+ *
+ * ### Medical Scribe Jobs
+ * **Example:** Delete a Medical Scribe Job
+ * ```typescript
+ * // init
+ * const deleteMedicalScribeJob = yield* AWS.Transcribe.DeleteMedicalScribeJob();
+ *
+ * // runtime
+ * yield* deleteMedicalScribeJob({ MedicalScribeJobName: "my-visit" });
+ * ```
+ *
+ * @binding
+ */
+export interface DeleteMedicalScribeJob extends Binding.Service<
+  DeleteMedicalScribeJob,
+  "AWS.Transcribe.DeleteMedicalScribeJob",
+  () => Effect.Effect<
+    (
+      request: transcribe.DeleteMedicalScribeJobRequest,
+    ) => Effect.Effect<
+      transcribe.DeleteMedicalScribeJobResponse,
+      transcribe.DeleteMedicalScribeJobError
+    >
+  >
+> {}
+export const DeleteMedicalScribeJob = Binding.Service<DeleteMedicalScribeJob>(
+  "AWS.Transcribe.DeleteMedicalScribeJob",
+);
