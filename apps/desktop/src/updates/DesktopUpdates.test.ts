@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - Fixtures hash cached packages the way electron-updater does.
+import * as NodeCrypto from "node:crypto";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -5,6 +9,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -21,6 +26,70 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+
+const sha512Of = (bytes: string) => NodeCrypto.createHash("sha512").update(bytes).digest("base64");
+const x64Package = "T3 Code 1.2.4 x64";
+const arm64Package = "T3 Code 1.2.4 arm64";
+
+// What electron-updater leaves in `<cache>/<updaterCacheDirName>/pending` after a verified download.
+const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (cache: {
+  readonly packageBytes: string;
+  readonly fileName?: string;
+  readonly sha512?: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-updater-pending-" });
+  const fileName = cache.fileName ?? "T3-Code-1.2.4-mac.zip";
+  yield* fs.writeFileString(`${directory}/${fileName}`, cache.packageBytes);
+  yield* fs.writeFileString(
+    `${directory}/update-info.json`,
+    JSON.stringify({ fileName, sha512: cache.sha512 ?? sha512Of(cache.packageBytes) }),
+  );
+  return directory;
+});
+
+// The provider resolves each manifest `files[].url` against the feed URL.
+const offeredUpdateFiles = (
+  feedUrl: string,
+  files: ReadonlyArray<readonly [url: string, packageBytes: string]>,
+) => ({
+  version: "1.2.4",
+  files: files.map(([url, packageBytes]) => ({
+    pathname: new URL(url, feedUrl).pathname,
+    infoUrl: url,
+    sha512: sha512Of(packageBytes),
+  })),
+});
+
+const macUpdateFiles = offeredUpdateFiles("https://updates.example/", [
+  ["T3-Code-1.2.4-arm64-mac.zip", arm64Package],
+  ["T3-Code-1.2.4-mac.zip", x64Package],
+]);
+
+const checkWithPendingDownload = Effect.fn("test.checkWithPendingDownload")(function* (options: {
+  readonly cache: Parameters<typeof pendingDownloadCache>[0];
+  readonly offeredUpdateFiles?: ReturnType<typeof offeredUpdateFiles>;
+  readonly platform?: NodeJS.Platform;
+  readonly processArch?: string;
+}) {
+  const { cache, ...harnessOptions } = options;
+  const harness = makeHarness({
+    offeredUpdateFiles: macUpdateFiles,
+    ...harnessOptions,
+    pendingDownloadDirectory: yield* pendingDownloadCache(cache),
+    checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+    // electron-updater satisfies the download from its verified cache.
+    downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+  });
+
+  return yield* Effect.gen(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.configure;
+    yield* updates.check("startup");
+    yield* flushCallbacks;
+    return { state: yield* updates.getState, downloadCount: harness.downloadCount() };
+  }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+});
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -108,6 +177,95 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect.each([
+    { name: "on an Intel Mac", processArch: "x64", cache: { packageBytes: x64Package } },
+    {
+      name: "on an Apple Silicon Mac",
+      processArch: "arm64",
+      cache: { packageBytes: arm64Package, fileName: "T3-Code-1.2.4-arm64-mac.zip" },
+    },
+    {
+      // findFile falls back to the first file that is not a .pkg or .dmg.
+      name: "from a mirror whose package URLs have no extension",
+      processArch: "x64",
+      cache: { packageBytes: x64Package, fileName: "x64" },
+      offeredUpdateFiles: offeredUpdateFiles("https://mirror.example/t3/download/", [
+        ["T3-Code-1.2.4.dmg", "T3 Code 1.2.4 dmg"],
+        ["x64", x64Package],
+      ]),
+    },
+  ])(
+    "restores a verified cached download after quitting without installing $name",
+    ({ name: _name, ...options }) =>
+      Effect.gen(function* () {
+        const { state, downloadCount } = yield* checkWithPendingDownload(options);
+
+        assert.equal(state.status, "downloaded");
+        assert.equal(state.downloadedVersion, "1.2.4");
+        assert.equal(downloadCount, 1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps other checks out while it validates a cached download", () =>
+    Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        offeredUpdateFiles: macUpdateFiles,
+        pendingDownloadDirectory: yield* pendingDownloadCache({ packageBytes: x64Package }),
+        beforePendingDownloadRead: Deferred.succeed(readStarted, undefined).pipe(
+          Effect.flatMap((first) => (first ? Deferred.await(releaseRead) : Effect.void)),
+        ),
+        checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+        downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+      });
+
+      yield* Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const startupCheck = yield* updates.check("startup").pipe(Effect.forkScoped);
+        yield* Deferred.await(readStarted);
+
+        const manualCheck = yield* updates.check("manual");
+        assert.isFalse(manualCheck.checked);
+        assert.equal(harness.checkCount(), 1);
+
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Fiber.join(startupCheck);
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "downloaded");
+        assert.equal(harness.downloadCount(), 1);
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { name: "a cached package for another release", cache: { packageBytes: "T3 Code 1.2.3 x64" } },
+    // The harness is an Intel Mac, so electron-updater would fetch the x64 zip instead.
+    { name: "a cached package for another architecture", cache: { packageBytes: arm64Package } },
+    {
+      name: "a cached package whose bytes are damaged",
+      cache: { packageBytes: "T3 Code 1.2.4 x6", sha512: sha512Of(x64Package) },
+    },
+    {
+      // Both resolved paths contain the feed's /x64/, so electron-updater picks the first .exe.
+      name: "an x64 installer listed after arm64 on an /x64/ feed",
+      platform: "win32" as const,
+      cache: { packageBytes: x64Package, fileName: "T3-Code-Setup-1.2.4-x64.exe" },
+      offeredUpdateFiles: offeredUpdateFiles("https://mirror.example/t3/x64/", [
+        ["T3-Code-Setup-1.2.4-arm64.exe", arm64Package],
+        ["T3-Code-Setup-1.2.4-x64.exe", x64Package],
+      ]),
+    },
+  ])("keeps the update click-to-download with $name", (options) =>
+    Effect.gen(function* () {
+      const { state, downloadCount } = yield* checkWithPendingDownload(options);
+
+      assert.equal(state.status, "available");
+      assert.equal(downloadCount, 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("preserves a queued installer when the feed has no update", () => {
     const harness = makeHarness();

@@ -1,12 +1,23 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, type ResolvedUpdateFileInfo, type UpdateInfo } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
+
+export interface ElectronUpdaterOfferedFiles {
+  readonly version: string;
+  readonly files: ReadonlyArray<{
+    readonly pathname: string;
+    readonly infoUrl: string;
+    readonly sha512: string | undefined;
+  }>;
+}
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
 
@@ -67,6 +78,8 @@ export class ElectronUpdater extends Context.Service<
     readonly setAllowDowngrade: (value: boolean) => Effect.Effect<void>;
     readonly setFullChangelog: (value: boolean) => Effect.Effect<void>;
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
+    readonly pendingDownloadDirectory: Effect.Effect<Option.Option<string>>;
+    readonly offeredUpdateFiles: Effect.Effect<Option.Option<ElectronUpdaterOfferedFiles>>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
     readonly quitAndInstall: (options: {
@@ -133,6 +146,44 @@ export const make = ElectronUpdater.of({
       });
     },
   ),
+  // The private helper resolves the same directory as downloads, including updaterCacheDirName.
+  pendingDownloadDirectory: Effect.tryPromise({
+    try: () =>
+      (
+        autoUpdater as unknown as {
+          getOrCreateDownloadHelper: () => Promise<{ readonly cacheDirForPendingUpdate: string }>;
+        }
+      ).getOrCreateDownloadHelper(),
+    catch: () => new Cause.NoSuchElementError("electron-updater has no download cache helper."),
+  }).pipe(
+    Effect.map((helper) => helper.cacheDirForPendingUpdate),
+    Effect.option,
+  ),
+  // downloadUpdate selects from these resolved URLs, not from the raw manifest file names.
+  offeredUpdateFiles: Effect.try({
+    try: () => {
+      const offered = (
+        autoUpdater as unknown as {
+          readonly updateInfoAndProvider: {
+            readonly info: UpdateInfo;
+            readonly provider: {
+              resolveFiles: (info: UpdateInfo) => Array<ResolvedUpdateFileInfo>;
+            };
+          } | null;
+        }
+      ).updateInfoAndProvider;
+      if (offered == null) return Option.none();
+      return Option.some({
+        version: offered.info.version,
+        files: offered.provider.resolveFiles(offered.info).map((file) => ({
+          pathname: file.url.pathname,
+          infoUrl: file.info.url,
+          sha512: file.info.sha512,
+        })),
+      });
+    },
+    catch: () => new Cause.NoSuchElementError("electron-updater could not resolve offered files."),
+  }).pipe(Effect.option, Effect.map(Option.flatten)),
   checkForUpdates: Effect.suspend(() => {
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
