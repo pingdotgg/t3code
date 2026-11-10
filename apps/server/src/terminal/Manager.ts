@@ -5,6 +5,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  retainedTerminalHistory,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -3224,20 +3225,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       registerCleanup,
     );
 
-  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (input, viewerId) =>
-    Stream.unwrap(
+  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (
+    input,
+    viewerId,
+  ) => {
+    const { maxHistoryBytes } = input;
+    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
+      maxHistoryBytes === undefined
+        ? listener
+        : (event: TerminalAttachStreamEvent) =>
+            listener(
+              "snapshot" in event
+                ? {
+                    ...event,
+                    snapshot: {
+                      ...event.snapshot,
+                      history: retainedTerminalHistory(event.snapshot.history, maxHistoryBytes),
+                    },
+                  }
+                : event,
+            );
+    return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
         (release) => Effect.sync(release),
       ).pipe(
         Effect.as(
           terminalOutputStream(
-            (listener, registerCleanup) => attachStream(input, listener, registerCleanup, viewerId),
-            (listener, registerCleanup) => resyncStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              attachStream(input, retained(listener), registerCleanup, viewerId),
+            (listener, registerCleanup) => resyncStream(input, retained(listener), registerCleanup),
           ),
         ),
       ),
     );
+  };
 
   const metadataEventFromTerminalEvent = (
     event: TerminalEvent,
