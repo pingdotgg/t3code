@@ -656,14 +656,31 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       };
       yield* logIn(loggedIn);
       let probeCount = 0;
+      let loginDuringProbe: string | undefined;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
             initializationResult: () => {
               probeCount++;
+              const email = loggedIn.email;
+              if (loginDuringProbe !== undefined) {
+                const organizationUuid = loginDuringProbe;
+                loginDuringProbe = undefined;
+                loggedIn = {
+                  email: `${organizationUuid}@example.com`,
+                  organizationUuid,
+                  utilization: 50,
+                };
+                NodeFS.writeFileSync(
+                  accountConfigPath,
+                  JSON.stringify({
+                    oauthAccount: { accountUuid: `${organizationUuid}-user`, organizationUuid },
+                  }),
+                );
+              }
               return Promise.resolve({
                 commands: [] as Array<ClaudeSdk.SlashCommand>,
-                account: { email: loggedIn.email, subscriptionType: "pro", tokenSource: "oauth" },
+                account: { email, subscriptionType: "pro", tokenSource: "oauth" },
               });
             },
             usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
@@ -714,6 +731,19 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         usageWindows: [expect.objectContaining({ usedPercent: 10 })],
       });
       expect(probeCount).toBeGreaterThan(probesBeforeLogin);
+
+      yield* TestClock.adjust("1 second");
+      yield* logIn({ email: "account-a@example.com", organizationUuid: "org-a", utilization: 100 });
+      loginDuringProbe = "org-c";
+      const raced = yield* claude!.snapshot.refresh;
+      expect(
+        raced.auth,
+        "a probe that raced a login must not pair its account with the new login's organization",
+      ).toMatchObject({ email: "account-a@example.com" });
+      expect(raced.auth.workspaceId).toBeUndefined();
+
+      const settled = yield* claude!.snapshot.refresh;
+      expect(settled.auth).toMatchObject({ email: "org-c@example.com", workspaceId: "org-c" });
     }).pipe(Effect.provide(layerTest)),
   );
 

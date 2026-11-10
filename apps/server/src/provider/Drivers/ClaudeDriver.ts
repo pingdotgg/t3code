@@ -197,15 +197,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       (key: string) =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
           Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-              Effect.map((workspaceId) => ({
-                _tag: "fresh" as const,
-                capabilities:
-                  workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
-              })),
+            Effect.all([
+              ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+              readCapabilitiesKey,
+            ]).pipe(
+              Effect.map(([workspaceId, currentKey]) =>
+                // A login that landed mid-probe leaves this probe's account unknown: show it once
+                // without the new login's organization, never cache it, re-probe next check.
+                currentKey !== key
+                  ? { _tag: "raced" as const, capabilities }
+                  : {
+                      _tag: "fresh" as const,
+                      capabilities:
+                        workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
+                    },
+              ),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, { key, capabilities })),
+          Effect.tap((result) =>
+            result._tag === "fresh"
+              ? Ref.set(lastGoodCapabilities, { key, capabilities: result.capabilities })
+              : Effect.void,
+          ),
           Effect.catch((error) =>
             // Re-read the account: a login can land while the failed probe was running.
             Effect.all([Ref.getAndSet(lastGoodCapabilities, undefined), readCapabilitiesKey]).pipe(
