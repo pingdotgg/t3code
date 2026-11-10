@@ -13,6 +13,7 @@ import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }));
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
