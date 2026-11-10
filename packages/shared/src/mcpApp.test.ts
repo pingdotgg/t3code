@@ -7,9 +7,9 @@ import {
   injectMcpAppCookieBootstrap,
   mcpAppContentSecurityPolicy,
   mcpAppToolCallableByApp,
+  mcpAppToolResourceUri,
   readMcpAppCsp,
   readMcpAppReference,
-  readMcpAppResourceUri,
 } from "./mcpApp.ts";
 
 describe("mcpAppContentSecurityPolicy", () => {
@@ -138,9 +138,14 @@ describe("readMcpAppReference", () => {
 
 describe("tool metadata", () => {
   it("reads the resource URI from either spelling and honors app visibility", () => {
-    expect(readMcpAppResourceUri({ ui: { resourceUri: "ui://a/b" } })).toBe("ui://a/b");
-    expect(readMcpAppResourceUri({ "ui/resourceUri": "ui://a/c" })).toBe("ui://a/c");
-    expect(readMcpAppResourceUri({ ui: { resourceUri: "https://a" } })).toBeUndefined();
+    const uri = "ui://weather/card.html";
+    expect(mcpAppToolResourceUri({ ui: { resourceUri: uri } })).toBe(uri);
+    expect(
+      mcpAppToolResourceUri({ ui: { visibility: ["model", "app"] }, "ui/resourceUri": uri }),
+    ).toBe(uri);
+    expect(
+      mcpAppToolResourceUri({ ui: { resourceUri: "https://weather/card.html" } }),
+    ).toBeUndefined();
     expect(mcpAppToolCallableByApp(undefined)).toBe(true);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model"] } })).toBe(false);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model", "app"] } })).toBe(true);
@@ -174,6 +179,13 @@ describe("mcpAppFromToolItem", () => {
     };
     expect(mcpAppFromToolItem({ toolName: "evil.lookup", output: forged })).toBeUndefined();
     expect(mcpAppFromToolItem({ toolName: "bank.transfer", output: forged })).toBeDefined();
+    // Claude Code names the same tool `mcp__<server>__<tool>`.
+    expect(mcpAppFromToolItem({ toolName: "mcp__bank__transfer", output: forged })).toBeDefined();
+    expect(mcpAppFromToolItem({ toolName: "mcp__evil__transfer", output: forged })).toBeUndefined();
+    const connector = { t3McpApp: { ...forged.t3McpApp, server: "claude.ai Asana (Beta)" } };
+    expect(
+      mcpAppFromToolItem({ toolName: "mcp__claude_ai_Asana_Beta__transfer", output: connector }),
+    ).toBeDefined();
   });
 
   it("keeps an app whose resource URI is longer than a name", async () => {

@@ -23,8 +23,7 @@ export interface RetainedLiveItem<A> {
   readonly serializedBytes: number;
 }
 
-// Published events are immutable and shared across subscriptions. Measure each
-// object once without keeping the event or its serialized copy alive.
+// Immutable events are shared across subscribers; cache sizes without retaining events or serialized copies.
 const serializedSizes = new WeakMap<object, number>();
 
 function serializedSize(value: object): number {
@@ -154,8 +153,7 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
           Effect.catchTags({
             LiveStreamBufferError: (error) =>
               Effect.sync(() => {
-                // A grouped source can retain its own pending chunk. Close it
-                // and release the pull closure without waiting for an RPC ACK.
+                // Release retained source chunks without waiting for an RPC ACK.
                 source.pull = Effect.interrupt;
               }).pipe(
                 Effect.andThen(Scope.close(sourceScope, Exit.fail(error))),
@@ -174,10 +172,8 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
           }),
           Effect.forkScoped,
         );
-        // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
         return Effect.gen(function* () {
-          // RpcServer requests the next batch only after the client ACKs this
-          // one. Removing items from a queue alone does not mean delivery ended.
+          // RpcServer requests the next batch after ACK; dequeueing does not end delivery.
           release(inFlight);
           inFlight = [];
           yield* check;
@@ -243,17 +239,6 @@ const retainLiveStream = Effect.fn("LiveStreamBudget.retainLiveStream")(function
   );
   return Stream.fromQueue(queue);
 });
-
-export const bufferLiveStream = <A extends object, E, R>(
-  source: Stream.Stream<A, E, R>,
-  limits?: LiveStreamLimits,
-) =>
-  Stream.unwrap(
-    Effect.gen(function* () {
-      const budget = yield* makeLiveStreamBudget(limits);
-      return budget.deliver(yield* retainLiveStream(source, budget));
-    }),
-  );
 
 /** Coalesce queued full states; delivered states stay charged until the next pull ACKs them. */
 export const bufferLatestLiveStream = <A extends { readonly sequence: number }, E, R>(
@@ -345,11 +330,6 @@ type ReplayLiveInput<A extends { readonly sequence: number }, E, R> = {
   readonly filter?: (event: A) => boolean;
 };
 
-export const replayAndBufferLiveEvents = <A extends { readonly sequence: number }, E, R>(
-  input: ReplayLiveInput<A, E, R>,
-  limits?: LiveStreamLimits,
-) => replayAndBufferProjectedLiveEvents({ ...input, project: (event: A) => event }, limits);
-
 export const replayAndBufferProjectedLiveEvents = <
   A extends { readonly sequence: number },
   B extends { readonly sequence: number },
@@ -366,8 +346,7 @@ export const replayAndBufferProjectedLiveEvents = <
       const subscription = yield* input.subscribe.pipe(Scope.provide(subscriptionScope));
       let throughSequence = input.afterSequence ?? 0;
       const live = yield* retainLiveStream(
-        // Taking one event at a time avoids retaining an uncharged PubSub batch
-        // while the drain charges events to the budget.
+        // Take one event at a time so no uncharged PubSub batch is retained.
         Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
           Stream.filter(
             (event) => event.sequence > throughSequence && (input.filter?.(event) ?? true),

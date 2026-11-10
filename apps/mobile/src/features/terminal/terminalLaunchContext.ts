@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 interface TerminalLocationLike {
   readonly cwd: string;
@@ -17,6 +17,7 @@ export interface PendingTerminalLaunch {
   readonly worktreePath: string | null;
   readonly env?: Record<string, string>;
   readonly initialInput?: string;
+  readonly stopOnSettle?: boolean;
 }
 
 const pendingTerminalLaunches = new Map<string, PendingTerminalLaunch>();
@@ -34,6 +35,7 @@ export function stagePendingTerminalLaunch(input: {
     worktreePath: input.launch.worktreePath,
     env: input.launch.env ? { ...input.launch.env } : undefined,
     initialInput: input.launch.initialInput,
+    stopOnSettle: input.launch.stopOnSettle,
   });
 }
 
@@ -82,10 +84,10 @@ export function resolveTerminalOpenLocation(input: {
   };
 }
 
+/** The first location resolved for a terminal target stays fixed for that target. */
 export function useInitialTerminalLaunchLocation(input: {
-  readonly targetKey: string | null;
+  readonly targetKey: string;
   readonly pendingLaunch: PendingTerminalLaunch | null;
-  readonly hasResolvedPendingLaunch: boolean;
   readonly isAuthenticated: boolean;
   readonly canRead: boolean;
   readonly canOperate: boolean;
@@ -93,12 +95,7 @@ export function useInitialTerminalLaunchLocation(input: {
   readonly location: Parameters<typeof resolveTerminalOpenLocation>[0] | null;
 }) {
   let candidate: TerminalLocationLike | null = null;
-  if (
-    input.location !== null &&
-    input.hasResolvedPendingLaunch &&
-    input.isAuthenticated &&
-    (input.canRead || input.canOperate)
-  ) {
+  if (input.location !== null && input.isAuthenticated && (input.canRead || input.canOperate)) {
     if (input.pendingLaunch !== null) {
       candidate = {
         cwd: input.pendingLaunch.cwd,
@@ -110,11 +107,9 @@ export function useInitialTerminalLaunchLocation(input: {
     }
   }
   const [entry, setEntry] = useState(() => ({ key: input.targetKey, location: candidate }));
-  useEffect(() => {
-    if (entry.key === input.targetKey && (entry.location !== null || candidate === null)) {
-      return;
-    }
+  if (entry.key !== input.targetKey || (entry.location === null && candidate !== null)) {
     setEntry({ key: input.targetKey, location: candidate });
-  }, [candidate, entry.key, entry.location, input.targetKey]);
-  return entry.key === input.targetKey ? entry.location : null;
+    return candidate;
+  }
+  return entry.location;
 }

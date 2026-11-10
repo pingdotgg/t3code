@@ -2,10 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
-/**
- * Each names the tool call that produced the app; the environment resolves the
- * app's server from that item, so an app can only reach the server it came from.
- */
+// The producing tool call restricts each app to its source server.
 const McpAppTarget = {
   threadId: ThreadId,
   itemId: TurnItemId,
@@ -51,9 +48,7 @@ export const McpAppReadResourceResult = Schema.Struct({
 });
 export type McpAppReadResourceResult = typeof McpAppReadResourceResult.Type;
 
-/**
- * Each update replaces the app's previous one; no content clears it.
- */
+/** Replaces prior context; no content clears it. */
 export const McpAppUpdateModelContextInput = Schema.Struct({
   ...McpAppTarget,
   conversationThreadId: ThreadId,

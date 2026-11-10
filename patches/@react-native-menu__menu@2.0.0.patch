@@ -1,5 +1,5 @@
 diff --git a/ios/MenuViewManager.mm b/ios/MenuViewManager.mm
-index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64b3e5b04f 100644
+index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..73b9e8bbe30e6647b03cc1890806e8d48a1cbd8c 100644
 --- a/ios/MenuViewManager.mm
 +++ b/ios/MenuViewManager.mm
 @@ -1,6 +1,6 @@
@@ -178,10 +178,19 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f552fa35828 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304a79e95f1 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,17 +60,46 @@ public class MenuViewImplementation: UIButton {
+@@ -17,7 +17,7 @@ public class MenuViewImplementation: UIButton {
+             }
+             _actions.removeAll()
+             actions.forEach { menuAction in
+-                _actions.append(RCTMenuAction(details: menuAction).createUIMenuElement({action in self.sendButtonAction(action)}))
++                _actions.append(RCTMenuAction(details: menuAction).createUIMenuElement({action in self.didSelectAction = true; self.sendButtonAction(action)}))
+             }
+             self.setup()
+         }
+@@ -60,17 +60,98 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -195,6 +204,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +            self.setup()
 +        }
 +        isMenuPresented = true
++        didSelectAction = false
 +        sendMenuInteractionStart()
          return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
              guard let self = self else { return nil }
@@ -222,15 +232,66 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +            pendingMenu = nil
 +            self.setup()
 +        }
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return contentPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        guard let preview = contentPreview() else {
++            return super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
++        }
++        // A selection usually re-renders the trigger, so fade instead of landing on its old look.
++        return didSelectAction ? nil : preview
      }
  
++    // The button is a transparent overlay: morph from the React content so UIKit hides and restores it.
++    // iOS 26 only, and only for content with its own corner radius; otherwise keep UIButton's default.
++    private func contentPreview() -> UITargetedPreview? {
++        guard #available(iOS 26.0, *) else {
++            return nil
++        }
++        guard !shouldOpenOnLongPress, let siblings = self.superview?.subviews.filter({ $0 !== self }), siblings.count == 1, let content = siblings.first, content.window != nil, let (target, radius) = previewTarget(content) else {
++            return nil
++        }
++        let bounds = target.bounds
++        let parameters = UIPreviewParameters()
++        parameters.backgroundColor = .clear
++        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(radius, bounds.height / 2, bounds.width / 2))
++        return UITargetedPreview(view: target, parameters: parameters)
++    }
++
++    // Walks the content's full-size single-child chain for its corner radius. A preview of a view
++    // above a glass effect view drops the glass until UIKit restores the source, so target the glass view.
++    private func previewTarget(_ content: UIView) -> (UIView, CGFloat)? {
++        var radius: CGFloat?
++        var view = content
++        for depth in 0...4 {
++            if radius == nil, view.layer.cornerRadius > 0 {
++                radius = view.layer.cornerRadius
++            }
++            if let radius, view is UIVisualEffectView {
++                return (view, radius)
++            }
++            guard depth < 4, view.subviews.count == 1, let child = view.subviews.first,
++                  abs(child.frame.size.width - view.bounds.size.width) <= 0.5,
++                  abs(child.frame.size.height - view.bounds.size.height) <= 0.5 else {
++                break
++            }
++            view = child
++        }
++        return radius.map { (content, $0) }
++    }
++
++    private var didSelectAction = false
 +    private var isMenuPresented = false
 +    private var pendingMenu: UIMenu?
 +
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +115,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +167,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -333,7 +394,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +247,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +299,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
@@ -343,10 +404,21 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +    }
  }
 diff --git a/ios/Shared/RCTMenuItem.swift b/ios/Shared/RCTMenuItem.swift
-index bb6bb2b7ad56135089f267587c974b166760539d..949b3f7ec49af7ba26d966a8923a51f619443d5a 100644
+index bb6bb2b7ad56135089f267587c974b166760539d..5675067ecb2db0239b74c66ff2e095471a721699 100644
 --- a/ios/Shared/RCTMenuItem.swift
 +++ b/ios/Shared/RCTMenuItem.swift
-@@ -103,10 +103,18 @@ class RCTMenuAction {
+@@ -27,7 +27,9 @@ class RCTMenuAction {
+             self.identifier = UIAction.Identifier(rawValue: identifier as String);
+         }
+ 
+-        if let image = details["image"] as? NSString {
++        // Fabric sends an absent image as "", and every asset lookup for "" logs a
++        // CoreUI fault with a backtrace.
++        if let image = details["image"] as? NSString, image.length > 0 {
+             self.image = UIImage(systemName: image as String);
+             if self.image === nil {
+                 self.image = UIImage(named: image as String)
+@@ -103,10 +105,18 @@ class RCTMenuAction {
                  subMenuActions.append(subaction.createUIMenuElement(handler))
              }
              var menu: UIMenu;

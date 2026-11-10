@@ -1,10 +1,23 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { ProjectId, type PullRequestSummary } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EnvironmentId,
+  ProjectId,
+  type PullRequestListEntry,
+  type PullRequestListInput,
+  type PullRequestListResult,
+  type PullRequestSummary,
+} from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   newestPullRequestObservation,
+  observedPullRequestSummary,
+  observePullRequestChecks,
+  observePullRequestMetadata,
   newestPullRequestSummary,
+  rememberPullRequestListAnswer,
+  restorePullRequestList,
+  restoredPullRequestList,
   threadPullRequestLinkToSummary,
 } from "./pullRequests";
 
@@ -112,5 +125,346 @@ describe("pull request summary cache", () => {
         stale.projectId,
       ),
     ).toBeNull();
+  });
+});
+
+describe("pull request observations", () => {
+  const fromSummary = (value: PullRequestSummary, observedAt: number) =>
+    observePullRequestMetadata({ metadata: null, checks: null }, observed(value, observedAt));
+  const checksRead = (
+    checksState: "passing" | "failing" | "pending" | null,
+    readAt: number | undefined,
+    observedAt: number,
+  ) => ({ checksState, readAt, observedAt });
+
+  it("keeps a newer list's mergeability when a checks read lands after it", () => {
+    const detail = summary({
+      mergeability: "conflicting",
+      checksState: "pending",
+      observedAt: 100,
+    });
+    let state = fromSummary(detail, 1);
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ mergeability: "mergeable", checksState: "pending", observedAt: 200 }), 2),
+    );
+    state = observePullRequestChecks(state, checksRead("passing", 300, 3));
+    expect(observedPullRequestSummary(state)).toMatchObject({
+      mergeability: "mergeable",
+      checksState: "passing",
+    });
+  });
+
+  it("keeps a newer checks read when an older list read lands after it", () => {
+    let state = fromSummary(
+      summary({ mergeability: "conflicting", checksState: "pending", observedAt: 100 }),
+      1,
+    );
+    state = observePullRequestChecks(state, checksRead("passing", 300, 2));
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ mergeability: "mergeable", checksState: "pending", observedAt: 250 }), 3),
+    );
+    expect(observedPullRequestSummary(state)).toMatchObject({
+      mergeability: "mergeable",
+      checksState: "passing",
+    });
+  });
+
+  it("lets a newer read's checks replace an older checks read", () => {
+    let state = fromSummary(summary({ checksState: "pending", observedAt: 100 }), 1);
+    state = observePullRequestChecks(state, checksRead("passing", 300, 2));
+    state = observePullRequestMetadata(
+      state,
+      observed(summary({ checksState: "failing", observedAt: 400 }), 3),
+    );
+    expect(observedPullRequestSummary(state)?.checksState).toBe("failing");
+  });
+
+  it("orders checks by arrival when the server reports no read time", () => {
+    let state = fromSummary(summary({ checksState: "pending" }), 1);
+    state = observePullRequestChecks(state, checksRead("passing", undefined, 2));
+    expect(observedPullRequestSummary(state)?.checksState).toBe("passing");
+    state = observePullRequestChecks(state, checksRead("failing", undefined, 1));
+    expect(observedPullRequestSummary(state)?.checksState).toBe("passing");
+  });
+
+  it("shows nothing until some read has described the pull request", () => {
+    const state = observePullRequestChecks(
+      { metadata: null, checks: null },
+      checksRead("failing", 1, 1),
+    );
+    expect(observedPullRequestSummary(state)).toBeNull();
+  });
+});
+
+describe("pull request list answers across a reload", () => {
+  const makeStorage = () => {
+    const held = new Map<string, string>();
+    return {
+      held,
+      getItem: (key: string) => held.get(key) ?? null,
+      setItem: (key: string, value: string) => void held.set(key, value),
+      removeItem: (key: string) => void held.delete(key),
+      key: (index: number) => [...held.keys()][index] ?? null,
+      get length() {
+        return held.size;
+      },
+    };
+  };
+  const listEntry = (number: number, updatedAt = "2026-07-02T00:00:00Z") =>
+    ({
+      provider: SourceControlProviderKind.make("github"),
+      host: "github.com",
+      projectId: ProjectId.make("project-1"),
+      projectTitle: "t3code",
+      repository: "pingdotgg/t3code",
+      number,
+      title: `Pull request ${number}`,
+      url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+      author: { login: "octocat", name: null, avatarUrl: null },
+      headBranch: `feat/branch-${number}`,
+      baseBranch: "main",
+      state: "open",
+      isDraft: false,
+      mergeability: "mergeable",
+      additions: 1,
+      deletions: 0,
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt,
+      viewerReviewRequested: false,
+      labels: [],
+    }) as PullRequestListEntry;
+  const answer = (entries: ReadonlyArray<PullRequestListEntry>, host = "github.com") =>
+    ({
+      entries,
+      viewers: { [host]: "Bilal" },
+      providers: [
+        {
+          host,
+          kind: SourceControlProviderKind.make("github"),
+          searchesOnHost: true,
+          projectCount: 1,
+          configured: true,
+          detail: null,
+        },
+      ],
+      errors: [{ projectId: ProjectId.make("project-1"), projectTitle: "t3code", message: "boom" }],
+      truncated: true,
+      nextCursors: { "pingdotgg/t3code": "cursor-1" },
+    }) as PullRequestListResult;
+  const local = EnvironmentId.make("env-local");
+  const remote = EnvironmentId.make("env-remote");
+  const input: PullRequestListInput = { state: "open", involvement: "all", limit: 99 };
+
+  it("restores every environment's first page as one merged list without stale failures or cursors", () => {
+    const storage = makeStorage();
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer([listEntry(1, "2026-07-01T00:00:00Z")]),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: remote, input },
+      answer([listEntry(2, "2026-07-03T00:00:00Z")], "gitlab.com"),
+    );
+    const restored = restorePullRequestList(storage, [
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+    expect(restored?.entries.map((row) => [row.environmentId, row.number])).toEqual([
+      [remote, 2],
+      [local, 1],
+    ]);
+    expect(restored?.viewers).toEqual({
+      "env-local github.com": "Bilal",
+      "env-remote gitlab.com": "Bilal",
+    });
+    expect(restored?.providers.map((provider) => provider.host)).toEqual([
+      "github.com",
+      "gitlab.com",
+    ]);
+    expect(restored?.errors).toEqual([]);
+    expect(restored?.nextCursors).toEqual({});
+  });
+
+  it("falls back to a fresh read when the browser blocks storage", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+    try {
+      expect(restoredPullRequestList([{ environmentId: local, input }])).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a page of rows and only first-page reads", () => {
+    const storage = makeStorage();
+    const rows = Array.from({ length: 120 }, (_, index) => listEntry(index + 1));
+    rememberPullRequestListAnswer(storage, { environmentId: local, input }, answer(rows));
+    const searched = { ...input, query: "fix" };
+    rememberPullRequestListAnswer(storage, { environmentId: local, input: searched }, answer(rows));
+    const continued = { ...input, cursors: { "pingdotgg/t3code": "cursor-1" } };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: continued },
+      answer(rows),
+    );
+    expect(
+      restorePullRequestList(storage, [{ environmentId: local, input }])?.entries,
+    ).toHaveLength(99);
+    expect(restorePullRequestList(storage, [{ environmentId: local, input: searched }])).toBeNull();
+    expect(
+      restorePullRequestList(storage, [{ environmentId: local, input: continued }]),
+    ).toBeNull();
+  });
+
+  it("restores answers kept under a project assignment for a cold start that has none yet", () => {
+    const storage = makeStorage();
+    rememberPullRequestListAnswer(
+      storage,
+      {
+        environmentId: local,
+        input: { ...input, projectIds: [ProjectId.make("project-1")] },
+      },
+      answer([listEntry(1)]),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      {
+        environmentId: remote,
+        input: { ...input, projectIds: [ProjectId.make("project-2")] },
+      },
+      answer([listEntry(2, "2026-07-03T00:00:00Z")]),
+    );
+    const restored = restorePullRequestList(storage, [
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+    expect(restored?.entries.map((row) => [row.environmentId, row.number])).toEqual([
+      [remote, 2],
+      [local, 1],
+    ]);
+  });
+
+  it("shows a pull request once when answers from before a reassignment overlap", () => {
+    const storage = makeStorage();
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer([listEntry(1, "2026-07-01T00:00:00Z")]),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: remote, input },
+      answer([listEntry(1, "2026-07-03T00:00:00Z")]),
+    );
+    const restored = restorePullRequestList(storage, [
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+    expect(restored?.entries.map((row) => [row.environmentId, row.updatedAt])).toEqual([
+      [remote, "2026-07-03T00:00:00Z"],
+    ]);
+  });
+
+  it("keeps a shared repository's rows when it moves to an environment that has not answered yet", () => {
+    const storage = makeStorage();
+    const own = ProjectId.make("project-own");
+    const shared = { ...listEntry(2), projectId: ProjectId.make("project-shared") };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer([{ ...listEntry(1), projectId: own }, shared]),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: remote, input },
+      answer([listEntry(3, "2026-07-03T00:00:00Z")]),
+    );
+    // The shared repository now belongs to the remote environment, which has not answered yet.
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: { ...input, projectIds: [own] } },
+      answer([{ ...listEntry(1), projectId: own }]),
+    );
+    const restored = restorePullRequestList(storage, [
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+    expect(restored?.entries.map((row) => row.number).toSorted()).toEqual([1, 2, 3]);
+  });
+
+  it("keeps one page per environment when retained rows join a partial answer", () => {
+    const storage = makeStorage();
+    const own = ProjectId.make("project-own");
+    const shared = ProjectId.make("project-shared");
+    const rows = (projectId: ProjectId, first: number) =>
+      Array.from({ length: 99 }, (_, index) => ({ ...listEntry(first + index), projectId }));
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      answer(rows(shared, 1)),
+    );
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input: { ...input, projectIds: [own] } },
+      answer(rows(own, 101)),
+    );
+    const restored = restorePullRequestList(storage, [{ environmentId: local, input }]);
+    expect(restored?.entries).toHaveLength(99);
+    expect(restored?.entries.every((row) => row.projectId === own)).toBe(true);
+  });
+
+  it("does not keep grown pages", () => {
+    const storage = makeStorage();
+    const grown = { ...input, limit: 198 };
+    rememberPullRequestListAnswer(storage, { environmentId: local, input: grown }, answer([]));
+    expect(restorePullRequestList(storage, [{ environmentId: local, input: grown }])).toBeNull();
+  });
+
+  it("forgets whole scopes, never one environment of a scope that is kept", () => {
+    const storage = makeStorage();
+    const scoped = (projectIndex: number) => ({
+      ...input,
+      projectId: ProjectId.make(`p-${projectIndex}`),
+    });
+    for (let projectIndex = 0; projectIndex < 9; projectIndex++) {
+      for (const [offset, environmentId] of [local, remote].entries()) {
+        rememberPullRequestListAnswer(
+          storage,
+          { environmentId, input: scoped(projectIndex) },
+          answer([listEntry(projectIndex * 2 + offset + 1, `2026-07-0${2 - offset}T00:00:00Z`)]),
+        );
+      }
+    }
+    const restore = (projectIndex: number) =>
+      restorePullRequestList(storage, [
+        { environmentId: local, input: scoped(projectIndex) },
+        { environmentId: remote, input: scoped(projectIndex) },
+      ]);
+    expect(restore(0)).toBeNull();
+    for (let projectIndex = 1; projectIndex < 9; projectIndex++) {
+      expect(restore(projectIndex)?.entries.map((row) => row.environmentId)).toEqual([
+        local,
+        remote,
+      ]);
+    }
+  });
+
+  it("removes the composite snapshots it replaced", () => {
+    const storage = makeStorage();
+    storage.held.set("t3.pullRequests.list:env-local,env-remote", "{}");
+    storage.held.set("t3.pullRequests.list:env-local", "{}");
+    storage.held.set("t3.other", "kept");
+    rememberPullRequestListAnswer(storage, { environmentId: local, input }, answer([]));
+    expect(
+      [...storage.held.keys()].filter((key) => key.startsWith("t3.pullRequests.list:")),
+    ).toEqual([]);
+    expect(storage.held.get("t3.other")).toBe("kept");
   });
 });

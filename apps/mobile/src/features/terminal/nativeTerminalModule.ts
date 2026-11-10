@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, Ref } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 
@@ -16,12 +16,17 @@ interface TerminalInputEvent {
   readonly data: string;
 }
 
+interface TerminalPasteEvent {
+  readonly text: string;
+}
+
 interface TerminalResizeEvent {
   readonly cols: number;
   readonly rows: number;
 }
 
 export interface NativeTerminalSurfaceProps extends ViewProps {
+  readonly ref?: Ref<NativeTerminalSurfaceHandle>;
   readonly appearanceScheme?: "light" | "dark";
   readonly autoFocus?: boolean;
   readonly readOnly?: boolean;
@@ -35,8 +40,18 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly initialBuffer: string;
   readonly fontSize: number;
+  /** `[cols, rows]` of the shared PTY, or empty before the server reports one. */
+  readonly sharedGrid?: ReadonlyArray<number>;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;
+  /** iOS only: clipboard text from a system paste (edit menu, ⌘V, shortcut bar). */
+  readonly onPaste?: (event: NativeSyntheticEvent<TerminalPasteEvent>) => void;
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
+}
+
+export interface NativeTerminalSurfaceHandle {
+  readonly writeOutput: (data: string, reset: boolean) => Promise<void>;
+  /** Absent on native builds that predate it. */
+  readonly resetInput?: () => Promise<void>;
 }
 
 let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;
@@ -95,4 +110,15 @@ export function getNativeTerminalHardwareKeyRevision(): number | null {
 
 export function hasNativeTerminalSurface() {
   return resolveNativeTerminalSurfaceView() !== null;
+}
+
+export function supportsNativeTerminalOutput(): boolean {
+  try {
+    const module = requireOptionalNativeModule<{ readonly outputRevision?: number }>(
+      NATIVE_TERMINAL_MODULE_NAME,
+    );
+    return (module?.outputRevision ?? 0) >= 1 && hasNativeTerminalSurface();
+  } catch {
+    return false;
+  }
 }

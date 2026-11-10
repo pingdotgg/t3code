@@ -3,10 +3,11 @@ import {
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -30,10 +31,12 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 
-class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {}
+class OpenCodeProbeError extends Schema.TaggedError<OpenCodeProbeError>()("OpenCodeProbeError", {
+  cause: Schema.optional(Schema.Defect()),
+  detail: Schema.String,
+}) {}
+
+const isOpenCodeProbeError = Schema.is(OpenCodeProbeError);
 
 function normalizeProbeMessage(message: string): string | undefined {
   const trimmed = message.trim();
@@ -50,7 +53,7 @@ function normalizeProbeMessage(message: string): string | undefined {
 }
 
 function normalizedErrorMessage(cause: unknown): string | undefined {
-  if (cause instanceof OpenCodeProbeError) {
+  if (isOpenCodeProbeError(cause)) {
     return normalizeProbeMessage(cause.detail);
   }
 
@@ -455,11 +458,7 @@ export interface OpenCode2Model extends OpenCodeRelease {
   readonly variants: ReadonlyArray<{ readonly id: string }>;
 }
 
-/**
- * One OpenCode instance fronts several providers, and their catalogues overlap:
- * OpenCode Zen and OpenCode Go both list Step 5 Preview Free. Naming the
- * sub-provider is what tells two such rows apart.
- */
+// Sub-provider names distinguish overlapping catalog entries.
 function subProviderLabelFor(input: {
   readonly providerID: string;
   readonly providerName?: string;
@@ -576,10 +575,7 @@ export function openCode2CommandsToServerProviderSlashCommands(
   return slashCommands;
 }
 
-/**
- * Auto asks like Supervised: OpenCode has no reviewer that approves routine
- * actions.
- */
+// OpenCode has no reviewer; Auto asks like Supervised.
 const OPENCODE_2_PRESENTATION = {
   ...OPENCODE_PRESENTATION,
   showInteractionModeToggle: true,
@@ -806,8 +802,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           binaryPath: openCodeSettings.binaryPath,
           directory: cwd,
           serverUrl: openCodeSettings.serverUrl,
-          ...(openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
+          ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)

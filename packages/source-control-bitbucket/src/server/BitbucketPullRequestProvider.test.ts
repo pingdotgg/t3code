@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -29,7 +30,7 @@ it.effect.each([
           source: { branch: { name: "release" } },
           destination: { branch: { name: "master" } },
           created_on: "2025-06-16T06:20:58.415108+00:00",
-          // Comments after a merge move this, so it is not the merge time.
+          // Comments after merging move this timestamp.
           updated_on: "2025-06-20T10:00:00.000000+00:00",
           closed_on: state === "OPEN" ? null : "2025-06-16T23:40:46.222238+00:00",
           links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/52" } },
@@ -175,6 +176,30 @@ it.effect("reads checks and PR state without diff, mergeability, or permission r
       reason: "rate-limited",
       retryAt: 120_000,
     });
+  }),
+);
+
+it.effect("serves only Bitbucket Cloud hosts unless an API base url is configured", () =>
+  Effect.gen(function* () {
+    const servedHosts = (env: Record<string, string>) =>
+      make.pipe(
+        Effect.map(({ servesHost }) =>
+          ["bitbucket.org", "altssh.bitbucket.org", "bitbucket.example.com"].filter(
+            (host) => servesHost?.(host) === true,
+          ),
+        ),
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+          ),
+        ),
+      );
+
+    expect(yield* servedHosts({})).toEqual(["bitbucket.org", "altssh.bitbucket.org"]);
+    expect(
+      yield* servedHosts({ T3CODE_BITBUCKET_API_BASE_URL: "https://bitbucket.example.com/api" }),
+    ).toEqual(["bitbucket.org", "altssh.bitbucket.org", "bitbucket.example.com"]);
   }),
 );
 

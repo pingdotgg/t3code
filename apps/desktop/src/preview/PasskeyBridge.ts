@@ -44,10 +44,7 @@ const ceremonyError = (name: string) =>
         DOM_EXCEPTION_NAMES.has(name) ? name : "NotAllowedError",
       );
 
-/**
- * Chromium ignores members it does not know, so functions and other uncloneable
- * values drop out here instead of failing the whole ceremony.
- */
+// Chromium drops unknown members; discard uncloneable values instead of failing the ceremony.
 const toCloneable = (value: unknown): unknown => {
   if (value instanceof ArrayBuffer) return value.slice(0);
   if (ArrayBuffer.isView(value)) {
@@ -64,9 +61,7 @@ const toCloneable = (value: unknown): unknown => {
   return value;
 };
 
-// The objects below borrow the native prototypes so `instanceof` checks pass.
-// Their own properties shadow the native getters, which only work on objects
-// Chromium created itself.
+// Shadow native getters: they reject objects Chromium did not create, even with the correct prototype.
 const withValues = <T extends object>(target: T, values: Record<string, unknown>) => {
   for (const [key, value] of Object.entries(values)) {
     Object.defineProperty(target, key, { value, enumerable: true, configurable: true });
@@ -202,10 +197,7 @@ const credentialFromGetResult = (data: Extract<GetCredentialResult, { success: t
 const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
-/**
- * Conditional (autofill and automatic upgrade) requests stay native: the system
- * sheet is modal and must not open on its own.
- */
+/** Keep conditional requests native so autofill and upgrades cannot open a modal sheet unprompted. */
 export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {
     return;
