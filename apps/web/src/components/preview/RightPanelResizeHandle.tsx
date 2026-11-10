@@ -20,7 +20,7 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       {...separatorProps}
       className={cn(
         // Chromium picks the cursor before useResizeDrag rules out a scrollbar thumb under the pointer.
-        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-default select-none data-[hover-zone=resize]:cursor-col-resize",
+        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-default touch-none select-none data-[hover-zone=resize]:cursor-col-resize any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
         className,
       )}
       {...handlers}
