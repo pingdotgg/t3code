@@ -345,7 +345,7 @@ export function useComposerAttachmentIntake(input: {
     }
     const confirmation = requestConfirmDialog(
       `Remove ${image?.name ?? "this image"} from the message?\nIt is referenced in your text; removing it also removes every reference.`,
-      { variant: "destructive" },
+      { variant: "destructive", confirmLabel: "Remove" },
     );
     if (!confirmation) {
       removeComposerImageFromDraft(imageId);
