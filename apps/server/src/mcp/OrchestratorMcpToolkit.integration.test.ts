@@ -20,7 +20,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -42,6 +42,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
@@ -214,6 +215,7 @@ describe("orchestrator MCP toolkit", () => {
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(rawTranscript, cwd),
       );
+      const replayGate = makeProviderReplayGate(["child.original.item/started"]);
       const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
         {
           name: "delegated-task-status/codex",
@@ -222,6 +224,7 @@ describe("orchestrator MCP toolkit", () => {
           runtimePolicyOverride: { cwd },
         },
         CodexOrchestratorReplayHarness,
+        { replayGate },
       );
       // SQL spans carry no bound parameters, so this records which thread each tool read.
       const threadRecordReads: Array<{
@@ -366,34 +369,41 @@ describe("orchestrator MCP toolkit", () => {
           mode: "async",
           clientRequestId: "delegate-codex-replay-1",
         };
-        const releaseRequest = yield* Deferred.make<void>();
-        const requestHeld = yield* Deferred.make<void>();
-        const replyReady = yield* Deferred.make<void>();
-        const lostReply = yield* Deferred.succeed(requestHeld, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseRequest)),
-          Effect.andThen(invoke("delegate_task", request)),
-          Effect.flatMap(() => Deferred.succeed(replyReady, undefined)),
-          Effect.andThen(Effect.never),
-          Effect.forkChild,
-        );
-        yield* Deferred.await(requestHeld);
         const before = yield* invoke("task_receipt", {
           clientRequestId: request.clientRequestId,
         });
         expect(
           (yield* decodeTaskReceiptResult(before.structuredContent).pipe(Effect.orDie)).acceptance,
         ).toBe("unknown");
-        yield* Deferred.succeed(releaseRequest, undefined);
-        yield* Deferred.await(replyReady);
-        yield* Fiber.interrupt(lostReply);
+        const waitingCall = yield* invoke("delegate_task", { ...request, mode: "wait" }).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.promise(() => replayGate.waitForReached("child.original.item/started"));
+        const acceptedCall = yield* invoke("task_receipt", {
+          clientRequestId: request.clientRequestId,
+        });
+        const accepted = yield* decodeTaskReceiptResult(acceptedCall.structuredContent).pipe(
+          Effect.orDie,
+        );
+        expect(accepted.acceptance).toBe("accepted");
+        expect(accepted.binding).not.toBeNull();
+        expect(waitingCall.pollUnsafe()).toBeUndefined();
+        yield* Fiber.interrupt(waitingCall);
         const recoveredCall = yield* invoke("task_receipt", {
           clientRequestId: request.clientRequestId,
         });
         const recovered = yield* decodeTaskReceiptResult(recoveredCall.structuredContent).pipe(
           Effect.orDie,
         );
-        expect(recovered.acceptance).toBe("accepted");
-        expect(recovered.binding).not.toBeNull();
+        expect(recovered.binding).toEqual(accepted.binding);
+        const activeChild = yield* orchestrator.getThreadProjection(
+          localChild(recovered.binding!.childThreadId),
+        );
+        expect(
+          activeChild.runs.find((run) => run.id === recovered.binding!.childRunId)?.status,
+        ).toBe("running");
+        expect(recovered.status).toBe("running");
+        yield* Effect.sync(() => replayGate.release("child.original.item/started"));
         const delegatedCall = yield* invoke("delegate_task", request);
         const delegatedStart = yield* decodeDelegateTaskResult(
           delegatedCall.structuredContent,
@@ -469,8 +479,14 @@ describe("orchestrator MCP toolkit", () => {
           costCoverage: "unknown",
           outcome: null,
         });
-        expect(completedReceipt.requestedAt).not.toBeNull();
-        expect(completedReceipt.startedAt).not.toBeNull();
+        const completedChild = yield* orchestrator.getThreadProjection(
+          localChild(delegatedStart.childThreadId),
+        );
+        const completedRun = completedChild.runs.find((run) => run.id === delegatedStart.childRunId);
+        expect(completedRun).toBeDefined();
+        expect(completedReceipt.requestedAt).toEqual(DateTime.formatIso(completedRun!.requestedAt!));
+        expect(completedReceipt.startedAt).toEqual(DateTime.formatIso(completedRun!.startedAt!));
+        expect(completedReceipt.completedAt).toEqual(DateTime.formatIso(completedRun!.completedAt!));
         expect(completedReceipt.completedAt).not.toBeNull();
         const delegatedStatusCall = yield* invoke("task_status", {
           taskId: delegatedStart.taskId,
@@ -885,6 +901,39 @@ describe("orchestrator MCP toolkit", () => {
             .filter(({ fields }) => fields.includes("runs") || fields.includes("contextTransfers"))
             .map(({ threadId }) => threadId),
         ).toEqual([delegated.childThreadId]);
+
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const parentRun = parent.runs.find((run) => run.status === "running");
+        expect(parentRun).toBeDefined();
+        const management = yield* ThreadManagementService.ThreadManagementService;
+        yield* management.forceStopThread({ threadId: parentThreadId, runId: parentRun!.id });
+        const stoppedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+        expect(stoppedParent.runs.find((run) => run.id === parentRun!.id)?.status).toBe(
+          "interrupted",
+        );
+        const providerRecovery = yield* invoke("task_receipt", {
+          clientRequestId: request.clientRequestId,
+        });
+        expect(
+          yield* decodeTaskReceiptResult(providerRecovery.structuredContent).pipe(Effect.orDie),
+        ).toEqual(completedReceipt);
+        const externalRecovery = yield* invoke(
+          "task_receipt",
+          {
+            clientRequestId: request.clientRequestId,
+            parentThreadId,
+            requestNamespace: invocation.requestNamespace,
+          },
+          externalScope,
+        );
+        expect(
+          yield* decodeTaskReceiptResult(externalRecovery.structuredContent).pipe(Effect.orDie),
+        ).toEqual(completedReceipt);
+        const denied = yield* invoke("delegate_task", {
+          ...request,
+          clientRequestId: "inactive-parent-dispatch",
+        });
+        expect(denied.isError).toBe(true);
       }).pipe(Effect.provide(layerTest));
     }),
   );
