@@ -2,7 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { type OrchestrationV2ProviderCapabilities } from "@t3tools/contracts";
 import { FxSettings } from "../settings.ts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -103,14 +103,17 @@ const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema
  * fx clips every tool result to 199 bytes, so a long sub-agent reply arrives
  * as cut-off `{"ok":…,"result":"…` JSON. Keeps the readable prefix and marks the cut.
  */
-function fxSubagentOutcome(
+export function fxSubagentOutcome(
   text: string,
 ): { readonly ok: boolean; readonly result: string | null } | undefined {
   const whole = decodeFxSubagentResult(text);
   if (Option.isSome(whole)) return whole.value;
   const clipped = /^\{"ok":(true|false),"result":"((?:[^"\\]|\\.)*)/.exec(text);
   if (clipped === null) return undefined;
-  const prefix = decodeJsonString(`"${(clipped[2] ?? "").replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`);
+  const fragment = clipped[2] ?? "";
+  const prefix = decodeJsonString(`"${fragment}"`).pipe(
+    Option.orElse(() => decodeJsonString(`"${fragment.replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`)),
+  );
   const cut = text[clipped[0].length] !== '"';
   return {
     ok: clipped[1] === "true",
@@ -160,7 +163,7 @@ export interface FxAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -207,7 +210,7 @@ export const makeFxAdapterV2 = Effect.fn("makeFxAdapterV2")(function* (
 
 export type FxAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
