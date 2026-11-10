@@ -3,6 +3,7 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
+import Constants from "expo-constants";
 
 import type {
   EnvironmentId,
@@ -37,6 +38,8 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
+import { serverEnvironment } from "../../state/server";
+import { authClientMetadata } from "../../lib/authClientMetadata";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -71,9 +74,11 @@ import {
 } from "../../state/use-remote-environment-registry";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isTriagePrompt, relinkTriagePlaybook } from "@t3tools/client-runtime/triage-prompt";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -575,6 +580,7 @@ export function NewTaskFlowProvider(
   };
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
+  const prepareTriage = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const [switchingToEnvironmentId, setSwitchingToEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
@@ -592,24 +598,48 @@ export function NewTaskFlowProvider(
     const request = {};
     latestSwitchRef.current = request;
     setSwitchingToEnvironmentId(environmentId);
-    const result = await openScratch({ environmentId, input: {} });
-    if (latestSwitchRef.current !== request) return false;
-    latestSwitchRef.current = null;
-    setSwitchingToEnvironmentId(null);
-    if (result._tag === "Success") {
-      setProject(result.value);
+    const settle = () => {
+      if (latestSwitchRef.current !== request) return false;
+      latestSwitchRef.current = null;
+      setSwitchingToEnvironmentId(null);
       return true;
+    };
+    const reportFailure = (
+      failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
+      fallback: string,
+    ) => {
+      if (isAtomCommandInterrupted(failure)) return;
+      const error = squashAtomCommandFailure(failure);
+      Dialog.alert("Could not switch machine", error instanceof Error ? error.message : fallback);
+    };
+    // The playbook and context file live on the machine that prepared them.
+    const draftKey = readFlow().draftKey;
+    const prepared =
+      draftKey !== null && isTriagePrompt(getComposerDraftSnapshot(draftKey).text)
+        ? await prepareTriage({
+            environmentId,
+            input: { client: authClientMetadata(Constants.expoConfig?.version) },
+          })
+        : null;
+    if (prepared?._tag === "Failure") {
+      if (settle()) reportFailure(prepared, "Triage could not start there.");
+      return false;
     }
-    if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      Dialog.alert(
-        "Could not switch machine",
-        error instanceof Error
-          ? error.message
-          : "The folder for threads without a project could not be created.",
+    const result = await openScratch({ environmentId, input: {} });
+    if (!settle()) return false;
+    if (result._tag === "Failure") {
+      reportFailure(result, "The folder for threads without a project could not be created.");
+      return false;
+    }
+    const currentDraftKey = readFlow().draftKey;
+    if (prepared !== null && currentDraftKey !== null) {
+      setComposerDraftText(
+        currentDraftKey,
+        relinkTriagePlaybook(getComposerDraftSnapshot(currentDraftKey).text, prepared.value.prompt),
       );
     }
-    return false;
+    setProject(result.value);
+    return true;
   };
 
   const setWorkspaceMode = (mode: WorkspaceMode) => {

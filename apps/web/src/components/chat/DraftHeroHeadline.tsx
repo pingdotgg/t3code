@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isTriagePrompt } from "@t3tools/client-runtime/triage-prompt";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
@@ -14,7 +15,6 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "~/hooks/useOrderWhileOpen";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
-import { isTriagePrompt } from "~/hooks/useStartTriage";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {

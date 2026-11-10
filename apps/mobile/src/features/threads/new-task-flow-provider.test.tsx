@@ -52,6 +52,9 @@ vi.mock("../../state/vcs", () => ({
 vi.mock("../../state/projects", () => ({
   projectEnvironment: { readFile: mocks.readFile, openScratch: {} },
 }));
+vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
+vi.mock("../../lib/authClientMetadata", () => ({ authClientMetadata: vi.fn() }));
+vi.mock("expo-constants", () => ({ default: {} }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: mocks.session },
 }));
