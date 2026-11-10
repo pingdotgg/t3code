@@ -166,6 +166,10 @@ function makeHarness(options: HarnessOptions = {}) {
     (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["removeWorktree"]>[0]) =>
       Effect.void,
   );
+  const deleteLocalBranch = vi.fn(
+    (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["deleteLocalBranch"]>[0]) =>
+      Effect.void,
+  );
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
   );
@@ -195,6 +199,7 @@ function makeHarness(options: HarnessOptions = {}) {
               : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
+      workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
@@ -211,6 +216,7 @@ function makeHarness(options: HarnessOptions = {}) {
       remoteBranchExists: () => Effect.succeed(true),
       listLocalBranchNames: () => Effect.succeed([]),
       removeWorktree,
+      deleteLocalBranch,
       ...options.git,
     }),
     Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
@@ -264,7 +270,12 @@ function makeHarness(options: HarnessOptions = {}) {
   });
   const layerTitleRegeneration = ThreadTitleRegeneration.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerThreadManagement, layerProjectedProjects, layerExternalServices),
+      Layer.mergeAll(
+        layerThreadManagement,
+        layerProjectedProjects,
+        layerExternalServices,
+        NodeServices.layer,
+      ),
     ),
   );
   return {
@@ -279,6 +290,7 @@ function makeHarness(options: HarnessOptions = {}) {
     ),
     createWorktree,
     removeWorktree,
+    deleteLocalBranch,
     renameBranch,
     generateBranchName,
     generateThreadTitle,
@@ -404,7 +416,11 @@ it.effect(
     );
     return Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
-      const threadId = ThreadId.make("thread:missing");
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const { threadId } = yield* launches.launch(
+        launchInput({ command: "command:missing", thread: "thread:missing" }),
+      );
       const { task } = yield* tasks.upsert({
         title: "Daily audit",
         prompt: "Audit performance and crashes.",
@@ -418,6 +434,11 @@ it.effect(
         interactionMode: "default",
         createdBy: "user",
         creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("command:missing:delete"),
+        threadId,
       });
       const result = yield* tasks.runNow({ id: task.id });
       assert.equal(result.task.lastRunStatus, "failed");
@@ -513,6 +534,21 @@ it.effect("retains automation and sender attribution while a message waits in th
     assert.equal(message?.scheduledTaskId, scheduledTaskId);
     assert.equal(message?.senderThreadId, senderThreadId);
     assert.equal(message?.text, "Run the audit");
+    // A fresh send queues instead of steering, so it needs no steerable run.
+    const fresh = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:automation:queued-fresh"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:automation:queued-fresh"),
+      text: "Start over",
+      attachments: [],
+      mode: "steer",
+      freshContext: true,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(fresh.delivery, "queued");
+    assert.isTrue(fresh.run.freshContext);
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -1116,7 +1152,7 @@ it.effect.each(["stable", "upstream/release"])(
       Effect.provide(
         GitVcsDriver.layer.pipe(
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-remote-git-" })),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),
@@ -2191,8 +2227,15 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
 it.effect("cancels tracked setup before provider work is released", () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>();
+    const renamed = yield* Deferred.make<void>();
     const harness = makeHarness({
-      runSetup: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      renameBranch: (input) =>
+        Deferred.succeed(renamed, undefined).pipe(Effect.as({ branch: input.newBranch })),
+      runSetup: () =>
+        Deferred.await(renamed).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Effect.never),
+        ),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -2213,9 +2256,48 @@ it.effect("cancels tracked setup before provider work is released", () =>
       const projection = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(projection.runs[0]?.status, "failed");
       assert.isNull(projection.thread.worktreePath);
+      assert.deepEqual(harness.deleteLocalBranch.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        refName: "generated-branch",
+        force: true,
+      });
       assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect(
+  "deletes a claimed worktree's branch when setup is cancelled before checkout returns",
+  () =>
+    Effect.gen(function* () {
+      const claimed = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        createWorktree: (_input, options) =>
+          (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
+            Effect.andThen(Deferred.succeed(claimed, undefined)),
+            Effect.andThen(Effect.never),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "launch:cancel-claimed",
+            thread: "thread:cancel-claimed",
+            message: "Start",
+            workspace: { type: "worktree", baseRef: "main" },
+          }),
+        );
+        yield* Deferred.await(claimed);
+        assert.isTrue(yield* tracker.cancel(launched.threadId));
+        assert.equal(harness.removeWorktree.mock.calls[0]?.[0].path, "/repo-worktrees/feature");
+        assert.equal(
+          harness.deleteLocalBranch.mock.calls[0]?.[0].refName,
+          harness.createWorktree.mock.calls[0]?.[0].newRefName,
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("stops an in-flight branch rename when tracked setup is cancelled", () =>
@@ -2262,6 +2344,10 @@ it.effect("stops an in-flight branch rename when tracked setup is cancelled", ()
       );
       assert.equal(harness.renameBranch.mock.calls.length, 0);
       assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath);
+      assert.equal(
+        harness.deleteLocalBranch.mock.calls[0]?.[0].refName,
+        harness.createWorktree.mock.calls[0]?.[0].newRefName,
+      );
     }).pipe(Effect.provide(harness.layer));
   }),
 );
