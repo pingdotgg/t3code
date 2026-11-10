@@ -1554,6 +1554,7 @@ describe("EnvironmentSupervisor routes", () => {
     (lanReadiness) =>
       Effect.gen(function* () {
         const lanWaiting = yield* Deferred.make<void>();
+        const relayMayConnect = yield* Deferred.make<void>();
         const harness = yield* makeHarness({
           checkRoute: (route) =>
             Effect.succeed(
@@ -1580,7 +1581,7 @@ describe("EnvironmentSupervisor routes", () => {
                         ),
                   ),
                 )
-              : Effect.void,
+              : Deferred.await(relayMayConnect),
         });
         const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
           initiallyDesired: true,
@@ -1588,6 +1589,9 @@ describe("EnvironmentSupervisor routes", () => {
 
         yield* Deferred.await(lanWaiting);
         yield* TestClock.adjust("500 millis");
+        // A late LAN failure does not end the race while relay is still connecting.
+        yield* TestClock.adjust("5 seconds");
+        yield* Deferred.succeed(relayMayConnect, undefined);
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
         expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
           "RelayConnectionTarget",
@@ -1596,6 +1600,76 @@ describe("EnvironmentSupervisor routes", () => {
         expect(yield* Ref.get(harness.sessionCount)).toBe(2);
         expect(yield* Ref.get(harness.releaseCount)).toBe(1);
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("gives a later answering route its own head start before racing relay", () =>
+    Effect.gen(function* () {
+      const secondLanTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:second-lan",
+      });
+      const entry: ConnectionCatalogEntry = {
+        ...LAN_THEN_RELAY_ENTRY,
+        alternateRoutes: [
+          {
+            target: secondLanTarget,
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: secondLanTarget.connectionId,
+                environmentId: TARGET.environmentId,
+                label: TARGET.label,
+                httpBaseUrl: "http://192.168.56.1:3773/",
+                wsBaseUrl: "ws://192.168.56.1:3773/",
+              }),
+            ),
+          },
+          { target: RELAY_TARGET, profile: Option.none() },
+        ],
+      };
+      const isFirstLan = (target: ConnectionTarget) =>
+        connectionRouteId(target) === LAN_TARGET.connectionId;
+      const firstLanPreparing = yield* Deferred.make<void>();
+      const secondLanWaiting = yield* Deferred.make<void>();
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(
+            isFirstLan(route.target) || route.target._tag !== "BearerConnectionTarget"
+              ? "unchecked"
+              : "answered",
+          ),
+        // The first LAN route spends the whole head start failing.
+        prepare: (_attempt, target) => {
+          attempted.push(connectionRouteId(target));
+          return isFirstLan(target)
+            ? Deferred.succeed(firstLanPreparing, undefined).pipe(
+                Effect.andThen(Effect.sleep("1 second")),
+                Effect.andThen(Effect.fail(transient("First LAN route failed."))),
+              )
+            : Effect.succeed(preparedFor(target));
+        },
+        ready: () =>
+          Deferred.succeed(secondLanWaiting, undefined).pipe(
+            Effect.andThen(Effect.sleep("200 millis")),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstLanPreparing);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(secondLanWaiting);
+      yield* TestClock.adjust("200 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(secondLanTarget.connectionId);
+      expect(attempted).toEqual([LAN_TARGET.connectionId, secondLanTarget.connectionId]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps waiting for a slow LAN route when relay fails its identity check", () =>

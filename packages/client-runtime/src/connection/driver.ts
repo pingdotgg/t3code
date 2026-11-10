@@ -110,10 +110,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   ) {
     const directScope = yield* Scope.fork(attemptScope);
     const direct = yield* Effect.forkChild(attempt(route, directScope));
-    const early = yield* Effect.raceFirst(
-      Fiber.join(direct).pipe(Effect.asSome),
-      Fiber.join(headStart).pipe(Effect.as(Option.none())),
-    );
+    const early = yield* Fiber.join(direct).pipe(Effect.timeoutOption(ROUTE_CHECK_HEAD_START_MS));
     if (Option.isSome(early)) return early.value;
     relayTried = true;
     const relayScope = yield* Scope.fork(attemptScope);
