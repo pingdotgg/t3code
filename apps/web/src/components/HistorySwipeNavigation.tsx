@@ -46,12 +46,12 @@ function isMouseWheelNotch(event: WheelEvent): boolean {
     wheelDeltaX?: number;
     wheelDeltaY?: number;
   };
-  if (wheelDeltaX === 0 && wheelDeltaY === 0) return false;
   const zoom = window.desktopBridge?.getWindowZoomFactor() ?? 1;
-  return [wheelDeltaX, wheelDeltaY].every((wheelDelta) => {
-    const notches = (wheelDelta * zoom) / WHEEL_NOTCH_DELTA;
-    return Math.abs(notches - Math.round(notches)) * WHEEL_NOTCH_DELTA <= zoom;
-  });
+  const notches = [wheelDeltaX, wheelDeltaY].map((delta) => (delta * zoom) / WHEEL_NOTCH_DELTA);
+  return (
+    notches.some((count) => Math.round(count) !== 0) &&
+    notches.every((count) => Math.abs(count - Math.round(count)) * WHEEL_NOTCH_DELTA <= zoom)
+  );
 }
 
 // `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.

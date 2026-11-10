@@ -70,6 +70,12 @@ describe("HistorySwipeNavigation", () => {
       ],
       true,
     ],
+    [
+      "a macOS trackpad swipe opening with one native pixel at 299% zoom navigates",
+      1.2 ** 6,
+      [[-1 / 1.2 ** 6, 1], ...Array.from({ length: 6 }, () => [-60 / 1.2 ** 6, 60] as const)],
+      true,
+    ],
     ["an accelerated macOS mouse wheel notch keeps the thread", 1, [[-200, 240]], false],
     [
       "slow macOS mouse wheel notches keep the thread",
