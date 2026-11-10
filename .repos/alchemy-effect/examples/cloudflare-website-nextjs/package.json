@@ -2,6 +2,11 @@
   "name": "cloudflare-website-nextjs",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-nextjs"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -15,7 +20,9 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@opennextjs/cloudflare": "catalog:",
     "@tailwindcss/postcss": "catalog:",
     "@types/react": "catalog:",
@@ -27,10 +34,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/cloudflare-website-nextjs"
   }
 }
