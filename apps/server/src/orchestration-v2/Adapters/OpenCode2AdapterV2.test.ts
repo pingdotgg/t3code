@@ -317,6 +317,8 @@ const colorForm = {
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
+    readonly version?: "2.2.5";
+    readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly replayGate?: ProviderReplayGate;
@@ -328,22 +330,28 @@ const resumed = (
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
-      withInstructions([
+      [
         ...opening,
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
-        ...(options?.supervised === true
-          ? [
-              out("agent.list", "<any>"),
-              reply("agent.list", agentList),
-              out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-              reply("session.update", null),
-            ]
+        ...(options?.version === "2.2.5"
+          ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
           : []),
-        ...entries,
-      ]),
+        ...withInstructions([
+          ...(options?.supervised === true
+            ? [
+                out("agent.list", "<any>"),
+                reply("agent.list", agentList),
+                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                reply("session.update", null),
+              ]
+            : []),
+          ...entries,
+        ]),
+      ],
       {
+        ...(options?.version === undefined ? {} : { version: options.version }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
         ...(options?.external === undefined ? {} : { external: options.external }),
@@ -357,7 +365,10 @@ const resumed = (
       },
     );
     const thread = yield* runtime.resumeThread({
-      providerThread: providerThread(yield* DateTime.now),
+      providerThread: {
+        ...providerThread(yield* DateTime.now),
+        ...(options?.goal === undefined ? {} : { goal: options.goal }),
+      },
       threadId,
       modelSelection: bigPickle,
       runtimePolicy: policy(options?.supervised === true ? "approval-required" : "full-access"),
@@ -5044,6 +5055,51 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.lengthOf(offers, 1);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
+  it.effect.each(["", "pause", "clear", "resume", "Write proof.txt"])(
+    "preserves older OpenCode goal command execution for /goal %s",
+    (control) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            out("command.list", "<any>"),
+            reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+            out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+            reply("message.list", { data: [], cursor: {} }),
+            out("session.command", { sessionID: SESSION, name: "goal", text: control }),
+            reply("session.command", null),
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_legacy_goal",
+              ordinal: 0,
+              text: "Legacy command finished",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { goal: { objective: "Saved before downgrade", status: "active" } },
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const input = turnInput(thread);
+        yield* runtime.startTurn({
+          ...input,
+          message: { ...input.message, text: `/goal ${control}`.trim() },
+        });
+        const collected = yield* Fiber.join(events);
+        assert.isTrue(
+          collected.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "assistant_message" &&
+              e.turnItem.text === "Legacy command finished",
+          ),
+        );
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("reads an existing OpenCode 2.2.5 goal when resuming a session", () =>
     Effect.gen(function* () {
       const runtime = yield* openCode2ReplayRuntime(
@@ -5081,23 +5137,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     "keeps an OpenCode goal turn open across executions until its goal is %s",
     (status) =>
       Effect.gen(function* () {
-        const { runtime, thread } = yield* resumed([
-          out("command.list", "<any>"),
-          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
-          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
-          reply("message.list", { data: [], cursor: {} }),
-          out("session.command", { sessionID: SESSION, name: "goal", text: "Write proof.txt" }),
-          reply("session.command", null),
-          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-          ...(status === "complete"
-            ? [event("session.execution.started", { sessionID: SESSION })]
-            : []),
-          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
-          ...(status === "complete"
-            ? [event("session.execution.succeeded", { sessionID: SESSION })]
-            : []),
-        ]);
+        const { runtime, thread } = yield* resumed(
+          [
+            out("command.list", "<any>"),
+            reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+            out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+            reply("message.list", { data: [], cursor: {} }),
+            out("session.command", { sessionID: SESSION, name: "goal", text: "Write proof.txt" }),
+            reply("session.command", null),
+            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            ...(status === "complete"
+              ? [event("session.execution.started", { sessionID: SESSION })]
+              : []),
+            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
+            ...(status === "complete"
+              ? [event("session.execution.succeeded", { sessionID: SESSION })]
+              : []),
+          ],
+          { version: "2.2.5" },
+        );
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((e) => e.type === "turn.terminal"),
           Stream.runCollect,
@@ -5149,6 +5208,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 event("rpc.opencode.goal.changed", { sessionID: SESSION, goal }),
                 reply("session.command", null),
               ],
+          { version: "2.2.5" },
         );
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((e) => e.type === "turn.terminal"),

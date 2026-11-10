@@ -712,6 +712,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     },
   ) {
     let connection = initial.connection;
+    const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
+    const hasActiveGoal = (state: ThreadState) =>
+      supportsNativeGoals() && state.providerThread.goal?.status === "active";
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
@@ -2327,10 +2330,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       end: TurnTerminal,
     ) {
-      if (
-        end.status === "completed" &&
-        (turn.steers.size > 0 || state.providerThread.goal?.status === "active")
-      ) {
+      if (end.status === "completed" && (turn.steers.size > 0 || hasActiveGoal(state))) {
         turn.heldEnd = end;
         return;
       }
@@ -2338,9 +2338,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const endIfSettled = (state: ThreadState, turn: ActiveTurn) =>
-      turn.heldEnd !== undefined &&
-      turn.steers.size === 0 &&
-      state.providerThread.goal?.status !== "active"
+      turn.heldEnd !== undefined && turn.steers.size === 0 && !hasActiveGoal(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
@@ -2466,6 +2464,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const state = threads.get(sessionId);
       if (state === undefined) return;
       if (event.type === "rpc.opencode.goal.changed") {
+        if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
         if (goal._tag === "Failure") return;
         yield* updateGoal(state, goal.success);
@@ -2639,7 +2638,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
     const reconcile = Effect.gen(function* () {
-      if (compareSemverVersions(connection.version, "2.2.5") >= 0) {
+      if (supportsNativeGoals()) {
         for (const state of threads.values()) {
           yield* readGoal(state).pipe(
             Effect.timeout(INVENTORY_TIMEOUT),
@@ -3453,7 +3452,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       const id = turnPromptId(sessionId, turnInput.attemptId);
-      const goalCommand = parseGoalCommand(turnInput.message);
+      const goalCommand = supportsNativeGoals() ? parseGoalCommand(turnInput.message) : null;
       if (goalCommand?.type === "show") {
         if (!sending()) return;
         yield* readGoal(state);
@@ -3618,7 +3617,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const loaded = threads.has(sessionId);
           const state = register(providerThread, native, cwd ?? native.location.directory);
           if (!loaded) yield* stopLeftoverRequests(state);
-          if (!loaded && compareSemverVersions(connection.version, "2.2.5") >= 0) {
+          if (!loaded && supportsNativeGoals()) {
             yield* lock
               .withPermit(readGoal(state))
               .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
