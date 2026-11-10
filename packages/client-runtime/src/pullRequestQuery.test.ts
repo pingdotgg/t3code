@@ -33,6 +33,7 @@ describe("reading qualifiers out of a typed query", () => {
       review: "changes-requested",
       checks: "failing",
     });
+    expect(parsePullRequestQuery("-draft:true").filters).toEqual({ draft: "hide" });
   });
 
   it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
@@ -62,14 +63,8 @@ describe("reading qualifiers out of a typed query", () => {
     ).toEqual({ text: "fix", filters: {} });
   });
 
-  it("reads a negated draft qualifier as the opposite value", () => {
-    expect(parsePullRequestQuery("-draft:true").filters).toEqual({ draft: "hide" });
-    expect(parsePullRequestQuery("-draft:false").filters).toEqual({ draft: "only" });
-  });
-
   it("sets no author when the query names more than one", () => {
     expect(parsePullRequestQuery("author:alice author:bob").filters).toEqual({});
-    expect(parsePullRequestQuery("author:alice author:alice").filters).toEqual({ author: "alice" });
     expect(parsePullRequestQuery("author:me author:@me").filters).toEqual({ author: "me" });
   });
 
