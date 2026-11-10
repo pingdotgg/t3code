@@ -389,23 +389,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "project lookup with unavailable workspaces",
   (it) => {
-    it.effect.each(["id", "stored path"] as const)(
-      "removes an empty project by %s after its directory is gone",
-      (identifier) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
-          yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
-          yield* runCli([
-            "project",
-            "remove",
-            identifier === "id" ? project.id : workspaceRoot,
-            "--base-dir",
-            baseDir,
-          ]);
-          assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-          assert.isFalse(yield* fs.exists(workspaceRoot));
-        }),
+    it.effect.each([
+      "id",
+      "stored path",
+      "relative path",
+      "path with a trailing separator",
+    ] as const)("removes an empty project by %s after its directory is gone", (identifier) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+        yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
+        const target = {
+          id: project.id,
+          "stored path": workspaceRoot,
+          "relative path": NodePath.relative(process.cwd(), workspaceRoot),
+          "path with a trailing separator": `${workspaceRoot}${NodePath.sep}`,
+        }[identifier];
+        yield* runCli(["project", "remove", target, "--base-dir", baseDir]);
+        assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+        assert.isFalse(yield* fs.exists(workspaceRoot));
+      }),
     );
 
     it.effect("does not resolve another environment's project ID in an empty database", () =>

@@ -1,6 +1,6 @@
+import { Buffer } from "node:buffer";
 import * as Effect from "effect/Effect";
 import type { Zippable } from "fflate";
-import { Buffer } from "node:buffer";
 
 export interface ZipFile {
   path: string;
@@ -31,9 +31,7 @@ export const zipCode = Effect.fn(function* (
 export const zipFiles = Effect.fn(function* (files: ReadonlyArray<ZipFile>) {
   const { zipSync, strToU8 } = yield* Effect.promise(() => import("fflate"));
   const entries: Zippable = Object.create(null);
-  for (const file of [...files].sort((a, b) =>
-    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
-  )) {
+  for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     entries[file.path] = [
       typeof file.content === "string" ? strToU8(file.content) : file.content,
       { attrs: (file.mode ?? 0o100644) << 16 },
@@ -46,14 +44,10 @@ export const zipFiles = Effect.fn(function* (files: ReadonlyArray<ZipFile>) {
  * Expand a zip archive into its file entries. Directory entries are dropped,
  * so every returned path addresses real content.
  */
-export const unzipFiles = Effect.fn(function* (
-  archive: Uint8Array<ArrayBufferLike>,
-) {
+export const unzipFiles = Effect.fn(function* (archive: Uint8Array<ArrayBufferLike>) {
   const { unzipSync } = yield* Effect.promise(() => import("fflate"));
   const entries = yield* Effect.try(() => unzipSync(archive));
-  const files: Record<string, Uint8Array<ArrayBufferLike>> = Object.create(
-    null,
-  );
+  const files: Record<string, Uint8Array<ArrayBufferLike>> = Object.create(null);
   for (const [path, content] of Object.entries(entries)) {
     if (path.endsWith("/")) continue;
     files[path] = content;

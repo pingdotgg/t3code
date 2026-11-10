@@ -480,17 +480,26 @@ const PROC_NET_TCP6 = `  sl  local_address                         remote_addres
 `;
 
 effectIt.effect(
-  "reads Linux listeners from /proc when lsof is missing, and stops spawning it",
+  "prefers Linux /proc over installed lsof, and bounds repeated socket owner lookups",
   () => {
     let lsofSpawns = 0;
     const fdWalks: string[] = [];
     const procFiles: Record<string, string> = {
-      "/proc/net/tcp": PROC_NET_TCP,
+      "/proc/net/tcp":
+        PROC_NET_TCP +
+        PROC_NET_TCP.split("\n")[1]!
+          .replace("0100007F:223D", "0101007F:1388")
+          .replace("5001", "5007"),
       "/proc/net/tcp6": PROC_NET_TCP6,
       "/proc/4242/comm": "python3\n",
     };
     const procFds: Record<string, Record<string, string>> = {
-      "4242": { "0": "/dev/null", "3": "socket:[5001]" },
+      "4242": {
+        "0": "/dev/null",
+        "3": "socket:[5001]",
+        "4": "socket:[5004]",
+        "5": "socket:[5007]",
+      },
       "77": { "5": "socket:[9999]" },
     };
     const missing = FileSystem.makeNoop({});
@@ -519,9 +528,9 @@ effectIt.effect(
       return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
     }) as typeof globalThis.fetch;
     const layer = layerProbeFailure(
-      (input) => {
+      () => {
         lsofSpawns += 1;
-        return processProbeFailure(input);
+        return Effect.succeed(processOutput("p4242\ncpython3\nn*:3001\nn*:8765\n"));
       },
       fetchFn,
       fileSystem,
@@ -532,17 +541,136 @@ effectIt.effect(
       const first = yield* scanner.scan();
       expect(
         first.map(({ port, pid, processName, url }) => ({ port, pid, processName, url })),
-      ).toEqual([{ port: 8765, pid: 4242, processName: "python3", url: "http://localhost:8765" }]);
+      ).toEqual([
+        { port: 3001, pid: 4242, processName: "python3", url: "http://localhost:3001" },
+        { port: 8765, pid: 4242, processName: "python3", url: "http://localhost:8765" },
+      ]);
       yield* scanner.scan();
-      expect(lsofSpawns).toBe(1);
+      expect(lsofSpawns).toBe(0);
       expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
       yield* scanner.scan();
       yield* scanner.scan();
       expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
+      procFds["77"]!["6"] = "socket:[5006]";
+      procFiles["/proc/net/tcp6"] =
+        PROC_NET_TCP6 + PROC_NET_TCP.split("\n")[1]!.replace("5001", "5006");
+      expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([3001]);
+      const walksAfterCollision = fdWalks.length;
+      procFiles["/proc/net/tcp"] = PROC_NET_TCP.split("\n")[0]!;
+      procFiles["/proc/net/tcp6"] = PROC_NET_TCP6.split("\n")[0]!;
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(lsofSpawns).toBe(0);
+      expect(fdWalks).toHaveLength(walksAfterCollision);
       expect(requests).toEqual([]);
+
+      procFiles["/proc/net/tcp"] = PROC_NET_TCP;
+      procFiles["/proc/net/tcp6"] = PROC_NET_TCP6;
+      expect((yield* scanner.scan()).map(({ pid }) => pid)).toEqual([4242, 4242]);
+      yield* scanner.retain.pipe(Effect.scoped);
+      procFds["77"] = procFds["4242"]!;
+      delete procFds["4242"];
+      procFiles["/proc/77/comm"] = "python3\n";
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [77],
+      });
+      expect((yield* scanner.scan()).map(({ port, pid }) => ({ port, pid }))).toEqual([
+        { port: 3001, pid: 77 },
+        { port: 8765, pid: 77 },
+      ]);
     }).pipe(Effect.provide(layer));
   },
 );
+
+effectIt.effect.each([
+  { mode: "missing", fallback: true },
+  { mode: "denied", fallback: true },
+  { mode: "invalid", fallback: true },
+  { mode: "fd-unavailable", fallback: true },
+  { mode: "fd-budget", fallback: true },
+  { mode: "fd-budget-no-lsof", fallback: true },
+  { mode: "ipv6-denied", fallback: true },
+  { mode: "ipv6-absent", fallback: false },
+  { mode: "empty", fallback: false },
+  { mode: "darwin", fallback: true },
+] as const)("uses lsof only if Linux /proc is unusable: $mode", ({ mode, fallback }) => {
+  let lsofSpawns = 0;
+  let procWalks = 0;
+  const missing = FileSystem.makeNoop({});
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          readFileString: (path) => {
+            if (!path.startsWith("/proc/net/tcp") || mode === "missing") {
+              return missing.readFileString(path);
+            }
+            if (mode === "denied" || (mode === "ipv6-denied" && path.endsWith("tcp6"))) {
+              return Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFileString",
+                }),
+              );
+            }
+            if (mode === "ipv6-absent" && path.endsWith("tcp6")) {
+              return missing.readFileString(path);
+            }
+            if (mode === "invalid") return Effect.succeed("unusable table");
+            return Effect.succeed(
+              mode === "fd-unavailable" || mode.startsWith("fd-budget")
+                ? PROC_NET_TCP
+                : PROC_NET_TCP.split("\n")[0]!,
+            );
+          },
+          readDirectory: (path) => {
+            if (!mode.startsWith("fd-budget")) return missing.readDirectory(path);
+            if (path === "/proc") procWalks += 1;
+            if (mode === "fd-budget-no-lsof") {
+              if (path === "/proc") return Effect.succeed(["1234", "9999"]);
+              if (path === "/proc/1234/fd") return Effect.succeed(["3"]);
+            }
+            return Effect.succeed(
+              path === "/proc"
+                ? ["1", "1234"]
+                : Array.from({ length: 50_000 }, (_, i) => String(i)),
+            );
+          },
+          readLink: (path) =>
+            mode === "fd-budget-no-lsof" && path === "/proc/1234/fd/3"
+              ? Effect.succeed("socket:[5001]")
+              : mode.startsWith("fd-budget")
+                ? Effect.succeed("/dev/null")
+                : missing.readLink(path),
+        }),
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            lsofSpawns += 1;
+            if (mode === "fd-budget-no-lsof") return processProbeFailure(input);
+            return Effect.succeed(processOutput(`p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`));
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, mode === "darwin" ? "darwin" : "linux"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    expect((yield* scanner.scan()).map(({ port }) => port)).toEqual(
+      mode === "fd-budget-no-lsof" ? [8765] : fallback ? [LSOF_TEST_PORT] : [],
+    );
+    if (mode === "fd-budget-no-lsof") {
+      for (let i = 0; i < 3; i += 1) {
+        expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([8765]);
+      }
+      expect(procWalks).toBe(4);
+    }
+    expect(lsofSpawns).toBe(fallback ? 1 : 0);
+  }).pipe(Effect.provide(layer));
+});
 
 effectIt.effect("ignores a partial Windows netstat snapshot when one query exits nonzero", () => {
   let ipv6Fails = true;

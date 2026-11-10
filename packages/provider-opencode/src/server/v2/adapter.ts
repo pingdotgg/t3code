@@ -16,6 +16,7 @@ import {
 import { Mcp } from "@opencode/schema/mcp";
 import {
   isOrchestrationV2WorkActive,
+  parseGoalCommand,
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
@@ -26,12 +27,14 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type MessageId,
   type ModelSelection,
+  type PlanId,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type RunId,
@@ -61,6 +64,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -87,7 +91,27 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeToolTurnItem } from "../toolItems.ts";
+import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+
+const NativeGoal = Schema.NullOr(
+  Schema.Struct({
+    objective: Schema.NonEmptyString,
+    status: Schema.Literals(["active", "paused", "complete"]),
+    rounds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    reason: Schema.optional(Schema.String),
+  }),
+);
+const decodeGoal = Schema.decodeUnknownEffect(NativeGoal);
+
+const NativeTodoList = Schema.Struct({
+  todos: Schema.Array(
+    Schema.Struct({
+      content: Schema.String,
+      status: Schema.Literals(["pending", "in_progress", "completed", "cancelled"]),
+    }),
+  ),
+});
+const isNativeTodoList = Schema.is(NativeTodoList);
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -141,8 +165,8 @@ const OpenCode2ProviderCapabilities = {
     approvalsCanOriginateFromSubagents: true,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
     emitsProposedPlan: false,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
@@ -219,6 +243,7 @@ interface ActiveTurn {
   before: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
+  todoPlanId: PlanId | undefined;
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -278,6 +303,10 @@ interface OpenBlock {
 interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
+  publishedBackgroundWork?: boolean;
+  goalRevision: number;
+  goalFresh: boolean;
+  goalRefreshing: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -626,18 +655,12 @@ const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
 
 const commandOf = (text: string) => {
-  const match = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
 
-const SKILL_MENTION = new RegExp(SKILL_MENTION_PATTERN.source, "u");
-
-const skillsNamed = (text: string, known: ReadonlySet<string>) => [
-  ...new Set(
-    [...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) =>
-      known.has(match[2] ?? "") ? [match[2]!] : [],
-    ),
-  ),
+const skillMentions = (text: string) => [
+  ...new Set([...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => match[2] ?? [])),
 ];
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
@@ -678,6 +701,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Digest.Digest;
   const driver = OPENCODE_PROVIDER;
+  let nativeGoalSupport: boolean | undefined;
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
@@ -705,6 +729,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     },
   ) {
     let connection = initial.connection;
+    const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
+    nativeGoalSupport = supportsNativeGoals();
+    const goalHoldsTurn = (state: ThreadState) =>
+      supportsNativeGoals() &&
+      (state.goalRefreshing || (state.goalFresh && state.providerThread.goal?.status === "active"));
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
@@ -720,7 +749,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: "ready",
       cwd: input.runtimePolicy.cwd ?? host.paths.cwd,
       model: input.modelSelection.model,
-      capabilities: OpenCode2ProviderCapabilities,
+      capabilities: {
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          supportsNativeGoals: supportsNativeGoals(),
+        },
+      },
       createdAt: now,
       updatedAt: now,
       lastError: null,
@@ -759,6 +794,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ): ThreadState => ({
       sessionId,
       providerThread,
+      goalRevision: 0,
+      goalFresh: false,
+      goalRefreshing: false,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
@@ -838,6 +876,57 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       [...state.calls.values()].some((call) => call.background);
 
     const hasBackground = (thread: ThreadState) => sessionsOf(thread).some(owesWork);
+
+    const emitProviderThread = Effect.fnUntraced(function* (state: ThreadState) {
+      const pendingBackgroundWork = hasBackground(state);
+      state.publishedBackgroundWork = pendingBackgroundWork;
+      yield* emit({
+        type: "provider_thread.updated",
+        driver,
+        providerThread: state.providerThread,
+        pendingBackgroundWork,
+      });
+    });
+
+    // Goal changes share the event stream, so do not create a span per notification.
+    const updateGoal = Effect.fnUntraced(function* (
+      state: ThreadState,
+      goal: typeof NativeGoal.Type,
+    ) {
+      state.goalRevision += 1;
+      state.goalFresh = true;
+      state.goalRefreshing = false;
+      state.providerThread = {
+        ...state.providerThread,
+        goal:
+          goal === null
+            ? null
+            : {
+                objective: goal.objective,
+                status: goal.status,
+                checks: goal.rounds,
+                ...(goal.reason === undefined ? {} : { lastCheck: goal.reason }),
+              },
+        updatedAt: yield* DateTime.now,
+      };
+      yield* emitProviderThread(state);
+    });
+
+    const readGoal = Effect.fn("OpenCode2Adapter.readGoal")(function* (state: ThreadState) {
+      const revision = state.goalRevision;
+      const result = yield* client.rpc.call({
+        rpcID: "opencode.goal",
+        method: "get",
+        location: { directory: state.directory },
+        input: { sessionID: state.sessionId },
+      });
+      const goal = yield* decodeGoal(result.output);
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+        }),
+      );
+    });
 
     const setSessionStatus =
       /* Provider events include streaming deltas; avoid a span for each update. */
@@ -985,29 +1074,112 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
+    // Todo updates share the provider event span.
+    const emitTodo = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      todos: typeof NativeTodoList.Type.todos,
+    ) {
+      turn.todoPlanId ??= yield* idAllocator.allocate.plan({
+        threadId: turn.input.threadId,
+        ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+        driver,
+      });
+      const nativeId = `${state.sessionId}:todo:${turn.providerTurn.id}`;
+      const now = yield* DateTime.now;
+      const startedAt = turn.startedAt.get(nativeId) ?? now;
+      turn.startedAt.set(nativeId, startedAt);
+      const steps: Array<OrchestrationV2PlanStep> = todos.flatMap((todo, index) =>
+        todo.status === "cancelled"
+          ? []
+          : [
+              {
+                id: `${nativeId}:${index + 1}`,
+                text: todo.content.trim() || `Todo ${index + 1}`,
+                status:
+                  todo.status === "completed"
+                    ? "completed"
+                    : todo.status === "in_progress"
+                      ? "running"
+                      : "pending",
+              },
+            ],
+      );
+      const base = itemBase(state, turn, nativeId, "completed", startedAt, now, now);
+      yield* emitNode(state, turn, nativeId, "todo_list", "completed", startedAt, now);
+      yield* emit({
+        type: "plan.updated",
+        driver,
+        plan: {
+          id: turn.todoPlanId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          kind: "todo_list",
+          status: steps.every((step) => step.status === "completed") ? "completed" : "active",
+          steps,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          type: "todo_list",
+          title: "Todo list",
+          planId: turn.todoPlanId,
+          steps,
+        },
+      });
+    });
+
     const emitTool = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
       id: string,
       status: "running" | "completed" | "failed" | "interrupted",
-      result?: { readonly output: string | undefined; readonly metadata: unknown },
+      result?: {
+        readonly output: string | undefined;
+        readonly metadata: unknown;
+        readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }>;
+      },
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
+      if (tool.name === "todowrite") {
+        if (status === "running") return;
+        if (status === "completed" && isNativeTodoList(result?.metadata)) {
+          const projected = yield* emitTodo(state, turn, result.metadata.todos).pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              IdAllocatorV2AllocationError: (error) =>
+                Effect.logWarning("Could not allocate an OpenCode todo list.", error).pipe(
+                  Effect.as(false),
+                ),
+            }),
+          );
+          if (projected) return;
+        }
+      }
       const updatedAt = yield* DateTime.now;
       const startedAt = turn.startedAt.get(id) ?? updatedAt;
       const completedAt = status === "running" ? null : updatedAt;
       const nativeId = `${turn.scope}${id}`;
-      yield* emitNode(state, turn, nativeId, "tool_call", status, startedAt, completedAt);
+      const settled =
+        status === "completed" && openCodeCommandFailed(tool.name, result?.metadata)
+          ? "failed"
+          : status;
+      yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
       yield* emit({
         type: "turn_item.updated",
         driver,
         turnItem: openCodeToolTurnItem(
-          itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
+          itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
           {
             name: tool.name,
             input: tool.input,
             output: result?.output,
+            files: result?.files,
             completedMetadata: status === "completed" ? result?.metadata : undefined,
           },
         ),
@@ -1141,6 +1313,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       before: undefined,
       compaction: undefined,
       compactions: 0,
+      todoPlanId: undefined,
       retry: undefined,
       interrupted: false,
       unsent: false,
@@ -1238,7 +1411,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           result: call.result,
         },
       });
-      yield* syncRoster(rootOf(call.state));
+      yield* syncRosterAncestors(call.state);
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
@@ -1254,6 +1427,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }));
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
+        state.publishedBackgroundWork === hasBackground(state) &&
         current.length === roster.length &&
         current.every(
           (task, index) =>
@@ -1270,11 +1444,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         pendingBackgroundTasks: roster,
         updatedAt: yield* DateTime.now,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
+    });
+
+    const syncRosterAncestors = Effect.fnUntraced(function* (state: ThreadState) {
+      let current: ThreadState | undefined = state;
+      while (current !== undefined) {
+        yield* syncRoster(current);
+        current = current.subagent?.call.state;
+      }
     });
 
     const withReportedModel = (
@@ -1384,11 +1562,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
       yield* emit({ type: "app_thread.created", driver, appThread });
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: child.providerThread,
-      });
+      yield* emitProviderThread(child);
       yield* emitSubagent(call);
       // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
       if (info === undefined) {
@@ -1423,11 +1597,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           status: "idle",
           updatedAt: call.completedAt,
         };
-        yield* emit({
-          type: "provider_thread.updated",
-          driver,
-          providerThread: child.providerThread,
-        });
+        yield* emitProviderThread(child);
       }
       yield* emitSubagent(call);
     });
@@ -1641,11 +1811,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         status: threadDisposition === "broken" ? "error" : "idle",
         updatedAt: completedAt,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
       const anyActive = [...threads.values()].some(
         (candidate) => candidate.subagent === undefined && candidate.active !== undefined,
       );
@@ -1880,13 +2046,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         native,
       });
       yield* emit({ type: "node.updated", driver, node });
+      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
+      // A response can commit as soon as the actionable request is published.
       yield* emit({
         type: "runtime_request.updated",
         driver,
         threadId: turn.input.threadId,
         runtimeRequest: request,
       });
-      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
       yield* setSessionStatus("waiting", null);
     });
 
@@ -1985,9 +2152,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const sessionOfEvent = (event: OpenCode2Client.OpenCode2StreamEvent) =>
       event.type === "unreadable.execution.ended" || event.type === "unreadable.execution.started"
         ? event.sessionID
-        : "sessionID" in event.data && typeof event.data.sessionID === "string"
-          ? event.data.sessionID
-          : undefined;
+        : event.type === "form.created"
+          ? event.data.form.sessionID
+          : "sessionID" in event.data && typeof event.data.sessionID === "string"
+            ? event.data.sessionID
+            : undefined;
 
     const executionEnd = (type: string) =>
       type === "session.execution.succeeded" ||
@@ -2094,6 +2263,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const output = textOf(event.data.content);
           yield* emitTool(state, turn, event.data.id, "completed", {
             output,
+            files: event.data.content.flatMap((part) => (part.type === "file" ? [part] : [])),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
@@ -2274,7 +2444,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       end: TurnTerminal,
     ) {
-      if (end.status === "completed" && turn.steers.size > 0) {
+      if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
         return;
       }
@@ -2282,7 +2452,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const endIfSettled = (state: ThreadState, turn: ActiveTurn) =>
-      turn.heldEnd !== undefined && turn.steers.size === 0
+      turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
@@ -2407,16 +2577,48 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (sessionId === undefined) return;
       const state = threads.get(sessionId);
       if (state === undefined) return;
+      if (event.type === "rpc.opencode.goal.changed") {
+        if (!supportsNativeGoals()) return;
+        const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
+        if (goal._tag === "Failure") {
+          state.goalFresh = false;
+          state.goalRefreshing = true;
+          state.goalRevision += 1;
+          const revision = state.goalRevision;
+          yield* Effect.logWarning(
+            "Could not decode an OpenCode goal update; refreshing its state.",
+          );
+          yield* Effect.forkIn(
+            readGoal(state).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.catch(() =>
+                Effect.logWarning(
+                  "Could not refresh OpenCode goal state after an unreadable update.",
+                ),
+              ),
+              Effect.ensuring(
+                lock.withPermit(
+                  Effect.gen(function* () {
+                    if (state.goalRevision === revision) state.goalRefreshing = false;
+                    if (state.active !== undefined) yield* endIfSettled(state, state.active);
+                  }),
+                ),
+              ),
+            ),
+            sessionScope,
+          );
+          return;
+        }
+        yield* updateGoal(state, goal.success);
+        if (state.active !== undefined) yield* endIfSettled(state, state.active);
+        return;
+      }
       if (event.type === "session.model.selected" || event.type === "session.step.started") {
         if (event.type === "session.model.selected") state.model = event.data.model;
         const providerThread = withReportedModel(state.providerThread, event.data.model);
         if (providerThread !== state.providerThread) {
           state.providerThread = { ...providerThread, updatedAt: yield* DateTime.now };
-          yield* emit({
-            type: "provider_thread.updated",
-            driver,
-            providerThread: state.providerThread,
-          });
+          yield* emitProviderThread(state);
         }
       }
       if (
@@ -2505,6 +2707,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const found = start === null || read.at(-1)?.id === start;
       if (!found) return undefined;
       const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+      for (const message of recent) {
+        if (message.type === "user" && turn.steers.delete(message.id)) {
+          turn.settledInbox.add(message.id);
+        }
+      }
       const idle = recent.find((message) => message.type === "idle");
       const assistant = recent.find((message) => message.type === "assistant");
       if (assistant?.retry !== undefined) {
@@ -2556,6 +2763,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
+              files: part.state.content.flatMap((content) =>
+                content.type === "file" ? [content] : [],
+              ),
               metadata: part.state.metadata,
             });
             turn.tools.delete(part.id);
@@ -2574,7 +2784,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
-    const reconcile = Effect.gen(function* () {
+    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* () {
       // Read deepest sessions first; subagent turns end before their waiting parents.
       const running = [...threads]
         .filter(([, state]) => state.active !== undefined)
@@ -2603,9 +2813,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn === undefined) continue;
         turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
-        if (sessionId in active || state.active !== turn) continue;
-        yield* finishTurn(
-          state,
+        if (state.active !== turn) continue;
+        if (sessionId in active) {
+          turn.heldEnd = undefined;
+          continue;
+        }
+        const terminal: TurnTerminal =
           ended?.outcome === "succeeded"
             ? { status: turn.interrupted ? "interrupted" : "completed" }
             : ended?.outcome === "failed"
@@ -2617,8 +2830,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     class: "provider_error",
                   }),
                 }
-              : { status: "interrupted" },
-        );
+              : { status: "interrupted" };
+        yield* endExecution(state, turn, terminal);
       }
       for (const state of background) {
         for (const call of runningCalls(state)) {
@@ -2627,10 +2840,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(call, "interrupted", LOST_BACKGROUND);
           }
         }
-        for (const session of sessionsOf(state)) {
+        const sessions = sessionsOf(state);
+        for (const session of sessions) {
           discardWakes(session, session.wakes.splice(0));
           session.reports.clear();
         }
+        for (const session of sessions.toReversed()) yield* syncRoster(session);
       }
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
       for (const thread of new Set([...strays.values()].map(rootOf))) {
@@ -2670,11 +2885,31 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      nativeGoalSupport = supportsNativeGoals();
+      session = {
+        ...session,
+        capabilities: {
+          ...session.capabilities,
+          turns: { ...session.capabilities.turns, supportsNativeGoals: supportsNativeGoals() },
+        },
+      };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
-      yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        state.goalFresh = false;
+        state.goalRefreshing = false;
+        state.goalRevision += 1;
+      }
+      if (supportsNativeGoals()) {
+        yield* Effect.forEach(
+          [...threads.values()],
+          (state) => readGoal(state).pipe(Effect.ignore({ log: true })),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
+      }
+      yield* lock.withPermit(reconcile()).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
       Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
@@ -2686,7 +2921,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       stream: Stream.Stream<OpenCode2Client.OpenCode2StreamEvent, unknown>,
     ): Effect.Effect<void> =>
       stream.pipe(
-        Stream.runForEach((event) => lock.withPermit(handleEvent(event))),
+        Stream.runForEach((event) =>
+          lock.withPermit(
+            Effect.gen(function* () {
+              yield* handleEvent(event);
+              if (
+                event.type === "session.execution.started" ||
+                event.type === "unreadable.execution.started" ||
+                executionEnd(event.type) ||
+                event.type === "unreadable.execution.ended" ||
+                event.type === "session.inbox.enqueued" ||
+                event.type === "session.inbox.delivered" ||
+                event.type === "session.inbox.cancelled"
+              ) {
+                const sessionId = sessionOfEvent(event);
+                const state = sessionId === undefined ? undefined : threads.get(sessionId);
+                if (state !== undefined) yield* syncRosterAncestors(state);
+              }
+            }),
+          ),
+        ),
         Effect.exit,
         Effect.flatMap(() =>
           Effect.gen(function* () {
@@ -2935,12 +3189,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    // The API accepts one message type; boundaries require both user and synthetic messages.
-    const userMessages = (sessionId: string) =>
-      OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), limit: 100 },
-        client.message.list,
-      ).pipe(
+    // Rollback must validate full history before native mutation; forks only need prompts.
+    const userMessages = (sessionId: string, types?: ReadonlyArray<"user" | "synthetic">) =>
+      Stream.fromIterable(types ?? [undefined]).pipe(
+        Stream.flatMap((type) =>
+          OpenCode2Client.paginate(
+            {
+              sessionID: Session.ID.make(sessionId),
+              limit: 100,
+              ...(type === undefined ? {} : { type }),
+            },
+            client.message.list,
+          ),
+        ),
         Stream.runCollect,
         Effect.map(
           (messages) =>
@@ -3157,11 +3418,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         lastRunOrdinal: turnInput.runOrdinal,
         updatedAt: startedAt,
       };
-      yield* emit({
-        type: "provider_thread.updated",
-        driver,
-        providerThread: state.providerThread,
-      });
+      yield* emitProviderThread(state);
       yield* setSessionStatus("running", null);
       return turn;
     });
@@ -3217,6 +3474,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (wake?.running !== true) return;
       state.wakes.pop();
       yield* replay(wake);
+      for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
+      yield* syncRosterAncestors(state);
     });
 
     const runWake = Effect.fnUntraced(function* (
@@ -3242,6 +3501,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           if (wake.running) state.unsettled = false;
           yield* replay(wake);
+          for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
+          yield* syncRosterAncestors(state);
         }),
       );
     });
@@ -3304,6 +3565,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const running = state.wakes.some((wake) => wake.running);
           discardWakes(state, state.wakes.splice(0));
+          yield* syncRosterAncestors(state);
           if (running) {
             markUnsettled(state);
             yield* client.session
@@ -3313,6 +3575,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }),
       );
       yield* stopStrays(state);
+    });
+
+    const listSkills = (location: { readonly directory: string }) =>
+      client.skill.list({ location }).pipe(
+        Effect.timeout(INVENTORY_TIMEOUT),
+        Effect.map((list) => new Set<string>(list.data.map((skill) => skill.id))),
+        Effect.orElseSucceed(() => new Set<string>()),
+      );
+
+    // A directory OpenCode is still scanning lists none or some of its skills.
+    // OpenCode 2.2.5 answers its model list only once the scan has ended (observed, not documented).
+    const skillsMentioned = Effect.fnUntraced(function* (
+      location: { readonly directory: string },
+      mentions: ReadonlyArray<string>,
+    ) {
+      const known = yield* listSkills(location);
+      if (mentions.some((name) => !known.has(name))) {
+        yield* readModels(location.directory);
+        for (const name of yield* listSkills(location)) known.add(name);
+      }
+      return mentions.filter((name) => known.has(name));
     });
 
     const submit = Effect.fnUntraced(function* (
@@ -3327,9 +3610,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.unsent = false;
         return true;
       };
+      const finishControl = lock.withPermit(
+        Effect.suspend(() =>
+          state.active === turn ? finishTurn(state, { status: "completed" }) : Effect.void,
+        ),
+      );
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       const id = turnPromptId(sessionId, turnInput.attemptId);
+      const goalCommand = supportsNativeGoals() ? parseGoalCommand(turnInput.message) : null;
+      if (goalCommand?.type === "show") {
+        if (!sending()) return;
+        yield* readGoal(state);
+        return yield* finishControl;
+      }
       if (bare && text === "/compact") {
         if (!sending()) return;
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
@@ -3347,19 +3641,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
           if (!sending()) return;
-          return yield* client.session.command({ sessionID, ...command });
+          yield* client.session.command({ sessionID, ...command });
+          if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
+            yield* finishControl;
+          }
+          return;
         }
       }
-      const skills = SKILL_MENTION.test(text)
-        ? skillsNamed(
-            text,
-            yield* client.skill.list({ location }).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.map((list) => new Set(list.data.map((skill) => skill.id))),
-              Effect.orElseSucceed(() => new Set<string>()),
-            ),
-          )
-        : [];
+      const mentions = skillMentions(text);
+      const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);
       if (!sending()) return;
@@ -3493,6 +3783,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const loaded = threads.has(sessionId);
           const state = register(providerThread, native, cwd ?? native.location.directory);
           if (!loaded) yield* stopLeftoverRequests(state);
+          if (!loaded && supportsNativeGoals()) {
+            yield* readGoal(state).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            );
+          }
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
           if (cwd != null && native.location.directory !== cwd) {
             yield* client.session.move({
@@ -4018,7 +4314,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   forkInput.sourceProviderTurns ?? [],
                   source.id,
                   selected,
-                  yield* userMessages(sourceId),
+                  yield* userMessages(sourceId, ["user", "synthetic"]),
                 );
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),
@@ -4081,7 +4377,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     instanceId,
     driver,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
-      return Effect.succeed(OpenCode2ProviderCapabilities);
+      return Effect.succeed({
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          ...(nativeGoalSupport === undefined ? {} : { supportsNativeGoals: nativeGoalSupport }),
+        },
+      });
     }),
     planSelectionTransition: Effect.fn("OpencodeAdapter.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());
