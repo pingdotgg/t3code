@@ -186,6 +186,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
   /** Server answers pipelines.* and pipelineRuns.*. */
   pipelines: Schema.optionalKey(Schema.Boolean),
+  /** Server keeps attachments and context on a pipeline start; older servers drop them silently. */
+  pipelineAttachments: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

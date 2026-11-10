@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -21,6 +22,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -29,6 +31,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import {
+  parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import type { ThreadLaunchInput } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -37,8 +43,10 @@ import type {
   ThreadManagementSendInput,
   ThreadManagementWaitResult,
 } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
@@ -49,9 +57,11 @@ const decodeDefinition = Schema.decodeSync(PipelineDefinition);
 const decodeRun = Schema.decodeSync(PipelineRun);
 const decodeStart = Schema.decodeSync(PipelineRunStartInput);
 const decodeThreadId = Schema.decodeSync(ThreadId);
+const decodeRunId = Schema.decodeSync(Schema.String) as (id: string) => PipelineRunId;
 const decodeCheckpointRef = Schema.decodeSync(CheckpointRef);
 
 const TEST_WORKTREES_DIR = "/t3-test-worktrees";
+const ATTACHMENTS_DIR = `${NodeOS.tmpdir()}/t3-pipeline-attachments-${process.pid}`;
 /** Worktrees the server manages: a folder per repository below its worktrees directory. */
 const MANAGED_ROOT = `${TEST_WORKTREES_DIR}/repo`;
 
@@ -102,6 +112,7 @@ const makeHarness = Effect.gen(function* () {
   const launches = yield* Queue.unbounded<{ input: ThreadLaunchInput; threadId: ThreadId }>();
   const waitsStarted = yield* Queue.unbounded<ThreadId>();
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const cleanedAttachments = yield* Queue.unbounded<ReadonlyArray<string>>();
   const interrupted = yield* Deferred.make<ThreadId>();
   const subscriptions = yield* Queue.unbounded<number>();
   const subscribed = yield* Deferred.make<void>();
@@ -468,7 +479,15 @@ const makeHarness = Effect.gen(function* () {
     // Only the worktrees directory is read, to tell managed worktrees from other folders.
     Layer.succeed(ServerConfig.ServerConfig, {
       worktreesDir: TEST_WORKTREES_DIR,
+      attachmentsDir: ATTACHMENTS_DIR,
     } as ServerConfig.ServerConfig["Service"]),
+    Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
+    Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
+      cleanupScheduledTasks: () => Effect.void,
+      cleanupTerminals: () => Effect.void,
+      cleanupPreviews: () => Effect.void,
+      cleanupAttachments: (ids) => Queue.offer(cleanedAttachments, ids),
+    }),
     IdAllocator.layer,
     NodeCrypto.layer,
     NodeServices.layer,
@@ -481,6 +500,7 @@ const makeHarness = Effect.gen(function* () {
     sentMessages,
     waitsStarted,
     events,
+    cleanedAttachments,
     interrupted,
     providerEnabled,
     commands,
@@ -1762,8 +1782,9 @@ const completedRun = Effect.fn("completedRun")(function* (
   harness: Effect.Success<typeof makeHarness>,
   service: PipelineService.PipelineService["Service"],
   commandId: string,
+  start: PipelineRunStartInput = startInput(commandId),
 ) {
-  const { run } = yield* service.start(startInput(commandId));
+  const { run } = yield* service.start(start);
   const first = yield* Queue.take(harness.launches);
   harness.outputs.set(first.threadId, { reply: "approved plan" });
   yield* harness.settle(first.threadId, "completed");
@@ -1779,7 +1800,13 @@ it.effect(
   () =>
     withService(
       Effect.fn(function* (harness, service) {
-        const { run, first, second } = yield* completedRun(harness, service, "cmd-revise");
+        const image = yield* pendingImage(3);
+        const { run, first, second } = yield* completedRun(
+          harness,
+          service,
+          "cmd-revise",
+          startWithContent("cmd-revise", { input: "Fix the bug", attachments: [image] }),
+        );
         harness.behavior.autoHandoff = false;
 
         const { run: revised } = yield* service.reviseStep({
@@ -1814,6 +1841,11 @@ it.effect(
         assert.include(feedback.input.text, "> Only light mode is planned");
         assert.include(feedback.input.text, "Pipeline handoff:");
         assert.strictEqual(feedback.input.createdBy, "user");
+        // The revised step reads {{input}}, so its starting files come with the feedback.
+        assert.deepStrictEqual(
+          feedback.input.attachments?.map((attachment) => attachment.id),
+          run.attachments.map((attachment) => attachment.id),
+        );
         // Nobody is launched fresh: both steps keep their threads.
         assert.strictEqual(yield* Queue.size(harness.launches), 0);
 
@@ -1839,6 +1871,7 @@ it.effect(
         assert.include(ping.input.text, "Cover dark mode too");
         assert.strictEqual(ping.input.messageId, `pipeline-run-message:${run.id}:build:2`);
         assert.strictEqual(ping.input.createdBy, "user");
+        assert.deepStrictEqual(ping.input.attachments, []);
 
         harness.behavior.autoHandoff = true;
         harness.outputs.set(ping.runId, { reply: "built it again" });
@@ -2425,4 +2458,218 @@ it.effect("a later step catching up on a revision compacts the step that fed it"
       assert.strictEqual(again.commandId, `server:pipeline-compact:${run.id}:build:2:ship:2`);
     }),
   ),
+);
+
+const pendingImage = (n: number) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const id = `pending-00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const bytes = `png-bytes-${n}`;
+    yield* fileSystem.makeDirectory(ATTACHMENTS_DIR, { recursive: true });
+    yield* fileSystem.writeFileString(`${ATTACHMENTS_DIR}/${id}.png`, bytes);
+    return {
+      type: "image" as const,
+      id,
+      name: `shot-${n}.png`,
+      mimeType: "image/png",
+      sizeBytes: bytes.length,
+    };
+  }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
+
+const startWithContent = (
+  commandId: string,
+  content: {
+    readonly attachments?: ReadonlyArray<Effect.Success<ReturnType<typeof pendingImage>>>;
+    readonly context?: unknown;
+    readonly input?: string;
+  },
+) =>
+  decodeStart({
+    commandId,
+    pipelineId: PIPELINE_ID,
+    projectId: "project-1",
+    input: content.input ?? "",
+    ...(content.attachments === undefined ? {} : { attachments: content.attachments }),
+    ...(content.context === undefined ? {} : { context: content.context as never }),
+    workspaceStrategy: { type: "root" },
+  });
+
+const imageContext = (attachmentId: string) => ({
+  version: 1,
+  records: [
+    {
+      version: 1,
+      contextId: "ctx-1",
+      label: "shot",
+      kind: "image",
+      attachmentId,
+      name: "shot-1.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+    },
+  ],
+});
+
+const storedAttachmentFiles = () =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fileSystem) => fileSystem.readDirectory(ATTACHMENTS_DIR)),
+    Effect.map((entries) => entries.filter((entry) => !entry.startsWith("pending-"))),
+    Effect.provide(NodeServices.layer),
+    Effect.orDie,
+  );
+
+it.effect("start titles the parent from the prose, not from inline context markers", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      yield* service.start(
+        startWithContent("cmd-title-1", {
+          input:
+            "[doc.pdf](t3-context://v1/file/file_1) Report this\n![shot](t3-context://v1/image/ctx-1)",
+        }),
+      );
+      const [parent] = commandOfType(harness.commands, "thread.create");
+      assert.strictEqual(parent?.title, "doc.pdf Report this");
+      const titleRequests = commandOfType(harness.commands, "thread.metadata.update").filter(
+        (command) => command.regenerateTitle === true,
+      );
+      assert.strictEqual(titleRequests[0]?.titleSource, "doc.pdf Report this");
+    }),
+  ),
+);
+
+it.effect(
+  "start claims attachments into the parent thread and only {{input}} steps receive them",
+  () =>
+    withService(
+      Effect.fn(function* (harness, service, store) {
+        const image = yield* pendingImage(1);
+        const before = (yield* storedAttachmentFiles()).length;
+        const { run } = yield* service.start(
+          startWithContent("cmd-att-1", {
+            attachments: [image],
+            context: imageContext(image.id),
+          }),
+        );
+        assert.strictEqual(run.input, "");
+        assert.strictEqual(run.attachments.length, 1);
+        const claimedId = run.attachments[0]?.id ?? "";
+        assert.notStrictEqual(claimedId, image.id);
+        assert.strictEqual(
+          parseThreadSegmentFromAttachmentId(claimedId),
+          toSafeThreadAttachmentSegment(run.parentThreadId),
+        );
+        assert.strictEqual((yield* storedAttachmentFiles()).length, before + 1);
+        // The live run carries only chips; the full context stays on the server.
+        assert.deepStrictEqual(
+          run.contextChips.map(({ contextId, kind, label }) => [contextId, kind, label]),
+          [["ctx-1", "image", "shot"]],
+        );
+        const context = yield* store.getRunContext(run.id);
+        const contextRecord = context?.records[0] as { attachmentId?: string } | undefined;
+        assert.strictEqual(contextRecord?.attachmentId, claimedId);
+
+        // With no text, the parent keeps the pipeline's name and asks for no generated title.
+        const [parent] = commandOfType(harness.commands, "thread.create");
+        assert.strictEqual(parent?.title, "Review");
+        assert.strictEqual(
+          commandOfType(harness.commands, "thread.metadata.update").filter(
+            (command) => command.regenerateTitle === true,
+          ).length,
+          0,
+        );
+
+        const first = yield* Queue.take(harness.launches);
+        assert.deepStrictEqual(
+          first.input.initialMessage?.attachments.map((attachment) => attachment.id),
+          [claimedId],
+        );
+        assert.deepStrictEqual(first.input.initialMessage?.context, context);
+
+        // The second step's template has no {{input}}: it gets neither.
+        harness.outputs.set(first.threadId, { reply: "first reply" });
+        yield* harness.settle(first.threadId, "completed");
+        const second = yield* Queue.take(harness.launches);
+        assert.deepStrictEqual(second.input.initialMessage?.attachments, []);
+        assert.isUndefined(second.input.initialMessage?.context);
+
+        // A replay of the same command claims nothing again.
+        yield* service.start(
+          startWithContent("cmd-att-1", { attachments: [image], context: imageContext(image.id) }),
+        );
+        assert.strictEqual((yield* storedAttachmentFiles()).length, before + 1);
+
+        // The run's files go with its parent thread.
+        yield* Queue.offer(harness.events, {
+          type: "thread.deleted",
+          threadId: run.parentThreadId,
+        } as unknown as OrchestrationV2DomainEvent);
+        assert.deepStrictEqual(yield* Queue.take(harness.cleanedAttachments), [claimedId]);
+      }),
+    ),
+);
+
+it.effect("retry and rerun re-send the run's attachments after the pending upload is gone", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const image = yield* pendingImage(2);
+      const { run } = yield* service.start(
+        startWithContent("cmd-att-2", { attachments: [image], input: "Look at this" }),
+      );
+      const claimedId = run.attachments[0]?.id ?? "";
+      const first = yield* Queue.take(harness.launches);
+      // What the pending sweep does once the upload is stale.
+      yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fileSystem) => fileSystem.remove(`${ATTACHMENTS_DIR}/${image.id}.png`)),
+        Effect.provide(NodeServices.layer),
+        Effect.orDie,
+      );
+
+      harness.outputs.set(first.threadId, { error: "boom" });
+      yield* harness.settle(first.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      yield* service.retryStep({ runId: run.id, stepIndex: 0 });
+      const retried = yield* Queue.take(harness.launches);
+      assert.deepStrictEqual(
+        retried.input.initialMessage?.attachments.map((attachment) => attachment.id),
+        [claimedId],
+      );
+
+      harness.outputs.set(retried.threadId, { reply: "first reply" });
+      yield* harness.settle(retried.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      harness.outputs.set(second.threadId, { reply: "done" });
+      yield* harness.settle(second.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.status === "completed");
+      yield* service.rerunFromStep({ runId: run.id, stepIndex: 0 });
+      const rerun = yield* Queue.take(harness.launches);
+      assert.deepStrictEqual(
+        rerun.input.initialMessage?.attachments.map((attachment) => attachment.id),
+        [claimedId],
+      );
+      assert.include(yield* storedAttachmentFiles(), `${claimedId}.png`);
+    }),
+  ),
+);
+
+it.effect("start rejects content over the attachment limit and creates no run", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      const attachments = yield* Effect.forEach(
+        Array.from({ length: 101 }, (_, index) => 100 + index),
+        pendingImage,
+      );
+      const failure = yield* Effect.flip(
+        service.start(startWithContent("cmd-att-3", { attachments })),
+      );
+      assert.include(failure.message, "up to 100");
+      assert.isNull(yield* store.getRun(decodeRunId("pipeline-run:cmd-att-3")));
+      assert.strictEqual(commandOfType(harness.commands, "thread.create").length, 0);
+    }),
+  ),
+);
+
+it.effect("start rejects an empty prompt with nothing attached", () =>
+  Effect.sync(() => {
+    assert.throws(() => startWithContent("cmd-att-4", {}));
+  }),
 );

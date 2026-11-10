@@ -3479,6 +3479,8 @@ export default function ChatView(props: ChatViewProps) {
                     environmentId={activeThread.environmentId}
                     runId={threadPipeline.runId}
                     cwd={gitCwd ?? undefined}
+                    onImageExpand={onExpandTimelineImageStable}
+                    onFileOpen={openFileAttachmentStable}
                   />
                 ) : null}
                 {

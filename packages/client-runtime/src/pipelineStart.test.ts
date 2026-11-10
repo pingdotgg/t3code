@@ -8,6 +8,8 @@ const base = {
   projectId: ProjectId.make("project-1"),
   input: "ship it",
   workspace: { mode: "worktree", branch: "main" },
+  attachments: [{ id: "a", name: "shot.png" }],
+  context: { version: 1, records: [{ contextId: "c1" }] },
 };
 
 describe("nextPipelineStartAttempt", () => {
@@ -16,6 +18,8 @@ describe("nextPipelineStartAttempt", () => {
     ["other pipeline", { pipelineId: PipelineId.make("pipeline-2") }, false],
     ["other project", { projectId: ProjectId.make("project-2") }, false],
     ["other input text", { input: "ship it now" }, false],
+    ["other attachments", { attachments: [] }, false],
+    ["other context", { context: undefined }, false],
     ["other workspace selection", { workspace: { mode: "local", branch: "main" } }, false],
   ])("%s: command id reused is %s", (_name, change, reused) => {
     let issued = 0;

@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 import { applyToProjection, emptyProjection } from "./ProjectionStore.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 
@@ -294,6 +295,32 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
+      ],
+    );
+  }).pipe(Effect.provide(IdAllocator.layer)),
+);
+
+it.effect("attachment cleanup keeps files another thread owns", () =>
+  Effect.gen(function* () {
+    const own = `${toSafeThreadAttachmentSegment(threadId)}-00000000-0000-4000-8000-000000000001`;
+    const other = "thread-another-run-00000000-0000-4000-8000-000000000002";
+    const pending = "pending-00000000-0000-4000-8000-000000000003";
+    const plan = yield* planThreadDeletion({
+      command,
+      projection: makeProjection(),
+      attachmentIds: [own, other, pending, "legacy_file"],
+      now: deletedAt,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+    });
+    assert.deepEqual(
+      plan.effects.filter((effect) => effect.request.type === "attachment.cleanup"),
+      [
+        {
+          id: `effect:${command.commandId}:attachment.cleanup`,
+          commandId: command.commandId,
+          threadId,
+          request: { type: "attachment.cleanup", attachmentIds: [own, pending, "legacy_file"] },
+        },
       ],
     );
   }).pipe(Effect.provide(IdAllocator.layer)),

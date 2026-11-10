@@ -12,8 +12,14 @@ import {
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
+  TrimmedString,
 } from "./baseSchemas.ts";
-import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "./chatAttachment.ts";
+import { ChatAttachment, PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "./chatAttachment.ts";
+import {
+  ComposerContextId,
+  ComposerContextKind,
+  OrchestrationMessageContext,
+} from "./composerContext.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   OrchestrationV2Actor,
@@ -283,6 +289,13 @@ export const PipelineRevision = Schema.Struct({
 });
 export type PipelineRevision = typeof PipelineRevision.Type;
 
+export const PipelineRunContextChip = Schema.Struct({
+  contextId: ComposerContextId,
+  kind: ComposerContextKind,
+  label: Schema.String,
+});
+export type PipelineRunContextChip = typeof PipelineRunContextChip.Type;
+
 export const PipelineRun = Schema.Struct({
   id: PipelineRunId,
   pipelineId: Schema.NullOr(PipelineId),
@@ -290,6 +303,12 @@ export const PipelineRun = Schema.Struct({
   projectId: ProjectId,
   parentThreadId: ThreadId,
   input: Schema.String,
+  /** Files and images that came with the starting prompt; steps that use `{{input}}` get them. */
+  attachments: Schema.Array(ChatAttachment).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The starting context's records, without their contents; those stay on the server. */
+  contextChips: Schema.Array(PipelineRunContextChip).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   status: PipelineRunStatus,
   pauseReason: Schema.NullOr(PipelinePauseReason),
@@ -309,10 +328,21 @@ export const PipelineRunStartInput = Schema.Struct({
   commandId: Schema.optional(CommandId),
   pipelineId: PipelineId,
   projectId: ProjectId,
-  input: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  /** May be empty when `attachments` or `context` carries something, as in a chat message. */
+  input: TrimmedString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  context: Schema.optional(OrchestrationMessageContext),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
-});
+}).check(
+  Schema.makeFilter((start) =>
+    start.input.length > 0 ||
+    (start.attachments?.length ?? 0) > 0 ||
+    (start.context?.records.length ?? 0) > 0
+      ? true
+      : "Enter a prompt, or attach a file or context.",
+  ),
+);
 export type PipelineRunStartInput = typeof PipelineRunStartInput.Type;
 
 export const PipelineRunSubscribeInput = Schema.Struct({ runId: PipelineRunId });

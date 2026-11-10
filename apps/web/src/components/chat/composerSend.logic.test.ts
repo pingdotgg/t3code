@@ -138,13 +138,17 @@ describe("activeDraftPipelineId", () => {
 });
 
 describe("pipelineSendBlock", () => {
-  it("allows text only", () => {
-    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: false })).toBeNull();
-    expect(pipelineSendBlock({ attachmentCount: 1, hasContext: false })).toBe(
+  it("blocks attachments and context only on servers that would drop them", () => {
+    const old = { supportsAttachments: false };
+    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: false, ...old })).toBeNull();
+    expect(pipelineSendBlock({ attachmentCount: 1, hasContext: false, ...old })).toBe(
       PIPELINE_TEXT_ONLY_HINT,
     );
-    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: true })).toBe(
+    expect(pipelineSendBlock({ attachmentCount: 0, hasContext: true, ...old })).toBe(
       PIPELINE_TEXT_ONLY_HINT,
     );
+    expect(
+      pipelineSendBlock({ attachmentCount: 2, hasContext: true, supportsAttachments: true }),
+    ).toBeNull();
   });
 });

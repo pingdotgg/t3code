@@ -31,11 +31,11 @@ from its summary, and the compaction appears in its thread like automatic compac
 
 Use these variables in a prompt template:
 
-| Variable                             | Value                                                  |
-| ------------------------------------ | ------------------------------------------------------ |
-| `{{input}}`                          | The prompt you started the run with.                   |
-| `{{previous.output}}`                | The output of the nearest earlier step that completed. |
-| `{{steps.<step id or name>.output}}` | The output of that step.                               |
+| Variable                             | Value                                                                        |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `{{input}}`                          | The prompt you started the run with, plus its attachments and added context. |
+| `{{previous.output}}`                | The output of the nearest earlier step that completed.                       |
+| `{{steps.<step id or name>.output}}` | The output of that step.                                                     |
 
 `{{previous.output}}` is not always the step directly above, for example after you skip one.
 
@@ -51,7 +51,9 @@ Pick a pipeline when you start a new thread, or choose **Start pipeline…** in 
 You can also ask an agent to start one for you. Agents can list your pipelines, start, check on,
 continue, and cancel runs when you ask them to.
 
-The starting prompt is text only. Attachments are not supported.
+The starting prompt takes what a chat message takes: images, files and added context (terminal output, review comments, preview annotations, threads, environments). They go with the prompt to every step whose template uses `{{input}}`, each time that step starts, including retries, reruns and feedback. Steps that do not use `{{input}}` get none.
+
+Servers on older versions of T3 Code take text only for pipelines.
 
 ## Work with a run
 

@@ -3850,6 +3850,8 @@ describe("OrchestratorMcpService pipelines", () => {
     projectId,
     parentThreadId: ThreadId.make("thread:pipeline-parent"),
     input: "Add dark mode",
+    attachments: [],
+    contextChips: [],
     workspaceStrategy: { type: "root" },
     status: "paused",
     pauseReason: "awaiting_continue",

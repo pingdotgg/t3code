@@ -259,7 +259,11 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { ComposerPipelinePicker } from "./ComposerPipelinePicker";
 import { draftPipelineSelectionAtom } from "./chatViewSend";
 import { PIPELINE_TEXT_ONLY_HINT } from "./composerSend.logic";
-import { useDraftPipelines, useSelectedDraftPipelineId } from "./useDraftPipelines";
+import {
+  useDraftPipelineAttachmentsSupported,
+  useDraftPipelines,
+  useSelectedDraftPipelineId,
+} from "./useDraftPipelines";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -890,6 +894,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const pipelineSelectionAtom = draftPipelineSelectionAtom(scopedThreadKey(routeThreadRef));
   const pipelinesEnabled = routeKind === "draft" && multipleModelSelections === null;
   const draftPipelines = useDraftPipelines(environmentId, pipelinesEnabled);
+  const pipelineAttachmentsSupported = useDraftPipelineAttachmentsSupported(environmentId);
   const selectedPipelineId = useSelectedDraftPipelineId(
     scopedThreadKey(routeThreadRef),
     environmentId,
@@ -943,7 +948,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (selectedPipelineMissing ? "The selected pipeline no longer exists. Choose another." : null) ??
     (pipelineActive && !draftPipelines.loaded ? "Loading pipelines." : null) ??
-    (pipelineActive && (composerImages.length > 0 || composerFiles.length > 0)
+    (pipelineActive &&
+    !pipelineAttachmentsSupported &&
+    (composerImages.length > 0 || composerFiles.length > 0)
       ? PIPELINE_TEXT_ONLY_HINT
       : null) ??
     (activePendingProgress
@@ -1188,7 +1195,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showComposerTopDrawer = pendingUserInputs.length > 0;
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile;
   const showComposerAttachAction =
-    !pipelineActive &&
+    (!pipelineActive || pipelineAttachmentsSupported) &&
     fileStagingLimit !== null &&
     (!activePendingProgress ||
       (supportsQuestionAttachments &&

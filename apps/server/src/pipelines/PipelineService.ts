@@ -48,6 +48,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -135,6 +136,7 @@ export const layerWithStarters = (
   | CheckpointStore.CheckpointStore
   | ProviderRegistry.ProviderRegistry
   | ServerConfig.ServerConfig
+  | DocumentText.DocumentText
   | FileSystem.FileSystem
   | Path.Path
 > =>

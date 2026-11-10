@@ -232,8 +232,10 @@ export interface ThreadDetailScreenProps {
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
-    /** Starting a pipeline: no model, mode or attachment controls. */
+    /** Starting a pipeline: no model or mode controls. */
     readonly pipelineSelected?: boolean;
+    /** The server keeps attachments and context on a pipeline start. */
+    readonly pipelineAttachments?: boolean;
   };
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
@@ -1919,6 +1921,7 @@ function ThreadDetailBody(
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         pipelineDraft={props.draftMode?.pipelineSelected === true}
+                        pipelineAttachments={props.draftMode?.pipelineAttachments === true}
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}

@@ -100,12 +100,18 @@ export function activeDraftPipelineId(
 }
 
 export const PIPELINE_TEXT_ONLY_HINT =
-  "Pipelines take text only. Remove attachments and added context, or choose No pipeline.";
+  "This server takes text only for pipelines. Update T3 Code there to attach files and context, or remove them, or choose No pipeline.";
 
-/** Why a pipeline cannot start from this draft: it carries more than text. */
+/**
+ * Why a pipeline cannot start from this draft: it carries more than text and the server would
+ * drop the rest. Servers with `pipelineAttachments` take everything a chat message takes.
+ */
 export function pipelineSendBlock(input: {
   readonly attachmentCount: number;
   readonly hasContext: boolean;
+  readonly supportsAttachments: boolean;
 }): string | null {
-  return input.attachmentCount > 0 || input.hasContext ? PIPELINE_TEXT_ONLY_HINT : null;
+  return !input.supportsAttachments && (input.attachmentCount > 0 || input.hasContext)
+    ? PIPELINE_TEXT_ONLY_HINT
+    : null;
 }

@@ -6,6 +6,11 @@ import type {
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import {
+  parseThreadSegmentFromAttachmentId,
+  PENDING_ATTACHMENT_THREAD_SEGMENT,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -226,7 +231,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
   });
-  const attachmentIds = Array.from(new Set(input.attachmentIds));
+  // Messages can reference files another thread owns, such as a pipeline run's starting
+  // attachments in its parent thread. Deleting this thread must not take those with it.
+  const ownSegment = toSafeThreadAttachmentSegment(command.threadId);
+  const attachmentIds = Array.from(new Set(input.attachmentIds)).filter((id) => {
+    const segment = parseThreadSegmentFromAttachmentId(id);
+    return (
+      segment === null || segment === ownSegment || segment === PENDING_ATTACHMENT_THREAD_SEGMENT
+    );
+  });
   if (attachmentIds.length > 0) {
     effects.push({
       id: `effect:${command.commandId}:attachment.cleanup`,

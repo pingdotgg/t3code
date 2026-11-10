@@ -222,6 +222,13 @@ export function replaceComposerContextReferences(
   return result + text.slice(cursor);
 }
 
+/** Reads a prompt as prose: inline context markers become their labels, image markers vanish. */
+export function composerContextProse(text: string): string {
+  return replaceComposerContextReferences(text, (reference) =>
+    reference.kind === "image" ? "" : reference.label,
+  ).trim();
+}
+
 const CONTEXT_ENVELOPE_TAG = "t3_context";
 const CONTEXT_ENTRY_TAG = "context";
 

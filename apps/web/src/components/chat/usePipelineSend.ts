@@ -1,5 +1,7 @@
 import {
+  type ChatAttachment,
   type EnvironmentId,
+  type OrchestrationMessageContext,
   type PipelineId,
   type ProjectId,
   type ThreadId,
@@ -10,7 +12,11 @@ import type { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "@t3tools/cont
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import { randomUUID } from "~/lib/utils";
-import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  type ComposerThreadDraftState,
+  type ComposerThreadTarget,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
@@ -30,6 +36,22 @@ interface PipelineSendInput {
   readonly promptRef: { current: string };
   readonly resetLocalDispatch: ReturnType<typeof useLocalDispatchState>["resetLocalDispatch"];
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
+}
+
+/** What the user wrote and attached, by id; a draft whose key changed since send was edited. */
+export function pipelineDraftContentKey(draft: ComposerThreadDraftState | null): string {
+  if (draft === null) return "";
+  const ids = (items: ReadonlyArray<{ readonly id: string }>) => items.map((item) => item.id);
+  return JSON.stringify([
+    draft.prompt,
+    ids(draft.images),
+    ids(draft.files),
+    ids(draft.terminalContexts),
+    ids(draft.previewAnnotations),
+    ids(draft.reviewComments),
+    draft.threadContexts.map((record) => record.contextId),
+    draft.environmentContexts.map((record) => record.contextId),
+  ]);
 }
 
 /**
@@ -59,20 +81,25 @@ export function usePipelineSend(input: PipelineSendInput) {
     pipelineId,
     projectId,
     text,
-    promptAtSend,
+    draftAtSend,
+    attachments,
+    context,
     workspaceStrategy,
   }: {
     readonly threadId: ThreadId;
     readonly pipelineId: PipelineId;
     readonly projectId: ProjectId;
     readonly text: string;
-    /** The draft's prompt when sent; a draft edited since is left alone. */
-    readonly promptAtSend: string;
+    /** `pipelineDraftContentKey` of the draft when sent; a draft edited since is left alone. */
+    readonly draftAtSend: string;
+    /** Uploaded attachments, as a chat message would send them. */
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly context: OrchestrationMessageContext | undefined;
     readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy;
   }) => {
     const attempt = (pipelineStartRef.current = nextPipelineStartAttempt(
       pipelineStartRef.current,
-      { pipelineId, projectId, input: text, workspace: workspaceStrategy },
+      { pipelineId, projectId, input: text, workspace: workspaceStrategy, attachments, context },
       randomUUID,
     ));
     setThreadError(threadId, null);
@@ -83,6 +110,8 @@ export function usePipelineSend(input: PipelineSendInput) {
         pipelineId,
         projectId,
         input: text,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(context === undefined ? {} : { context }),
         workspaceStrategy,
         creationSource: "web",
       },
@@ -106,7 +135,7 @@ export function usePipelineSend(input: PipelineSendInput) {
     const parentRef = scopeThreadRef(environmentId, result.value.run.parentThreadId);
     const stillOnDraft = currentRouteThreadKeyRef.current === routeThreadKey;
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    if (draft?.prompt === promptAtSend) {
+    if (pipelineDraftContentKey(draft) === draftAtSend) {
       useComposerDraftStore.getState().clearComposerContent(composerDraftTarget);
       if (stillOnDraft) {
         promptRef.current = "";

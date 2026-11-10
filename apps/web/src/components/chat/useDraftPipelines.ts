@@ -19,6 +19,19 @@ const supportsPipelinesAtom = Atom.family((environmentId: EnvironmentId) =>
   ).pipe(Atom.withLabel(`web-composer-pipelines-supported:${environmentId}`)),
 );
 
+const supportsPipelineAttachmentsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+        .pipelineAttachments === true,
+  ).pipe(Atom.withLabel(`web-composer-pipeline-attachments-supported:${environmentId}`)),
+);
+
+/** Whether a pipeline start here keeps attachments and added context; older servers drop them. */
+export function useDraftPipelineAttachmentsSupported(environmentId: EnvironmentId) {
+  return useAtomValue(supportsPipelineAttachmentsAtom(environmentId));
+}
+
 function useDraftPipelinesAvailable(environmentId: EnvironmentId, enabled: boolean) {
   const supported = useAtomValue(supportsPipelinesAtom(environmentId));
   const canStart = useAtomValue(serverEnvironment.startPipelineRun.permissionAtom(environmentId));

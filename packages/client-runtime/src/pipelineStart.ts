@@ -18,6 +18,9 @@ export function nextPipelineStartAttempt(
     readonly projectId: ProjectId;
     readonly input: string;
     readonly workspace: unknown;
+    /** What the request carries besides text; any JSON-serialisable shape. */
+    readonly attachments?: unknown;
+    readonly context?: unknown;
   },
   newId: () => string,
 ): PipelineStartAttempt {
@@ -26,6 +29,8 @@ export function nextPipelineStartAttempt(
     request.projectId,
     request.input,
     request.workspace,
+    request.attachments ?? null,
+    request.context ?? null,
   ]);
   return previous?.fingerprint === fingerprint
     ? previous
