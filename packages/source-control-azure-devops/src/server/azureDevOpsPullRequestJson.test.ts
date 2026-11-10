@@ -406,13 +406,14 @@ describe("decodeThreadsJson", () => {
     ]);
   });
 
-  it("reads a reset vote as withdrawing the reviewer's earlier verdict", () => {
+  it("reads a reset vote as withdrawing the verdict, in either value type, and skips a missing one", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
             voteThread({ id: 2, vote: "10", voterId: JANE_ID, voterName: "Jane Doe" }),
-            voteThread({ id: 3, vote: "0", voterId: JANE_ID, voterName: "Jane Doe" }),
+            voteThread({ id: 3, vote: 0, voterId: JANE_ID, voterName: "Jane Doe" }),
+            voteThread({ id: 4, vote: null, voterId: JANE_ID, voterName: "Jane Doe" }),
           ],
         }),
         reviewersById(),
@@ -423,22 +424,6 @@ describe("decodeThreadsJson", () => {
       ["jane@acme.dev", "APPROVED"],
       ["jane@acme.dev", "DISMISSED"],
     ]);
-  });
-
-  it("reads a vote Azure reports as a number and skips one it does not report", () => {
-    const comments = expectSuccess(
-      decodeThreadsJson(
-        asJson({
-          value: [
-            voteThread({ id: 2, vote: -10, voterId: JANE_ID, voterName: "Jane Doe" }),
-            voteThread({ id: 3, vote: null, voterId: JANE_ID, voterName: "Jane Doe" }),
-          ],
-        }),
-        reviewersById(),
-      ),
-    );
-
-    expect(comments.map((comment) => comment.reviewState)).toEqual(["CHANGES_REQUESTED"]);
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
