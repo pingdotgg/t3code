@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -31,6 +32,30 @@ const layerTest = Layer.empty.pipe(
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+// Keeps finders in this process so a test can intercept the native calls.
+const layerInProcessFinders = Layer.effect(
+  WorkspaceEntries.WorkspaceEntries,
+  WorkspaceEntries.make,
+).pipe(
+  Layer.provide(Layer.fresh(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layerNoDeps)),
+  Layer.provide(
+    Layer.succeed(WorkspaceSearchIndex.WorkspaceSearchWorker, {
+      create: async (options) => {
+        const created = FileFinder.create(options);
+        if (!created.ok) return created;
+        const finder = new Proxy(created.value, {
+          get: (target, method: keyof FileFinder) =>
+            method === ("alive" as string)
+              ? true
+              : async (...args: Array<never>) =>
+                  (target[method] as (...args: Array<never>) => unknown)(...args),
+        });
+        return { ok: true, value: finder as unknown as WorkspaceSearchIndex.RemoteFileFinder };
+      },
+    }),
+  ),
 );
 
 const makeTempDir = Effect.fn(function* (opts?: { prefix?: string; git?: boolean }) {
@@ -787,7 +812,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
         // The second search ran on the rescanned live finder, not a rebuild.
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
-      }),
+      }).pipe(Effect.provide(layerInProcessFinders)),
     );
   });
 
