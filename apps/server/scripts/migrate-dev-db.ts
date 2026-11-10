@@ -388,6 +388,14 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
         WHERE EXISTS (
           SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
           WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
+      // Copied threads keep their real worktree paths, where a settle script would run.
+      yield* sql`UPDATE projection_projects
+        SET scripts_json = (
+          SELECT json_group_array(json_remove(script.value, '$.runOnSettle') ORDER BY script.key)
+          FROM json_each(scripts_json) AS script)
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(scripts_json) AS script
+          WHERE json_extract(script.value, '$.runOnSettle') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
