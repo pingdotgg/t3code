@@ -42,6 +42,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import * as CheckoutCloner from "./CheckoutCloner.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -144,6 +145,8 @@ export interface CreateWorktreeOptions {
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
+  /** Clone the checkout from the macOS worktree checkout cache. */
+  readonly fastCheckout?: boolean;
 }
 
 export interface GitCommitProgress {
@@ -176,6 +179,11 @@ export interface GitPushResult {
   branch: string;
   upstreamBranch?: string | undefined;
   setUpstream?: boolean | undefined;
+}
+
+export interface GitPushTarget {
+  remoteName: string;
+  branchName: string;
 }
 
 export interface GitRangeContext {
@@ -338,6 +346,11 @@ export class GitVcsDriver extends Context.Service<
       fallbackBranch: string | null,
       options?: { readonly remoteName?: string | null },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
+    /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */
+    readonly resolvePushTarget: (
+      cwd: string,
+      current: { readonly branch: string; readonly hasUpstream: boolean },
+    ) => Effect.Effect<GitPushTarget | null, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
       baseRef: string,
@@ -375,6 +388,8 @@ export class GitVcsDriver extends Context.Service<
       input: VcsCreateWorktreeInput,
       options?: CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    /** Deletes the macOS worktree checkout cache in the background. */
+    readonly clearWorktreeCheckoutCache: Effect.Effect<void>;
     /** Force-updates local `branch` to the primary remote's `ref`. */
     readonly fetchRefIntoBranch: (
       input: GitFetchRefInput & { readonly branch: string },
@@ -1596,4 +1611,4 @@ export const make = Effect.gen(function* () {
 });
 
 export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
-export const layer = Layer.effect(GitVcsDriver, make);
+export const layer = Layer.effect(GitVcsDriver, make).pipe(Layer.provide(CheckoutCloner.layer));
