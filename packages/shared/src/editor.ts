@@ -65,10 +65,13 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         candidates.push(
           ...(jetbrains || editor.id === "zed"
             ? [path.join(contents, "MacOS", editor.id === "zed" ? "cli" : command)]
-            : [
-                path.join(contents, "Resources/app/bin", command),
-                path.join(contents, "Resources/app/bin/code"),
-              ]),
+            : editor.id === "github-desktop"
+              ? // The CLI ships in the app; "Install Command Line Tool" only symlinks it onto PATH.
+                [path.join(contents, "Resources/app/static/github.sh")]
+              : [
+                  path.join(contents, "Resources/app/bin", command),
+                  path.join(contents, "Resources/app/bin/code"),
+                ]),
         );
       }
     }

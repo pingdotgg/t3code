@@ -631,6 +631,57 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "opens the containing folder in GitHub Desktop through the CLI bundled in the Mac app",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-github-desktop-" });
+      const cli = path.join(
+        home,
+        "Applications/GitHub Desktop.app/Contents/Resources/app/static/github.sh",
+      );
+      yield* fs.makeDirectory(path.dirname(cli), { recursive: true });
+      yield* fs.writeFileString(cli, "#!/bin/sh\n");
+      yield* fs.chmod(cli, 0o755);
+      const repo = path.join(home, "repo");
+      yield* fs.makeDirectory(path.join(repo, "src"), { recursive: true });
+      yield* fs.writeFileString(path.join(repo, "src/index.ts"), "");
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      const editors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        const available = yield* launcher.resolveAvailableEditors();
+        yield* launcher.launchEditor({ editor: "github-desktop", cwd: repo });
+        yield* launcher.launchEditor({
+          editor: "github-desktop",
+          cwd: `${path.join(repo, "src/index.ts")}:12:4`,
+        });
+        return available;
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned.push(command);
+            },
+          }),
+        ),
+      );
+
+      assert.include(editors, "github-desktop");
+      assert.deepEqual(
+        spawned.map(({ command, args }) => [command, ...args]),
+        [
+          [cli, "open", repo],
+          [cli, "open", path.join(repo, "src")],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
   { platform: "linux", installPath: ".local/bin/agy", onPath: false },

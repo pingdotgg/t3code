@@ -38,6 +38,7 @@ import {
   CursorIcon,
   FileExplorerIcon,
   FinderIcon,
+  GitHubDesktopIcon,
   Icon,
   KiroIcon,
   TraeIcon,
@@ -181,6 +182,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: GitHubDesktopIcon,
+      value: "github-desktop",
       kind: "brand",
     },
     {

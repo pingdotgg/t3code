@@ -456,6 +456,25 @@ export class ExternalLauncher extends Context.Service<
   }
 >()("t3/process/externalLauncher") {}
 
+// GitHub Desktop finds the repository from a folder inside it, but not from a file.
+const resolveRepositoryTarget = Effect.fn("externalLauncher.resolveRepositoryTarget")(function* (
+  target: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const isDirectory = (candidate: string) =>
+    fileSystem.stat(candidate).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+  if (yield* isDirectory(target)) return target;
+  const filePath = Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: (parsed) => parsed.path,
+  });
+  return (yield* isDirectory(filePath)) ? filePath : path.dirname(filePath);
+});
+
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
 ): Effect.fn.Return<
@@ -483,11 +502,13 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
         baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
       }),
     );
+    const target =
+      editorDef.id === "github-desktop" ? yield* resolveRepositoryTarget(input.cwd) : input.cwd;
     return {
       editor: editorDef.id,
-      target: input.cwd,
+      target,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, target)],
     };
   }
 
