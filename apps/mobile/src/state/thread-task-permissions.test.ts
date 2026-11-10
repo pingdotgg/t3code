@@ -411,7 +411,7 @@ describe("mobile task permissions", () => {
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
       "why does this fail?",
-      { runtimeMode: "approval-required", modelSelection: selection },
+      { modelSelection: selection },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();
