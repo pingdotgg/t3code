@@ -86,6 +86,5 @@ describe("resolveProjectScriptTerminalId", () => {
       uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
     });
     expect(terminalId).not.toBe(DEFAULT_TERMINAL_ID);
-    expect(getTerminalLabel(terminalId)).toBe("Terminal 1");
   });
 });

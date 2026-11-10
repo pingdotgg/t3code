@@ -66,6 +66,9 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     createEnvironmentLinkChallenge: () => Effect.die("unused"),
     linkEnvironment: () => Effect.die("unused"),
     unlinkEnvironment: () => Effect.die("unused"),
+    getT3ChatLink: () => Effect.die("unused"),
+    createT3ChatLinkRequest: () => Effect.die("unused"),
+    unlinkT3Chat: () => Effect.die("unused"),
     getEnvironmentStatus: () =>
       Effect.succeed({
         environmentId: environment.environmentId,
@@ -93,7 +96,7 @@ function setSession() {
 function clerkToken(expiresAtSeconds: number): string {
   const encode = (value: unknown) =>
     btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
-  return `${encode({ alg: "none" })}.${encode({ exp: expiresAtSeconds })}.signature`;
+  return `${encode({ alg: "RS256" })}.${encode({ exp: expiresAtSeconds })}.c2lnbmF0dXJl`;
 }
 
 describe("createManagedRelayQueryManager", () => {

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
+  queuedRunEditBlockedReason,
   resolveQueuedEditExit,
   type QueuedRunStatus,
 } from "./queuedRunEdit.ts";
@@ -37,6 +38,15 @@ describe("resolveQueuedEditExit", () => {
   it("keeps a changed edit only when the thread draft is empty", () => {
     expect(resolveQueuedEditExit({ editChanged: true, threadDraftEmpty: true })).toBe("kept");
     expect(resolveQueuedEditExit({ editChanged: true, threadDraftEmpty: false })).toBe("discarded");
+  });
+});
+
+describe("queuedRunEditBlockedReason", () => {
+  it("blocks edits only while a question holds the composer", () => {
+    expect(queuedRunEditBlockedReason({ openQuestionCount: 0 })).toBeNull();
+    expect(queuedRunEditBlockedReason({ openQuestionCount: 1 })).toBe(
+      "Answer the question to edit queued messages",
+    );
   });
 });
 
