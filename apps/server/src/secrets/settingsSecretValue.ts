@@ -41,7 +41,9 @@ export const requireSettingsSecret = Effect.fn("SettingsSecrets.require")(functi
   if (!isSecretReference(value)) return value;
   const [secret] = yield* resolver.read([value]);
   if (secret === undefined || secret.trim() === "") {
-    return yield* new SettingsSecretUnresolvedError({ provider: value.provider });
+    return yield* new SettingsSecretUnresolvedError({
+      provider: yield* resolver.label(value.provider),
+    });
   }
   return secret;
 });
