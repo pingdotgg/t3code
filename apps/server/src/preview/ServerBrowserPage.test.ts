@@ -516,26 +516,53 @@ describe("server browser click", () => {
     expect(clicks).toHaveLength(1);
   });
 
-  it("gives up on a target the page keeps replacing once the timeout passes", async () => {
-    const clicks: Array<unknown> = [];
-    const detached = new Error(
-      "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
-    );
+  it("retries a replaced target only within the action's timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const clicks: Array<unknown> = [];
+      const detached = new Error(
+        "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+      );
+      const page = {
+        locator: () => ({
+          scrollIntoViewIfNeeded: async (options?: { timeout?: number }) => {
+            timeouts.push(options?.timeout);
+            vi.advanceTimersByTime(60);
+            throw detached;
+          },
+          click: async (options: unknown) => {
+            clicks.push(options);
+          },
+        }),
+      } as unknown as Page;
+
+      await expect(
+        ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 }),
+      ).rejects.toBe(detached);
+      expect(timeouts).toEqual([100, 40]);
+      expect(clicks).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry other scroll failures", async () => {
+    let scrolls = 0;
+    const failure = new Error("locator.scrollIntoViewIfNeeded: Timeout 100ms exceeded.");
     const page = {
       locator: () => ({
         scrollIntoViewIfNeeded: async () => {
-          throw detached;
-        },
-        click: async (options: unknown) => {
-          clicks.push(options);
+          scrolls++;
+          throw failure;
         },
       }),
     } as unknown as Page;
 
-    await expect(ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 1 })).rejects.toBe(
-      detached,
+    await expect(ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 })).rejects.toBe(
+      failure,
     );
-    expect(clicks).toHaveLength(0);
+    expect(scrolls).toBe(1);
   });
 });
 
