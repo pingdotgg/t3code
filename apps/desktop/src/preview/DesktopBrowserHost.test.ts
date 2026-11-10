@@ -163,8 +163,8 @@ describe("DesktopBrowserHost", () => {
       const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
 
       yield* Effect.yieldNow;
-      host.setShown(key, true);
       host.attach(key, loading.tab);
+      host.setShown(key, true);
       host.attach(other, makeDebuggee().tab);
       loading.domReady();
 
