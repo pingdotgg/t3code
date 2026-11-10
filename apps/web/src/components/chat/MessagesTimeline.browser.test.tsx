@@ -512,6 +512,24 @@ describe("MessagesTimeline messages", () => {
       );
       expect(screen.button("Next turn")).not.toBeDisabled();
     });
+
+    // So does a footer that grows below a detached bottom.
+    viewport.scrollTop = viewport.scrollHeight;
+    await vi.waitFor(() => expect(screen.button("Next turn")).toBeDisabled());
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        liveFollowEnabled={false}
+        footer={<div style={{ height: 400 }} />}
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+        300,
+      );
+      expect(screen.button("Next turn")).not.toBeDisabled();
+    });
   });
 
   it("enables the minimap's next turn button on a thread restored above its bottom", async () => {
