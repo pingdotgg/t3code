@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   type LinkableMachine,
   linkRequestAnswerInput,
@@ -20,6 +21,8 @@ import {
   type AuthMcpClientAccess,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
+  type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -37,7 +40,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
-import { Sheet } from "../../components/ui/Sheet";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { useHardwareBack } from "../../lib/backHandler";
+import { useEnvironmentThread } from "../../state/threads";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
 /** The same five levels as web's access picker: read-only, then the runtime modes. */
@@ -104,7 +110,7 @@ function PendingLinkRequest(props: {
   readonly item: LinkRequestItem;
 }) {
   const { item } = props;
-  const [open, setOpen] = useState(false);
+  const navigation = useNavigation();
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
@@ -161,7 +167,13 @@ function PendingLinkRequest(props: {
           <Button
             label={picksMachine(item) ? "Choose machine…" : "Review link…"}
             disabled={declining}
-            onPress={() => setOpen(true)}
+            onPress={() =>
+              navigation.navigate("ThreadLinkRequest", {
+                environmentId: props.environmentId,
+                threadId: item.threadId,
+                itemId: item.id,
+              })
+            }
             tone="primary"
             fullWidth
           />
@@ -183,13 +195,33 @@ function PendingLinkRequest(props: {
           Only a session that manages access here can answer this.
         </Text>
       )}
-      {open ? (
-        <LinkRequestSheet
-          environmentId={props.environmentId}
-          item={item}
-          onClose={() => setOpen(false)}
-        />
-      ) : null}
+    </View>
+  );
+}
+
+export function LinkRequestRouteScreen({
+  route,
+}: StaticScreenProps<{
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+}>) {
+  const navigation = useNavigation();
+  const thread = useEnvironmentThread(route.params.environmentId, route.params.threadId);
+  const item = Option.getOrNull(thread.data)?.turnItems.find(
+    (item) => item.id === route.params.itemId,
+  );
+  const close = () => navigation.goBack();
+  return item?.type === "link_request" && item.linkStatus === "pending" ? (
+    <LinkRequestSheet environmentId={route.params.environmentId} item={item} onClose={close} />
+  ) : (
+    <View className="flex-1 bg-sheet">
+      <SheetHeader title="Link a machine" onClose={close} />
+      <ScreenContent>
+        <Text className="p-5 text-sm text-foreground-muted">
+          This link request is no longer pending.
+        </Text>
+      </ScreenContent>
     </View>
   );
 }
@@ -244,6 +276,7 @@ function LinkRequestSheet(props: {
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
+  useHardwareBack(busy, () => true);
   const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "answer link request",
     // The failure cause holds the request, and with it the code; keep it out of the console.
@@ -316,19 +349,16 @@ function LinkRequestSheet(props: {
     }
   };
 
-  return (
-    <Sheet
-      title={pickMachine ? "Link a machine" : `Link ${targetName}`}
-      onClose={props.onClose}
-      // An answer that lands after a close would still link, and would close a reopened sheet.
-      dismissDisabled={busy}
-    >
+  const content = (
+    <ScreenContent>
       <ScrollView
+        nestedScrollEnabled
         className="flex-1 bg-sheet-solid"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
       >
         <View className="gap-1">
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
@@ -445,16 +475,26 @@ function LinkRequestSheet(props: {
             {error}
           </Text>
         ) : null}
-        <Button
-          label={busy ? "Linking…" : useExisting ? "Use this link" : "Link"}
-          disabled={busy || !ready}
-          onPress={() => void submit()}
-          tone="primary"
-          fullWidth
-        />
-        <Button label="Cancel" tone="secondary" disabled={busy} onPress={props.onClose} fullWidth />
       </ScrollView>
-    </Sheet>
+    </ScreenContent>
+  );
+
+  return (
+    <View collapsable={false} className="flex-1 bg-sheet android:flex-col-reverse">
+      {content}
+      <SheetHeader
+        title={pickMachine ? "Link a machine" : `Link ${targetName}`}
+        onCancel={props.onClose}
+        // An answer that lands after a close would still link, and would close a reopened sheet.
+        dismissDisabled={busy}
+        confirm={{
+          label: busy ? "Linking…" : useExisting ? "Use this link" : "Link",
+          disabled: busy || !ready,
+          loading: busy,
+          onPress: () => void submit(),
+        }}
+      />
+    </View>
   );
 }
 
