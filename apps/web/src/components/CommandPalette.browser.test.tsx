@@ -215,26 +215,15 @@ describe("CommandPalette open intents", () => {
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/parent"));
   });
 
-  it("numbers filtered New thread in... rows from 1", async () => {
+  it("numbers filtered New thread in... rows from 1 and jumps to them", async () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     setup({ projects: [makeProject("server"), makeProject("lima")] });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
     openCommandPalette({ open: "new-thread-in" });
     await userEvent.fill(page.getByPlaceholder("Search..."), "li");
-
     await expect.element(page.getByRole("option", { name: /server/ })).not.toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent("Ctrl+1");
-  });
-
-  it("jump 1 starts a thread in the first filtered New thread in... row", async () => {
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    setup({ projects: [makeProject("server"), makeProject("lima")] });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-
-    openCommandPalette({ open: "new-thread-in" });
-    await userEvent.fill(page.getByPlaceholder("Search..."), "li");
-    await expect.element(page.getByRole("option", { name: /server/ })).not.toBeInTheDocument();
     await userEvent.keyboard("{Control>}1{/Control}");
 
     await vi.waitFor(() =>
