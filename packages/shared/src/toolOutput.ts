@@ -288,7 +288,7 @@ export function mcpToolResultOutput(result: {
   readonly structuredContent?: unknown;
 }): unknown {
   const structuredContent =
-    Predicate.isObject(result.structuredContent) &&
+    (Array.isArray(result.structuredContent) || Predicate.isObject(result.structuredContent)) &&
     Object.keys(result.structuredContent).length === 0
       ? undefined
       : result.structuredContent;
