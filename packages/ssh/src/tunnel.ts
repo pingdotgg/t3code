@@ -626,7 +626,7 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
 done
 # Resolve with the new runner before replacing the old one: a failed home
 # change must not consume the runner-change signal used for future updates.
-DEFAULT_SERVER_HOME="$("$RUNNER_NEXT" __ssh-helper home-dir)"
+DEFAULT_SERVER_HOME="$("$RUNNER_NEXT" __ssh-helper home-dir)" || DEFAULT_SERVER_HOME=""
 if [ -z "$DEFAULT_SERVER_HOME" ]; then
   printf 'Could not resolve the remote T3 home.\\n' >&2
   exit 1
@@ -866,7 +866,7 @@ chmod 700 "$RUNNER_FILE"
 if [ -f "$STATE_DIR/server-home" ]; then
   PAIRING_BASE_DIR="$(cat "$STATE_DIR/server-home")"
 else
-  PAIRING_BASE_DIR="$("$RUNNER_FILE" __ssh-helper home-dir)"
+  PAIRING_BASE_DIR="$("$RUNNER_FILE" __ssh-helper home-dir)" || PAIRING_BASE_DIR=""
 fi
 if [ -z "$PAIRING_BASE_DIR" ]; then
   printf 'Could not resolve the remote T3 home for pairing.\\n' >&2
