@@ -59,6 +59,7 @@ describe("useHostConnectionChecks", () => {
     expect(results?.[environmentId]).toEqual({
       status: "failed",
       error: "Mac mini is unavailable: SSH connection refused.",
+      rawError: "Mac mini is unavailable: SSH connection refused.",
     });
   });
 });
