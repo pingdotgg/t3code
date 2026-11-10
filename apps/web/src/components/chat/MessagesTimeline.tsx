@@ -1649,24 +1649,28 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : row.kind === "turn-fold" || row.kind === "working" || row.kind === "background-activity"
-            ? "pb-1.5"
-            : row.kind === "message" && row.groupedWithNext
-              ? "pb-1"
-              : row.kind === "message" && row.message.role === "user"
-                ? row.continuesPromptStack
-                  ? "pb-2"
-                  : "pb-3"
-                : (row.kind === "message" &&
-                      row.message.role === "assistant" &&
-                      !row.showAssistantMeta) ||
-                    row.kind === "worktree-setup" ||
-                    row.kind === "event" ||
-                    row.kind === "attempt-fold" ||
-                    row.kind === "html-render" ||
-                    row.kind === "mcp-app"
-                  ? "pb-2"
-                  : "pb-4",
+          : row.kind === "background-activity" && row.precedesPrompt
+            ? "pb-4"
+            : row.kind === "turn-fold" ||
+                row.kind === "working" ||
+                row.kind === "background-activity"
+              ? "pb-1.5"
+              : row.kind === "message" && row.groupedWithNext
+                ? "pb-1"
+                : row.kind === "message" && row.message.role === "user"
+                  ? row.continuesPromptStack
+                    ? "pb-2"
+                    : "pb-3"
+                  : (row.kind === "message" &&
+                        row.message.role === "assistant" &&
+                        !row.showAssistantMeta) ||
+                      row.kind === "worktree-setup" ||
+                      row.kind === "event" ||
+                      row.kind === "attempt-fold" ||
+                      row.kind === "html-render" ||
+                      row.kind === "mcp-app"
+                    ? "pb-2"
+                    : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
