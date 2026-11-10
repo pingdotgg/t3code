@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { claimThreadOpen } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -67,18 +68,23 @@ function TabVisit({ tabId }: { tabId: string }) {
   );
 }
 
-it("retains visits across render eviction while the layout tab still exists", async () => {
+it("visits a layout tab only on screen and retains visits across render eviction", async () => {
   mocks.visitRun.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   setShell(threadA, "2026-01-02T00:00:00.000Z");
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
-  useLayoutStore.setState({ layout: createLayoutState() });
+  useLayoutStore.setState({ layout: createLayoutState(), onScreenThreadKeys: new Set() });
   useLayoutStore.getState().openTab({
     kind: "chat",
     target: { kind: "server", threadRef: threadA },
   });
   const tab = selectFocusedTab(useLayoutStore.getState().layout)!;
   await using screen = await render(<TabVisit tabId={tab.id} />);
+  expect(visitedThreadIds()).toEqual([]);
+
+  await act(() =>
+    useLayoutStore.getState().setOnScreenThreadKeys(new Set([scopedThreadKey(threadA)])),
+  );
   expect(visitedThreadIds()).toEqual(["a"]);
 
   await screen.rerender(<>{null}</>);
