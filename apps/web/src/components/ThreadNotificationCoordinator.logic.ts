@@ -3,6 +3,8 @@ export type ThreadNotificationKind = "input" | "completion";
 export interface ThreadNotificationObservation {
   /** Run, status and request key while the thread needs attention, otherwise null. */
   readonly attention: string | null;
+  /** The pending request's id, when it has one; null whenever attention is. */
+  readonly requestId: string | null;
   /** The thread is idle and its latest run completed. */
   readonly settled: boolean;
   /** When the latest run completed, if it did. */
@@ -17,17 +19,22 @@ export function createThreadNotificationGate<Key>(
   const skip = (key: Key, at: number | null) => {
     if (at !== null && at > (handled.get(key) ?? -Infinity)) handled.set(key, at);
   };
-  // Attention keys seen since the thread last stopped needing attention.
+  // Attention keys with a request id seen since the thread last stopped needing attention.
   const attended = new Map<Key, Set<string>>();
-  const attend = (key: Key, attention: string | null): boolean => {
-    if (attention === null) {
+  const attend = (
+    key: Key,
+    prior: ThreadNotificationObservation | undefined,
+    next: ThreadNotificationObservation,
+  ): boolean => {
+    if (next.attention === null) {
       attended.delete(key);
       return false;
     }
+    if (next.requestId === null) return next.attention !== prior?.attention;
     const seen = attended.get(key);
-    if (seen?.has(attention)) return false;
-    if (seen) seen.add(attention);
-    else attended.set(key, new Set([attention]));
+    if (seen?.has(next.attention)) return false;
+    if (seen) seen.add(next.attention);
+    else attended.set(key, new Set([next.attention]));
     return true;
   };
   return {
@@ -39,7 +46,7 @@ export function createThreadNotificationGate<Key>(
     ): void {
       // The first sighting, archived threads, and stopped or silent runs never notify completion.
       if (!prior || options.archived || options.quiet) skip(key, next.completedAt);
-      const fresh = attend(key, next.attention);
+      const fresh = attend(key, prior, next);
       if (!prior || options.archived) return;
       if (fresh) {
         notify(key, "input");

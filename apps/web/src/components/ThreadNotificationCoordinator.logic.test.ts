@@ -7,11 +7,13 @@ import {
 
 const working: ThreadNotificationObservation = {
   attention: null,
+  requestId: null,
   settled: false,
   completedAt: null,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
+  requestId: null,
   settled: true,
   completedAt: at,
 });
@@ -57,19 +59,32 @@ describe("createThreadNotificationGate", () => {
   it("notifies each attention once per stretch and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = { attention: "run-1:approval:a", settled: false, completedAt: null };
+    const attention = {
+      attention: "run-1:approval:a",
+      requestId: "a",
+      settled: false,
+      completedAt: null,
+    };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
     expect(notify).toHaveBeenCalledTimes(1);
-    observe({ ...attention, attention: "run-1:approval:b" });
+    observe({ ...attention, attention: "run-1:approval:b", requestId: "b" });
     observe(attention);
     expect(notify).toHaveBeenCalledTimes(2);
     observe(working);
     observe(attention);
+    expect(notify).toHaveBeenCalledTimes(3);
+    const subagent = { ...attention, attention: "run-1:approval:", requestId: null };
+    observe(subagent);
+    observe(attention);
+    observe(subagent);
+    expect(notify).toHaveBeenCalledTimes(5);
     observe(working);
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
+      ["thread", "input"],
+      ["thread", "input"],
       ["thread", "input"],
       ["thread", "input"],
       ["thread", "input"],
@@ -81,7 +96,7 @@ describe("createThreadNotificationGate", () => {
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ attention: "run-1:limited", requestId: null, settled: false, completedAt: null });
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
       ["thread", "completion"],
