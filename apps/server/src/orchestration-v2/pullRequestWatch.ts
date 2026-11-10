@@ -179,7 +179,10 @@ export function evaluatePullRequestWatch(
     if (remark.editedAt != null && held.get(remark.id) === remark.editedAt) {
       edits.push(remark);
     } else if (!fresh.includes(remark)) {
-      continue;
+      // A rewatch moves the watermark past an edit made while the watch was stopped.
+      if (remark.editedAt != null && held.has(remark.id)) {
+        heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+      }
     } else if (remark.editedAt == null || isNew(remark.createdAt, remark.id)) {
       added.push(remark);
     } else {

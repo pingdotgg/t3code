@@ -447,6 +447,14 @@ describe("evaluatePullRequestWatch", () => {
     const settled = evaluatePullRequestWatch(unread.next, detail(), [final]);
     assert.deepEqual(settled.changes, [{ kind: "remarks", remarks: [final], edited: true }]);
     assert.deepEqual(evaluatePullRequestWatch(settled.next, detail(), [final]).changes, []);
+    // A watch started again keeps the held edit, even one the bot changed while it was stopped.
+    const rewatched = { ...next, remarksThrough: "2026-10-10T20:10:00.000Z", remarkIds: [] };
+    const whileStopped = { ...seen, editedAt: "2026-10-10T20:08:50.000Z" };
+    const reheld = evaluatePullRequestWatch(rewatched, detail(), [whileStopped]);
+    assert.deepEqual(reheld.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(reheld.next, detail(), [whileStopped]).changes, [
+      { kind: "remarks", remarks: [whileStopped], edited: true },
+    ]);
     const own = { ...final, author: { login: "agent-user", name: null, avatarUrl: null } };
     const ownHeld = evaluatePullRequestWatch(watching, detail(), [own]);
     assert.deepEqual(evaluatePullRequestWatch(ownHeld.next, detail(), [own]).changes, []);
