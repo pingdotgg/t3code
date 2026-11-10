@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -884,3 +885,97 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+export interface ResetCreditGrantSummary {
+  readonly id: string | undefined;
+  readonly count: number;
+  /** Set when the grant only clears part of the account, e.g. "Fable". */
+  readonly scope: string | undefined;
+  readonly effect: string | undefined;
+  readonly expiresAt: string | undefined;
+}
+
+export interface WindowResetCredits {
+  readonly count: number;
+  /** The scope every counted grant shares, for a compact badge. */
+  readonly scope: string | undefined;
+  readonly grants: ReadonlyArray<ResetCreditGrantSummary>;
+}
+
+const joinLabels = (labels: ReadonlyArray<string>) =>
+  labels.length < 2 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+
+/** Grants without a clears list reset every window. Omit `windowId` to describe the whole account. */
+export function resetCreditsForWindow(
+  credits: ServerProviderResetCredits | undefined,
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  windowId?: string,
+): WindowResetCredits {
+  if (!credits) return { count: 0, scope: undefined, grants: [] };
+  if (!credits.grants) {
+    return {
+      count: credits.availableCount,
+      scope: undefined,
+      grants:
+        credits.availableCount === 0
+          ? []
+          : [
+              {
+                id: undefined,
+                count: credits.availableCount,
+                scope: undefined,
+                effect: undefined,
+                expiresAt: credits.nextExpiresAt,
+              },
+            ],
+    };
+  }
+  const resettable = windows.filter((window) => window.kind !== "monthly");
+  const grants = credits.grants
+    .filter((grant) => grant.availableCount > 0)
+    .flatMap((grant): ResetCreditGrantSummary[] => {
+      const clears = grant.clearsWindowIds;
+      const listed = clears ? resettable.filter((window) => clears.includes(window.id)) : [];
+      const scope =
+        listed.length < resettable.length
+          ? listed.map((window) => window.label.split(" · ")[1]).find(Boolean)
+          : undefined;
+      // Claude lists the shared Session in a model-scoped grant's clears, but redeeming leaves it.
+      const cleared = scope
+        ? listed.filter((window) => window.label.split(" · ")[1] === scope)
+        : listed;
+      if (windowId !== undefined && clears && !cleared.some((window) => window.id === windowId)) {
+        return [];
+      }
+      const keptWeekly = clears
+        ? resettable.find((window) => window.kind === "weekly" && !cleared.includes(window))
+        : undefined;
+      const givesBack =
+        grant.givesBackWeekly && keptWeekly
+          ? ` and gives back ${scope ? `${scope}'s` : "its"} share of ${keptWeekly.label}`
+          : "";
+      return [
+        {
+          id: grant.id,
+          count: grant.availableCount,
+          scope,
+          effect:
+            cleared.length > 0
+              ? `Clears ${joinLabels(cleared.map((window) => window.label))}${givesBack}.`
+              : undefined,
+          expiresAt: grant.expiresAt,
+        },
+      ];
+    });
+  const scopes = new Set(grants.map((grant) => grant.scope));
+  return {
+    count: grants.reduce((sum, grant) => sum + grant.count, 0),
+    scope: scopes.size === 1 ? [...scopes][0] : undefined,
+    grants,
+  };
+}
+
+export const withResetCreditId = (
+  input: ProviderConsumeResetCreditInput,
+  creditId: string | undefined,
+): ProviderConsumeResetCreditInput => (creditId ? { ...input, creditId } : input);

@@ -11,6 +11,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { claudeUsageWindowId } from "./claudeUsageLimits.ts";
+
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
 const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
@@ -33,6 +35,8 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  gives_back_weekly: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -109,9 +113,10 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
+  overageIncluded?: string,
   weeklyBlock?: unknown,
 ): ServerProviderResetCredits | undefined {
-  const banked = bankedCredits(block, nowMs);
+  const banked = bankedCredits(block, nowMs, overageIncluded);
   if (!Option.exists(decodeJuniperTide(weeklyBlock), (weekly) => weekly.available === true)) {
     return banked;
   }
@@ -119,10 +124,18 @@ export function claudeResetCreditsToContract(
     ...banked,
     availableCount: (banked?.availableCount ?? 0) + 1,
     nextCreditId: WEEKLY_RESET_ID,
+    grants: [
+      { id: WEEKLY_RESET_ID, availableCount: 1, clearsWindowIds: ["seven_day"] },
+      ...(banked?.grants ?? []),
+    ],
   };
 }
 
-function bankedCredits(block: unknown, nowMs: number): ServerProviderResetCredits | undefined {
+function bankedCredits(
+  block: unknown,
+  nowMs: number,
+  overageIncluded: string | undefined,
+): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
   const live = (parsed.value.grants ?? [])
@@ -134,13 +147,28 @@ function bankedCredits(block: unknown, nowMs: number): ServerProviderResetCredit
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
-  const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
+  if (!next) return { availableCount: 0 };
+  const expiresAt = (grant: typeof next) => {
+    const date = grant.ends_at ? DateTime.make(grant.ends_at) : Option.none();
+    return Option.isSome(date) ? DateTime.formatIso(date.value) : undefined;
+  };
+  const nextExpiresAt = expiresAt(next);
+  const grants = live.map((grant) => {
+    const grantExpiresAt = expiresAt(grant);
+    const clears = grant.clears?.map((bucket) => claudeUsageWindowId(bucket, overageIncluded));
+    return {
+      id: grant.id,
+      availableCount: grant.resets_left,
+      ...(grantExpiresAt ? { expiresAt: grantExpiresAt } : {}),
+      ...(clears?.length ? { clearsWindowIds: clears } : {}),
+      ...(grant.gives_back_weekly ? { givesBackWeekly: true } : {}),
+    };
+  });
   return {
-    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
-    ...(Option.isSome(nextExpiresAt)
-      ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
-      : {}),
-    ...(next ? { nextCreditId: next.id } : {}),
+    availableCount: live.reduce((sum, grant) => sum + grant.resets_left, 0),
+    ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    nextCreditId: next.id,
+    grants,
   };
 }
 
@@ -175,7 +203,7 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
+  function* (configDir: string, version: string, overageIncluded: string | undefined) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
@@ -190,6 +218,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     return claudeResetCreditsToContract(
       body.cedar_ember,
       DateTime.toEpochMillis(yield* DateTime.now),
+      overageIncluded,
       body.juniper_tide,
     );
   },

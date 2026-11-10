@@ -51,6 +51,13 @@ function scopedWindowId(displayName: string): string {
   return `seven_day_${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
 }
 
+/** Maps a usage bucket named by Claude's API to the id of the window shown for it. */
+export function claudeUsageWindowId(bucket: string, overageIncluded: string | undefined): string {
+  return bucket === OVERAGE_INCLUDED_EVENT_TYPE && overageIncluded
+    ? scopedWindowId(overageIncluded)
+    : bucket;
+}
+
 function scopedWindow(
   displayName: string,
   usedPercent: number,

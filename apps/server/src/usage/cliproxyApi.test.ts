@@ -357,6 +357,7 @@ describe("CLIProxyAPI built-in management API", () => {
           ends_at: "2099-01-01T00:00:00Z",
           paused: false,
           usable_now: true,
+          clears: ["five_hour", "seven_day_overage_included"],
         },
       ],
       next_grant_id: "free_reset",
@@ -387,6 +388,14 @@ describe("CLIProxyAPI built-in management API", () => {
         availableCount: 1,
         nextCreditId: "free_reset",
         nextExpiresAt: "2099-01-01T00:00:00.000Z",
+        grants: [
+          {
+            id: "free_reset",
+            availableCount: 1,
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            clearsWindowIds: ["five_hour", "seven_day_fable"],
+          },
+        ],
       });
       expect(test.requests.find((request) => request.body?.url)?.body?.url).toContain(
         "cedar_ember=1&at_wall=1",
@@ -407,10 +416,14 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const [account] = yield* api.readAccounts(config);
-      expect(account?.usageLimits.resetCredits).toEqual({
+      expect(account?.usageLimits.resetCredits).toMatchObject({
         availableCount: 2,
         nextCreditId: "weekly:juniper_tide",
         nextExpiresAt: "2099-01-01T00:00:00.000Z",
+        grants: [
+          { id: "weekly:juniper_tide", availableCount: 1, clearsWindowIds: ["seven_day"] },
+          { id: "free_reset", availableCount: 1 },
+        ],
       });
       expect(yield* api.consume(config, "first.json", "weekly:juniper_tide")).toEqual({
         outcome: "reset",

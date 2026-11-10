@@ -313,11 +313,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
           `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1&at_wall=1`,
         );
         const usage = yield* decodeClaudeUsage(body);
-        const resetCredits = claudeResetCreditsToContract(
-          usage.cedar_ember,
-          DateTime.toEpochMillis(yield* DateTime.now),
-          usage.juniper_tide,
-        );
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -328,6 +323,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 },
               ]
             : [],
+        );
+        // A model-scoped grant clears the scoped weekly window, named after its model.
+        const resetCredits = claudeResetCreditsToContract(
+          usage.cedar_ember,
+          DateTime.toEpochMillis(yield* DateTime.now),
+          model_scoped[0]?.display_name,
+          usage.juniper_tide,
         );
         const rateLimits = {
           five_hour: usage.five_hour ?? null,

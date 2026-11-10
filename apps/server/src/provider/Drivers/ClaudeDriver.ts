@@ -246,8 +246,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               stateDir,
               catalog,
               scopedLimitNames,
-              (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+              (version, overageIncluded) =>
+                ClaudeResetCredits.readClaudeResetCredits(configDir, version, overageIncluded).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -309,10 +309,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "ClaudeDriver.consumeResetCredit",
     )(
-      function* () {
+      function* (creditId) {
         const current = yield* snapshot.getSnapshot;
-        const creditId = current.usageLimits?.resetCredits?.nextCreditId;
-        if (!creditId || !current.version) return "noCredit" as const;
+        const credits = current.usageLimits?.resetCredits;
+        const grantId =
+          creditId === undefined
+            ? credits?.nextCreditId
+            : credits?.grants?.find((grant) => grant.id === creditId)?.id;
+        if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
           configDir,
@@ -321,7 +325,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               configDir,
               accountConfigPath,
               version,
-              creditId,
+              creditId: grantId,
               requestId,
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,

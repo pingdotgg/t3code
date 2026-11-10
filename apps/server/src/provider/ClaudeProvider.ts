@@ -525,7 +525,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
-  resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  resolveResetCredits?: (
+    version: string,
+    overageIncluded: string | undefined,
+  ) => Effect.Effect<ServerProviderResetCredits | undefined>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -727,7 +730,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&
     parsedVersion
-      ? yield* resolveResetCredits(parsedVersion)
+      ? yield* resolveResetCredits(
+          parsedVersion,
+          scopedLimitNames ? (yield* Ref.get(scopedLimitNames)).overageIncluded : undefined,
+        )
       : undefined;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
