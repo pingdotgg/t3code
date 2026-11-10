@@ -126,7 +126,11 @@ function PreviewPanelShellFrame(
           ? maximized
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
               "flex-1"
-            : "shrink-0 border-l border-border"
+            : cn(
+                "shrink-0 [--preview-panel-gap:1px]",
+                // Keeps the chat's scrollbar off the divider, as the window inset does when closed.
+                open && "md:ps-2 md:[--preview-panel-gap:calc(0.5rem+1px)]",
+              )
           : "w-full",
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
@@ -149,7 +153,9 @@ function PreviewPanelShellFrame(
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >
-      {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      {isInline && !maximized ? (
+        <RightPanelResizeHandle handlers={handlers} className="md:left-1" />
+      ) : null}
       {/* Content stays pinned to the right edge, so closing uncovers the chat
           instead of sliding the tab bar under the title bar controls. */}
       <div
@@ -157,6 +163,7 @@ function PreviewPanelShellFrame(
           "h-full min-h-0 w-full",
           collapsible && "overflow-clip",
           collapsible && !maximized && "flex justify-end",
+          isInline && !maximized && "border-l border-border",
         )}
       >
         <div
@@ -166,7 +173,7 @@ function PreviewPanelShellFrame(
           )}
           style={
             collapsible && !maximized
-              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` }
+              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - var(--preview-panel-gap))` }
               : undefined
           }
         >
