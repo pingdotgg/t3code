@@ -58,3 +58,20 @@ it.each(plugins)(
     }
   },
 );
+
+it.each(plugins)("%s finds each escape's word after earlier escapes in the text", (_, plugin) => {
+  const processor = unified().use(remarkParse).use(plugin);
+  const markdown = String.raw`one\_two C:\a\_b \*x\* three\_four&#x20;D:\c\_d \*y\* *em*E:\e\_f \*z\*`;
+  expect(processor.parse(markdown)).toMatchObject({
+    children: [
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", value: String.raw`one_two C:\a\_b *x* three_four D:\c\_d *y* ` },
+          { type: "emphasis" },
+          { type: "text", value: String.raw`E:\e\_f *z*` },
+        ],
+      },
+    ],
+  });
+});
