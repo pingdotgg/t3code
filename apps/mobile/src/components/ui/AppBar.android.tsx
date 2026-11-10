@@ -161,7 +161,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const confirm = props.confirm;
   const menuConfirm = confirm?.menu ? (
     <Menu
-      actions={androidHeaderMenuActions(confirm.menu.items)}
+      actions={menuActionsFromAppBarItems(confirm.menu.items)}
       isAnchoredToRight
       title={confirm.menu.status ?? confirm.menu.title}
       shouldOpenOnLongPress
