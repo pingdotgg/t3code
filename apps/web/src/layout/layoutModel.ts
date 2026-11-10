@@ -994,16 +994,11 @@ export function renameLayoutWorkspace(
   );
 }
 
-/** The chat tab a workspace is named after when it has no name of its own. */
+/** The tab a workspace is named after when it has no name of its own. */
 export function selectLayoutWorkspaceLeadTab(workspace: LayoutWorkspace): LayoutTab | null {
-  for (const column of workspace.columns) {
-    for (const pane of column.panes) {
-      const tab =
-        pane.tabs.find((candidate) => candidate.id === pane.activeTabId) ?? pane.tabs[0] ?? null;
-      if (tab?.content.kind === "chat") return tab;
-    }
-  }
-  return null;
+  const panes = workspace.columns.flatMap((column) => column.panes);
+  const pane = panes.find((candidate) => candidate.id === workspace.focusedPaneId) ?? panes[0];
+  return pane?.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane?.tabs[0] ?? null;
 }
 
 /** Scoped keys of every server thread a chat tab holds, in any workspace, sorted. */
