@@ -1256,6 +1256,15 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
+    const sql = yield* SqlClient.SqlClient;
+    const [receipt] = yield* sql<{ readonly result_metadata: string | null }>`
+      SELECT result_metadata FROM orchestration_command_receipts WHERE command_id = ${"delegate-parent-pr"}
+    `;
+    assert.deepEqual(JSON.parse(receipt!.result_metadata!), {
+      taskId: updatedParent.subagents[0]!.id,
+      childThreadId,
+      childRunId: child.runs[0]!.id,
+    });
     assert.isNull(child.thread.linkedPullRequest);
     assert.deepEqual(child.thread.pullRequests, []);
     assert.equal(child.thread.branch, parent.thread.branch);
