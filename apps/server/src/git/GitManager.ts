@@ -2297,7 +2297,7 @@ export const make = Effect.gen(function* () {
     return yield* new GitManagerError({
       operation: "runStackedAction",
       cwd,
-      detail: `${baseBranch} is the base branch. Check out a feature branch to create a ${changeRequestLabel}.`,
+      detail: `${baseBranch} is the base branch. Check out a feature branch to create ${changeRequestLabel}.`,
     });
   });
 
@@ -3277,7 +3277,7 @@ export const make = Effect.gen(function* () {
             input.cwd,
             initialStatus.branch,
             initialStatus.upstreamRef,
-            changeRequestTerms.shortLabel,
+            changeRequestTerms.shortLabelWithArticle,
           );
         }
 
