@@ -194,10 +194,8 @@ import {
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftAfterSelection,
   archiveCloudComposerDrafts,
-  applyNativeComposerDraftText,
   clearComposerDraftContent,
   clearComposerDraftContentState,
-  releaseClearedComposerDraftText,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -212,7 +210,6 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
-  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
@@ -2124,45 +2121,6 @@ describe("mobile composer drafts", () => {
         attachments: [],
       },
     });
-  });
-
-  it("keeps a cleared send empty when native rewrites the exact sent text", async () => {
-    const draftKey = "environment-1:thread-1";
-    setComposerDraftText(draftKey, "Ship the release notes");
-    clearComposerDraftContent(draftKey);
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("");
-
-    applyNativeComposerDraftText(draftKey, "Ship the release notes");
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("");
-
-    applyNativeComposerDraftText(draftKey, "Ship the release notes!");
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes!");
-  });
-
-  it("still fills a linked prompt that matches the just-sent text", () => {
-    const draftKey = "environment-1:thread-1";
-    setComposerDraftText(draftKey, "Ship the release notes");
-    clearComposerDraftContent(draftKey);
-    // Prompt-link fill is intentional, not a late native event.
-    setComposerDraftText(draftKey, "Ship the release notes");
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
-  });
-
-  it("allows restoring a cleared send after a failed outbox write", async () => {
-    const draftKey = "environment-1:thread-1";
-    setComposerDraftText(draftKey, "Ship the release notes");
-    clearComposerDraftContent(draftKey);
-    await mergeComposerDraftContent(draftKey, { text: "Ship the release notes", attachments: [] });
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
-  });
-
-  it("allows retyping the sent text after the composer is focused again", () => {
-    const draftKey = "environment-1:thread-1";
-    setComposerDraftText(draftKey, "Ship the release notes");
-    clearComposerDraftContent(draftKey);
-    releaseClearedComposerDraftText(draftKey);
-    applyNativeComposerDraftText(draftKey, "Ship the release notes");
-    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
   });
 
   it.each(["inactive", "background"] as const)(

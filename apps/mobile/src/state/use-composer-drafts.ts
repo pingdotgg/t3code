@@ -559,32 +559,11 @@ let loadPromise: Promise<void> | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistRetryNeeded = false;
 const persistenceQueue = new SerializedAsyncQueue();
-// Text cleared by send (or discard). Late native events that republish it into an empty
-// draft are dropped until the user focuses or types something else.
-const clearedComposerDraftText = new Map<string, string>();
 
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
   appAtomRegistry.set(composerDraftsLoadedAtom, false);
   persistRetryNeeded = false;
-  clearedComposerDraftText.clear();
-}
-
-function rememberClearedComposerDraftText(draftKey: string, text: string): void {
-  if (text.length === 0) {
-    clearedComposerDraftText.delete(draftKey);
-    return;
-  }
-  clearedComposerDraftText.set(draftKey, text);
-}
-
-/** Call when the user focuses the composer so they can retype or paste the same message. */
-export function releaseClearedComposerDraftText(draftKey: string): void {
-  clearedComposerDraftText.delete(draftKey);
-}
-
-function isClearedComposerDraftText(draftKey: string, value: string): boolean {
-  return value.length > 0 && clearedComposerDraftText.get(draftKey) === value;
 }
 
 function attachmentContextRecord(
@@ -1353,23 +1332,7 @@ export function setStickyComposerModelSelection(modelSelection: ModelSelection):
   schedulePersistComposerState();
 }
 
-/**
- * Native editor changes only. After a send clear, the exact sent string is dropped so a late
- * IME/dictation/autocorrect event cannot refill an empty draft. Intentional fills (prompt links,
- * voice, slash commands) use {@link setComposerDraftText} and are not blocked.
- */
-export function applyNativeComposerDraftText(draftKey: string, value: string): void {
-  if (
-    isClearedComposerDraftText(draftKey, value) &&
-    getComposerDraftSnapshot(draftKey).text === ""
-  ) {
-    return;
-  }
-  setComposerDraftText(draftKey, value);
-}
-
 export function setComposerDraftText(draftKey: string, value: string): void {
-  clearedComposerDraftText.delete(draftKey);
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
@@ -1801,8 +1764,6 @@ export async function mergeComposerDraftContent(
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  // Failed enqueue restores the sent text; that must not look like a late native refill.
-  releaseClearedComposerDraftText(draftKey);
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = mergeComposerDraftContentState(current, draftKey, content);
   const currentAttachmentIds = new Set(
@@ -1925,12 +1886,11 @@ export function clearComposerDraftContent(
     readonly deferAttachmentCleanup?: boolean;
   },
 ): void {
-  const previous = getComposerDraftSnapshot(draftKey);
-  rememberClearedComposerDraftText(draftKey, previous.text);
+  const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
   markComposerDraftReset(draftKey);
   updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey, options));
   if (!options?.deferAttachmentCleanup) {
-    scheduleUnusedComposerAttachmentCleanup(previous.attachments);
+    scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
 }
 
@@ -1939,9 +1899,8 @@ export function clearComposerDraft(
   options?: { readonly deferAttachmentCleanup?: boolean },
 ): void {
   abortComposerDraftOperations(draftKey);
-  const previous = getComposerDraftSnapshot(draftKey);
-  rememberClearedComposerDraftText(draftKey, previous.text);
   markComposerDraftReset(draftKey);
+  const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
   updateComposerDrafts((current) => {
     if (!current[draftKey]) {
       return current;
@@ -1951,7 +1910,7 @@ export function clearComposerDraft(
     return next;
   });
   if (!options?.deferAttachmentCleanup) {
-    scheduleUnusedComposerAttachmentCleanup(previous.attachments);
+    scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
 }
 

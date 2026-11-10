@@ -57,10 +57,8 @@ import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
-  applyNativeComposerDraftText,
   getComposerDraftSnapshot,
   composerDraftsAtom,
-  releaseClearedComposerDraftText,
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
@@ -658,7 +656,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = () => {
-    releaseClearedComposerDraftText(composerDraftKey);
     setIsFocused(true);
     settingsSheetPresentation.onEditorFocusChange(true);
     onEditorFocusChange?.(true);
@@ -968,7 +965,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   skills={composerMenu.skills}
                   selection={composerMenu.selection}
                   onChangeText={(text) => {
-                    if (!isSubmissionLocked) applyNativeComposerDraftText(composerDraftKey, text);
+                    if (!isSubmissionLocked) props.onChangeDraftMessage(text);
                   }}
                   onSelectionChange={composerMenu.onSelectionChange}
                   onPasteImages={(uris) => {
