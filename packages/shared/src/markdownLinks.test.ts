@@ -101,6 +101,7 @@ describe("parseMarkdownFileLink", () => {
     ["pages/posts/%5Bid%5D.tsx", "pages/posts/[id].tsx"],
     ["+page.svelte", "+page.svelte"],
     ["[id].tsx", "[id].tsx"],
+    ["/\\server\\share\\x.ts", "/\\server\\share\\x.ts"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
@@ -124,6 +125,7 @@ describe("parseMarkdownFileLink", () => {
     "me@example.com",
     "foo(bar)",
     "$HOME",
+    "\\foo.ts",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });
@@ -189,6 +191,20 @@ describe("resolveMarkdownFileLinkTarget", () => {
       "/repo/project/patches/",
     );
     expect(resolveMarkdownFileLinkTarget("patches", "/repo/project")).toBeNull();
+  });
+
+  // regression: #33625 backslash-separated relative links open the workspace file
+  it.each([
+    ["src/Example.cs", "C:\\repo\\src\\Example.cs"],
+    ["src\\Example.cs", "C:\\repo\\src\\Example.cs"],
+    ["src%5CExample.cs", "C:\\repo\\src\\Example.cs"],
+    ["src\\Example.cs:3", "C:\\repo\\src\\Example.cs:3"],
+  ])("resolves the relative link %s against a windows cwd", (href, target) => {
+    expect(resolveMarkdownFileLinkTarget(href, "C:\\repo")).toBe(target);
+  });
+
+  it("keeps a backslash in a relative link that already names a file", () => {
+    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/./foo\\bar.ts");
   });
 
   it("does not treat filename line references as external schemes", () => {
