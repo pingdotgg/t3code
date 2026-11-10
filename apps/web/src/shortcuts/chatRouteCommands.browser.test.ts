@@ -24,7 +24,7 @@ import {
 } from "../layout/layoutModel";
 import { getLayoutBehavior, useLayoutBehaviorStore } from "../layout/layoutBehavior";
 import { useLayoutStore } from "../layout/layoutStore";
-import { toggleThreadDiff } from "../layout/openRules";
+import { toggleThreadSurfaceTab } from "../layout/openRules";
 import {
   findThreadChat,
   requestLayoutSurfacePlacement,
@@ -176,7 +176,9 @@ describe("chat route commands", () => {
       );
     const pressDiff = () =>
       act(() =>
-        toggleThreadDiff(threadRef, () => useRightPanelStore.getState().toggle(threadRef, "diff")),
+        toggleThreadSurfaceTab(threadRef, "diff", () =>
+          useRightPanelStore.getState().toggle(threadRef, "diff"),
+        ),
       );
 
     await pressDiff();
