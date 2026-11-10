@@ -28,7 +28,7 @@ provider instance's environment overrides to use ACP v1.
 Search only shows agents that can run on the connected server. Registry agents are third-party
 code; review an agent's source and license before adding it.
 
-Search also lists DeepSeek Harness and ZCode. T3 Code installs those itself:
+Search also lists DeepSeek Harness and ZCode. T3 Code installs an agent when that command is not already available:
 
 | Agent                                                               | What T3 Code runs                                       |
 | ------------------------------------------------------------------- | ------------------------------------------------------- |
