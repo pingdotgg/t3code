@@ -332,6 +332,11 @@ it("keeps the number written on each ordered list item", () => {
     "9",
   ]);
   expect(render("1. one\n2. two\n- bullet")).toEqual([undefined, undefined, undefined]);
+  expect(render("-       first block\n\n        3. first\n        5. second")).toEqual([
+    undefined,
+    undefined,
+    "5",
+  ]);
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {

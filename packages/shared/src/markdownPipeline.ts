@@ -11,6 +11,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
+import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
@@ -438,41 +439,6 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
         }
         if (child) visit(child);
       }
-    };
-    visit(tree);
-  };
-}
-
-/**
- * CommonMark numbers an ordered list from its first marker only, so answers to questions 3 and 5
- * would render as 3 and 4. An item whose written number breaks the sequence keeps it.
- */
-function remarkKeepOrderedListNumbers(): Transformer<Root> {
-  return (tree, file) => {
-    const source = String(file);
-    const marker = /[ \t]*(\d{1,9})[.)]/y;
-    const writtenNumber = (offset: number | undefined) => {
-      if (offset === undefined) return undefined;
-      marker.lastIndex = offset;
-      const digits = marker.exec(source)?.[1];
-      return digits === undefined ? undefined : Number(digits);
-    };
-    const visit = (node: Root | RootContent) => {
-      if (!("children" in node)) return;
-      if (node.type === "list" && node.ordered) {
-        let expected = node.start ?? 1;
-        for (const item of node.children) {
-          const value = writtenNumber(item.position?.start.offset) ?? expected;
-          if (value !== expected) {
-            item.data = {
-              ...item.data,
-              hProperties: { ...item.data?.hProperties, value: String(value) },
-            };
-          }
-          expected = value + 1;
-        }
-      }
-      node.children.forEach(visit);
     };
     visit(tree);
   };
