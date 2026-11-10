@@ -766,10 +766,16 @@ const make = Effect.gen(function* () {
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
     desktopChannel.available && !snapshot.headless
       ? runPromise(
-          desktopChannel.awaitAttached(
-            { threadId: snapshot.threadId, tabId: snapshot.tabId },
-            DESKTOP_ATTACH_TIMEOUT,
-          ),
+          Effect.gen(function* () {
+            const key = { threadId: snapshot.threadId, tabId: snapshot.tabId };
+            // A reloaded desktop mounts a thread's tabs again only once an event for it arrives.
+            if (!(yield* desktopChannel.isAttached(key))) {
+              yield* manager
+                .announce({ threadId: ThreadId.make(key.threadId), tabId: key.tabId })
+                .pipe(Effect.ignore);
+            }
+            return yield* desktopChannel.awaitAttached(key, DESKTOP_ATTACH_TIMEOUT);
+          }),
         )
       : Promise.resolve(false);
 
