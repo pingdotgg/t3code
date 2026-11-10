@@ -739,7 +739,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const workspace = yield* checkpointWorkspace("legacy-v1-cutover");
-          const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cutover-state-" });
+          const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v1-cutover-state-" });
           const fixturePath = path.join(stateDir, "v1-source.sqlite");
           const copyPath = path.join(stateDir, "userdata", "state.sqlite");
           yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });
