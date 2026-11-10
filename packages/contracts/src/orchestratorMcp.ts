@@ -538,12 +538,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite),
-  returnOnInput: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "Return on questions/approvals. Defaults to true for thread callers, false for external clients.",
-    }),
-  ),
+  returnOnInput: Schema.optional(Schema.Boolean),
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({
       description:

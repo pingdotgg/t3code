@@ -283,7 +283,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait for completion/input. No runId: latest. Questions: t3_pending_request; secret cards: t3_thread_read activity. Ask the user to answer secret cards and approvals in the thread. Timeout: next means end turn; else retry.",
+    "Wait for a run to end or need input (t3_pending_request; else user). Timeout+next: end turn.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,
