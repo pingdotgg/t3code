@@ -197,6 +197,18 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
+  it("preserves explicit ordered-list values and continues from resets when copying", () => {
+    const list = new FakeElement("OL", [], { start: "0" }).append(
+      new FakeElement("LI").append(new FakeText("A")),
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("B")),
+      new FakeElement("LI").append(new FakeText("C")),
+      new FakeElement("LI", [], { value: "0" }).append(new FakeText("D")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "0. A\n5. B\n6. C\n0. D",
+    );
+  });
+
   it("keeps fences when a bare list item sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
