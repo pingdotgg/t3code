@@ -5,6 +5,7 @@ import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/sess
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  type KeepAwakeMode,
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
@@ -128,6 +129,24 @@ const STREAMING_CHOICES: ReadonlyArray<{
     mode: "paragraph",
     label: "Finished paragraphs",
     description: "Show each paragraph or code block as it completes.",
+  },
+];
+
+const KEEP_AWAKE_CHOICES: ReadonlyArray<{
+  readonly mode: KeepAwakeMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { mode: "off", label: "Off", description: "Let the computer sleep as usual." },
+  {
+    mode: "whileWorking",
+    label: "While agents are working",
+    description: "Stay awake until the last agent finishes.",
+  },
+  {
+    mode: "always",
+    label: "Always",
+    description: "Stay awake so the computer stays reachable.",
   },
 ];
 
@@ -556,6 +575,36 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   </View>
                 </SettingsSection>
+                {!projectSelected &&
+                targets.every(
+                  (target) =>
+                    target.environment.serverConfig.environment.capabilities.keepAwake === true,
+                ) ? (
+                  <SettingsSection
+                    title="Keep computer awake"
+                    footer={managedSubtitle(
+                      "keepAwake",
+                      "Stops idle sleep only. Closing the lid or logging out still stops agents.",
+                    )}
+                    trailing={
+                      pendingWrites === 0 && uniform("keepAwake") === null ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {KEEP_AWAKE_CHOICES.map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={choice.label}
+                        description={choice.description}
+                        selected={uniform("keepAwake") === choice.mode}
+                        separated={index > 0}
+                        disabled={disabledFor("keepAwake")}
+                        onPress={() => write({ keepAwake: choice.mode })}
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
               </>
             ) : null}
           </>
