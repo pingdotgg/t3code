@@ -80,6 +80,7 @@ import {
   type TerminalContextDraft,
 } from "../../lib/terminalContext";
 import {
+  collectInlineContextIds,
   ensureInlineContextReferences,
   formatInlineContextReference,
 } from "../../lib/composerContextReferences";
@@ -572,10 +573,12 @@ export function useComposerSend(input: ComposerSendInput) {
       : promptRef.current;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
-    // The reply leads the message, so its card sits above the text it is about.
-    const promptForSend = replyTo
-      ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
-      : draftPrompt;
+    // The reply leads the message, so its card sits above the text it is about. Text that
+    // already points at that response, from a pasted card, keeps its one reference.
+    const promptForSend =
+      replyTo && !collectInlineContextIds(draftPrompt).includes(replyTo.contextId)
+        ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
+        : draftPrompt;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
       records: composerThreadContexts,

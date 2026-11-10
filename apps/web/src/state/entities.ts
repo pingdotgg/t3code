@@ -460,9 +460,12 @@ export function readRunSubagents(
     (starterItem?.type === "user_message" ? starterItem.senderThreadId : undefined);
   const taskIds = starter?.delegatedCompletion?.taskIds ?? [];
   const titles = new Map<ThreadId, string | null>();
-  if (senderThreadId !== undefined) titles.set(senderThreadId, null);
+  // A sender counts only as this thread's subagent: a child's first message comes from its parent.
   for (const subagent of projection.subagents) {
-    if (subagent.childThreadId !== null && taskIds.includes(subagent.id)) {
+    if (
+      subagent.childThreadId !== null &&
+      (taskIds.includes(subagent.id) || subagent.childThreadId === senderThreadId)
+    ) {
       titles.set(subagent.childThreadId, subagent.title);
     }
   }
