@@ -3190,6 +3190,8 @@ export const layerWsRpc = (
                         ? failure.value.message
                         : "Source control action failed.");
                     // Stacked actions only need source-control write; waking the agent needs operate.
+                    // Detach the wake so a slow dispatch cannot hold the progress stream open
+                    // (client keeps isRunning until the stream ends).
                     return (
                       input.threadId === undefined ||
                       !currentSession.scopes.includes(AuthOrchestrationOperateScope)
@@ -3208,7 +3210,7 @@ export const layerWsRpc = (
                             ),
                             Effect.provideService(SecureRandom.SecureRandom, random),
                           )
-                    ).pipe(Effect.andThen(Queue.failCause(queue, cause)));
+                    ).pipe(Effect.forkDetach, Effect.ensuring(Queue.failCause(queue, cause)));
                   },
                   onSuccess: (result) =>
                     (input.threadId === undefined
