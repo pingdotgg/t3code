@@ -71,7 +71,9 @@ export function useOpenLayoutPage() {
     replaceTabId?: string,
   ) => {
     if (kind === "settings" || kind === "usage") {
-      return navigate({ href: layoutPageHref({ kind }) });
+      return navigate({ href: layoutPageHref({ kind }) }).then(() => {
+        if (replaceTabId) useLayoutStore.getState().closeTab(replaceTabId);
+      });
     }
     const store = useLayoutStore.getState();
     const existing = findLayoutTabByContent(store.layout, { kind });

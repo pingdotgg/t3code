@@ -368,6 +368,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   codexArtifactTemplatePromptToAppend,
+  isCoveredByModal,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -2148,10 +2149,14 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
+  const focusOpenedThreadComposer = useStableCallback(() => {
+    if (!isCoveredByModal(composerOverlayElement)) focusComposer();
+  });
+
   useFocusComposerOnThreadOpen(
     activeThread?.id,
     !embedded && !terminalUiState.terminalOpen,
-    focusComposerStable,
+    focusOpenedThreadComposer,
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
