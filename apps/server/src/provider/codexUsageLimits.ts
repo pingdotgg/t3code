@@ -165,6 +165,15 @@ export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerE
   }
 }
 
+/** Codex refuses the usage read with one of two such messages when it holds no ChatGPT login. */
+export function isCodexUsageLoginMissing(error: CodexErrors.CodexAppServerError): boolean {
+  return (
+    error._tag === "CodexAppServerRequestError" &&
+    error.code === -32600 &&
+    error.errorMessage.endsWith("authentication required to read rate limits")
+  );
+}
+
 /** Rate-limit notifications are partial: omitted fields preserve earlier session values. */
 export function mergeCodexRateLimits(
   previous: CodexRateLimitSnapshot | undefined,

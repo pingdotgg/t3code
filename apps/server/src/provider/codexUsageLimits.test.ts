@@ -5,6 +5,7 @@ import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
+  isCodexUsageLoginMissing,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -207,6 +208,20 @@ describe("codexRateLimitsFailureMessage", () => {
         }),
       ),
     ).toBe("Codex could not read usage (JSON-RPC -32603).");
+  });
+});
+
+describe("isCodexUsageLoginMissing", () => {
+  it("tells a missing ChatGPT login apart from other failed usage reads", () => {
+    const loginMissing = (code: number, errorMessage: string) =>
+      isCodexUsageLoginMissing(new CodexErrors.CodexAppServerRequestError({ code, errorMessage }));
+    expect(loginMissing(-32600, "codex account authentication required to read rate limits")).toBe(
+      true,
+    );
+    expect(loginMissing(-32600, "chatgpt authentication required to read rate limits")).toBe(true);
+    expect(loginMissing(-32603, "failed to fetch codex rate limits: HTTP 401 Unauthorized")).toBe(
+      false,
+    );
   });
 });
 

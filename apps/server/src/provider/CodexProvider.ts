@@ -49,6 +49,7 @@ import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageL
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
+  isCodexUsageLoginMissing,
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
@@ -67,7 +68,8 @@ type CodexRateLimitsProbe =
       readonly resetCredits: CodexResetCreditsSummary | null | undefined;
       readonly accountId?: string | null | undefined;
     }
-  | { readonly failure: string };
+  | { readonly failure: string }
+  | { readonly loginMissing: true };
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
@@ -592,7 +594,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             ),
             Effect.catch((error) =>
               Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
-                Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+                Effect.as<CodexRateLimitsProbe>(
+                  isCodexUsageLoginMissing(error)
+                    ? { loginMissing: true }
+                    : { failure: codexRateLimitsFailureMessage(error) },
+                ),
               ),
             ),
           ),
@@ -732,6 +738,31 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
   return { status: "ready", auth };
 }
 
+function codexUsageLimits(
+  { account, rateLimits }: CodexAppServerProviderSnapshot,
+  checkedAt: string,
+  accountMessage: string | undefined,
+) {
+  // Without a ChatGPT login (an API key or a custom model provider) there are no limits to read.
+  if (account.account?.type === "apiKey" || (rateLimits && "loginMissing" in rateLimits)) {
+    return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  }
+  if (!rateLimits || "failure" in rateLimits) {
+    const message = rateLimits?.failure ?? accountMessage;
+    return makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "probeFailed",
+      ...(message ? { message } : {}),
+    });
+  }
+  return codexRateLimitsToLimits({
+    snapshot: rateLimits.snapshot,
+    rateLimitsByLimitId: rateLimits.rateLimitsByLimitId,
+    resetCredits: rateLimits.resetCredits,
+    checkedAt,
+  });
+}
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
@@ -841,22 +872,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-      : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
-        ? makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            ...(accountStatus.message ? { message: accountStatus.message } : {}),
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
-          })
-        : codexRateLimitsToLimits({
-            snapshot: snapshot.rateLimits.snapshot,
-            rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
-            resetCredits: snapshot.rateLimits.resetCredits,
-            checkedAt,
-          });
+  const usageLimits = codexUsageLimits(snapshot, checkedAt, accountStatus.message);
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,

@@ -472,12 +472,14 @@ it.layer(
                 account: null,
                 requiresOpenaiAuth: false,
               },
+              rateLimits: { loginMissing: true },
             }),
           ),
         );
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+        assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
       }),
     );
 
