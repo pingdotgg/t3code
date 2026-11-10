@@ -1,10 +1,15 @@
 import { Button } from "../../components/ui/Button";
-import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  isManagedSettingPath,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDurationField } from "./components/AutoSettleDurationField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
+import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -24,7 +29,11 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import {
+  managedSettingReason,
+  resolveMobileSettingsTargets,
+  uniformMobileSetting,
+} from "./settings-scoped-server";
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -38,14 +47,26 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <BetaSettingsSection />
-        <LegacySettingsSection />
+        <MachineBetaSection
+          title="Linked environments"
+          icon="link"
+          capability="peerLinks"
+          setting="linkedEnvironmentsEnabled"
+          description="Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish."
+        />
+        <MachineBetaSection
+          title="Fast worktree checkout"
+          icon="bolt.circle"
+          capability="fastWorktreeCheckout"
+          setting="fastWorktreeCheckout"
+          description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+        />
       </ScrollView>
     </SettingsScreen>
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 /**
  * Usage-limit and auto-settle rows. The Threads page owns their writes, so they share its queue
@@ -119,6 +140,8 @@ export function AutoSettleSettingsRows(props: {
   );
 
   const disabled = !canWriteSettings || props.pending;
+  const disabledFor = (...keys: string[]) =>
+    disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
   const childAfterHours = referenceSettings.autoSettleFinishedChildrenAfterHours;
   const archiveAfterDays = referenceSettings.autoArchiveSettledAfterDays;
@@ -132,7 +155,7 @@ export function AutoSettleSettingsRows(props: {
             label="Resume after usage limits"
             subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("autoResumeLimitedThreads")}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
@@ -140,7 +163,7 @@ export function AutoSettleSettingsRows(props: {
             label="Snooze until limits reset"
             subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
-            disabled={disabled}
+            disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
@@ -150,7 +173,7 @@ export function AutoSettleSettingsRows(props: {
           icon="clock"
           label="Auto-settle inactive threads"
           value={(afterDays ?? 0) > 0}
-          disabled={disabled}
+          disabled={disabledFor("sidebarAutoSettleAfterDays")}
           onValueChange={(value) =>
             writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
           }
@@ -162,7 +185,7 @@ export function AutoSettleSettingsRows(props: {
             <AutoSettleDurationField
               unit="day"
               value={afterDays}
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleAfterDays")}
               onValueChange={(value) => writeToAll({ sidebarAutoSettleAfterDays: value })}
             />
           </View>
@@ -173,7 +196,7 @@ export function AutoSettleSettingsRows(props: {
             label="Auto-settle finished child chats"
             subtitle="Child chats that finished their work settle after this many hours without changes. Their parent stays."
             value={childAfterHours > 0}
-            disabled={disabled}
+            disabled={disabledFor("autoSettleFinishedChildrenAfterHours")}
             onValueChange={(value) =>
               writeToAll({
                 autoSettleFinishedChildrenAfterHours: value
@@ -192,7 +215,7 @@ export function AutoSettleSettingsRows(props: {
             <AutoSettleDurationField
               unit="hour"
               value={childAfterHours}
-              disabled={disabled}
+              disabled={disabledFor("autoSettleFinishedChildrenAfterHours")}
               onValueChange={(value) => writeToAll({ autoSettleFinishedChildrenAfterHours: value })}
             />
           </View>
@@ -205,7 +228,7 @@ export function AutoSettleSettingsRows(props: {
             label="Auto-archive settled threads"
             subtitle="Archive threads that stay settled this many days. Unarchive brings them back."
             value={archiveAfterDays > 0}
-            disabled={disabled}
+            disabled={disabledFor("autoArchiveSettledAfterDays")}
             onValueChange={(value) =>
               writeToAll({
                 autoArchiveSettledAfterDays: value ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : 0,
@@ -219,7 +242,7 @@ export function AutoSettleSettingsRows(props: {
               <AutoSettleDurationField
                 unit="archiveDay"
                 value={archiveAfterDays}
-                disabled={disabled}
+                disabled={disabledFor("autoArchiveSettledAfterDays")}
                 onValueChange={(value) => writeToAll({ autoArchiveSettledAfterDays: value })}
               />
             </View>
@@ -236,7 +259,7 @@ export function AutoSettleSettingsRows(props: {
             <Button
               label="Apply auto-settle defaults"
               tone="secondary"
-              disabled={disabled}
+              disabled={disabledFor("sidebarAutoSettleOnMerge", "sidebarAutoSettleAfterDays")}
               onPress={() => writeToAll(autoSettlePatch)}
             />
           </View>
@@ -290,67 +313,64 @@ export function NewThreadSettingsSection() {
   );
 }
 
-/** Per machine, since each machine's own setting decides whether it links and answers links. */
-function BetaSettingsSection() {
+type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+
+/** One switch per connected machine that offers the beta, since each machine's own setting decides. */
+function MachineBetaSection({
+  title,
+  icon,
+  capability,
+  setting,
+  description,
+}: {
+  readonly title: string;
+  readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
+  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly setting: MachineBetaSetting;
+  readonly description: string;
+}) {
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.peerLinks === true,
+      environment.serverConfig?.environment.capabilities[capability] === true,
   );
   const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "linked environments beta update",
+    label: `${setting} beta update`,
     reportFailure: true,
   });
   if (supported.length === 0) return null;
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => (
-          <SettingsSwitchRow
-            key={environment.environmentId}
-            icon="link"
-            label={environment.label}
-            value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-            disabled={!writable.has(environment.environmentId)}
-            onValueChange={(value) =>
-              void updateSettings({
-                environmentId: environment.environmentId,
-                input: { patch: { linkedEnvironmentsEnabled: value } },
-              })
-            }
-          />
-        ))}
+      <SettingsSection title={`Beta: ${title}`}>
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, setting);
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon={icon}
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings[setting] === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: {
+                    patch:
+                      setting === "linkedEnvironmentsEnabled"
+                        ? { linkedEnvironmentsEnabled: value }
+                        : { fastWorktreeCheckout: value },
+                  },
+                })
+              }
+            />
+          );
+        })}
       </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
-      </Text>
-    </View>
-  );
-}
-
-function LegacySettingsSection() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const planModeEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
-
-  return (
-    <View className="gap-3">
-      <SettingsSection title="Legacy">
-        <SettingsSwitchRow
-          icon="hammer"
-          label="Plan Mode"
-          value={planModeEnabled}
-          onValueChange={(value) => savePreferences({ planModeEnabled: value })}
-        />
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
-        control; otherwise every task runs in Build mode.
-      </Text>
+      <Text className="px-2 text-sm text-foreground-muted">{description}</Text>
     </View>
   );
 }

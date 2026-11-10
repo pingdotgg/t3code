@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
@@ -45,6 +46,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -68,12 +70,11 @@ const layerTestEventSink = EventSink.layer.pipe(
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerEmptyInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-  getInstance: () => Effect.succeed(undefined),
+  getInstance: () => Effect.undefined,
 });
 const makeLayerTest = <E>(
   ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
@@ -257,6 +258,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           generatePrContent: () => Effect.die("unused"),
           generateThreadTitle: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
         },
         snapshot: {
           refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
@@ -325,12 +327,14 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
 );
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
-  const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
-    record: (properties: Readonly<Record<string, unknown>>) =>
+  const recorded: Array<ProviderUsageAnalytics.ProviderTurnReport> = [];
+  const layerAnalytics = Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
+    runStarted: () => Effect.void,
+    turnCompleted: (report) =>
       Effect.sync(() => {
-        recorded.push(properties);
+        recorded.push(report);
       }),
+    runSettled: () => Effect.void,
   });
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -413,23 +417,9 @@ it.effect("records accepted billed turn usage once without billing the context w
     assert.isEmpty(ignored);
     assert.lengthOf(recorded, 1);
     assert.deepEqual(recorded[0], {
-      provider: CODEX_DRIVER,
-      terminalStatus: "completed",
-      usageStatus: "complete",
-      usageScope: "main_agent",
-      hasSubagents: false,
-      inputTokens: 40,
-      cachedInputTokens: 30,
-      outputTokens: 10,
-      model: modelSelection.model,
-      mixedModels: false,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "provider",
-      scheduled: false,
-      subagent: true,
-      durationMs: 120,
+      driver: CODEX_DRIVER,
+      providerTurn,
+      context: input.analyticsContext,
     });
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
@@ -556,8 +546,12 @@ layer("ProviderEventIngestorV2", (it) => {
           event: { type: "node.updated", driver: CODEX_DRIVER, node: sent },
         });
 
-      assert.lengthOf(yield* ingestNode(node), 1);
-      assert.isEmpty(yield* ingestNode({ ...node }));
+      yield* eventSink.withProviderBatch(
+        Effect.gen(function* () {
+          assert.lengthOf(yield* ingestNode(node), 1);
+          assert.isEmpty(yield* ingestNode({ ...node }));
+        }),
+      );
       yield* eventSink.write({
         events: [
           {

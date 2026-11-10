@@ -74,5 +74,9 @@
   [73, "ActiveTurnItemIndexes"],
   [74, "ExcludeAttachmentPlaceholdersFromSearch"],
   [75, "SubagentDeliveryState"],
-  [76, "ProjectionProjectsPinArchive"]
+  [76, "ProjectionProjectsPinArchive"],
+  [77, "RepairBooleanSettledOverride"],
+  [78, "DropOrchestrationEventCorrelationIndex"],
+  [79, "DelegatedRecoveryIndexes"],
+  [80, "ScheduledTaskThreadMode"]
 ]

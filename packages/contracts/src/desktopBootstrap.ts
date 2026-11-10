@@ -6,6 +6,8 @@ import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts
 export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
 // Nor one that refused its database's migration history: every restart is refused again.
 export const SERVER_EXIT_CODE_DATABASE_REFUSED = 65;
+// A server the managed policy refused, so the desktop app blames the policy rather than the release.
+export const SERVER_EXIT_CODE_MANAGED_POLICY = 77;
 
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),

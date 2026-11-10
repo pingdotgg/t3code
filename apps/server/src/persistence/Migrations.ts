@@ -81,6 +81,10 @@ import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 import Migration0074 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
 import Migration0075 from "./Migrations/075_SubagentDeliveryState.ts";
 import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
+import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
+import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
+import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
+import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 
 import ForkMigration001 from "./Migrations/fork/001_AgentProfileAndPullRequestCompatibility.ts";
 import ForkMigration002 from "./Migrations/fork/002_RepairAgentUpgradeSchema.ts";
@@ -97,6 +101,7 @@ import ForkMigration012 from "./Migrations/fork/012_TailnetDevices.ts";
 import ForkMigration013 from "./Migrations/fork/013_TailnetDevicePolicy.ts";
 import ForkMigration014 from "./Migrations/fork/014_ThreadTaskDepartures.ts";
 import ForkMigration015 from "./Migrations/fork/015_ThreadAutoArchiveIndex.ts";
+import ForkMigration016 from "./Migrations/fork/016_GuardThreadPayloadIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -175,6 +180,10 @@ const migrationEntries = [
   [74, "ExcludeAttachmentPlaceholdersFromSearch", Migration0074],
   [75, "SubagentDeliveryState", Migration0075],
   [76, "ProjectionProjectsPinArchive", Migration0076],
+  [77, "RepairBooleanSettledOverride", Migration0077],
+  [78, "DropOrchestrationEventCorrelationIndex", Migration0078],
+  [79, "DelegatedRecoveryIndexes", Migration0079],
+  [80, "ScheduledTaskThreadMode", Migration0080],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -196,6 +205,7 @@ const forkMigrationEntries = [
   [13, "TailnetDevicePolicy", ForkMigration013, 72],
   [14, "ThreadTaskDepartures", ForkMigration014, 72],
   [15, "ThreadAutoArchiveIndex", ForkMigration015, 76],
+  [16, "GuardThreadPayloadIndexes", ForkMigration016, 80],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(
@@ -234,7 +244,7 @@ const ledgers = {
 } as const;
 
 /** Whether a recorded migration name matches this build's slot, directly or through a repaired earlier build. */
-export const isKnownMigrationName = (ledger: Ledger, id: number, name: string): boolean =>
+const isKnownMigrationName = (ledger: Ledger, id: number, name: string): boolean =>
   ledgers[ledger].entries.some(([entryId, entryName]) => entryId === id && entryName === name) ||
   (ledgers[ledger].superseded.get(id)?.includes(name) ?? false);
 

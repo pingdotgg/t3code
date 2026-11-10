@@ -181,7 +181,7 @@ function resolveIdleSince(
     : null;
 }
 
-/** Match the client snooze: pending requests, waiting guests and fresh failures wake it; completion does not. */
+/** Match the client snooze: new pending requests, waiting guests and fresh failures wake it; completion does not. */
 export function isSnoozed(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -196,9 +196,17 @@ export function isSnoozed(
 ): boolean {
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
-  if (thread.pendingRuntimeRequest !== null || (thread.pendingGuestMessageCount ?? 0) > 0)
-    return false;
+  // Same as the client: a waiting guest message wakes the thread, and the snooze stays stored.
+  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  if (
+    thread.pendingRuntimeRequest !== null &&
+    (thread.pendingRuntimeRequest.kind !== "user_input" ||
+      snoozedAtMs === null ||
+      DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) > snoozedAtMs)
+  ) {
+    return false;
+  }
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&

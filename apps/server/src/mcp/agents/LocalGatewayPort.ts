@@ -29,7 +29,7 @@ import {
 } from "@t3tools/client-runtime/gateway";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -194,7 +194,7 @@ export const layer = Layer.effect(
           : Stream.fail(unavailable(id)),
     } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
     const context = Context.make(EnvironmentRegistry.EnvironmentRegistry, registry).pipe(
-      Context.add(Crypto.Crypto, yield* Crypto.Crypto),
+      Context.add(SecureRandom.SecureRandom, yield* SecureRandom.SecureRandom),
     );
     const base = createGatewayRuntimePortFromContext(context);
     const tasks = yield* ThreadTaskService.ThreadTaskService;

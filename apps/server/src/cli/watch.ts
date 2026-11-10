@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -193,8 +193,8 @@ const sameState = (left: Record<string, string>, right: Record<string, string>) 
 
 /** A brand new cursor is a new watcher identity: it gets its own `instanceId`. */
 const randomId = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  return yield* crypto.randomUUIDv4();
+  const random = yield* SecureRandom.SecureRandom;
+  return yield* random.uuidV4();
 }).pipe(Effect.orDie);
 
 const newCursor = Effect.fn("watch.newCursor")(function* () {

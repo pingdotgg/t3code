@@ -17,12 +17,14 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ScheduledTaskTestkit from "./ScheduledTaskService.testkit.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 afterEach(() => vi.unstubAllEnvs());
 
 const dependencies = Layer.mergeAll(
   NodeCrypto.layer,
   Scheduler.layer,
+  ManagedPolicy.layerTest(),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({
     launch: () => Effect.die("synthetic dispatch failure"),
   }),

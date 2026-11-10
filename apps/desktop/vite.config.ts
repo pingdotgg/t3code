@@ -26,6 +26,12 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
+      // CI bundle jobs skip the Linux browser secret helper; packaging stages one per arch.
+      "build:bundle": {
+        command: "node scripts/build-preview-annotation-css.mjs && vp pack",
+        dependsOn: ["t3#build"],
+        cache: false,
+      },
       dev: {
         command:
           "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
@@ -42,9 +48,9 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
-      // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      // A local tsbuildinfo is leftover build state, not a typecheck input.
       typecheck: {
-        command: "tsc --noEmit",
+        command: "effect-tsgo tsrs --noEmit",
         cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
       },
     },
@@ -94,7 +100,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/boot.ts", "src/compileCache.ts"],
+      entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
       clean: false,
       deps: {
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
@@ -121,7 +127,10 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pick-preload.ts"],
       deps: {
-        alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
+        alwaysBundle: (id) =>
+          id === "react-grab" ||
+          id.startsWith("react-grab/") ||
+          id === "@t3tools/shared/keybindingMatching",
       },
     },
     {

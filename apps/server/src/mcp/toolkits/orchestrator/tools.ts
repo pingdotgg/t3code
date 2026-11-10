@@ -41,7 +41,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -60,7 +60,7 @@ const dependencies = [
   OrchestratorMcpService.OrchestratorMcpService,
 ];
 // A send to another environment mints its retry key when the caller passes none.
-const sendDependencies = [...dependencies, Crypto.Crypto];
+const sendDependencies = [...dependencies, SecureRandom.SecureRandom];
 /** Listing this environment's links. */
 const linkDependencies = [...dependencies, PeerForwarding.PeerForwarding];
 /** Making and forgetting links. */
@@ -93,7 +93,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Needs an agent running inside a T3 thread. Delegate one task, run with only the supplied task prompt and not this thread's conversation; read its result with task_status. With an agent's profileId (orchestrator_capabilities.agents) it runs as that agent in its own child chat: omit target and modes so the agent's settings apply. Explicit target or modes override the agent, and a child never runs with broader modes than this thread's. If a profileId call fails, report the error instead of retrying without the agent. Without profileId it is a short subagent helper inside this thread's run. Use it instead of native subagent tools when they lack the chosen model or model options are requested or inherited (nonempty inheritedOptions in orchestrator_capabilities): native subagents cannot reliably apply T3 model options. For independent T3 delegated review rounds, call delegate_task again with the original brief, prior findings, responses, and unresolved objections in the task prompt, tracking each round by its own taskId with a distinct clientRequestId, stable across retries of that round. For a follow-up that needs the same child's conversation, use t3_thread_send on its childThreadId. isolation:'worktree' gives a separate checkout based on the parent local commit, with project setup completed before the child starts; uncommitted edits are not copied, and omitted isolation shares the parent checkout. Set target.options using advertised IDs, e.g. Claude {effort: 'max', fastMode: true}, Codex {reasoningEffort: 'max', serviceTier: 'priority'}, and check providerInstanceId, model, and options in the result. Provider/model and modes inherit unless overridden. Options inherit only for the same instance and model; explicit entries override individual values and [] or {} clears them. A requested runtimeMode must be one the target provider lists in orchestrator_capabilities runtimeModes; an inherited one steps down to the broadest mode it offers. Leave runtimeMode unset unless the user asks for a supervised child: approval-required and auto-accept-edits make the child wait for a person at each action that needs approval. Prefer mode='async' for long helper work. mode='wait' blocks until completion, a blocking question, a pending approval, or timeoutMs, which bounds only the parent's wait and never cancels the task; after waitTimedOut keep the taskId and read task_status later. Named children send no automatic messages: use mode='wait' or t3_thread_wait, then task_status or t3_thread_read. If hasPendingQuestion, pass threadId=childThreadId to t3_pending_request with action=list, read (with requestId), or respond, or ask the user; a child's question also wakes this thread once. If pendingApproval is set, read the fresh full request in childThreadId before responding, since the record can outlive its provider callback. It grants no approval authority: decisions remain with the child's existing approval holder, pending request tools answer questions only, and the child keeps running. An async profile-less helper's completion wakes this thread, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn.",
+    "Needs an agent running inside a T3 thread. Delegate one task, run with only the supplied task prompt and not this thread's conversation; read its result with task_status. With an agent's profileId (orchestrator_capabilities.agents) it runs as that agent in its own child chat: omit target and modes so the agent's settings apply. Explicit target or modes override the agent, and a child never runs with broader modes than this thread's. If a profileId call fails, report the error instead of retrying without the agent. Without profileId it is a short subagent helper inside this thread's run. Use it instead of native subagent tools when they lack the chosen model or model options are requested or inherited (nonempty inheritedOptions in orchestrator_capabilities): native subagents cannot reliably apply T3 model options. For independent T3 delegated review rounds, call delegate_task again with the original brief, prior findings, responses, and unresolved objections in the task prompt, tracking each round by its own taskId with a distinct clientRequestId, stable across retries of that round. For a follow-up that needs the same child's conversation, use t3_thread_send on its childThreadId. isolation:'worktree' gives a separate checkout based on the parent local commit, with project setup completed before the child starts; uncommitted edits are not copied, and omitted isolation shares the parent checkout. Set target.options using advertised IDs, e.g. Claude {effort: 'max', fastMode: true}, Codex {reasoningEffort: 'max', serviceTier: 'priority'}, and check providerInstanceId, model, and options in the result. Provider/model and modes inherit unless overridden. Options inherit only for the same instance and model; explicit entries override individual values and [] or {} clears them. A requested runtimeMode must be one the target provider lists in orchestrator_capabilities runtimeModes; an inherited one steps down to the broadest mode it offers. Leave runtimeMode unset unless the user asks for a supervised child: approval-required and auto-accept-edits make the child wait for a person at each action that needs approval. Prefer mode='async' for long helper work. mode='wait' blocks until completion, a blocking question, a pending approval, or timeoutMs, which bounds only the parent's wait and never cancels the task; after waitTimedOut keep the taskId and read task_status later. Named children send no automatic messages: use mode='wait' or t3_thread_wait, then task_status or t3_thread_read. If hasPendingQuestion, pass threadId=childThreadId to t3_pending_request with action=list, read (with requestId), or respond, or ask the user; a child's question also wakes this thread once. If pendingApproval is set, read the fresh full request in childThreadId before responding, since the record can outlive its provider callback. It grants no approval authority: decisions remain with the child's existing approval holder, pending request tools answer questions only, and the child keeps running. An async profile-less helper's completion wakes this thread, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn. No secrets in the task prompt.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -206,7 +206,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    'Ask the user to enter a secret in a private card and wait. You never see the value. Returns a one-use `secretRef` for a tool that accepts it, or with `delivery: "file"` a private file path to read inside a shell command. Asked how to provide a secret: call this now, do not explain instead.',
+    'Ask for one secret per single-line card; never combine values. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,
@@ -214,7 +214,9 @@ const RequestSecretTool = Tool.make("request_secret", {
   dependencies,
 })
   .annotate(Tool.Title, "Request a secret from the user")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:

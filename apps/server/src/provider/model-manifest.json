@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-28T08:10:39Z",
+  "updatedAt": "2026-11-05T22:38:29Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -25,7 +25,7 @@
     {
       "driver": "claudeAgent",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=2.1.280",
+      "recommendedRange": ">=2.1.301",
       "ranges": [
         { "range": ">=2.1.280", "status": "supported" },
         { "range": ">=2.1.111 <2.1.280", "status": "graceful" },
@@ -75,12 +75,19 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": "=1.4.1",
+      "recommendedRange": "=1.4.5 || =1.4.1",
       "ranges": [
+        { "range": "=1.4.5", "status": "supported" },
         { "range": "=1.4.1", "status": "supported" },
         { "range": "=1.3.0", "status": "supported" },
         { "range": "=1.1.1", "status": "supported" }
       ]
+    },
+    {
+      "driver": "kiro",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=2.27.0",
+      "ranges": [{ "range": ">=2.27.0", "status": "supported" }]
     },
     {
       "driver": "pi",
@@ -577,6 +584,56 @@
             }
           }
         },
+        "sonnet-5-5": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "High",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
+                ],
+                "promptInjectedValues": ["ultrathink"]
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "effortMap": { "ultrathink": null },
+              "fixedContextWindowTokens": 1000000
+            }
+          }
+        },
         "sonnet-4-6": {
           "capabilities": {
             "optionDescriptors": [
@@ -658,6 +715,11 @@
                   { "id": "high", "label": "High" },
                   { "id": "xhigh", "label": "Extra High" },
                   { "id": "max", "label": "Max" },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
                   { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
@@ -701,7 +763,7 @@
           "name": "Claude Sonnet 5.5",
           "aliases": ["sonnet", "sonnet-5.5", "claude-sonnet-5.5"],
           "status": "current",
-          "profile": "sonnet-5",
+          "profile": "sonnet-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
         {

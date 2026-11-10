@@ -10,6 +10,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
@@ -35,6 +36,7 @@ const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 export class DirectEndpoints extends Context.Service<
   DirectEndpoints,
   {
+    readonly resolveAvailable: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
     readonly resolve: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
   }
 >()("t3/environment/DirectEndpoints") {}
@@ -129,7 +131,8 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
-  const resolve = Effect.gen(function* () {
+  const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
+  const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
         platform,
@@ -139,6 +142,12 @@ export const make = Effect.gen(function* () {
         onCloudVm: yield* onCloudVm,
       }),
     ];
+    const servedUrl = yield* Ref.get(servedEndpoint);
+    if (Option.isSome(servedUrl)) endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    return endpoints;
+  });
+
+  const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
       // The server may have picked any port, and `t3 pair --tailscale` maps one from
@@ -169,14 +178,13 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      if (Option.isSome(servedUrl)) {
-        endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
-      }
+      yield* Ref.set(servedEndpoint, servedUrl);
     }
-    return endpoints;
+    return yield* resolveAvailable();
   });
 
   return DirectEndpoints.of({
+    resolveAvailable,
     resolve: Effect.fn("DirectEndpoints.resolve")(function () {
       return resolve;
     }),

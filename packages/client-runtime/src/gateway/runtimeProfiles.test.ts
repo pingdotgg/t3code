@@ -5,7 +5,7 @@ import {
   WS_METHODS,
   type ServerSettings,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -65,10 +65,7 @@ describe("runtime profile persistence", () => {
             effect.pipe(Effect.provideService(EnvironmentSupervisor, supervisor)),
         } as unknown as EnvironmentRegistry["Service"];
         let counter = 0;
-        const crypto = Crypto.make({
-          randomBytes: (size) => new Uint8Array(size).fill(++counter),
-          digest: (_algorithm, bytes) => Effect.succeed(bytes),
-        });
+        const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(++counter));
         const context = yield* Effect.context<never>();
         const port = createGatewayRuntimePort({
           runPromise: (effect) =>
@@ -76,7 +73,7 @@ describe("runtime profile persistence", () => {
             Effect.runPromiseWith(context)(
               effect.pipe(
                 Effect.provideService(EnvironmentRegistry, registry),
-                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(SecureRandom.SecureRandom, crypto),
               ),
             ),
         });

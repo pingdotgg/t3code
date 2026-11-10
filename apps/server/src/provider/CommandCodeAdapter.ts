@@ -360,7 +360,10 @@ export const makeCommandCodeAdapter = Effect.fn("makeCommandCodeAdapter")(functi
                 Stream.runForEach((line) =>
                   Effect.gen(function* () {
                     if (!line.trim()) return;
-                    const frame = yield* Effect.try(() => decodeCommandCodeFrame(line));
+                    const frame = yield* Effect.try({
+                      try: () => decodeCommandCodeFrame(line),
+                      catch: (cause) => new Cause.UnknownError(cause),
+                    });
                     if (frame.type === "result") {
                       result = frame;
                       if (frame.sessionId) yield* captureSession(frame.sessionId);

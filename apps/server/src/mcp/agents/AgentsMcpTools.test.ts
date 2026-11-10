@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import type { GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
@@ -132,7 +133,7 @@ const makeLayer = (
       );
       return broker;
     }),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   return base.pipe(Layer.provide(broker));
 };
 

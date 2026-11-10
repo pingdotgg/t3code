@@ -283,7 +283,11 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     accepting = false;
     for (const renderer of active.values()) renderer.removeListeners();
     active.clear();
-  }).pipe(Effect.andThen(Fiber.interrupt(writerFiber)), Effect.asVoid);
+  }).pipe(
+    Effect.andThen(Fiber.interrupt(writerFiber)),
+    Effect.asVoid,
+    Effect.withSpan("desktop.rendererHistory.shutdown"),
+  );
   yield* Effect.addFinalizer(() => shutdown);
 
   return DesktopRendererHistory.of({ register, recordMetrics, shutdown });

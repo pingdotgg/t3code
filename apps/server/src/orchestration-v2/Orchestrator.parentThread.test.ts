@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpGatewayBroker from "../mcp/McpGatewayBroker.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -1108,7 +1109,7 @@ const relayLayer = (input: {
       );
       return broker;
     }),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const withRemoteParents = (relay: ReturnType<typeof relayLayer>) =>
   RemoteParentSettlement.layer.pipe(Layer.provideMerge(testLayer), Layer.provideMerge(relay));

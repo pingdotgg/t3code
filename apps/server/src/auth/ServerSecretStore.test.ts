@@ -1,6 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -37,7 +37,7 @@ const layerPermissionDeniedFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerPermissionDeniedSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -64,7 +64,7 @@ const layerRenameFailureFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerRenameFailureSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -93,24 +93,20 @@ const layerConcurrentReadMissFileSystem = Layer.effect(
                     yield* Deferred.succeed(readBarrier, void 0);
                   }
                   yield* Deferred.await(readBarrier);
-                  return yield* Effect.failCause(
-                    Cause.fail(
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFile",
-                        pathOrDescriptor: String(path),
-                        description: "Secret file does not exist yet.",
-                      }),
-                    ),
-                  );
+                  return yield* PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    pathOrDescriptor: String(path),
+                    description: "Secret file does not exist yet.",
+                  });
                 });
               }),
             )
           : fileSystem.readFile(path),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerConcurrentCreateSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -138,10 +134,10 @@ const layerCountingSecretStore = (reads: Ref.Ref<number>) =>
         }),
       ),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
-it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStore.layer", (it) => {
   it.effect("serves repeat reads from memory and still sees its own writes", () =>
     Effect.gen(function* () {
       const reads = yield* Ref.make(0);

@@ -16,7 +16,7 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import {
   v2Project,
@@ -42,10 +42,7 @@ import {
 } from "./runtimePort.ts";
 
 const environmentId = EnvironmentId.make("remote-1");
-const testCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size));
 
 describe("Gateway Runtime Port", () => {
   it.effect.each(["listProjects", "getThread"] as const)(
@@ -65,12 +62,14 @@ describe("Gateway Runtime Port", () => {
               ),
             ),
         } as unknown as EnvironmentRegistry["Service"]);
-        const context = yield* Effect.context<EnvironmentRegistry | Crypto.Crypto>().pipe(
+        const context = yield* Effect.context<
+          EnvironmentRegistry | SecureRandom.SecureRandom
+        >().pipe(
           Effect.provideService(EnvironmentRegistry, registry),
-          Effect.provideService(Crypto.Crypto, testCrypto),
+          Effect.provideService(SecureRandom.SecureRandom, testCrypto),
         );
         const port = createGatewayRuntimePortFromContext(context);
-        const request = yield* Effect.tryPromise(async (): Promise<unknown> =>
+        const request = yield* Effect.promise(async (): Promise<unknown> =>
           operation === "listProjects"
             ? port.listProjects(environmentId)
             : port.getThread(environmentId, "offline-thread"),
@@ -264,10 +263,10 @@ describe("Gateway Runtime Port", () => {
               Effect.ensuring(Deferred.succeed(released, undefined)),
             ),
         } as unknown as EnvironmentRegistry["Service"];
-        const port = yield* Effect.context<EnvironmentRegistry | Crypto.Crypto>().pipe(
+        const port = yield* Effect.context<EnvironmentRegistry | SecureRandom.SecureRandom>().pipe(
           Effect.map(createGatewayRuntimePortFromContext),
           Effect.provideService(EnvironmentRegistry, registry),
-          Effect.provideService(Crypto.Crypto, testCrypto),
+          Effect.provideService(SecureRandom.SecureRandom, testCrypto),
         );
         const pending = (
           operation === "listProjects"
@@ -319,7 +318,7 @@ describe("Gateway Runtime Port", () => {
       } as unknown as EnvironmentRegistry["Service"]);
 
       yield* Effect.gen(function* () {
-        const context = yield* Effect.context<EnvironmentRegistry | Crypto.Crypto>();
+        const context = yield* Effect.context<EnvironmentRegistry | SecureRandom.SecureRandom>();
         const port = createGatewayRuntimePortFromContext(context);
         const result = yield* Effect.promise(() => port.listEnvironments());
 
@@ -334,7 +333,7 @@ describe("Gateway Runtime Port", () => {
         expect(start).not.toHaveBeenCalled();
       }).pipe(
         Effect.provideService(EnvironmentRegistry, registry),
-        Effect.provideService(Crypto.Crypto, testCrypto),
+        Effect.provideService(SecureRandom.SecureRandom, testCrypto),
       );
     }),
   );
@@ -485,7 +484,7 @@ it.effect(
         },
       } as unknown as EnvironmentRegistry["Service"];
       yield* Effect.gen(function* () {
-        const context = yield* Effect.context<EnvironmentRegistry | Crypto.Crypto>();
+        const context = yield* Effect.context<EnvironmentRegistry | SecureRandom.SecureRandom>();
         const port = createGatewayRuntimePortFromContext(context);
         expect((yield* Effect.promise(() => port.listThreads("machine-b"))).items[0]?.title).toBe(
           "machine-b",
@@ -538,7 +537,7 @@ it.effect(
         ]);
       }).pipe(
         Effect.provideService(EnvironmentRegistry, registry),
-        Effect.provideService(Crypto.Crypto, testCrypto),
+        Effect.provideService(SecureRandom.SecureRandom, testCrypto),
       );
     }),
 );

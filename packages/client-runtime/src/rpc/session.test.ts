@@ -9,6 +9,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeZlib from "node:zlib";
 import * as Cause from "effect/Cause";
@@ -304,6 +305,37 @@ describe("RpcSessionFactory", () => {
       }
     }).pipe(Effect.scoped),
   );
+
+  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      const request = yield* awaitRequest(socket);
+      // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
+      const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
+      const frame = encodeJson({
+        _tag: "Chunk",
+        requestId: request.id,
+        values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
+      });
+      const parts = new URL(socket.url).searchParams.has("frameParts")
+        ? splitSocketFrame(frame)
+        : [frame];
+
+      for (const part of parts) {
+        const bytes = new TextEncoder().encode(part);
+        yield* TestClock.adjust((bytes.length / 4000) * 1000);
+        socket.serverMessage(new TextDecoder().decode(bytes));
+      }
+      yield* Fiber.join(readyFiber);
+
+      expect(yield* session.initialConfig).toEqual(config);
+    }),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -311,7 +343,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
@@ -429,7 +461,9 @@ describe("RpcSessionFactory", () => {
           }),
         });
         const relaySocket = yield* awaitSocket(relay.sockets);
-        expect(relaySocket.url).toBe(PREPARED.socketUrl);
+        expect(new URL(relaySocket.url).searchParams.has(DEFLATED_RPC_FRAMES_QUERY_PARAM)).toBe(
+          false,
+        );
         relaySocket.open();
       }),
   );
@@ -451,6 +485,38 @@ describe("RpcSessionFactory", () => {
 
       expect(sockets[0]?.readyState).toBe(TestWebSocket.CLOSED);
     }),
+  );
+
+  it.effect("ends a stream at once when its socket closes", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      // Like the supervisor: the closed session interrupts its streams, and a
+      // stream interrupt must not wait for a socket that is gone.
+      const ended = yield* Effect.forkChild(
+        Effect.raceFirst(
+          Effect.flip(session.closed),
+          session.client[WS_METHODS.subscribeServerLifecycle]({}).pipe(
+            Stream.runDrain,
+            Effect.andThen(Effect.never),
+          ),
+        ),
+      );
+      yield* awaitRequest(socket, 1);
+      socket.close(1006);
+      yield* TestClock.adjust("999 millis");
+
+      expect(ended.pollUnsafe()).toBeDefined();
+      // A request made after the close still fails instead of waiting forever.
+      const lateProbe = yield* Effect.forkChild(session.probe);
+      yield* TestClock.adjust("999 millis");
+      expect(lateProbe.pollUnsafe()?._tag).toBe("Failure");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("replays current config and broadcasts updates to every subscriber", () =>
@@ -528,7 +594,7 @@ describe("RpcSessionFactory", () => {
         yield* completeInitialConfig(socket, encodeServerConfig(SOURCE_SERVER_CONFIG), options);
         yield* Fiber.join(ready);
         const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
-        yield* session.subscribeServerConfig(options).pipe(
+        yield* session.subscribeServerConfig().pipe(
           Stream.runForEach((event) => Queue.offer(observed, event)),
           Effect.forkChild,
         );

@@ -18,6 +18,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type MessageId,
@@ -453,6 +454,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
+      ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -788,6 +790,14 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
+    // The server would refuse this mode in settings sync, which retries forever; stop first.
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
+    }
 
     if (settings.runtimeMode !== thread.runtimeMode) {
       if (!hasAccess()) return true;
@@ -899,6 +909,7 @@ export function createThreadOutboxDelivery(): {
         interactionMode: sendSettings.interactionMode,
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
+        ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
@@ -954,6 +965,13 @@ export function createThreadOutboxDelivery(): {
         creation.projectId,
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
     let prepared: PreparedTurnAttachments;
     let persistedMessage: QueuedThreadMessage;

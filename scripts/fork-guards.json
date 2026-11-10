@@ -85,7 +85,7 @@
     "protects": "the server resets clients that stopped reading",
     "test": "apps/server/src/wsClientLiveness.test.ts",
     "title": "treats a client that stops sending as gone after the silence limit",
-    "sha256": "3f21253777486e387cad1808436cb8c612f34411f35842fc2f027e88b79a70e2",
+    "sha256": "1bd755c8f77360e4cfbf3c85f6c8668578a7360e232afa9ae8ee75b3c2801793",
     "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
   },
   {
@@ -101,7 +101,7 @@
     "protects": "the server resets clients that stopped reading",
     "test": "apps/server/src/wsClientLiveness.test.ts",
     "title": "treats a send backlog that stops draining as a stalled client",
-    "sha256": "0d6aad5f980ee8c58782d22c7e27b47707c8c8a71ba30d0b69db1be8dcd69680",
+    "sha256": "fc20b08a256877fba345b7ea767c3d9079cda65673c9692697b24c593d28e2d3",
     "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
   },
   {
@@ -171,7 +171,7 @@
     "protects": "Tailscale Serve never takes over a route another process owns",
     "test": "scripts/lib/dev-share.test.ts",
     "title": "replaces a stale mapping whose target no longer answers",
-    "sha256": "921e8952aea62262f2b942f55710c614cbbb678795a20f4f5d8f63c754093e76",
+    "sha256": "6a711455379461a12ad77d58e90235da1c47e7a6356a3096c9103b2ff07a9647",
     "sources": ["scripts/lib/dev-share.ts"]
   },
   {
@@ -206,7 +206,7 @@
     "protects": "an equal route keeps a live socket, and a host that stays down shows offline",
     "test": "packages/client-runtime/src/connection/supervisor.test.ts",
     "title": "retries a host that stays down quietly and recovers by itself",
-    "sha256": "3c204ca72b0a948abefb52e1702d06bc67695bed801a23258ed4ac0c96e77407",
+    "sha256": "90a2c3bc5ab01d6f7f49b55672f424b0be2f777b8bebbfa829f4719e86f5d3ce",
     "sources": [
       "packages/client-runtime/src/connection/supervisor.ts",
       "packages/client-runtime/src/connection/presentation.ts"

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -45,7 +47,9 @@ const connection = (rpcClientId: number) => ({
 });
 
 const makeBroker = (leases: Ref.Ref<ReadonlyArray<ClientActivityLease>>) =>
-  ClientFocusBroker.make(Ref.get(leases)).pipe(Effect.provide(NodeServices.layer));
+  ClientFocusBroker.make(Ref.get(leases)).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 
 it.effect("delivers to the focused window when a device has several connections", () =>
   Effect.gen(function* () {

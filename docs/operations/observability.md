@@ -72,6 +72,11 @@ span spent waiting for that connection, behind other SQL. That wait does not blo
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
 connection and do not carry these attributes.
 
+An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
+it: the credential check, the mode limit, and the Linked environments gate. The request runs after
+it, under the `McpServer.…/<method>` span, and each tool call has its own `mcp.tool.<name>` span
+that times it. That span's attributes name the tool, never its arguments.
+
 DPoP proof failures include the safe `environment.dpop.failure_code` span
 attribute. A `time_window` failure means that a signed proof was too old or too
 far in the future for the environment server's allowed window. It can point to
@@ -161,7 +166,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+t3
 ```
 
 ```bash
@@ -196,7 +201,7 @@ Default Grafana login:
 
 For endpoint settings and startup precedence, see the
 [user telemetry guide](../user/telemetry.md#export-diagnostics-to-your-own-receiver).
-In a worktree, use `vp run dev` instead of `npx t3` to keep state isolated.
+In a worktree, use `vp run dev` instead of `t3` to keep state isolated.
 
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
@@ -217,7 +222,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+t3
 ```
 
 Monorepo web/server dev:

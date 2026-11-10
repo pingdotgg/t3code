@@ -15,7 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -25,6 +25,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ScheduledTaskTestkit from "../scheduledTasks/ScheduledTaskService.testkit.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -149,7 +150,7 @@ it.effect.each(deliveries)(
           attachmentsDir: cwd,
           fileSystem: yield* FileSystem.FileSystem,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           queryRunner: {
             allocateSessionId: Effect.succeed(sessionId),
@@ -169,6 +170,10 @@ it.effect.each(deliveries)(
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 stopTask: () => Effect.void,
                 interrupt: Effect.die("automatic delivery must never interrupt"),
                 close: Effect.void,
@@ -332,6 +337,7 @@ it.effect.each(deliveries)(
                     }),
                   ),
                   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+                  Layer.provide(ManagedPolicy.layerTest()),
                   Layer.provide(
                     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
                       namedProjectsRoot: "/projects",
@@ -480,7 +486,12 @@ it.effect.each(deliveries)(
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

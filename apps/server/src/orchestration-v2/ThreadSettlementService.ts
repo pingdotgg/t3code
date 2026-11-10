@@ -4,7 +4,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -63,7 +63,7 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -90,9 +90,7 @@ export const make = Effect.gen(function* () {
           if (yield* projections.hasActiveDescendants(thread.id)) return;
           yield* orchestrator.dispatch({
             type: "thread.auto-archive",
-            commandId: CommandId.make(
-              `server:auto-archive:${thread.id}:${yield* crypto.randomUUIDv4()}`,
-            ),
+            commandId: CommandId.make(`server:auto-archive:${thread.id}:${yield* random.uuidV4()}`),
             threadId: thread.id,
             snapshotAt: thread.updatedAt,
           });
@@ -166,9 +164,7 @@ export const make = Effect.gen(function* () {
           // taking its sub-runs along; its parent is never touched.
           yield* orchestrator.dispatch({
             type: "thread.auto-settle",
-            commandId: CommandId.make(
-              `server:auto-settle:${thread.id}:${yield* crypto.randomUUIDv4()}`,
-            ),
+            commandId: CommandId.make(`server:auto-settle:${thread.id}:${yield* random.uuidV4()}`),
             threadId: thread.id,
             snapshotAt: thread.updatedAt,
             settledAt,
@@ -205,7 +201,7 @@ export const make = Effect.gen(function* () {
       // A thread re-engaged before this event ran keeps its shells.
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
-      yield* terminals.closeIdle({ threadId });
+      yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Closing and the worktree check wait on I/O. A thread re-engaged

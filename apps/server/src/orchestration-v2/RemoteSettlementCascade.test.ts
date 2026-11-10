@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, type OrchestrationV2AppThread, ThreadId } from "@t3tools/contracts";
@@ -83,7 +84,7 @@ const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<string>) =>
         );
         return broker;
       }),
-    ).pipe(Layer.provide(NodeServices.layer)),
+    ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getDescriptor: Effect.succeed({ environmentId: devBox } as never),
     }),

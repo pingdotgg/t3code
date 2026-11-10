@@ -12,7 +12,7 @@ import {
   type McpGatewayRelayResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -63,7 +63,7 @@ interface Pending {
  * environments they reach. Each app advertises the grants its user set.
  */
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const hosts = new Map<string, Host>();
   const pending = new Map<string, Pending>();
   /** Fires when an app connects, so queued cross-environment work can retry at once. */
@@ -71,7 +71,7 @@ export const make = Effect.gen(function* () {
   const connect = (owner: string, grants: McpGatewayRelayGrants) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const connectionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+        const connectionId = yield* random.uuidV4();
         const requests = yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>();
         const host: Host = { owner, connectionId, grants, requests, stalled: false };
         yield* Effect.acquireRelease(
@@ -113,7 +113,7 @@ export const make = Effect.gen(function* () {
     relayedArgs: ReadonlyArray<unknown>,
     timeout: Duration.Input,
   ) {
-    const invocationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const invocationId = yield* random.uuidV4();
     const deferred = yield* Deferred.make<unknown, McpGatewayUnavailableError>();
     pending.set(invocationId, { host, deferred });
     return yield* Effect.gen(function* () {

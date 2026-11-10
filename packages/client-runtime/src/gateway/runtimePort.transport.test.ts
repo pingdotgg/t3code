@@ -37,7 +37,7 @@ it.effect("a paused gateway consumer does not block delivery of a replay frame",
     const supervisor = {
       target: { environmentId: EnvironmentId.make("test") },
       session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
-    } as EnvironmentSupervisor["Service"];
+    } as unknown as EnvironmentSupervisor["Service"];
     const values = Array.from({ length: 500 }, (_, i) => ({
       kind: "thread.updated" as const,
       sequence: i + 1,

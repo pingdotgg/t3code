@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -497,10 +498,36 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("cuts a long remark in the wake message without splitting an emoji", () => {
+    const body = `${"x".repeat(196)}🚀 and more`;
+    const report = evaluatePullRequestWatch(
+      watch(),
+      detail(),
+      [remark("reviewer", "2026-10-02T12:06:00Z", body)],
+      NONE_REQUIRED,
+    );
+    const { text } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: null,
+      report,
+    });
+    assert.isTrue(text.isWellFormed());
+    assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
   it("reports a conflict once, until the branch is clean again", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks, NONE_REQUIRED);
     assert.deepEqual(first.changes, [{ kind: "conflicting" }]);
+    const { headSha: _unreadHead, ...headUnread } = conflicting;
+    const unread = evaluatePullRequestWatch(first.next, headUnread, noRemarks, NONE_REQUIRED);
+    assert.deepEqual(unread.changes, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(unread.next, conflicting, noRemarks, NONE_REQUIRED).changes,
+      [],
+    );
     const recomputing = evaluatePullRequestWatch(
       first.next,
       detail({ mergeability: "unknown" }),
@@ -514,6 +541,22 @@ describe("evaluatePullRequestWatch", () => {
     const clean = evaluatePullRequestWatch(first.next, detail(), noRemarks, NONE_REQUIRED);
     assert.deepEqual(
       evaluatePullRequestWatch(clean.next, conflicting, noRemarks, NONE_REQUIRED).changes,
+      [{ kind: "conflicting" }],
+    );
+    const pushed = { headSha: "bbbbbbbbbb" };
+    const recomputed = evaluatePullRequestWatch(
+      first.next,
+      detail({ ...pushed, mergeability: "unknown" }),
+      noRemarks,
+      NONE_REQUIRED,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        recomputed.next,
+        detail({ ...pushed, mergeability: "conflicting" }),
+        noRemarks,
+        NONE_REQUIRED,
+      ).changes,
       [{ kind: "conflicting" }],
     );
   });

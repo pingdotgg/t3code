@@ -67,6 +67,9 @@ describe("Codex orchestration context", () => {
       .join("\n");
 
     NodeAssert.ok(
+      orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
+    );
+    NodeAssert.ok(
       orchestration.includes(
         "For independent T3 delegated review rounds, call `delegate_task` again.",
       ),

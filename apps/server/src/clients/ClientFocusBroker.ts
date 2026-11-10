@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { ClientNotConnectedError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -94,7 +94,7 @@ export const make = Effect.fn("clients.focusBroker.make")(function* (
   leases: Effect.Effect<ReadonlyArray<ClientActivityLease>>,
 ) {
   const connectionsRef = yield* Ref.make<ReadonlySet<Connection>>(new Set());
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   // Registers on call so a focus request can target the client as soon as the
   // stream exists; the stream's finalizer unregisters it.
@@ -150,7 +150,7 @@ export const make = Effect.fn("clients.focusBroker.make")(function* (
       if (target === undefined) {
         return yield* new ClientNotConnectedError({ clientId: input.clientId });
       }
-      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const requestId = yield* random.uuidV4();
       yield* Queue.offer(target.queue, { requestId, target: input.target });
       return { requestId, clientId: input.clientId, label: target.host.label };
     },

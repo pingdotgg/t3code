@@ -57,6 +57,7 @@ export interface GatewayBuild {
 }
 
 /** A retiring owner is releasing the port; the launcher should start a fresh one. */
+// @effect-diagnostics-next-line extendsNativeError:off - the MCP SDK transport throws these; no Effect runtime here.
 export class GatewayRetiringError extends Error {}
 
 /** Tell a connecting launcher to retry against the next owner, then drop the socket. */
@@ -137,6 +138,7 @@ export async function acceptMcpSession(
   );
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - the MCP SDK transport throws these; no Effect runtime here.
 export class GatewayUnavailableError extends Error {}
 
 /** An occupied port is usable only if its owner proves the same token and configuration. */

@@ -12,12 +12,14 @@ import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
-  getCloneDirectoryName,
+  getCloneDirectoryLeafName,
+  getCloneDirectoryPath,
   getDefaultCloneUrl,
   getNewProjectPathPreview,
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -74,6 +76,7 @@ import {
   MonitorIcon,
   PinIcon,
   PinOffIcon,
+  PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
@@ -108,6 +111,7 @@ import {
 import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -130,7 +134,16 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useAnyEnvironmentHiding,
+  useHiddenThreadKeys,
+  useEnvironmentThreadRefs,
+  useProjects,
+  useServerConfigs,
+  useVisibleThreadShells,
+  waitForProject,
+} from "../state/entities";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -140,10 +153,12 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   dispatchCommandPalette,
   getCommandPaletteReturnFocus,
@@ -204,7 +219,8 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { CommandPaletteContent } from "./CommandPaletteContent";
+import { isSidebarHiddenThread } from "./Sidebar.logic";
+import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
   useEnvironmentLookups,
@@ -235,6 +251,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -400,6 +417,11 @@ function OpenCommandPaletteDialog(props: {
       },
   );
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
+  // Rows were captured when the palette opened; drop any hidden since then.
+  const hiddenKeys = useHiddenThreadKeys();
+  const linkedEnvironmentId = linkedThreadSearch?.linkedThreads?.environmentId ?? null;
+  const hidingAnywhere = useAnyEnvironmentHiding();
+  const linkedThreadRefs = useEnvironmentThreadRefs(linkedEnvironmentId);
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
@@ -414,6 +436,8 @@ function OpenCommandPaletteDialog(props: {
   const resultListRef = useRef<LegendListRef | null>(null);
   // A pushed view drops the typed highlight until the user moves it again.
   const highlightClearedRef = useRef(viewStack.length > 0);
+  // Entering or leaving browse mode remounts the input; carry the caret across it.
+  const remountSelectionRef = useRef<PendingInputSelection | null>(null);
   function clearTypedHighlight(): void {
     highlightClearedRef.current = true;
     setHighlightedItemValue(null);
@@ -476,12 +500,14 @@ function OpenCommandPaletteDialog(props: {
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
+          hostedAppUrl: configuredHostedAppUrl(),
         });
   const copyActiveThreadReference = async () => {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  const threads = useThreadShells();
+  // Side chats and subagents open inside their parent, so opening a project never lands on one.
+  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -622,15 +648,17 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   const pinnedCloneDirectoryName =
     addProjectCloneFlow?.step === "confirm"
-      ? getCloneDirectoryName(
+      ? getCloneDirectoryLeafName(
+          addProjectCloneFlow.remoteUrl,
+          environments.find(
+            (candidate) => candidate.environmentId === addProjectCloneFlow.environmentId,
+          )?.serverConfig?.settings.ghqCloneLayout === true,
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
-  const browsePath = getFilesystemBrowsePath(
-    query,
-    browseEnvironmentPlatform,
-    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null,
-  );
+  const canBrowsePaths =
+    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
+  const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
@@ -804,8 +832,15 @@ function OpenCommandPaletteDialog(props: {
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
+      const currentEntry =
+        currentProjectId === null
+          ? undefined
+          : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
         projects: pickerProjects.filter((project) => !isScratch(project)),
+        currentProjectKey: currentEntry
+          ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
+          : null,
         projectGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
@@ -904,10 +939,25 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
 
-  function handleQueryChange(nextQuery: string): void {
+  function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
-    setQuery(nextQuery);
+    const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
+    // A rewritten paste has no matching offsets, so its caret lands at the end.
+    if (
+      source instanceof HTMLInputElement &&
+      resolvedQuery === nextQuery &&
+      (canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) !==
+        isBrowsing
+    ) {
+      remountSelectionRef.current = {
+        value: resolvedQuery,
+        start: source.selectionStart,
+        end: source.selectionEnd,
+        direction: source.selectionDirection,
+      };
+    }
+    setQuery(resolvedQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
     }
@@ -1579,6 +1629,34 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:use-in-another-app",
+    searchTerms: [
+      "mcp",
+      "connector",
+      "another app",
+      "poke",
+      "claude",
+      "chatgpt",
+      "grok",
+      "muse",
+      "instinct",
+      "openclaw",
+      "hermes",
+    ],
+    title: "Use T3 Code in another app (MCP)",
+    icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openUseInAnotherApp(
+        currentProjectEnvironmentId ??
+          (paletteRouteTarget?.kind === "server"
+            ? paletteRouteTarget.threadRef.environmentId
+            : null),
+      );
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",
@@ -1755,6 +1833,13 @@ function OpenCommandPaletteDialog(props: {
       isLinkedThreadSearch && linkedThreadSearch?.linkedThreads
         ? buildLinkedThreadActionItems({
             ...linkedThreadSearch.linkedThreads,
+            threads: visibleLinkedThreads(
+              linkedThreadSearch.linkedThreads.threads,
+              linkedThreadSearch.linkedThreads.environmentId,
+              linkedThreadRefs,
+              hiddenKeys,
+              hidingAnywhere,
+            ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
             runThread: async (thread) => {
@@ -1969,8 +2054,20 @@ function OpenCommandPaletteDialog(props: {
     if (created.value) setOpen(false);
   }
 
-  function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
-    return getAddProjectInitialQueryForEnvironment(environmentId);
+  function getDefaultCloneDestination(
+    environmentId: EnvironmentId,
+    remoteUrl: string,
+    repository: string,
+  ): string {
+    const environment = environments.find((candidate) => candidate.environmentId === environmentId);
+    return getCloneDestinationPath(
+      getAddProjectInitialQueryForEnvironment(environmentId),
+      getCloneDirectoryPath(
+        remoteUrl,
+        environment?.serverConfig?.settings.ghqCloneLayout === true,
+        repository,
+      ),
+    );
   }
 
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
@@ -1994,11 +2091,28 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
+        addProjectCloneFlow.source,
+        rawRepository,
+      );
+      if (incompleteOwnerMessage) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Repository name incomplete",
+            description: incompleteOwnerMessage,
+          }),
+        );
+        return;
+      }
+
       const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
-        const destinationPath = getCloneDestinationPath(
-          getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
-          getCloneDirectoryName(rawRepository),
+        const remoteUrl = normalizePastedCloneUrl(rawRepository);
+        const destinationPath = getDefaultCloneDestination(
+          addProjectCloneFlow.environmentId,
+          remoteUrl,
+          rawRepository,
         );
         setAddProjectCloneFlow({
           step: "confirm",
@@ -2006,7 +2120,7 @@ function OpenCommandPaletteDialog(props: {
           source: addProjectCloneFlow.source,
           repositoryInput: rawRepository,
           repository: null,
-          remoteUrl: normalizePastedCloneUrl(rawRepository),
+          remoteUrl,
         });
         setHighlightedItemValue(null);
         setQuery(destinationPath);
@@ -2038,9 +2152,11 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
-      const destinationPath = getCloneDestinationPath(
-        getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
-        getCloneDirectoryName(repository.nameWithOwner),
+      const remoteUrl = getDefaultCloneUrl(repository);
+      const destinationPath = getDefaultCloneDestination(
+        addProjectCloneFlow.environmentId,
+        remoteUrl,
+        repository.nameWithOwner,
       );
       setAddProjectCloneFlow({
         step: "confirm",
@@ -2048,7 +2164,7 @@ function OpenCommandPaletteDialog(props: {
         source: addProjectCloneFlow.source,
         repositoryInput: rawRepository,
         repository,
-        remoteUrl: getDefaultCloneUrl(repository),
+        remoteUrl,
       });
       setHighlightedItemValue(null);
       setQuery(destinationPath);
@@ -2854,7 +2970,8 @@ function OpenCommandPaletteDialog(props: {
           scrollCommandPaletteRowIntoView(resultListRef.current, rowIndex);
         }
       }}
-      onValueChange={handleQueryChange}
+      onValueChange={(nextQuery, { event }) => handleQueryChange(nextQuery, event.target)}
+      pendingSelectionRef={remountSelectionRef}
       showBackHint={isSubmenu}
       value={query}
     >

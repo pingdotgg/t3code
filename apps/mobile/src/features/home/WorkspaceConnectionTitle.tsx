@@ -1,4 +1,3 @@
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 
@@ -6,11 +5,6 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import {
-  brandTitleOffset,
-  CompactBrandTitle,
-  getCompactBrandHeaderOptions,
-} from "../../components/CompactBrandTitle";
 import { useDeadlinePassed } from "../../lib/clock";
 import { useWorkspaceState } from "../../state/workspace";
 import {
@@ -107,47 +101,10 @@ export function WorkspaceConnectionTitle(props: {
   readonly size?: "navbar" | "pageTitle";
   readonly statusOffset?: number;
   readonly maxWidth?: number;
-  /**
-   * Keep the brand and show the status as a compact icon beside it. For
-   * controls such as the Agents/Threads switch, which must stay usable while
-   * an environment reconnects.
-   */
-  readonly inlineStatus?: boolean;
 }) {
   const status = use(ConnectionStatusContext);
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
-
-  if (props.inlineStatus) {
-    return (
-      <View className="flex-row items-center gap-2">
-        {status === null ? null : (
-          <StatusFadeIn animate={status.fadeIn}>
-            <Pressable
-              accessibilityHint="Opens environment settings"
-              accessibilityLabel={status.label}
-              accessibilityRole="button"
-              disabled={props.onPress === undefined}
-              hitSlop={8}
-              onPress={props.onPress}
-            >
-              {status.showsProgress ? (
-                <AppActivityIndicator colorClassName={"accent-icon-muted"} size="small" />
-              ) : (
-                <SymbolView
-                  name="wifi.slash"
-                  size={16}
-                  tintColorClassName={"accent-icon-muted"}
-                  type="monochrome"
-                />
-              )}
-            </Pressable>
-          </StatusFadeIn>
-        )}
-        {props.brand}
-      </View>
-    );
-  }
 
   if (status === null) {
     return props.grow ? (
@@ -197,28 +154,4 @@ export function WorkspaceConnectionTitle(props: {
       </Pressable>
     </StatusFadeIn>
   );
-}
-
-export function getConnectionAwareBrandHeaderOptions(opts: {
-  readonly headerWidth: number;
-  readonly trailingItemCount?: number;
-  readonly onOpenEnvironments: () => void;
-  readonly fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"];
-  /** Replaces the brand lockup; the connection status then shows inline beside it. */
-  readonly brand?: ReactNode;
-}): NativeStackNavigationOptions {
-  const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
-
-  return {
-    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
-    headerTitle: () => (
-      <WorkspaceConnectionTitle
-        brand={opts.brand ?? <CompactBrandTitle />}
-        inlineStatus={opts.brand !== undefined}
-        maxWidth={maxWidth}
-        onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset()}
-      />
-    ),
-  };
 }

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -194,6 +195,7 @@ it.effect(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.sync(() => (hostReads += 1)).pipe(Effect.as(detail)),
               activity: () =>
