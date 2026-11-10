@@ -1758,6 +1758,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
+  const backgroundWorkHoldsFollowUps = Effect.fn("Orchestrator.backgroundWorkHoldsFollowUps")(
+    function* (projection: OrchestrationV2ThreadProjection) {
+      const { turnItems } = yield* projectionStore
+        .getThreadRecords(projection.thread.id, ["turnItems"], {
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: projection.thread.id, cause }),
+          ),
+        );
+      return backgroundWorkHoldsCompletion(
+        derivePendingBackgroundWork({
+          latestRun: latestExecutedRun(projection.runs),
+          providerThreads: projection.providerThreads,
+          turnItems,
+          activeProviderThreadId: projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }),
+      );
+    },
+  );
+
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -1789,6 +1813,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
+      if (
+        queuedMessage?.delegatedCompletion === undefined &&
+        queuedMessage?.notification === undefined &&
+        queuedMessage?.creationSource !== "provider" &&
+        (yield* backgroundWorkHoldsFollowUps(projection))
+      ) {
+        return;
+      }
       const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
@@ -6216,7 +6248,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       usageLimitHoldsQueue(projection, modelSelection.instanceId)
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun ?? usageLimitedRun;
+    const backgroundWorkRun =
+      activeRun === undefined &&
+      dispatchMode.type === "queue_after_active" &&
+      command.delegatedCompletion === undefined &&
+      command.notification === undefined &&
+      command.creationSource !== "provider" &&
+      (yield* backgroundWorkHoldsFollowUps(projection))
+        ? (latestRun ?? undefined)
+        : undefined;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? usageLimitedRun ?? backgroundWorkRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||

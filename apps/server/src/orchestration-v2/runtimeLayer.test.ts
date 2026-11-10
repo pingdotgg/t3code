@@ -5926,6 +5926,91 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["command", true, "queued"],
+    ["command", false, "starting"],
+    ["subagent", true, "queued"],
+  ] as const)("queues behind background %s (awaited: %s)", ([kind, awaited, expected]) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`queue-background-${kind}-${awaited}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queue behind background work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (index: number) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${index}`),
+          text: `Prompt ${index}`,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      yield* send(0);
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const original = projection.runs[0]!;
+      const providerThread = projection.providerThreads[0]!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: original.id,
+            occurredAt: now,
+            payload: { ...original, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make(`${threadId}:background`),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...providerThread,
+              pendingBackgroundTasks: [
+                { taskId: "background", kind, ...(awaited ? { awaited: true as const } : {}) },
+              ],
+            },
+          },
+        ],
+      });
+      yield* send(1);
+      const sent = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(sent.runs[1]?.status, expected);
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, expected);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:background-completed`),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...providerThread, pendingBackgroundTasks: [] },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, "starting");
+    }),
+  );
+
   it.effect("queues a message sent with Queue while a usage limit blocks the thread", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

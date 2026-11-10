@@ -247,7 +247,10 @@ export function derivePendingBackgroundWork(input: {
   if (input.latestRun == null) {
     return pullRequestWatchTasks(input.pullRequests);
   }
-  if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
+  if (
+    !isLatestRunSettledForBackgroundWait(input.latestRun) &&
+    input.latestRun.status !== "queued"
+  ) {
     return [];
   }
 

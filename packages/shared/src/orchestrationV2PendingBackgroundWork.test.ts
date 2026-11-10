@@ -94,23 +94,26 @@ describe("derivePendingBackgroundWork", () => {
     ).toEqual([]);
   });
 
-  it("returns pending work when the latest run is waiting (post-success, pre-checkpoint)", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "waiting" },
-      providerThreads: [{ id: "pt-1" as never }],
-      turnItems: [
-        {
-          id: "item-1" as never,
-          type: "command_execution",
-          status: "running",
-          title: "npm test",
-          nativeItemRef: { nativeId: "cmd-1" },
-          input: "npm test",
-        },
-      ],
-    });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
-  });
+  it.each(["waiting", "queued"] as const)(
+    "returns pending work when the latest run is %s",
+    (status) => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status },
+        providerThreads: [{ id: "pt-1" as never }],
+        turnItems: [
+          {
+            id: "item-1" as never,
+            type: "command_execution",
+            status: "running",
+            title: "npm test",
+            nativeItemRef: { nativeId: "cmd-1" },
+            input: "npm test",
+          },
+        ],
+      });
+      expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    },
+  );
 
   it("excludes rolled_back items when the latest run is waiting", () => {
     const tasks = derivePendingBackgroundWork({
