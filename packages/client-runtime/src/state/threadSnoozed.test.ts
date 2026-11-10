@@ -15,6 +15,7 @@ import {
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
+  isThreadReopenedUnseen,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
 
@@ -502,4 +503,49 @@ it("dismisses a wake at its timestamp without hiding a later wake", () => {
   expect(isThreadWokeUnseen(state)).toBe(true);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake })).toBe(false);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake, wokeAt: NOW })).toBe(true);
+});
+
+describe("isThreadReopenedUnseen", () => {
+  const reopenedAt = "2026-11-10T16:00:00.000Z";
+
+  it("is true after an auto-unsettle until the user opens the thread", () => {
+    expect(
+      isThreadReopenedUnseen({
+        unsettledAt: reopenedAt,
+        settled: false,
+        lastVisitedAt: "2026-11-10T10:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      isThreadReopenedUnseen({
+        unsettledAt: reopenedAt,
+        settled: false,
+        lastVisitedAt: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("is false once the user has visited, or if the thread is settled again", () => {
+    expect(
+      isThreadReopenedUnseen({
+        unsettledAt: reopenedAt,
+        settled: false,
+        lastVisitedAt: "2026-11-10T16:05:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isThreadReopenedUnseen({
+        unsettledAt: reopenedAt,
+        settled: true,
+        lastVisitedAt: "2026-11-10T10:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isThreadReopenedUnseen({
+        unsettledAt: null,
+        settled: false,
+        lastVisitedAt: null,
+      }),
+    ).toBe(false);
+  });
 });

@@ -350,6 +350,7 @@ it.effect(
             thread: {
               ...expected,
               latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              latestResumingMessageAt: candidate.latestResumingMessageAt,
             },
           }),
         );
@@ -407,12 +408,66 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
       DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
+    assert.equal(
+      DateTime.formatIso(candidate.latestResumingMessageAt!),
+      DateTime.formatIso(written),
+    );
     const shellThread = (yield* store.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );
     assert.equal(
       DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
+    );
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: an intentional MCP agent send counts as a resuming message", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("agent-kicked");
+    yield* createRun(threadId);
+    const message = (
+      id: string,
+      createdBy: "user" | "agent",
+      creationSource: "web" | "provider" | "mcp",
+      at: DateTime.Utc,
+    ) =>
+      store.apply({
+        id: EventId.make(`event:settlement:${id}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy,
+          creationSource,
+          id: MessageId.make(`message:settlement:${id}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: id,
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+    const written = DateTime.subtract(now, { hours: 2 });
+    const kicked = now;
+    yield* message("written", "user", "web", written);
+    yield* message("follow-up", "agent", "mcp", kicked);
+
+    const [candidate] = yield* store.getSettlementCandidates(threadId);
+    assert.isDefined(candidate);
+    assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(kicked));
+    assert.equal(
+      DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
+      DateTime.formatIso(written),
+    );
+    assert.equal(
+      DateTime.formatIso(candidate.latestResumingMessageAt!),
+      DateTime.formatIso(kicked),
     );
   }).pipe(Effect.provide(layerSql)),
 );

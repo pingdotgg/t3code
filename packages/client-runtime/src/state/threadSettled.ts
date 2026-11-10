@@ -411,3 +411,20 @@ export function isThreadWokeUnseen(input: {
     .filter((ms) => !Number.isNaN(ms));
   return seenAt.every((ms) => ms < wokeAtMs);
 }
+
+/**
+ * Whether a thread that just left Settled is still unseen. `unsettledAt` is
+ * stamped when the user un-settles it or when a new intentional turn (composer,
+ * `t3 thread send`, MCP) un-settles it automatically.
+ */
+export function isThreadReopenedUnseen(input: {
+  readonly unsettledAt: string | null;
+  readonly settled: boolean;
+  readonly lastVisitedAt: string | null | undefined;
+}): boolean {
+  if (input.settled || input.unsettledAt === null) return false;
+  const reopenedAtMs = Date.parse(input.unsettledAt);
+  if (Number.isNaN(reopenedAtMs)) return false;
+  const seenAt = input.lastVisitedAt ? Date.parse(input.lastVisitedAt) : Number.NaN;
+  return Number.isNaN(seenAt) || seenAt < reopenedAtMs;
+}

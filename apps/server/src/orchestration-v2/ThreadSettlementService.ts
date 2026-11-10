@@ -121,10 +121,24 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
+/** Messages that resume a thread against merge/close auto-settle.
+ * User-authored messages always count. Agent messages from MCP or the CLI
+ * (`t3 thread send`, `t3_thread_send`) also count. Automatic wakes from the
+ * server or a provider — pull request watches, delegated completions — do not.
+ */
+export function isResumingSettlementMessage(message: {
+  readonly createdBy?: string | null;
+  readonly creationSource?: string | null;
+}): boolean {
+  if (message.createdBy === "user") return true;
+  if (message.createdBy !== "agent") return false;
+  return message.creationSource !== "server" && message.creationSource !== "provider";
+}
+
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt"
+    "createdAt" | "latestUserAuthoredMessageAt" | "latestResumingMessageAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -137,6 +151,7 @@ function pullRequestSettles(
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
     toMillis(thread.latestUserAuthoredMessageAt),
+    toMillis(thread.latestResumingMessageAt),
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
@@ -145,7 +160,10 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "latestResumingMessageAt"
+  >,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;

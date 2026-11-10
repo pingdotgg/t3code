@@ -53,7 +53,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "latestResumingMessageAt"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -93,6 +96,8 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
     latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    latestResumingMessageAt:
+      overrides.latestUserAuthoredMessageAt ?? overrides.latestUserMessageAt ?? null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -197,6 +202,47 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+  });
+});
+
+describe("isResumingSettlementMessage", () => {
+  it("counts user-authored messages and intentional agent/CLI sends, not automatic wakes", () => {
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "user",
+        creationSource: "server",
+      }),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "agent",
+        creationSource: "server",
+      }),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "agent",
+        creationSource: "provider",
+      }),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isResumingSettlementMessage({
+        createdBy: "system",
+        creationSource: "server",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -379,10 +425,11 @@ describe("resolveAutoSettlementAt", () => {
     ).toEqual(shell().createdAt);
   });
 
-  it("settles on merge after agent-started runs, but not after the user writes again", () => {
+  it("settles on merge after an automatic agent wake, but not after the user writes again", () => {
     const woken = shell({
       latestUserMessageAt: at(-30 * 60 * 1_000),
       latestUserAuthoredMessageAt: at(-2 * 60 * 60 * 1_000),
+      latestResumingMessageAt: at(-2 * 60 * 60 * 1_000),
       latestRunRequestedAt: at(-30 * 60 * 1_000),
       latestRunCompletedAt: at(-29 * 60 * 1_000),
     });
@@ -397,7 +444,35 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
-        thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
+        thread: {
+          ...woken,
+          latestUserAuthoredMessageAt: at(-30 * 60 * 1_000),
+          latestResumingMessageAt: at(-30 * 60 * 1_000),
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("does not settle on merge after an intentional agent or CLI turn later than the merge", () => {
+    const kicked = shell({
+      latestUserMessageAt: at(-30 * 60 * 1_000),
+      latestUserAuthoredMessageAt: at(-2 * 60 * 60 * 1_000),
+      latestResumingMessageAt: at(-30 * 60 * 1_000),
+      latestRunRequestedAt: at(-30 * 60 * 1_000),
+      latestRunCompletedAt: at(-29 * 60 * 1_000),
+    });
+    const input = {
+      thread: kicked,
+      pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)) },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleAfterDays: 1,
       }),
     ).toBeNull();
   });
