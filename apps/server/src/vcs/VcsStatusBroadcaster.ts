@@ -537,24 +537,11 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    const previous = options?.localOnly ? yield* getCachedStatus(cwd) : null;
-    const local = yield* refreshLocalStatusCore(cwd);
+    yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
-      return yield* withRemoteWriteLock(
-        cwd,
-        Effect.gen(function* () {
-          if (previous?.local?.value.refName !== local.refName || !previous?.remote) {
-            yield* workflow.invalidateRemoteStatus(cwd);
-            yield* updateCachedRemoteStatus(
-              cwd,
-              { branch: local.refName, fingerprint: fingerprintStatusPart(null), value: null },
-              { publish: true },
-            );
-          }
-          const parts = yield* getStatusParts(cwd);
-          return mergeGitStatusParts(parts.local, parts.remote);
-        }),
-      );
+      // Never cache a remote here: readers take `value: null` as "read and found no PR".
+      const parts = yield* getStatusParts(cwd);
+      return mergeGitStatusParts(parts.local, parts.remote);
     }
     return yield* withRemoteWriteLock(
       cwd,
