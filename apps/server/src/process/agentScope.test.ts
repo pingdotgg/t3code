@@ -50,6 +50,7 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
+    readonly runtimeDir: string;
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
@@ -63,6 +64,7 @@ const withFakeSystemd = <A, E>(
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
     const cgroupRoot = NodePath.join(bin, "cgroup");
+    const runtimeDir = NodePath.join(bin, "run");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
@@ -105,7 +107,7 @@ const withFakeSystemd = <A, E>(
     const scope = yield* make.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: runtimeDir }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
@@ -115,7 +117,7 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot, runtimeDir }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -281,9 +283,13 @@ describe("AgentScope service", () => {
   );
 
   it.effect("caps agent memory and yields CPU, disk, and tasks to the server", () =>
-    withFakeSystemd(({ scope, calls }) =>
+    withFakeSystemd(({ scope, calls, runtimeDir }) =>
       Effect.gen(function* () {
+        const dropIns = NodePath.join(runtimeDir, "systemd/user.control/app-t3code.slice.d");
+        NodeFS.mkdirSync(dropIns, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(dropIns, "50-TasksMaxScale.conf"), "TasksMax=2.6%\n");
         yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(NodeFS.readdirSync(dropIns)).toEqual([]);
         const setProperties = calls.filter(([, verb]) => verb === "set-property");
         expect(setProperties).toEqual([
           [

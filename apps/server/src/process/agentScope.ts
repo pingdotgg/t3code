@@ -22,9 +22,8 @@ const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
 const AGENTS_PARENT_SLICE = "app-t3code.slice";
 // Low weights yield CPU and disk to the server under contention, where the user manager
-// has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
-// below logind's 33% per-user task limit, leaving forks for the server.
-const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
+// has those controllers: current systemd delegates cpu, rarely io.
+const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10"];
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -200,7 +199,33 @@ export const make = Effect.gen(function* () {
       });
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
       yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
-      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
+      // A quarter of systemd's task limit keeps agents below logind's 33% per-user cap. Sent as
+      // a count: systemd before v260 saves a set-property percentage as a tenth of itself.
+      const taskLimits = yield* Effect.forEach(["pid_max", "threads-max"], (file) =>
+        fileSystem.readFileString(`/proc/sys/kernel/${file}`).pipe(
+          Effect.map((text) => Number.parseInt(text, 10)),
+          Effect.orElseSucceed(() => Number.NaN),
+        ),
+      );
+      const tasksMax = Math.floor(Math.min(...taskLimits) / 4);
+      // Earlier servers left that percentage in its own drop-in, which outranks the count.
+      yield* fileSystem
+        .remove(
+          path.join(
+            runtimeDir,
+            "systemd/user.control",
+            `${AGENTS_PARENT_SLICE}.d`,
+            "50-TasksMaxScale.conf",
+          ),
+          { force: true },
+        )
+        .pipe(Effect.ignore);
+      yield* setProperties(
+        AGENTS_PARENT_SLICE,
+        Number.isFinite(tasksMax) && tasksMax > 0
+          ? [...AGENTS_PARENT_PROPERTIES, `TasksMax=${tasksMax}`]
+          : AGENTS_PARENT_PROPERTIES,
+      );
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
