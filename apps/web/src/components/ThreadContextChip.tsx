@@ -3,7 +3,7 @@ import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 
-import { useProject, useThreadShell } from "~/state/entities";
+import { useProject, useLinkedThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
@@ -17,7 +17,7 @@ export function ThreadContextChip(props: {
   unreadable?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
-  const shell = useThreadShell({ environmentId, threadId });
+  const shell = useLinkedThreadShell({ environmentId, threadId });
   const lookup = useEnvironmentQuery(
     shell === null && props.projectId === undefined
       ? orchestrationEnvironment.threadLinkMetadata({

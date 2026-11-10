@@ -8,7 +8,7 @@ import {
 } from "@t3tools/shared/threadLinks";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
-import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useThreadRefs, useLinkedThreadShell } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,7 +23,7 @@ export function MarkdownThreadLink(props: {
 }) {
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
-  const written = useThreadShell(writtenRef);
+   const written = useLinkedThreadShell(writtenRef);
   // A linked machine's threads are reachable only through its server, not from this client.
   const reachable = useEnvironmentIdentities().some(
     (environment) => environment.environmentId === writtenRef.environmentId,
@@ -53,7 +53,7 @@ export function MarkdownThreadLink(props: {
         refs.filter((ref) => ref.environmentId !== writtenRef.environmentId),
       )
     : null;
-  const remote = useThreadShell(remoteRef);
+  const remote = useLinkedThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
   if (missing && resolved === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
