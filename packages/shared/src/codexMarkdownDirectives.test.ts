@@ -141,6 +141,9 @@ describe.each([
 ])("$name web citation markers", ({ render }) => {
   it.each([
     [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],
+    ["red \uE200cite\uE202turn0search0\uE201blue", "red blue"],
+    ["[s](https://a.dev\uE200cite\uE202turn0search0\uE201)", "[s](https://a.dev)"],
+    ["[s]\n\n[s]: https://a.dev\uE200cite\uE202turn0search0\uE201", "[s]\n\n[s]: https://a.dev"],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
     ["`citeturn0search0`", "`citeturn0search0`"],
     [':codex-followup[Show `citeturn0search0`]{prompt="Show it"}', "Show `citeturn0search0`"],
