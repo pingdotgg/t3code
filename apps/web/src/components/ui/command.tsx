@@ -32,6 +32,7 @@ function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.B
       className={cn(
         DIALOG_BACKDROP_CLASS,
         "has-[+[data-slot=command-dialog-viewport]_[data-create-project-form]]:backdrop-blur-lg",
+        "data-ending-style:pointer-events-none",
         className,
       )}
       data-slot="command-dialog-backdrop"
@@ -78,7 +79,7 @@ function CommandDialogPopup({
           ref={popupRef}
           className={cn(
             DIALOG_POPUP_CLASS,
-            "pointer-events-auto max-h-105 max-w-xl text-foreground has-data-[create-project-form]:shadow-[0_24px_70px_rgba(0,0,0,0.65)]",
+            "pointer-events-auto max-h-105 max-w-xl text-foreground has-data-[create-project-form]:shadow-[0_24px_70px_rgba(0,0,0,0.65)] data-ending-style:pointer-events-none",
             className,
           )}
           data-slot="command-dialog-popup"

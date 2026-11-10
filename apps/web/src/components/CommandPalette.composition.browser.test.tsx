@@ -5,6 +5,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type { SourceControlDiscoveryResult } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Option from "effect/Option";
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -23,9 +24,10 @@ const state = vi.hoisted(() => ({
   discovery: undefined as SourceControlDiscoveryResult | undefined,
   canOperate: true,
   multipleEnvironments: false,
+  deniedScope: undefined as string | undefined,
 }));
 
-function setup() {
+function setup(deniedScope?: string) {
   commands.run.mockClear();
   commands.createNew.mockClear();
   commands.query.mockReset();
@@ -33,6 +35,7 @@ function setup() {
   state.discovery = undefined;
   state.canOperate = true;
   state.multipleEnvironments = false;
+  state.deniedScope = deniedScope;
 }
 
 vi.mock("@effect/atom-react", async (original) => ({
@@ -128,7 +131,8 @@ vi.mock("../state/queries", async (original) => ({
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  useEnvironmentScope: () => state.canOperate,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) =>
+    state.canOperate && scope !== state.deniedScope,
   readEnvironmentScope: () => state.canOperate,
 }));
 vi.mock("../state/filesystem", async (original) => ({
@@ -181,6 +185,41 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     }
   });
 });
+
+it.each([
+  { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
+  {
+    step: "highlighted folder",
+    source: "Local folder",
+    keys: "{ArrowDown}",
+    description: /Add.*(Ctrl|⌘) Enter/,
+  },
+  { step: "repository", source: "Git URL", keys: "", description: /Continue.*Enter/ },
+  {
+    step: "permission-blocked folder",
+    source: "Local folder",
+    keys: "",
+    deniedScope: AuthOrchestrationOperateScope,
+    description: "This connection cannot add projects.",
+  },
+  {
+    step: "permission-blocked destination",
+    source: "Git URL",
+    keys: "https://example.com/team/project.git{Enter}",
+    deniedScope: AuthSourceControlWriteScope,
+    description: "This connection needs permission to write source control and add projects.",
+  },
+])(
+  "tells screen readers how to submit the $step step",
+  async ({ source, keys, deniedScope, description }) => {
+    setup(deniedScope);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText(source, { exact: true }).click();
+    if (keys) await userEvent.keyboard(keys);
+    await expect.element(page.getByRole("combobox")).toHaveAccessibleDescription(description);
+  },
+);
 
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
   setup();
@@ -435,3 +474,18 @@ it.each([
     expect(commands.run).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
+])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText(step.flow, { exact: true }).click();
+  const input = page.getByRole("combobox");
+  await input.fill(step.value);
+  const submit = page.getByRole("button", { name: step.submit });
+  await expect.element(submit).toBeEnabled();
+  await userEvent.keyboard("{Tab}");
+  await expect.element(submit).toHaveFocus();
+});
