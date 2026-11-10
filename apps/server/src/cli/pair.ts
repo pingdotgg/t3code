@@ -295,17 +295,16 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (Option.isNone(state)) {
         continue;
       }
-      const hostname = otherMachineOf(state.value, localHostname);
-      if (hostname !== undefined) {
-        otherMachine ??= new ServerOnOtherMachineError({ hostname, statePath });
-        continue;
-      }
       // A dead server's port may be reused; do not mint tokens in its old database for another server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
+      // A live PID that answers is local even under a changed hostname (macOS follows the network).
+      const probed = isProcessAlive(state.value.pid)
+        ? yield* probeEnvironmentDescriptor(state.value.origin)
+        : undefined;
+      if (probed?._tag !== "descriptor") {
+        const hostname = otherMachineOf(state.value, localHostname);
+        if (hostname !== undefined) {
+          otherMachine ??= new ServerOnOtherMachineError({ hostname, statePath });
+        }
         continue;
       }
       return {

@@ -132,17 +132,12 @@ export const clearPersistedServerRuntimeState = Effect.fn(
   );
 });
 
-/**
- * The machine a recorded server runs on, when that is not this one. A live local PID wins:
- * hostnames can change under a running server (macOS takes them from the network).
- */
+/** The machine a recorded server runs on, when that is not this one. */
 export const otherMachineOf = (
-  state: Pick<PersistedServerRuntimeState, "hostname" | "pid">,
+  state: Pick<PersistedServerRuntimeState, "hostname">,
   localHostname: string,
 ): string | undefined =>
-  state.hostname !== undefined && state.hostname !== localHostname && !isProcessAlive(state.pid)
-    ? state.hostname
-    : undefined;
+  state.hostname !== undefined && state.hostname !== localHostname ? state.hostname : undefined;
 
 /** Signal 0 only probes existence; EPERM still means alive. */
 export const isProcessAlive = (pid: number): boolean => {

@@ -190,14 +190,8 @@ describe("server ownership", () => {
           assert.include(refused.message, "do not delete it while a server is running");
           assert.notInclude(refused.message, "which this machine shares");
           assert.equal(yield* fs.readFileString(statePath), before);
-          // A renamed host keeps a live local server local.
+          // A shared $HOME: the owner recorded another machine; its PID may exist here too.
           yield* owner.publish({ ...state, hostname: "host-a" });
-          const renamed = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
-            Effect.flip,
-          );
-          assert.notInclude(renamed.message, "host-a");
-          // A shared $HOME: the owner recorded another machine, whose PID is not alive here.
-          yield* owner.publish({ ...state, pid: 4_194_305, hostname: "host-a" });
           const remote = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(Effect.flip);
           assert.include(remote.message, "server on host-a already owns");
           assert.include(remote.message, "Stop it on host-a");
