@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   ThreadId,
@@ -133,7 +134,7 @@ export function useStartSideChat() {
           messageId: MessageId.make(uuidv4()),
           role: "user",
           ...serializeComposerMessageForServer(
-            message.text,
+            restoreAttachmentOnlyBootstrapPrompt(message.text, attachments.length > 0),
             uploadedComposerContext(message.context, message.attachments, attachments),
           ),
           attachments,

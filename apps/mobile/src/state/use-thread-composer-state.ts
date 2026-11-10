@@ -559,6 +559,7 @@ export function useThreadComposerState(input: {
     };
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
+    const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (sideChatCommand) {
       if (sideChatUnavailableReason !== null) {
         Dialog.alert("Side chat not started", sideChatUnavailableReason);
@@ -571,6 +572,13 @@ export function useThreadComposerState(input: {
         );
       } else if (sideChatCommand.prompt.length === 0 && attachments.length === 0) {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
+      } else if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        Dialog.alert(
+          "Too many attachments",
+          `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        );
+      } else if (contextBlockReason) {
+        Dialog.alert("Too much context", contextBlockReason);
       } else if (modelUnavailable) {
         alertModelUnavailable();
       } else if (!startingSideChatRef.current) {
@@ -625,7 +633,6 @@ export function useThreadComposerState(input: {
       return null;
     }
 
-    const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
       Dialog.alert("Too much context", contextBlockReason);
       return null;

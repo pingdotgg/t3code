@@ -215,6 +215,7 @@ interface ComposerSendInput {
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
   readonly activePendingProgress: PendingThreadRequests["activePendingProgress"];
   readonly onAdvanceActivePendingUserInput: PendingThreadRequests["onAdvanceActivePendingUserInput"];
+  readonly onChangeActivePendingUserInputCustomAnswer: PendingThreadRequests["onChangeActivePendingUserInputCustomAnswer"];
   readonly onRespondToApproval: PendingThreadRequests["onRespondToApproval"];
   readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
   readonly resetLocalDispatch: LocalDispatchState["resetLocalDispatch"];
@@ -308,6 +309,7 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIds,
     activePendingProgress,
     onAdvanceActivePendingUserInput,
+    onChangeActivePendingUserInputCustomAnswer,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
     resetLocalDispatch,
@@ -552,8 +554,9 @@ export function useComposerSend(input: ComposerSendInput) {
             sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)))
       ) {
         promptRef.current = "";
-        if (answeringQuestion) setComposerDraftPrompt(composerDraftTarget, "");
-        else clearComposerPromptAndImages(composerDraftTarget);
+        const questionId = activePendingProgress?.activeQuestion?.id;
+        if (!answeringQuestion) clearComposerPromptAndImages(composerDraftTarget);
+        else if (questionId) onChangeActivePendingUserInputCustomAnswer(questionId, "");
         composerRef.current?.resetCursorState();
         releaseDraftAttachments(attachments);
       }
