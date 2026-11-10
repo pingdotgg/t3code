@@ -86,6 +86,7 @@ import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
   scheduledTaskEditorSessionAtom,
+  subscribeScheduledTaskEditorReset,
 } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -518,6 +519,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     label: editor?.draft.title.trim() || title,
     subscribeToDraftChanges: (onChange) =>
       appAtomRegistry.subscribe(scheduledTaskEditorSessionAtom, onChange),
+    subscribeToDraftReset: subscribeScheduledTaskEditorReset,
     selection,
     readDraftMessage: () => {
       const current = readEditor();

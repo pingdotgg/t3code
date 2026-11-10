@@ -22,8 +22,13 @@ type ScheduledTaskEditorSession = {
 export const scheduledTaskEditorSessionAtom = Atom.make<ScheduledTaskEditorSession | null>(
   null,
 ).pipe(Atom.keepAlive);
+const scheduledTaskEditorResetAtom = Atom.make(0).pipe(Atom.keepAlive);
 let nextEditorId = 0;
 let newTaskLinkAwaitsDiscard = false;
+
+export function subscribeScheduledTaskEditorReset(onReset: () => void): () => void {
+  return appAtomRegistry.subscribe(scheduledTaskEditorResetAtom, onReset);
+}
 
 export function scheduledTaskEditorHasChanges(
   initial: ScheduledTaskEditor | null,
@@ -68,6 +73,7 @@ export function updateScheduledTaskEditor(
  */
 export function markScheduledTaskEditorSaved(): void {
   newTaskLinkAwaitsDiscard = false;
+  appAtomRegistry.set(scheduledTaskEditorResetAtom, ++nextEditorId);
   const session = appAtomRegistry.get(scheduledTaskEditorSessionAtom);
   if (session) {
     appAtomRegistry.set(scheduledTaskEditorSessionAtom, { ...session, initial: session.current });
@@ -96,6 +102,7 @@ export function takeScheduledTaskNewLink(
     if (session && scheduledTaskEditorHasChanges(session.initial, session.current)) {
       newTaskLinkAwaitsDiscard = true;
     } else {
+      appAtomRegistry.set(scheduledTaskEditorResetAtom, ++nextEditorId);
       appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
     }
   }
@@ -106,6 +113,7 @@ export function takeScheduledTaskNewLink(
 export function discardScheduledTaskEditor(): void {
   if (newTaskLinkAwaitsDiscard) {
     newTaskLinkAwaitsDiscard = false;
+    appAtomRegistry.set(scheduledTaskEditorResetAtom, ++nextEditorId);
     appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
     return;
   }

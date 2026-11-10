@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import type { PreparedVoiceTranscription } from "@t3tools/client-runtime/voice-input";
+import { EnvironmentId } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { resetVoiceInputGlobalsForTests } from "../../../../../packages/client-runtime/src/voice-input/controller";
 import {
@@ -26,6 +27,16 @@ import {
   type VoiceInputTarget,
   type VoiceRecordingSample,
 } from "./voiceInputSession";
+import {
+  discardScheduledTaskEditor,
+  markScheduledTaskEditorSaved,
+  scheduledTaskEditorSessionAtom,
+  subscribeScheduledTaskEditorReset,
+  takeScheduledTaskNewLink,
+  updateScheduledTaskEditor,
+} from "../settings/scheduled-task-editor-state";
+import { createDraft } from "../settings/scheduledTaskDraft";
+import { appAtomRegistry } from "../../state/atom-registry";
 
 function createTarget(
   ownerKey: string,
@@ -84,73 +95,99 @@ function createSession(
 describe("global voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
-  it.each(["recover", "reset", "remove"] as const)(
-    "handles retained batch audio on %s",
-    async (action) => {
-      const registry = AtomRegistry.make();
-      onTestFinished(() => registry.dispose());
-      const draft = Atom.make<string | null>("draft");
-      const reset = Atom.make(0);
-      const unsubscribeReset = vi.fn();
-      const { session, recorder, prepare, deleteRecording, keepAwake } = createSession();
-      const transcribe = vi
-        .fn<PreparedVoiceTranscription["transcribe"]>()
-        .mockRejectedValueOnce(new Error("Upload failed"))
-        .mockRejectedValueOnce(new Error("Transcription failed"))
-        .mockResolvedValueOnce("recovered text");
-      prepare.mockResolvedValue({ locale: "en-US", transcribe });
-      const commit = vi.fn();
-      await session.start(
-        createVoiceInputTarget(
-          "first",
-          () => registry.get(draft),
-          commit,
-          { start: 5, end: 5 },
-          (onChange) => registry.subscribe(draft, onChange),
-          (onReset) => {
-            const stop = registry.subscribe(reset, onReset);
-            return () => {
-              stop();
-              unsubscribeReset();
-            };
-          },
-        ),
-      );
-      await session.controller.stop();
-      expect(session.controller.currentState.phase).toBe("error");
-      expect(deleteRecording).not.toHaveBeenCalled();
-      expect(commit).not.toHaveBeenCalled();
+  it.each([
+    "recover",
+    "reset",
+    "remove",
+    "new-task-link",
+    "task-saved",
+    "discard-new-task-link",
+  ] as const)("handles retained batch audio on %s", async (action) => {
+    const registry = AtomRegistry.make();
+    onTestFinished(() => registry.dispose());
+    appAtomRegistry.set(scheduledTaskEditorSessionAtom, null);
+    onTestFinished(() => appAtomRegistry.set(scheduledTaskEditorSessionAtom, null));
+    const draft = Atom.make<string | null>("draft");
+    const reset = Atom.make(0);
+    const unsubscribeReset = vi.fn();
+    const { session, recorder, prepare, deleteRecording, keepAwake } = createSession();
+    const transcribe = vi
+      .fn<PreparedVoiceTranscription["transcribe"]>()
+      .mockRejectedValueOnce(new Error("Upload failed"))
+      .mockRejectedValueOnce(new Error("Transcription failed"))
+      .mockResolvedValueOnce("recovered text");
+    prepare.mockResolvedValue({ locale: "en-US", transcribe });
+    const commit = vi.fn();
+    await session.start(
+      createVoiceInputTarget(
+        "first",
+        () => registry.get(draft),
+        commit,
+        { start: 5, end: 5 },
+        (onChange) => registry.subscribe(draft, onChange),
+        (onReset) => {
+          const stop = ["new-task-link", "task-saved", "discard-new-task-link"].includes(action)
+            ? subscribeScheduledTaskEditorReset(onReset)
+            : registry.subscribe(reset, onReset);
+          return () => {
+            stop();
+            unsubscribeReset();
+          };
+        },
+      ),
+    );
+    await session.controller.stop();
+    expect(session.controller.currentState.phase).toBe("error");
+    expect(deleteRecording).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
 
+    await session.retry();
+    expect(session.controller.currentState.phase).toBe("error");
+    expect(deleteRecording).not.toHaveBeenCalled();
+    if (action === "recover") {
       await session.retry();
-      expect(session.controller.currentState.phase).toBe("error");
-      expect(deleteRecording).not.toHaveBeenCalled();
-      if (action === "recover") {
-        await session.retry();
-      } else {
-        if (action === "reset") registry.set(reset, 1);
-        else registry.set(draft, null);
-        expect(session.controller.currentState.phase).toBe("idle");
-        expect(deleteRecording).toHaveBeenCalledExactlyOnceWith("file:///voice.m4a");
-        expect(commit).not.toHaveBeenCalled();
-        await session.start(createTarget("first", () => "draft", commit, { start: 5, end: 5 }));
-        await session.controller.stop();
-      }
+    } else {
+      if (action === "new-task-link") {
+        takeScheduledTaskNewLink({ routes: [{ name: "SettingsScheduledTaskNew" }] });
+      } else if (action === "discard-new-task-link") {
+        const editor = {
+          environmentId: EnvironmentId.make("environment"),
+          environmentLabel: "Environment",
+          draft: createDraft(null, null),
+        };
+        updateScheduledTaskEditor(
+          { ...editor, draft: { ...editor.draft, prompt: "typed" } },
+          editor,
+        );
+        takeScheduledTaskNewLink({ routes: [{ name: "SettingsScheduledTaskNew" }] });
+        expect(session.controller.currentState.phase).toBe("error");
+        expect(deleteRecording).not.toHaveBeenCalled();
+        discardScheduledTaskEditor();
+      } else if (action === "task-saved") {
+        markScheduledTaskEditorSaved();
+      } else if (action === "reset") registry.set(reset, 1);
+      else registry.set(draft, null);
       expect(session.controller.currentState.phase).toBe("idle");
-      expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
-        "file:///voice.m4a",
-        "file:///voice.m4a",
-        "file:///voice.m4a",
-      ]);
-      expect(recorder.record).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
-      expect(keepAwake).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
-      expect(commit).toHaveBeenCalledExactlyOnceWith("draft recovered text", {
-        start: 20,
-        end: 20,
-      });
-      expect(deleteRecording).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
-      expect(unsubscribeReset).toHaveBeenCalledTimes(action === "recover" ? 3 : 2);
-    },
-  );
+      expect(deleteRecording).toHaveBeenCalledExactlyOnceWith("file:///voice.m4a");
+      expect(commit).not.toHaveBeenCalled();
+      await session.start(createTarget("first", () => "draft", commit, { start: 5, end: 5 }));
+      await session.controller.stop();
+    }
+    expect(session.controller.currentState.phase).toBe("idle");
+    expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
+      "file:///voice.m4a",
+      "file:///voice.m4a",
+      "file:///voice.m4a",
+    ]);
+    expect(recorder.record).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
+    expect(keepAwake).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
+    expect(commit).toHaveBeenCalledExactlyOnceWith("draft recovered text", {
+      start: 20,
+      end: 20,
+    });
+    expect(deleteRecording).toHaveBeenCalledTimes(action === "recover" ? 1 : 2);
+    expect(unsubscribeReset).toHaveBeenCalledTimes(action === "recover" ? 3 : 2);
+  });
 
   it.each(["retry", "takeover"])(
     "handles failed deactivation with %s without notifying a released owner",
