@@ -328,17 +328,13 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
-  const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
   if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
   if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
   if (failed > 0) {
     parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
   }
-  if (parts.length === 0) {
-    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
-  }
-  return parts.join(" · ");
+  return parts.length === 0 ? "All checks passed" : parts.join(" · ");
 }
 
 export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {

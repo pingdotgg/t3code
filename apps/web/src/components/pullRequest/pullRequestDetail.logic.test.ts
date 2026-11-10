@@ -52,7 +52,10 @@ import {
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
   readableFailure,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
 } from "./pullRequestDetail.logic";
+import { summarizePullRequestChecks } from "./pullRequestPresentation";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -1501,6 +1504,27 @@ describe("when the source branch can be deleted", () => {
   it("needs both the host capability and the viewer's permission", () => {
     expect(canDeletePullRequestBranch(branchDetail("merged", { deleteBranch: false }))).toBe(false);
     expect(canDeletePullRequestBranch(branchDetail("merged", { allowed: false }))).toBe(false);
+  });
+});
+
+describe("pull request checks summaries", () => {
+  const check = (status: PullRequestCheck["status"]): PullRequestCheck => ({
+    name: status,
+    status,
+    description: null,
+    url: null,
+  });
+
+  it("count skipped and neutral checks as settled, matching the passing icon", () => {
+    for (const checks of [
+      [check("skipped"), check("skipped"), check("skipped")],
+      [check("success"), check("success"), check("neutral")],
+      [check("success"), check("skipped"), check("neutral")],
+    ]) {
+      expect(classifyPullRequestChecks(checks)).toBe("passing");
+      expect(describePullRequestChecks(checks)).toBe("All checks passed");
+      expect(summarizePullRequestChecks(checks)).toBe("All checks passed");
+    }
   });
 });
 
