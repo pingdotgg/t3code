@@ -2548,6 +2548,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     const childThreadIds = [1, 2, 3, 4].map((index) =>
       ThreadId.make(`thread:foundation-turn-start-priority:child-${index}`),
     );
+    const lateThreadId = ThreadId.make("thread:foundation-turn-start-priority:late");
     const capture = (id: string, threadId: ThreadId) => ({
       id,
       commandId,
@@ -2597,11 +2598,30 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         turnStartId,
         "claimable provider-turn.start queued behind other threads' checkpoint captures",
       );
+
+      yield* TestClock.adjust("30 seconds");
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-turn-start-priority:z-late-turn-start",
+          commandId,
+          threadId: lateThreadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-turn-start-priority:late"),
+          },
+        },
+      ]);
+      const aged = yield* outbox.claimNext({ workerId: "priority-worker" });
+      assert.equal(
+        Option.getOrUndefined(aged)?.request.type,
+        "checkpoint.capture",
+        "newer work kept passing a capture past its deferral window",
+      );
     }).pipe(
       Effect.ensuring(
         Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
           Effect.forEach(
-            [parentThreadId, ...childThreadIds],
+            [parentThreadId, ...childThreadIds, lateThreadId],
             (threadId) =>
               outbox.cancelUnsettled({
                 threadId,
