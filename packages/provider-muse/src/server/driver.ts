@@ -121,12 +121,13 @@ export const MuseDriver: ProviderDriver<
       const capabilities = yield* resolveInstallation(options);
       // The maintenance runner requests fresh capabilities around an explicit update
       // and needs the native target version to verify that the command actually upgraded.
-      const latestVersion = options?.fresh
-        ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          )
-        : undefined;
+      const latestVersion =
+        options?.fresh && !capabilities.lookupLatestVersion
+          ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+            )
+          : undefined;
       return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
     });
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
