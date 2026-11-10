@@ -55,8 +55,8 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
-// Teams sends Electron User-Agents to an error page before sign-in, and Entra hides passkey sign-in.
-// Electron allows one listener per session.
+// Teams sends Electron User-Agents to an error page before sign-in, and Microsoft sign-in hides
+// passkeys from them. Electron allows one listener per session.
 const ELECTRON_TOKEN_STRIPPED_URL_PATTERNS = [
   "https://teams.cloud.microsoft/*",
   "https://teams.microsoft.com/*",
