@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import { clearStaleGpuCaches, resolveUserDataPath } from "./DesktopUserData.ts";
 
@@ -90,4 +91,31 @@ it.effect.each([
       "44.10.1 shaders",
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("retries on the next launch when a GPU cache cannot be removed", () =>
+  Effect.gen(function* () {
+    const writes: Array<string> = [];
+    const fileSystem = FileSystem.makeNoop({
+      remove: (path) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "remove",
+            pathOrDescriptor: path,
+          }),
+        ),
+      writeFileString: (path) =>
+        Effect.sync(() => {
+          writes.push(path);
+        }),
+    });
+
+    yield* clearStaleGpuCaches({ userDataPath: "/profile", electronVersion: "44.10.1" }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
+
+    assert.deepStrictEqual(writes, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
