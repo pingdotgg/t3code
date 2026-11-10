@@ -168,7 +168,10 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       }),
       mapLocateErrors,
     );
-    if (Option.isSome(located)) return located.value;
+    // An AVD-name match could be on another host than the one whose list failed.
+    if (Option.isSome(located) && (failed.length === 0 || located.value.id === deviceId)) {
+      return located.value;
+    }
     if (failed.length > 0) {
       const failures = failed.map((host) => {
         const detail = state.hostStatuses[host.id]?.detail;

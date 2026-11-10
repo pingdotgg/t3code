@@ -539,15 +539,20 @@ describe("device targeting across hosts", () => {
     ),
   );
 
-  it.effect("says a host's device list failed instead of that a device is missing", () => {
-    const failedRefresh = {
-      ...multiHostState,
-      hostStatuses: {
-        ...multiHostState.hostStatuses,
-        local: { status: "failed" as const, detail: "adb devices timed out" },
-      },
-    };
-    return run(
+  const failedRefresh = {
+    ...multiHostState,
+    hostStatuses: {
+      ...multiHostState.hostStatuses,
+      local: { status: "failed" as const, detail: "adb devices timed out" },
+    },
+  };
+  const withFailedRefresh = {
+    list: Effect.succeed(failedRefresh),
+    state: Effect.succeed(failedRefresh),
+  };
+
+  it.effect("says a host's device list failed instead of that a device is missing", () =>
+    run(
       [],
       ({ opened, call }) =>
         Effect.gen(function* () {
@@ -559,19 +564,12 @@ describe("device targeting across hosts", () => {
           }
           expect(opened).toEqual([]);
         }),
-      { list: Effect.succeed(failedRefresh), state: Effect.succeed(failedRefresh) },
-    );
-  });
+      withFailedRefresh,
+    ),
+  );
 
-  it.effect("says the asked host's device list failed even when another host has the id", () => {
-    const failedRefresh = {
-      ...multiHostState,
-      hostStatuses: {
-        ...multiHostState.hostStatuses,
-        local: { status: "failed" as const, detail: "adb devices timed out" },
-      },
-    };
-    return run(
+  it.effect("says the asked host's device list failed even when another host has the id", () =>
+    run(
       [],
       ({ opened, call }) =>
         Effect.gen(function* () {
@@ -580,13 +578,32 @@ describe("device targeting across hosts", () => {
           expect(text(result)).toContain("adb devices timed out");
           expect(opened).toEqual([]);
         }),
+      { ...withFailedRefresh, locateDevice: () => Effect.fail(onTheMac) },
+    ),
+  );
+
+  it.effect("does not open another host's emulator by AVD name while a device list failed", () =>
+    run(
+      [],
+      ({ opened, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("device_open", { deviceId: "Medium_Phone" });
+          expect(result.isError).toBe(true);
+          expect(text(result)).toContain("adb devices timed out");
+          expect(opened).toEqual([]);
+        }),
       {
-        list: Effect.succeed(failedRefresh),
-        state: Effect.succeed(failedRefresh),
-        locateDevice: () => Effect.fail(onTheMac),
+        ...withFailedRefresh,
+        locateDevice: () =>
+          Effect.succeedSome({
+            ...macPixel,
+            id: "emulator-5554",
+            name: "Medium_Phone",
+            booted: true,
+          }),
       },
-    );
-  });
+    ),
+  );
 
   it.effect("screenshots an open device by id on whichever host it is on", () =>
     run([session("mac-mini", "MAC-UDID", "ios")], ({ call }) =>
