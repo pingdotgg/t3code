@@ -9,6 +9,7 @@ const files = [
   "packages/server/src/index.ts",
   "packages/web/src/index.ts",
   "packages/server/src/ws.ts",
+  "packages/server/docs/report.pdf",
   "/home/user/work/worker/src/worker.ts",
 ];
 
@@ -23,6 +24,7 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
     "`/usr/bin/node`, `git rebase --onto`",
     "```md\n[example](docs/missing.md) and `src/missing.ts`\n```",
     "Write links as `[example](docs/missing.md)`.",
+    "[report](docs/report.pdf)",
   ].join("\n");
   const pills = Object.fromEntries(
     fileLinkPills(text, cwd, files).map((pill) => [pill.source, pill.works]),
@@ -37,6 +39,7 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
     "./ws.ts": false,
     "./packages/server/src/ws.ts": true,
     "WS.ts:3": true,
+    "docs/report.pdf": false,
     "index.ts:5": false,
     "src/index.ts": false,
     "/home/user/app/packages/server/src/ws.ts": true,
