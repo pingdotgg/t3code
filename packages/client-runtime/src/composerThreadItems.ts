@@ -121,7 +121,8 @@ export function matchComposerEnvironmentItems(input: {
 
 /**
  * Orders `@` results by how surely they are what was typed: a file with exactly that name, then
- * machines, threads with a word starting with it, files starting with it, and the rest.
+ * machines, threads with a word starting with it, models (in their own order), files starting
+ * with it, and the rest.
  */
 export function rankComposerMentionItems<
   T extends { readonly type: string; readonly label: string },
@@ -130,6 +131,7 @@ export function rankComposerMentionItems<
   if (query.length === 0) return [...items];
   const rank = ({ type, label }: T) => {
     if (type === "environment") return 1;
+    if (type === "model") return 2;
     if (type === "thread") return startsSearchWord(label, query) ? 2 : 4;
     const name = foldSearchQuery(label);
     if (name === query || name.startsWith(`${query}.`)) return 0;

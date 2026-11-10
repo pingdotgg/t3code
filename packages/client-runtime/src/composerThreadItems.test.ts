@@ -137,6 +137,7 @@ describe("rankComposerMentionItems", () => {
   const thread = (label: string) => ({ type: "thread", label });
   const machine = (label: string) => ({ type: "environment", label });
   const file = (label: string) => ({ type: "path", label });
+  const model = (label: string) => ({ type: "model", label });
 
   it.each([
     [
@@ -155,6 +156,16 @@ describe("rankComposerMentionItems", () => {
       "ner",
       [thread("Partner sync"), thread("ner plan"), file("planner.md"), file("ner-notes.md")],
       ["ner plan", "ner-notes.md", "Partner sync", "planner.md"],
+    ],
+    [
+      "sonnet",
+      [
+        thread("Sonnet pricing"),
+        model("Sonnet 5.5"),
+        model("Claude Sonnet 4"),
+        file("sonnet-notes.md"),
+      ],
+      ["Sonnet pricing", "Sonnet 5.5", "Claude Sonnet 4", "sonnet-notes.md"],
     ],
     [
       "model",
