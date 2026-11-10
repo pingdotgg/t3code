@@ -84,96 +84,95 @@ const decodePackageVersion = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
 );
 
-it.live.each([false, true])(
-  "prebuilds portable caches without starting the desktop or server (server: %s)",
-  (includeServer) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const resources = path.join(root, "resources");
-      const desktop = path.join(resources, "app.asar/apps/desktop/dist-electron");
-      const server = path.join(resources, "app.asar/apps/server/dist");
-      yield* fs.makeDirectory(desktop, { recursive: true });
-      yield* fs.makeDirectory(server, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(resources, "app.asar/package.json"),
-        JSON.stringify({ main: "apps/desktop/dist-electron/boot.cjs" }),
-      );
-      yield* fs.writeFileString(
-        path.join(desktop, "main.cjs"),
-        'require("electron"); throw new Error("desktop started");',
-      );
-      yield* fs.writeFileString(path.join(server, "dependency.cjs"), "module.exports = 42;");
-      yield* fs.writeFileString(
-        path.join(server, "binCli-fixture.mjs"),
-        'import value from "./dependency.cjs"; export const cli = { value };',
-      );
-      yield* fs.writeFileString(path.join(server, "bin.mjs"), "export const bin = {};");
-      yield* Effect.promise(() =>
-        prebuildDesktopCompileCache(resources, process.execPath, includeServer),
-      );
-      const manifest = JSON.parse(
-        yield* fs.readFileString(path.join(resources, "compile-cache/runtime.json")),
-      );
-      assert.equal(manifest.node, process.versions.node);
-      assert.equal(manifest.v8, process.versions.v8);
-      assert.equal(manifest.electron, process.versions.electron);
-      assert.equal(manifest.tag, NodeV8.cachedDataVersionTag());
-      assert.equal(manifest.arch, yield* HostProcess.Architecture);
-      const entries = yield* fs.readDirectory(path.join(resources, "compile-cache"));
-      assert.isTrue(entries.some((entry) => entry.startsWith(`v${process.versions.node}-`)));
-      yield* fs.chmod(path.join(resources, "compile-cache"), 0o755);
-      yield* fs.chmod(path.join(resources, "compile-cache", manifest.cacheDirectory), 0o755);
-      const moved = path.join(root, "moved-resources");
-      yield* fs.copy(resources, moved);
-      const movedManifest = path.join(moved, "compile-cache/runtime.json");
-      yield* fs.chmod(movedManifest, 0o644);
-      yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, uid: -1 }));
-      const loader = NodePath.join(
-        import.meta.dirname,
-        "../apps/desktop/src/packagedCompileCache.ts",
-      );
-      const consume = path.join(root, "consume.mjs");
-      yield* fs.writeFileString(
-        consume,
-        `import { enablePackagedCompileCache } from ${JSON.stringify(loader)};
+it.live("prebuilds a portable main-process cache without starting the desktop or server", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const resources = path.join(root, "resources");
+    const desktop = path.join(resources, "app.asar/apps/desktop/dist-electron");
+    const server = path.join(resources, "app.asar/apps/server/dist");
+    yield* fs.makeDirectory(desktop, { recursive: true });
+    yield* fs.makeDirectory(server, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(resources, "app.asar/package.json"),
+      JSON.stringify({ main: "apps/desktop/dist-electron/boot.cjs" }),
+    );
+    yield* fs.writeFileString(
+      path.join(desktop, "main.cjs"),
+      'require("electron"); throw new Error("desktop started");',
+    );
+    yield* fs.writeFileString(path.join(server, "dependency.cjs"), "module.exports = 42;");
+    yield* fs.writeFileString(
+      path.join(server, "binCli-fixture.mjs"),
+      'import value from "./dependency.cjs"; export const cli = { value };',
+    );
+    yield* fs.writeFileString(path.join(server, "bin.mjs"), "export const bin = {};");
+    yield* Effect.promise(() => prebuildDesktopCompileCache(resources, process.execPath));
+    const manifest = JSON.parse(
+      yield* fs.readFileString(path.join(resources, "compile-cache/runtime.json")),
+    );
+    assert.equal(manifest.node, process.versions.node);
+    assert.equal(manifest.v8, process.versions.v8);
+    assert.equal(manifest.electron, process.versions.electron);
+    assert.equal(manifest.tag, NodeV8.cachedDataVersionTag());
+    assert.equal(manifest.arch, yield* HostProcess.Architecture);
+    assert.deepEqual(
+      manifest.files.map((file: { path: string }) => file.path),
+      [path.join("app.asar/apps/desktop/dist-electron/main.cjs")],
+    );
+    const entries = yield* fs.readDirectory(path.join(resources, "compile-cache"));
+    assert.isTrue(entries.some((entry) => entry.startsWith(`v${process.versions.node}-`)));
+    yield* fs.chmod(path.join(resources, "compile-cache"), 0o755);
+    yield* fs.chmod(path.join(resources, "compile-cache", manifest.cacheDirectory), 0o755);
+    const moved = path.join(root, "moved-resources");
+    yield* fs.copy(resources, moved);
+    const movedManifest = path.join(moved, "compile-cache/runtime.json");
+    yield* fs.chmod(movedManifest, 0o644);
+    yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, uid: -1 }));
+    const loader = NodePath.join(
+      import.meta.dirname,
+      "../apps/desktop/src/packagedCompileCache.ts",
+    );
+    const consume = path.join(root, "consume.mjs");
+    yield* fs.writeFileString(
+      consume,
+      `import { createRequire } from "node:module";
+import { enablePackagedCompileCache } from ${JSON.stringify(loader)};
 const enabled = enablePackagedCompileCache(${JSON.stringify(moved)});
+try { createRequire(import.meta.url)(${JSON.stringify(path.join(moved, "app.asar/apps/desktop/dist-electron/main.cjs"))}); } catch {}
 const { cli } = await import(${JSON.stringify(path.join(moved, "app.asar/apps/server/dist/binCli-fixture.mjs"))});
 console.log(JSON.stringify({ enabled, works: typeof cli === "object" }));`,
+    );
+    const run = Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, [consume], {
+          env: { NODE_DEBUG_NATIVE: "compile_cache", NODE_COMPILE_CACHE: "" },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
-      const run = Effect.gen(function* () {
-        const child = yield* spawner.spawn(
-          ChildProcess.make(process.execPath, [consume], {
-            env: { NODE_DEBUG_NATIVE: "compile_cache", NODE_COMPILE_CACHE: "" },
-            stdout: "pipe",
-            stderr: "pipe",
-          }),
-        );
-        return yield* Effect.all(
-          {
-            stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-            stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
-            exit: child.exitCode,
-          },
-          { concurrency: "unbounded" },
-        );
-      });
-      const cached = yield* run;
-      assert.equal(Number(cached.exit), 0, cached.stderr);
-      assert.include(cached.stdout, '"enabled":true,"works":true');
-      if (includeServer) {
-        assert.match(cached.stderr, /V8 code cache for ESM .*binCli-fixture\.mjs was accepted/);
-        assert.match(cached.stderr, /V8 code cache for CommonJS .*dependency\.cjs was accepted/);
-      } else {
-        assert.notMatch(cached.stderr, /was accepted/);
-      }
-      yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, node: "different" }));
-      const fallback = yield* run;
-      assert.equal(Number(fallback.exit), 0, fallback.stderr);
-      assert.include(fallback.stdout, '"enabled":false,"works":true');
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      return yield* Effect.all(
+        {
+          stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          exit: child.exitCode,
+        },
+        { concurrency: "unbounded" },
+      );
+    });
+    const cached = yield* run;
+    assert.equal(Number(cached.exit), 0, cached.stderr);
+    assert.include(cached.stdout, '"enabled":true,"works":true');
+    assert.match(cached.stderr, /V8 code cache for CommonJS .*main\.cjs was accepted/);
+    assert.notMatch(cached.stderr, /binCli-fixture\.mjs was accepted/);
+    yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, node: "different" }));
+    const fallback = yield* run;
+    assert.equal(Number(fallback.exit), 0, fallback.stderr);
+    assert.include(fallback.stdout, '"enabled":false,"works":true');
+    assert.notMatch(fallback.stderr, /was accepted/);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 // Keeps pnpm from auto-installing TypeScript, a types-only peer, into the app.

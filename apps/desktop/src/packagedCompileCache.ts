@@ -17,7 +17,6 @@ interface PackagedCache {
   readonly files: ReadonlyArray<{
     readonly path: string;
     readonly type: number;
-    readonly target: "main" | "server";
     readonly cache: string;
   }>;
 }
@@ -60,12 +59,7 @@ export function enablePackagedCompileCache(resources: string): boolean {
       return false;
     }
     versionDirectory = NodePath.join(bridge, NodeFS.readdirSync(bridge)[0]!);
-    const target =
-      process.versions.electron !== undefined && process.env.ELECTRON_RUN_AS_NODE !== "1"
-        ? "main"
-        : "server";
     for (const file of runtime.files) {
-      if (file.target !== target) continue;
       const filename = NodePath.resolve(resources, file.path);
       const key = file.type === 0 ? filename : NodeURL.pathToFileURL(filename).href;
       // Node's version-pinned key is CRC32(code type byte, filename); source hashes remain authoritative.

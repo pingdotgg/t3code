@@ -3,11 +3,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-export async function prebuildDesktopCompileCache(
-  resources: string,
-  executable: string,
-  includeServer = true,
-) {
+// Main-process bytecode only; prepare-server-compile-cache.cjs prepares the backend.
+export async function prebuildDesktopCompileCache(resources: string, executable: string) {
   const directory = NodePath.join(resources, "compile-cache");
   await NodeFSP.mkdir(directory, { recursive: true });
   // Use the packaged runtime: Electron's V8 build differs from the build host's Node.
@@ -25,49 +22,37 @@ const app = path.join(resources, "app.asar");
 const main = path.join(app, path.dirname(JSON.parse(fs.readFileSync(path.join(app, "package.json"), "utf8")).main), "main.cjs");
 const stop = Symbol("compiled");
 const sources = new Map();
-let target = "main";
 const hook = moduleApi.registerHooks({
   resolve(specifier, context, next) {
-    if (target === "main" && context.parentURL === pathToFileURL(main).href) throw stop;
+    if (context.parentURL === pathToFileURL(main).href) throw stop;
     return next(specifier, context);
   },
   load(url, context, next) {
     const result = next(url, context);
     if (url.startsWith("file:") && (result.format === "commonjs" || result.format === "module"))
-      sources.set(url, { type: result.format === "commonjs" ? 0 : 1, target });
+      sources.set(url, result.format === "commonjs" ? 0 : 1);
     return result;
   },
 });
 try { require(main); } catch (error) { if (error !== stop) throw error; }
-(async () => {
-  if (process.argv[2] === "true") {
-    target = "server";
-    const archive = fs.existsSync(path.join(resources, "server.asar")) ? "server.asar" : "app.asar";
-    const server = path.join(resources, archive, "apps/server/dist");
-    const cli = fs.readdirSync(server).find(name => /^binCli-.*\\.mjs$/.test(name));
-    if (!cli) throw new Error("Packaged backend CLI chunk is missing");
-    await import(pathToFileURL(path.join(server, cli)).href);
-    await import(pathToFileURL(path.join(server, "bin.mjs")).href);
-  }
-  hook.deregister();
-  moduleApi.flushCompileCache();
-  const cacheDirectory = fs.readdirSync(directory).find(name => name.startsWith("v"));
-  const files = [...sources].flatMap(([url, { type, target }]) => {
-    const file = fileURLToPath(url);
-    const relative = path.relative(path.join(directory, cacheDirectory), file).replaceAll("\\\\", "/");
-    const cache = crc32(Buffer.concat([Buffer.from([type]), Buffer.from(relative)])).toString(16).padStart(8, "0");
-    return fs.existsSync(path.join(directory, cacheDirectory, cache))
-      ? [{ path: path.relative(resources, file), type, target, cache }] : [];
-  });
-  if (!files.some(file => file.target === "main") || (process.argv[2] === "true" && files.length < 3)) throw new Error("Packaged compile cache is incomplete");
-  fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify({
-    node: process.versions.node, v8: process.versions.v8, electron: process.versions.electron,
-    arch: process.arch, tag: require("node:v8").cachedDataVersionTag(),
-    cacheDirectory, files,
-  }));
-})().catch(error => { console.error(error); process.exitCode = 1; });
+hook.deregister();
+moduleApi.flushCompileCache();
+const cacheDirectory = fs.readdirSync(directory).find(name => name.startsWith("v"));
+const files = [...sources].flatMap(([url, type]) => {
+  const file = fileURLToPath(url);
+  const relative = path.relative(path.join(directory, cacheDirectory), file).replaceAll("\\\\", "/");
+  const cache = crc32(Buffer.concat([Buffer.from([type]), Buffer.from(relative)])).toString(16).padStart(8, "0");
+  return fs.existsSync(path.join(directory, cacheDirectory, cache))
+    ? [{ path: path.relative(resources, file), type, cache }] : [];
+});
+if (files.length === 0) throw new Error("Packaged compile cache is incomplete");
+fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify({
+  node: process.versions.node, v8: process.versions.v8, electron: process.versions.electron,
+  arch: process.arch, tag: require("node:v8").cachedDataVersionTag(),
+  cacheDirectory, files,
+}));
 `;
-  NodeChildProcess.execFileSync(executable, ["-e", warmup, resources, String(includeServer)], {
+  NodeChildProcess.execFileSync(executable, ["-e", warmup, resources], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", NODE_COMPILE_CACHE: "" },
     stdio: "pipe",
     timeout: 60_000,

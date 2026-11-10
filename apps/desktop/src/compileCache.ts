@@ -16,23 +16,14 @@ try {
       ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache")
       : NodeOS.tmpdir();
   const directory = NodePath.join(cacheRoot, "t3code", "compile-cache");
-  const preparedManifest = NodePath.resolve(
-    __dirname,
-    "../../../../server-compile-cache/manifest.json",
-  );
-  if (process.env.ELECTRON_RUN_AS_NODE === "1" && NodeFS.existsSync(preparedManifest)) {
-    enablePreparedServerCache(process.argv[1] ?? "", directory);
-  } else if (NodeFS.existsSync(manifestPath)) {
-    enablePackagedCompileCache(NodePath.dirname(packagedDirectory));
-  } else if (
-    process.env.ELECTRON_RUN_AS_NODE === "1" ||
-    (!__dirname.includes("app.asar") && !process.env.APPIMAGE)
-  ) {
-    const prepared =
-      process.env.ELECTRON_RUN_AS_NODE === "1" &&
-      enablePreparedServerCache(process.argv[1] ?? "", directory);
-    if (!prepared && !process.env.APPIMAGE) {
+  if (process.env.ELECTRON_RUN_AS_NODE === "1") {
+    // AppImage mounts change paths each launch, so Node's path-keyed cache would miss and accumulate copies.
+    if (!enablePreparedServerCache(process.argv[1] ?? "", directory) && !process.env.APPIMAGE) {
       NodeModule.enableCompileCache(directory);
     }
+  } else if (NodeFS.existsSync(manifestPath)) {
+    enablePackagedCompileCache(NodePath.dirname(packagedDirectory));
+  } else if (!__dirname.includes("app.asar") && !process.env.APPIMAGE) {
+    NodeModule.enableCompileCache(directory);
   }
 } catch {}

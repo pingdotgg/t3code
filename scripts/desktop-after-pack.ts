@@ -56,9 +56,9 @@ export default async function afterPack(context: {
             context.appOutDir,
             `${context.packager.executableName ?? context.packager.appInfo.productFilename}${context.electronPlatformName === "win32" ? ".exe" : ""}`,
           );
-    await prebuildDesktopCompileCache(resources, executable, hostPlatform === "linux");
+    await prebuildDesktopCompileCache(resources, executable);
   }
-  // electron-builder accepts one afterPack hook; macOS and Windows also ship the prepared server cache.
+  // electron-builder accepts one afterPack hook, so the backend's prepared cache runs here too.
   await NodeModule.createRequire(import.meta.url)("./prepare-server-compile-cache.cjs")(context);
   if (context.electronPlatformName === "win32") return;
   const licensePath = NodePath.join(
