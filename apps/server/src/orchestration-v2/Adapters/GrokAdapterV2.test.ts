@@ -609,9 +609,12 @@ describe("Grok native questions", () => {
 });
 
 describe("Grok context usage", () => {
-  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
   const layerTest = Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     IdAllocator.layer,
     McpProviderSessions.layer,
     layerHost,
@@ -758,48 +761,16 @@ describe("Grok context usage", () => {
           }),
           Effect.forkScoped,
         );
-        const now = yield* DateTime.now;
-        yield* runtime.startTurn({
-          appThread: {
-            createdBy: "user",
-            creationSource: "web",
-            id: threadId,
-            projectId: ProjectId.make("grok-context-usage-project"),
-            title: "Grok context usage",
-            providerInstanceId: instanceId,
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
             modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: workspace,
-            activeProviderThreadId: providerThread.id,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-          threadId,
-          runId: RunId.make("grok-context-usage-run"),
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId: RunAttemptId.make("grok-context-usage-attempt"),
-          rootNodeId: NodeId.make("grok-context-usage-root"),
-          providerThread,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: MessageId.make("grok-context-usage-message"),
-            text: "Say done.",
-            attachments: [],
-          },
-          modelSelection,
-          runtimePolicy: policy,
-        });
+            runtimePolicy: policy,
+            now: yield* DateTime.now,
+          }),
+        );
         yield* Deferred.await(terminal);
         assert.deepEqual(contextUsages.at(-1), { usedTokens: 18_653, maxTokens: 500_000 });
         assert.deepInclude(contextUsages, { usedTokens: 18_609, maxTokens: 500_000 });
