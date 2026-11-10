@@ -84,7 +84,9 @@ list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
-environment is offline then, the task runs when it is back.
+environment is offline then, the task runs when it is back. A one-time task is
+automatically deleted after its agent run completes successfully; its conversation
+and results remain. Failed or interrupted runs stay available to inspect or retry.
 
 Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post

@@ -180,6 +180,7 @@ const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
+const encodeScheduleJson = Schema.encodeSync(Schema.fromJsonString(ScheduledTask.fields.schedule));
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
@@ -907,8 +908,33 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
-        if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
-        else
+        const fireKey =
+          webhook === undefined
+            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
+            : `${active.id}:webhook:${webhook.deliveryId}`;
+        const commandId = CommandId.make(`scheduled-task:${fireKey}`);
+        const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
+        if (webhook === undefined && active.schedule.type !== "once") {
+          yield* markRunning(active.id, startedAtIso);
+        } else if (webhook === undefined) {
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* markRunning(active.id, startedAtIso);
+                if (active.schedule.type === "once") {
+                  yield* sql`INSERT INTO scheduled_task_once_runs (task_id, message_id, schedule_json, started_at)
+                VALUES (${active.id}, ${messageId}, ${encodeScheduleJson(active.schedule)}, ${startedAtIso})
+                ON CONFLICT(task_id) DO UPDATE SET message_id = excluded.message_id,
+                  schedule_json = excluded.schedule_json, started_at = excluded.started_at`;
+                }
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                taskError("Could not start one-time schedule task.", { taskId: active.id, cause }),
+              ),
+            );
+        } else
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
@@ -925,12 +951,6 @@ export const layer = Layer.effect(
 
         yield* notifyChanged;
 
-        const fireKey =
-          webhook === undefined
-            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
-            : `${active.id}:webhook:${webhook.deliveryId}`;
-        const commandId = CommandId.make(`scheduled-task:${fireKey}`);
-        const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const prompt = webhook?.prompt ?? active.prompt;
         const threadMode = scheduledTaskThreadMode(active);
 
@@ -1234,6 +1254,38 @@ export const layer = Layer.effect(
     );
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
+
+    const cleanupOnceRuns = Effect.fn("ScheduledTaskService.cleanupOnceRuns")(function* () {
+      const deleted = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<{
+              task_id: string;
+            }>`DELETE FROM scheduled_tasks WHERE task_id IN (
+          SELECT pending.task_id FROM scheduled_task_once_runs AS pending
+          JOIN scheduled_tasks AS task ON task.task_id = pending.task_id
+          JOIN orchestration_v2_projection_messages AS message ON message.message_id = pending.message_id
+          JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
+          WHERE task.schedule_json = pending.schedule_json
+            AND task.last_run_at = pending.started_at
+            AND task.last_run_status = 'succeeded' AND task.next_run_at IS NULL
+            AND json_extract(pending.schedule_json, '$.runAt') <= pending.started_at
+            AND run.status = 'completed'
+        ) RETURNING task_id`;
+            for (const row of rows) {
+              yield* sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${row.task_id}`;
+            }
+            return rows;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not clean up completed one-time tasks.", { cause }),
+          ),
+        );
+      if (deleted.length > 0) yield* notifyChanged;
+    });
+    yield* scheduler.register("one-off-cleanup", cleanupOnceRuns());
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
