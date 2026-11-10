@@ -1,5 +1,6 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
+import * as Crypto from "node:crypto";
 import * as FileSystem from "effect/FileSystem";
 
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
@@ -232,15 +233,17 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   const dest = piT3McpExtensionDestPath(cacheDir);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    // Concurrent pi launches read this file: stage it in a per-call directory
-    // and rename so readers and other writers never see a partial file.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
-        const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
-        yield* fs.writeFileString(staging, PI_T3_MCP_EXTENSION_SOURCE);
-        yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
-      }),
+    // Concurrent pi launches read this file: write a same-directory staging
+    // sibling and rename so readers and other writers never see a partial file.
+    // Same-volume renames are atomic; the unique suffix keeps concurrent
+    // materializations from colliding on one staging path.
+    const staging = `${dest}.${Crypto.randomUUID()}.materializing`;
+    yield* fs.writeFileString(staging, PI_T3_MCP_EXTENSION_SOURCE);
+    // A Windows reader holding the destination open denies the rename; sleep
+    // before each retry so a continuous reader cannot exhaust them.
+    yield* fs.rename(staging, dest).pipe(
+      Effect.tapError(() => Effect.sleep("10 millis")),
+      Effect.retry({ times: 10 }),
     );
   }
   return dest;
