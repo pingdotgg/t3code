@@ -665,10 +665,9 @@ export function LayoutSurfaceHost({
     };
     if (staged) {
       // The overview renders the chats it shows big enough to read.
-      const thumbScale = (stage.scale * viewportWidth) / window.innerWidth;
       for (const row of stage.rows) {
         for (const slot of row.slots) {
-          const width = slot.rect.width * row.stripWidth * viewportWidth * thumbScale;
+          const width = slot.rect.width * row.stripWidth * viewportWidth * stage.scale;
           if (width >= OVERVIEW_RENDER_MIN_PX) mark(slot);
         }
       }
