@@ -297,10 +297,19 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-stop-" });
       const binaryPath = path.join(tempDir, "opencode");
-      // The background child shares the leader's group, so stopping only the leader would leave the group behind.
+      // The background child shares the leader's group. The leader reaps it before exiting, so no
+      // zombie keeps the group alive under an init that does not reap. The trap is set after the
+      // fork: a child forked with the trap already set can swallow the signal before it execs.
       yield* fs.writeFileString(
         binaryPath,
-        '#!/bin/sh\nsleep 600 &\necho "opencode server listening on http://127.0.0.1:4096"\nwait\n',
+        [
+          "#!/bin/sh",
+          "sleep 600 &",
+          "trap 'wait; exit 0' TERM",
+          'echo "opencode server listening on http://127.0.0.1:4096"',
+          "wait",
+          "",
+        ].join("\n"),
       );
       yield* fs.chmod(binaryPath, 0o755);
 
