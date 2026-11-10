@@ -14,10 +14,5 @@
     "jsxImportSource": "octane",
     "types": ["vite/client"]
   },
-  "include": [
-    "src/**/*",
-    "octane.config.ts",
-    "vite.config.ts",
-    "alchemy.run.ts"
-  ]
+  "include": ["src/**/*", "octane.config.ts", "vite.config.ts", "alchemy.run.ts"]
 }

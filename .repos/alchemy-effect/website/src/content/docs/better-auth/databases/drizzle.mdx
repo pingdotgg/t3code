@@ -8,8 +8,8 @@ This example uses an existing Postgres database and serves Better Auth through a
 ## Install compatible packages
 
 ```sh
-bun add @alchemy.run/better-auth better-auth@^1.7.5 @better-auth/drizzle-adapter@^1.7.5 pg drizzle-orm@1.0.0-rc.5-ab785fc
-bun add -d drizzle-kit@1.0.0-rc.5-ab785fc @types/pg
+bun add @alchemy.run/better-auth better-auth@^1.7.5 @better-auth/drizzle-adapter@^1.7.5 pg drizzle-orm@1.0.0-rc.5
+bun add -d drizzle-kit@1.0.0-rc.5 @types/pg
 ```
 
 Keep ORM and Kit versions compatible when upgrading. Configure an [AWS profile](/environments/profiles) and set `DATABASE_URL` to a Postgres database reachable by both your deployer and Lambda.
@@ -119,7 +119,7 @@ The URL resolves during host construction, while the inner Effect opens and rele
 
 ```typescript title="src/function.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { AuthDatabase } from "./auth-database.ts";
@@ -150,7 +150,7 @@ The function exposes `/api/auth` through a public Function URL and packages `pg`
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import AuthApi from "./src/function.ts";
 
