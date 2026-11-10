@@ -195,5 +195,6 @@ export const makeOpenCodeRuntimeProbe = <E>(probe: Effect.Effect<ProbedOpenCode,
       get: Cache.get(cache, undefined),
       refresh: Cache.refresh(cache, undefined),
       lastSuccess: Cache.getSuccess(cache, undefined),
+      record: (probed: ProbedOpenCode) => Cache.set(cache, undefined, probed),
     }),
   );
