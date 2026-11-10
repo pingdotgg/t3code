@@ -208,6 +208,8 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
+const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh"]);
+
 export function buildEnvironmentCaptureCommand(
   shell: string,
   names: ReadonlyArray<string>,
@@ -251,7 +253,10 @@ export function buildEnvironmentCaptureCommand(
     .join("; ");
 
   // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
-  return isNushell ? capture : `trap - DEBUG 2>/dev/null || true; ${capture}`;
+  // Only shells that survive `trap - DEBUG`: OpenBSD ksh (loksh, oksh) exits on it.
+  return DEBUG_TRAP_SHELLS.has(executableName)
+    ? `trap - DEBUG 2>/dev/null || true; ${capture}`
+    : capture;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
