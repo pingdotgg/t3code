@@ -97,11 +97,23 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
   });
 
+  it("opens a line range at its first line and keeps the range for the label", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/http.ts:42-64", "/repo")).toMatchObject({
+      targetPath: "/repo/src/http.ts:42",
+      line: 42,
+      endLine: 64,
+    });
+  });
+
   it("does not treat arbitrary name:digits shapes as files", () => {
     expect(resolveInlineCodeFileLinkMeta("error:1", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("TODO:12", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("exit:0", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("port:3000", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("port:3000-3010", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("localhost:3000-3010", "/Users/julius/project"),
+    ).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("http:80", "/Users/julius/project")).toBeNull();
   });
 
