@@ -7344,16 +7344,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* ({ completedAfter }: { readonly completedAfter: DateTime.Utc }) {
         const rows = yield* sql<{ readonly thread_id: string; readonly run_id: string }>`
         SELECT run.thread_id, run.run_id
-        FROM orchestration_v2_projection_runs run
-        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
-        WHERE run.status = 'completed'
-          AND run.completed_at >= ${DateTime.formatIso(completedAfter)}
-          AND thread.deleted_at IS NULL
+        FROM orchestration_v2_projection_threads thread
+        -- CROSS JOIN keeps threads outermost; the planner otherwise scans every run row.
+        CROSS JOIN orchestration_v2_projection_runs run
+        WHERE thread.deleted_at IS NULL
           AND thread.archived_at IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_runs later
-            WHERE later.thread_id = run.thread_id AND later.ordinal > run.ordinal
+          AND run.thread_id = thread.thread_id
+          AND run.ordinal = (
+            SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
+            WHERE latest.thread_id = thread.thread_id
           )
+          AND run.status = 'completed'
+          AND run.completed_at >= ${DateTime.formatIso(completedAfter)}
       `;
         return rows.map((row) => ({
           threadId: ThreadId.make(row.thread_id),
