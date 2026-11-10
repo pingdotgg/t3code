@@ -406,15 +406,15 @@ export function isTerminalClearShortcut(
     return false;
   }
 
-  const key = event.key.toLowerCase();
+  const keys = resolveEventKeys(event);
 
-  if (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+  if (keys.has("l") && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     return true;
   }
 
   return (
     isMacPlatform(platform) &&
-    key === "k" &&
+    keys.has("k") &&
     event.metaKey &&
     !event.ctrlKey &&
     !event.altKey &&

@@ -15,6 +15,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isTerminalClearShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -763,6 +764,21 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
+  });
+});
+
+describe("isTerminalClearShortcut", () => {
+  it("clears from the physical K and L keys on non-Latin layouts", () => {
+    // Russian layout: the K key types "л" and the L key types "д".
+    assert.isTrue(
+      isTerminalClearShortcut(event({ key: "л", code: "KeyK", metaKey: true }), "MacIntel"),
+    );
+    assert.isTrue(
+      isTerminalClearShortcut(event({ key: "д", code: "KeyL", ctrlKey: true }), "Linux x86_64"),
+    );
+    assert.isFalse(
+      isTerminalClearShortcut(event({ key: "t", code: "KeyK", metaKey: true }), "MacIntel"),
+    );
   });
 });
 
