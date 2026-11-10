@@ -124,15 +124,20 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
-    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
-    ["cursor", ["autoPercentUsed"], "composer-2.5", false],
-    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
-    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
-    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
-    ["antigravity", ["gemini-weekly"], "antigravity-default", true],
-    ["opencode", ["go_weekly"], "opencode/big-pickle", false],
-    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
-  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined],
+    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined],
+    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined],
+    ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined],
+    ["opencode", ["budget_model"], "opencode/other", false, ["opencode/limited"]],
+    ["opencode", ["budget_model"], "opencode/limited", true, ["opencode/limited"]],
+    ["opencode", ["budget_set"], "other/model", false, ["opencode/limited", "opencode/second"]],
+    ["opencode", ["budget_set"], "opencode/second", true, ["opencode/limited", "opencode/second"]],
+    ["opencode", ["budget_empty"], "opencode/other", false, []],
+  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback, modelIds) => {
     const defaultSelection = { ...selection, model };
     expect(
       resolveNewThreadModelSelection({
@@ -143,7 +148,12 @@ describe("new thread model fallback", () => {
             driver: ProviderDriverKind.make(driver),
             usageLimits: {
               checkedAt: limited.checkedAt,
-              windows: ids.map((id) => ({ ...window, id, usedPercent: 100 })),
+              windows: ids.map((id) => ({
+                ...window,
+                id,
+                usedPercent: 100,
+                ...(modelIds === undefined ? {} : { modelIds }),
+              })),
             },
           }),
           available,

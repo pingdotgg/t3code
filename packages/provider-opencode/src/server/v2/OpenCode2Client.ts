@@ -14,6 +14,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { readServerUsageLimits } from "./usageLimits.ts";
+
 /** OpenCode 2 accepts only HTTP Basic auth, always with this user name. */
 const OPENCODE_USERNAME = "opencode";
 
@@ -53,6 +55,9 @@ export type OpenCode2StreamEvent =
 /** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
+  readonly usageLimits: (
+    directory: string,
+  ) => Effect.Effect<import("@t3tools/contracts").ServerProviderUsageLimits | undefined>;
   readonly events: Effect.Effect<
     Stream.Stream<
       OpenCode2StreamEvent,
@@ -212,6 +217,13 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, fillCompactionRecents(authenticated)),
         Effect.map((client) => ({
           client,
+          usageLimits: (directory) =>
+            readServerUsageLimits(directory).pipe(
+              Effect.provideService(
+                HttpClient.HttpClient,
+                HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
+              ),
+            ),
           events: readEvents.pipe(
             Effect.provideService(
               HttpClient.HttpClient,
