@@ -37,6 +37,7 @@ import {
   type ScopedThreadRef,
   type ThreadContextRecord,
   type EnvironmentContextRecord,
+  type ResponseContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
@@ -1259,6 +1260,8 @@ export interface ComposerSendContents {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  /** The response the message replies to. `prompt` already leads with its reference. */
+  readonly replyTo: ResponseContextRecord | null;
 }
 
 /**
@@ -1279,6 +1282,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
+    replyTo: contents.replyTo,
     messageText: contents.terminalContexts
       .filter((context) => !terminalContexts.includes(context))
       .reduce(

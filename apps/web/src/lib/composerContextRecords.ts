@@ -19,6 +19,7 @@ import type {
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
+  ResponseContextRecord,
   ReviewCommentContextRecord,
   TerminalContextRecord,
   ThreadContextRecord,
@@ -165,6 +166,31 @@ export function previewAnnotationContextReference(
 
 export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
   return { kind: "thread", contextId: record.contextId, label: record.label };
+}
+
+export function isResponseContextRecord(
+  record: ComposerContextRecord,
+): record is ResponseContextRecord {
+  return record.kind === "response" && "citation" in record;
+}
+
+export function responseContextReference(record: ResponseContextRecord): ComposerContextReference {
+  return { kind: "response", contextId: record.contextId, label: record.label };
+}
+
+/** One record per response, so replying to it again reuses the same reference. */
+export function responseContextRecord(
+  input: Pick<ResponseContextRecord, "citation" | "itemId" | "subagent">,
+): ResponseContextRecord {
+  return {
+    version: 1,
+    kind: "response",
+    contextId: toKindScopedComposerContextId("response", input.citation.messageId),
+    label: sanitizeComposerContextLabel(input.citation.text.slice(0, 64), "response"),
+    citation: input.citation,
+    itemId: input.itemId,
+    ...(input.subagent ? { subagent: input.subagent } : {}),
+  };
 }
 
 /** One record per machine: mentioning the same machine twice reuses the chip. */
@@ -331,6 +357,7 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  replyTo?: ResponseContextRecord | null;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -343,6 +370,7 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.replyTo ? [input.replyTo] : []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

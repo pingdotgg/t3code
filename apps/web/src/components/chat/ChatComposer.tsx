@@ -20,6 +20,7 @@ import {
 import type {
   KeybindingCommand,
   AssistantCitation,
+  ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
@@ -297,8 +298,9 @@ export interface ChatComposerHandle {
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
-    sourceAnchor?: AssistantCitationSourceAnchor,
+    sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  replyToResponse: (response: ResponseContextRecord) => boolean;
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
@@ -2458,14 +2460,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           id: "reply-to",
           variant: "default",
           icon: <ReplyIcon />,
-          title: "Replying to",
+          title: replyTo.subagent ? `Replying to ${replyTo.subagent.title}` : "Replying to",
           description: (
             <button
               type="button"
               className="cursor-pointer hover:text-foreground"
-              onClick={() => void navigate(assistantCitationNavigation(replyTo))}
+              onClick={() => void navigate(assistantCitationNavigation(replyTo.citation))}
             >
-              {assistantCitationLabel(replyTo)}
+              {assistantCitationLabel(replyTo.citation)}
             </button>
           ),
           dismissLabel: "Cancel reply",
@@ -2959,17 +2961,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
-      citeAssistantText: (citation, sourceAnchor) => {
-        if (sourceAnchor) {
-          return insertComposerTextStable(
-            formatAssistantCitationForComposer(citation, citation.comment),
-            "cursor",
-            { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
-          );
-        }
+      citeAssistantText: (citation, sourceAnchor) =>
+        insertComposerTextStable(
+          formatAssistantCitationForComposer(citation, citation.comment),
+          "cursor",
+          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
+        ),
+      replyToResponse: (response) => {
         // An open question owns the composer, and its answer would not carry the reply.
         if (pendingUserInputs.length > 0 || projectSelectionRequired) return false;
-        setComposerDraftReplyTo(composerDraftTarget, citation);
+        setComposerDraftReplyTo(composerDraftTarget, response);
         focusComposer();
         return true;
       },

@@ -55,7 +55,6 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
-  formatAssistantCitationForComposer,
 } from "../../composer-logic";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
@@ -80,10 +79,14 @@ import {
   filterTerminalContextsWithText,
   type TerminalContextDraft,
 } from "../../lib/terminalContext";
-import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
+import {
+  ensureInlineContextReferences,
+  formatInlineContextReference,
+} from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
   previewAnnotationContextReference,
+  responseContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
@@ -569,8 +572,9 @@ export function useComposerSend(input: ComposerSendInput) {
       : promptRef.current;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
+    // The reply leads the message, so its card sits above the text it is about.
     const promptForSend = replyTo
-      ? `${formatAssistantCitationForComposer(replyTo)}${draftPrompt}`
+      ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
       : draftPrompt;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
@@ -604,6 +608,7 @@ export function useComposerSend(input: ComposerSendInput) {
           previewAnnotations: composerPreviewAnnotations,
           threadContexts: composerThreadContexts,
           environmentContexts: composerEnvironmentContexts,
+          replyTo,
         },
         setThreadError,
       );
@@ -735,6 +740,7 @@ export function useComposerSend(input: ComposerSendInput) {
       reviewComments: composerReviewComments,
       threadContexts: composerThreadContexts,
       environmentContexts: composerEnvironmentContexts,
+      replyTo,
     });
     const {
       files: composerFilesSnapshot,
@@ -780,6 +786,7 @@ export function useComposerSend(input: ComposerSendInput) {
         previewAnnotations: composerPreviewAnnotationsSnapshot,
         threadContexts: composerThreadContextsSnapshot,
         environmentContexts: composerEnvironmentContextsSnapshot,
+        replyTo,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,

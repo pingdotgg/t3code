@@ -1,11 +1,12 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { type RunId } from "@t3tools/contracts";
+import { type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import { GitForkIcon, ReplyIcon } from "lucide-react";
-import { captureAssistantMessage } from "~/lib/assistantTextSelection";
+import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
+import { responseContextRecord } from "~/lib/composerContextRecords";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
@@ -13,7 +14,12 @@ import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
-import { useAssistantMessageText, useProject, useThreadShell } from "../../state/entities";
+import {
+  readRunSubagent,
+  useAssistantMessageText,
+  useProject,
+  useThreadShell,
+} from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
@@ -189,7 +195,9 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {!message.streaming ? <AssistantReplyButton message={message} /> : null}
+      {!message.streaming && projectedItem ? (
+        <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -204,10 +212,10 @@ function AssistantMessageMeta({
   );
 }
 
-function AssistantReplyButton({ message }: { message: ChatMessage }) {
+function AssistantReplyButton({ message, itemId }: { message: ChatMessage; itemId: TurnItemId }) {
   const ctx = use(TimelineRowCtx);
-  const { threadRef, onCiteAssistantText } = ctx;
-  if (!threadRef || !onCiteAssistantText || !message.text.trim()) return null;
+  const { threadRef, onReplyToResponse } = ctx;
+  if (!threadRef || !onReplyToResponse || !message.text.trim()) return null;
 
   const reply = () => {
     // The meta row can sit below trailing tool rows, so the message may be virtualized away.
@@ -219,9 +227,15 @@ function AssistantReplyButton({ message }: { message: ChatMessage }) {
         element.dataset.assistantCitationThread === threadRef.threadId &&
         element.dataset.assistantCitationEnvironment === threadRef.environmentId,
     );
-    const selector = captureAssistantMessage(source ?? null, message.text);
-    if (!selector) return;
-    onCiteAssistantText({ version: 1, ...threadRef, messageId: message.id, ...selector });
+    const opening = captureAssistantMessageOpening(source ?? null, message.text);
+    if (!opening) return;
+    onReplyToResponse(
+      responseContextRecord({
+        citation: { version: 1, ...threadRef, messageId: message.id, ...opening },
+        itemId,
+        subagent: readRunSubagent(threadRef, message.runId),
+      }),
+    );
   };
 
   return (

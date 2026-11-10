@@ -23,6 +23,7 @@ import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -433,4 +434,27 @@ export function useThreadRelationshipShells(
   ref: ScopedThreadRef,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return useAtomValue(relationshipShellsAtomFamily(threadKey(ref)));
+}
+
+/**
+ * The subagent whose result started the run a response belongs to, read once on demand so a
+ * timeline row does not subscribe to the thread for it.
+ */
+export function readRunSubagent(
+  ref: ScopedThreadRef,
+  runId: RunId | null,
+): { readonly threadId: ThreadId; readonly title: string } | undefined {
+  if (runId === null) return undefined;
+  const projection = appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection;
+  const userMessageId = projection?.runs.find((run) => run.id === runId)?.userMessageId;
+  const threadId = projection?.messages.find(
+    (message) => message.id === userMessageId,
+  )?.senderThreadId;
+  if (threadId === undefined) return undefined;
+  const title = appAtomRegistry
+    .get(
+      environmentThreadShells.quietThreadShellAtom({ environmentId: ref.environmentId, threadId }),
+    )
+    ?.title.trim();
+  return { threadId, title: title || "Agent" };
 }

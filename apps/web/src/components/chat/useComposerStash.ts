@@ -27,15 +27,13 @@ import {
 } from "../../promptStashStore";
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
-import {
-  collapseExpandedComposerCursor,
-  formatAssistantCitationForComposer,
-} from "../../composer-logic";
+import { collapseExpandedComposerCursor } from "../../composer-logic";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
+  isResponseContextRecord,
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -211,6 +209,16 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
+    // A reply only makes sense in the thread that holds the response.
+    const stashedReply = entry.records?.find(isResponseContextRecord);
+    if (
+      stashedReply &&
+      typeof composerDraftTarget !== "string" &&
+      stashedReply.citation.threadId === composerDraftTarget.threadId &&
+      stashedReply.citation.environmentId === composerDraftTarget.environmentId
+    ) {
+      setComposerDraftReplyTo(composerDraftTarget, stashedReply);
+    }
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
@@ -460,12 +468,12 @@ export function useComposerStash(input: {
       return;
     }
     const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
-    const prompt =
-      `${replyTo ? formatAssistantCitationForComposer(replyTo) : ""}${promptRef.current}`.trim();
+    const prompt = promptRef.current.trim();
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
     const stashedRecords: ComposerContextRecord[] = [
+      ...(replyTo ? [replyTo] : []),
       ...composerThreadContexts,
       ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
