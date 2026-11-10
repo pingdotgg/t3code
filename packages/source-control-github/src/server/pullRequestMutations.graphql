@@ -23,6 +23,7 @@ fragment PullRequestActionSummary on PullRequest {
   autoMergeRequest {
     mergeMethod
   }
+  isInMergeQueue
 }
 
 mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
@@ -147,6 +148,16 @@ mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
   disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
     pullRequest {
       ...PullRequestActionSummary
+    }
+  }
+}
+
+mutation DequeuePullRequest($pullRequestId: ID!) {
+  dequeuePullRequest(input: { id: $pullRequestId }) {
+    mergeQueueEntry {
+      pullRequest {
+        ...PullRequestActionSummary
+      }
     }
   }
 }
