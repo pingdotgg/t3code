@@ -56,8 +56,9 @@ const AUTHORIZATION_CODE_TTL_MS = 60_000;
 const MAX_CLIENT_NAME_LENGTH = 100;
 const MAX_REDIRECT_URIS = 10;
 const MAX_REDIRECT_URI_LENGTH = 512;
-// The client_id rides in the authorize URL; this leaves room under Node's 16 KB header cap for an
-// encoded redirect_uri and state.
+// The client_id rides in the authorize URL. Past the original five-URI limit, cap it to leave room
+// under Node's 16 KB header cap for an encoded redirect_uri and state.
+const MAX_UNBOUNDED_CLIENT_ID_REDIRECT_URIS = 5;
 const MAX_CLIENT_ID_LENGTH = 10_240;
 const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -352,7 +353,10 @@ const make = Effect.gen(function* () {
         });
       }
       const clientId = yield* signClientId(name, redirectUris, peerLink);
-      if (clientId.length > MAX_CLIENT_ID_LENGTH) {
+      if (
+        redirectUris.length > MAX_UNBOUNDED_CLIENT_ID_REDIRECT_URIS &&
+        clientId.length > MAX_CLIENT_ID_LENGTH
+      ) {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_redirect_uri",
           error_description: "Redirect URIs are too long to fit in an authorization request.",

@@ -243,6 +243,20 @@ it.live("registers loopback and https clients and never redirects for an unverif
         }),
       );
       expect(oversized.status).toBe(400);
+      const fiveLongCallbacks = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "A".repeat(100),
+            redirect_uris: Array.from(
+              { length: 5 },
+              (_, index) => `https://a.co/${index}/${"界".repeat(497)}`,
+            ),
+          }),
+        }),
+      );
+      expect(fiveLongCallbacks.status).toBe(201);
 
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
