@@ -145,18 +145,19 @@ export function createWorkspaceFocusController(doc: Document) {
   };
   doc.addEventListener("focusin", remember);
 
-  const focusArea = (area: HTMLElement, restore = true) => {
+  const focusArea = (area: HTMLElement, restore = true, nested = true) => {
     const key = area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea!;
     const previous = restore ? lastFocused.get(key) : undefined;
-    const belongs = (element: HTMLElement) =>
-      workspaceArea(element) === area &&
-      isWorkspaceElementVisible(element) &&
-      !element.matches(":disabled");
+    const usable = (element: HTMLElement) =>
+      isWorkspaceElementVisible(element) && !element.matches(":disabled");
+    const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
+    // A side chat's message input sits in its own area inside the panel. Opening the
+    // panel focuses it, but F6 visits that area on its own, so it moves past it here.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
         '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
-    ).find(belongs);
+    ).find(nested ? usable : belongs);
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
       (element) => element.tabIndex >= 0 && belongs(element),
     );
@@ -279,7 +280,7 @@ export function createWorkspaceFocusController(doc: Document) {
           : areas.length - 1
         : (current + direction + areas.length) % areas.length;
     const area = areas[index]!;
-    return focusArea(area);
+    return focusArea(area, true, false);
   };
 
   // Focus that drops to the body because its element was hidden, made inert, disabled, or removed
