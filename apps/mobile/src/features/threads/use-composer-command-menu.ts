@@ -661,7 +661,6 @@ export function useComposerCommandMenu({
     onSelectionChange,
     trigger,
     items,
-    searchesThreads: Boolean(environmentId && trigger?.kind === "path" && trigger.query.trim()),
     skills,
     isLoading:
       trigger?.kind === "pull-request"

@@ -848,7 +848,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               items={composerMenu.items}
               triggerKind={composerMenu.trigger.kind}
               isLoading={composerMenu.isLoading}
-              searchesThreads={composerMenu.searchesThreads}
               error={composerMenu.error}
               onSelect={composerMenu.onSelect}
             />

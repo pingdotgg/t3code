@@ -86,7 +86,6 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
-  readonly searchesThreads: boolean;
   readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
