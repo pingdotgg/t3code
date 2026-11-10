@@ -1097,6 +1097,7 @@ export const layer = Layer.effect(
 
     const discoverProviders = Effect.fn("ProviderRegistry.discoverProviders")(function* () {
       const instances = yield* instanceRegistry.listInstances;
+      // One provider's failed probe must not fail discovery for the rest.
       yield* Effect.forEach(
         instances,
         (instance) =>
@@ -1109,7 +1110,7 @@ export const layer = Layer.effect(
             if ((yield* instanceRegistry.getInstance(instance.instanceId)) === instance) {
               yield* syncProvider(provider);
             }
-          }),
+          }).pipe(Effect.ignoreCause({ log: true })),
         { concurrency: "unbounded", discard: true },
       );
       return yield* Ref.get(providersRef);

@@ -50,13 +50,19 @@ type TextGenerationOp =
   | "generateReviewGuide"
   | "generateTranscriptionPostProcessing";
 
+// A failed live probe falls back to the stored snapshot, which is all main ever read here.
+const readySnapshot = (instance: ProviderInstance) =>
+  instance.snapshot.ensureReady
+    ? instance.snapshot.ensureReady.pipe(Effect.catchCause(() => instance.snapshot.getSnapshot))
+    : instance.snapshot.getSnapshot;
+
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
   instanceId: ProviderInstanceId,
 ): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
   registry.getInstance(instanceId).pipe(
-    Effect.tap((instance) => instance?.snapshot.ensureReady ?? Effect.void),
+    Effect.tap((instance) => (instance ? readySnapshot(instance) : Effect.void)),
     Effect.flatMap((instance) =>
       instance
         ? Effect.succeed(instance.textGeneration)
@@ -100,7 +106,7 @@ export const make = Effect.gen(function* () {
     const instances = yield* registry.listInstances;
     let snapshots = yield* Effect.forEach(instances, (instance) =>
       instance.instanceId === selection.instanceId
-        ? (instance.snapshot.ensureReady ?? instance.snapshot.getSnapshot)
+        ? readySnapshot(instance)
         : instance.snapshot.getSnapshot,
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -112,11 +118,7 @@ export const make = Effect.gen(function* () {
         selected.status === "error" &&
         (!selected.installed || selected.auth.status === "unauthenticated"));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
-      snapshots = yield* Effect.forEach(
-        instances,
-        (instance) => instance.snapshot.ensureReady ?? instance.snapshot.getSnapshot,
-        { concurrency: "unbounded" },
-      );
+      snapshots = yield* Effect.forEach(instances, readySnapshot, { concurrency: "unbounded" });
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
