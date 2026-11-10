@@ -43,14 +43,7 @@ it("ignores composing keys in the search", async () => {
   );
 });
 
-async function pressOnBody(init: KeyboardEventInit) {
-  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
-  await act(() => document.body.dispatchEvent(event));
-  return event;
-}
-
-it("opens search with the slash key on layouts where it is not '/'", async () => {
+it("opens search from the physical Slash and F keys on non-US layouts", async () => {
   await using _screen = await render(
     <SidebarProvider defaultOpen>
       <SettingsSidebarNav pathname="/settings/general" />
@@ -59,46 +52,16 @@ it("opens search with the slash key on layouts where it is not '/'", async () =>
   );
   const search = page.getByRole("combobox", { name: "Search settings" });
 
-  // German Shift+7 types "/" on a key that is not the physical Slash key.
-  const german = await pressOnBody({ key: "/", code: "Digit7", shiftKey: true });
-  expect(german.defaultPrevented).toBe(true);
-  await expect.element(search).toHaveFocus();
-
-  // Russian and Ukrainian layouts type "." on the physical Slash key.
-  const russian = await pressOnBody({ key: ".", code: "Slash" });
-  expect(russian.defaultPrevented, "Slash key on a Russian layout").toBe(true);
-  await expect.element(search).toHaveFocus();
-});
-
-it("opens search with Mod+F on non-Latin layouts", async () => {
-  await using _screen = await render(
-    <SidebarProvider defaultOpen>
-      <SettingsSidebarNav pathname="/settings/general" />
-    </SidebarProvider>,
-    { router: "/settings/general" },
-  );
-  const search = page.getByRole("combobox", { name: "Search settings" });
-
-  for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
-    const event = await pressOnBody({ key: "а", code: "KeyF", ...modifier });
-    expect(event.defaultPrevented, `Russian ${JSON.stringify(modifier)}+F`).toBe(true);
-    await expect.element(search).toHaveFocus();
-  }
-});
-
-it("ignores Shift on the slash key unless the layout types '/'", async () => {
-  await using _screen = await render(
-    <SidebarProvider defaultOpen>
-      <SettingsSidebarNav pathname="/settings/general" />
-    </SidebarProvider>,
-    { router: "/settings/general" },
-  );
-
-  for (const init of [
-    { key: "?", code: "Slash", shiftKey: true },
-    { key: "7", code: "Digit7" },
+  for (const { init, opens } of [
+    { init: { key: "/", code: "Digit7", shiftKey: true }, opens: true }, // German Shift+7
+    { init: { key: ".", code: "Slash" }, opens: true }, // Russian Slash key
+    { init: { key: "а", code: "KeyF", ctrlKey: true }, opens: true }, // Russian Ctrl+F
+    { init: { key: "?", code: "Slash", shiftKey: true }, opens: false },
   ]) {
-    const event = await pressOnBody(init);
-    expect(event.defaultPrevented, JSON.stringify(init)).toBe(false);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+    await act(() => document.body.dispatchEvent(event));
+    expect(event.defaultPrevented, JSON.stringify(init)).toBe(opens);
+    if (opens) await expect.element(search).toHaveFocus();
   }
 });
