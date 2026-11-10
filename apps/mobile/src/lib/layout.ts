@@ -209,6 +209,7 @@ export function deriveWorkspacePaneLayout(input: {
   /** Width UIKit keeps out of its columns, such as the Duo's system bar. */
   readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
+  readonly equalAuxiliarySplit?: boolean;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
@@ -229,6 +230,7 @@ export function deriveWorkspacePaneLayout(input: {
     layout: input.layout,
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
+    equalAuxiliarySplit: input.equalAuxiliarySplit,
     reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
@@ -237,16 +239,19 @@ export function deriveWorkspacePaneLayout(input: {
     : fileInspector.width;
   const primarySidebarSuppressedByAuxiliary =
     preferredPrimarySidebarVisible &&
-    !floats &&
     auxiliaryPaneVisible &&
-    inspectorWidth !== null &&
-    input.layout.listPaneWidth !== null &&
-    viewportWidth -
-      (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
-      input.layout.listPaneWidth -
-      (input.layout.listPaneGap ?? 0) -
-      inspectorWidth <
-      (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
+    (input.equalAuxiliarySplit === true ||
+      (!floats &&
+        inspectorWidth !== null &&
+        input.layout.listPaneWidth !== null &&
+        viewportWidth -
+          (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
+          input.layout.listPaneWidth -
+          (input.layout.listPaneGap ?? 0) -
+          inspectorWidth <
+          (input.nativeWorkspace
+            ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH
+            : FILE_INSPECTOR_MIN_MAIN_WIDTH)));
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
@@ -284,8 +289,15 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly viewportWidth: number;
   readonly preferredWidth?: number;
   readonly reservedLeadingWidth?: number;
+  readonly equalAuxiliarySplit?: boolean;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
+  if (input.equalAuxiliarySplit) {
+    // Android keeps a 4dp trailing card gap; the divider overlays the column boundary.
+    const width = Math.max(0, viewportWidth - 4) / 2;
+    const supported = input.layout.usesSplitView && width >= 320;
+    return { supported, width: supported ? width : null };
+  }
   const reservedLeadingWidth = Number.isFinite(input.reservedLeadingWidth)
     ? Math.max(0, input.reservedLeadingWidth ?? 0)
     : 0;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 import Animated, {
   cubicBezier,
   runOnJS,
@@ -97,7 +98,7 @@ export function WorkspaceInspectorPane(props: {
 
   return (
     <>
-      {inspectorVisible ? (
+      {inspectorVisible && Platform.OS !== "android" ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize detail pane"
           currentWidth={inspectorWidth ?? 0}

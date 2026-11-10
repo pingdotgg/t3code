@@ -140,6 +140,40 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
+  it.each([660, 745, 1100])(
+    "splits Android content equally and steps the sidebar aside at %s dp",
+    (viewportWidth) => {
+      const layout = deriveLayout({ width: viewportWidth + 96, height: 900 });
+      for (const primarySidebarFloats of [false, true]) {
+        const input = {
+          layout,
+          viewportWidth,
+          equalAuxiliarySplit: true,
+          primarySidebarFloats,
+          primarySidebarPreferredVisible: true,
+          auxiliaryPanePreferredVisible: true,
+        };
+        expect(deriveWorkspacePaneLayout(input)).toMatchObject({
+          primarySidebarVisible: false,
+          primarySidebarSuppressedByAuxiliary: true,
+          auxiliaryPaneVisible: true,
+          auxiliaryPaneWidth: (viewportWidth - 4) / 2,
+          contentPaneWidth: viewportWidth,
+        });
+        expect(
+          deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),
+        ).toMatchObject({ primarySidebarVisible: true });
+        expect(
+          deriveWorkspacePaneLayout({
+            ...input,
+            layout: deriveLayout({ width: 390, height: 900 }),
+            viewportWidth: 390,
+          }),
+        ).toMatchObject({ auxiliaryPaneVisible: false });
+      }
+    },
+  );
+
   it.each([
     { width: 1_194, height: 834, horizontalSafeArea: 0, fraction: 0.4, suppressed: false },
     { width: 1_032, height: 1_376, horizontalSafeArea: 0, fraction: 0.4, suppressed: true },
