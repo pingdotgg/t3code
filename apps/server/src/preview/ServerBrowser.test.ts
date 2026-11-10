@@ -675,8 +675,10 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
       desktopTabs.delete(tabId);
       desktopDetaches.emit("detach", { threadId, tabId });
       yield* Effect.promise(() => desktopReleased.promise);
-      const events = yield* manager.subscribeEvents;
+      // It is still reloading when the agent's call arrives, so it misses the first events.
       yield* Effect.gen(function* () {
+        yield* Effect.promise(() => desktopAttachWaiting.promise);
+        const events = yield* manager.subscribeEvents;
         let event = yield* PubSub.take(events);
         while (event.threadId !== threadId) event = yield* PubSub.take(events);
         desktopTabs.add(tabId);
