@@ -2460,7 +2460,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           id: "reply-to",
           variant: "default",
           icon: <ReplyIcon />,
-          title: replyTo.subagent ? `Replying to ${replyTo.subagent.title}` : "Replying to",
+          title: replyTo.subagents
+            ? `Replying to ${replyTo.subagents.map((subagent) => subagent.title).join(", ")}`
+            : "Replying to",
           description: (
             <button
               type="button"

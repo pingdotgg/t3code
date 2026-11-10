@@ -1081,6 +1081,7 @@ describe("snapshotComposerSend", () => {
         suffix: "",
       },
       itemId: TurnItemId.make("item-1"),
+      subagents: [],
     });
     const reference = responseContextReference(replyTo);
     const snapshot = snapshotComposerSend({

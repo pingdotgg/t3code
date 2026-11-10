@@ -437,24 +437,47 @@ export function useThreadRelationshipShells(
 }
 
 /**
- * The subagent whose result started the run a response belongs to, read once on demand so a
- * timeline row does not subscribe to the thread for it.
+ * The subagents whose results started the run a response belongs to, read once on demand so a
+ * timeline row does not subscribe to the thread for it. A result reaches the thread either as a
+ * message from the subagent's thread or as a completion notice that names its tasks.
  */
-export function readRunSubagent(
+export function readRunSubagents(
   ref: ScopedThreadRef,
   runId: RunId | null,
-): { readonly threadId: ThreadId; readonly title: string } | undefined {
-  if (runId === null) return undefined;
+): ReadonlyArray<{ readonly threadId: ThreadId; readonly title: string }> {
   const projection = appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection;
-  const userMessageId = projection?.runs.find((run) => run.id === runId)?.userMessageId;
-  const threadId = projection?.messages.find(
-    (message) => message.id === userMessageId,
-  )?.senderThreadId;
-  if (threadId === undefined) return undefined;
-  const title = appAtomRegistry
-    .get(
-      environmentThreadShells.quietThreadShellAtom({ environmentId: ref.environmentId, threadId }),
-    )
-    ?.title.trim();
-  return { threadId, title: title || "Agent" };
+  if (runId === null || !projection) return [];
+  // Older history loads its items without their runs, so the starting message is found either way.
+  const starterItem = projection.visibleTurnItems.find(
+    ({ item }) => item.type === "user_message" && item.runId === runId,
+  )?.item;
+  const userMessageId =
+    projection.runs.find((run) => run.id === runId)?.userMessageId ??
+    (starterItem?.type === "user_message" ? starterItem.messageId : undefined);
+  const starter = projection.messages.find((message) => message.id === userMessageId);
+  const senderThreadId =
+    starter?.senderThreadId ??
+    (starterItem?.type === "user_message" ? starterItem.senderThreadId : undefined);
+  const taskIds = starter?.delegatedCompletion?.taskIds ?? [];
+  const titles = new Map<ThreadId, string | null>();
+  if (senderThreadId !== undefined) titles.set(senderThreadId, null);
+  for (const subagent of projection.subagents) {
+    if (subagent.childThreadId !== null && taskIds.includes(subagent.id)) {
+      titles.set(subagent.childThreadId, subagent.title);
+    }
+  }
+  return [...titles].map(([threadId, title]) => ({
+    threadId,
+    title:
+      title?.trim() ||
+      appAtomRegistry
+        .get(
+          environmentThreadShells.quietThreadShellAtom({
+            environmentId: ref.environmentId,
+            threadId,
+          }),
+        )
+        ?.title.trim() ||
+      "Agent",
+  }));
 }

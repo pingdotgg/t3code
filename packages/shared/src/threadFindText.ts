@@ -141,7 +141,8 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      // The quote card is not searched; its text is found in the message it came from.
+      // The quote card is not searched, and it splits the text the way the rendered card does.
+      flush();
       text += (citation.comment ?? "").replace(/\r?\n/g, " ");
       return;
     }

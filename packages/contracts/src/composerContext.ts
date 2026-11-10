@@ -237,8 +237,12 @@ export const ResponseContextRecord = Schema.Struct({
   /** Where the response is and how it starts, as the reader saw it. */
   citation: AssistantCitation,
   itemId: TurnItemId,
-  /** The subagent whose result that response reported on. */
-  subagent: Schema.optional(Schema.Struct({ threadId: ThreadId, title: ContextLabel })),
+  /** The subagents whose results that response reported on. */
+  subagents: Schema.optional(
+    Schema.Array(Schema.Struct({ threadId: ThreadId, title: ContextLabel })).check(
+      Schema.isMaxLength(20),
+    ),
+  ),
 });
 export type ResponseContextRecord = typeof ResponseContextRecord.Type;
 

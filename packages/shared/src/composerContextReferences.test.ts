@@ -327,7 +327,7 @@ describe("provider projection", () => {
             suffix: " Here is what it found",
           },
           itemId: "item-1" as never,
-          subagent: { threadId: "review-search" as never, title: "review pr 412 (search)" },
+          subagents: [{ threadId: "review-search" as never, title: "review pr 412 (search)" }],
         },
       ],
     });

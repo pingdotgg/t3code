@@ -149,7 +149,7 @@ export function AssistantCitationEmbed({
   );
 }
 
-/** The response a message replies to: its subagent, when it had one, and how it starts. */
+/** The response a message replies to: its subagents, when it had any, and how it starts. */
 export function ResponseReplyCard({
   record,
   copyMarkdown,
@@ -166,7 +166,7 @@ export function ResponseReplyCard({
       citation={record.citation}
       copyMarkdown={copyMarkdown}
       label={`Go to the response this replies to: ${record.label}`}
-      title={record.subagent?.title}
+      title={record.subagents?.map((subagent) => subagent.title).join(", ")}
       preview={flat(record.citation.text)}
       leading={leading}
       trailing={trailing}
