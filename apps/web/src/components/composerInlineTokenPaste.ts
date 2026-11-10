@@ -20,14 +20,16 @@ import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
+const readCopiedComposerContext = (clipboardData: Pick<DataTransfer, "getData">) =>
+  decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
+  decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
-export function readPastedComposerContext(
+function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
+  decodedFragment = readCopiedComposerContext(clipboardData),
 ): ComposerContextClipboardFragment | null {
   const pastedText = clipboardData.getData("text/plain");
-  const decodedFragment =
-    decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
-    decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
   const threads = threadLinkContextReferences(
     pastedText,
     decodedFragment?.records ?? [],
@@ -57,6 +59,18 @@ export function readPastedComposerContext(
     source,
     records: [...records.values()].filter((record) => pastedIds.has(record.contextId)),
   };
+}
+
+/** Whether the paste references context copied from T3, which folding it into a file would drop. */
+export function pastesCopiedComposerContext(clipboardData: Pick<DataTransfer, "getData">): boolean {
+  const copied = readCopiedComposerContext(clipboardData);
+  if (copied === null) return false;
+  const copiedIds = new Set<string>(copied.records.map((record) => record.contextId));
+  return (
+    readPastedComposerContext(clipboardData, copied)?.records.some((record) =>
+      copiedIds.has(record.contextId),
+    ) ?? false
+  );
 }
 
 export function importPastedComposerText(

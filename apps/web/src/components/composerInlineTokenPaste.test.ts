@@ -7,7 +7,7 @@ import {
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, pastesCopiedComposerContext } from "./composerInlineTokenPaste";
 
 const thread = {
   environmentId: EnvironmentId.make("env-1"),
@@ -55,5 +55,36 @@ describe("importPastedComposerText", () => {
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );
+  });
+});
+
+describe("pastesCopiedComposerContext", () => {
+  it("counts a copied chip but not a bare thread link", () => {
+    const target = threadChipCopyTarget(thread, "Fix the login flow");
+    expect(
+      pastesCopiedComposerContext(
+        clipboard({
+          "text/plain": `See ${target.value}`,
+          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment(target.fragment!)!,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      pastesCopiedComposerContext(
+        clipboard({ "text/plain": "See https://app.t3.codes/threads/env-1/thread-1" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores a copied fragment the pasted text does not reference", () => {
+    const target = threadChipCopyTarget(thread, "Fix the login flow");
+    expect(
+      pastesCopiedComposerContext(
+        clipboard({
+          "text/plain": "See https://app.t3.codes/threads/env-1/thread-2",
+          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment(target.fragment!)!,
+        }),
+      ),
+    ).toBe(false);
   });
 });
