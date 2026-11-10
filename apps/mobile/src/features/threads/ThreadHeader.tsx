@@ -1,9 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useSafeAreaFrame, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../components/ui/AppBar";
-import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
@@ -28,14 +30,12 @@ export function ThreadHeader(props: {
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
   readonly hasThreadCwd: boolean;
-  readonly fileInspectorSupported: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
-  readonly onToggleInspector: () => void;
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
-    useAdaptiveWorkspaceLayout();
+  const { layout, toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const frame = useSafeAreaFrame();
   const insets = useSafeAreaInsets();
   const metrics = useNativeLayoutMetrics();
@@ -45,7 +45,6 @@ export function ThreadHeader(props: {
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
-  const inspectorVisible = props.inspectorMode !== null && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
         {
@@ -59,7 +58,6 @@ export function ThreadHeader(props: {
       ]
     : [];
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
-  const showsInspectorToggle = props.fileInspectorSupported && props.hasThreadCwd;
 
   // Mirrors the iOS AppBar's buttons so the custom title gets a width cap; Android ignores it.
   const button = { type: "button", icon: {} };
@@ -77,10 +75,7 @@ export function ThreadHeader(props: {
           ...(!usesDuoHeader && !props.draft ? [button] : []),
         ]
       : null,
-    trailingItems: Array.from(
-      { length: actions.length + menus.length + (showsInspectorToggle ? 1 : 0) },
-      () => button,
-    ),
+    trailingItems: Array.from({ length: actions.length + menus.length }, () => button),
     compose: usesDuoHeader,
   });
   const titleContent = props.thread ? (
@@ -90,7 +85,6 @@ export function ThreadHeader(props: {
       canMutate={props.canMutateThread}
       subtitle={props.subtitle}
       maxWidth={titleMaxWidth}
-      compact={composerKeyboardActive}
     />
   ) : undefined;
 
@@ -104,7 +98,6 @@ export function ThreadHeader(props: {
         titleMaxWidth,
         threadTitleMenuVersion(props.thread),
         props.canMutateThread,
-        composerKeyboardActive,
       ]}
       onBackToList={goBack}
       onCompose={props.draft ? undefined : startNewTask}
@@ -119,18 +112,7 @@ export function ThreadHeader(props: {
       }
       actions={actions}
       menus={menus}
-      trailing={
-        showsInspectorToggle ? (
-          <ScreenHeaderButton
-            accessibilityLabel={inspectorVisible ? "Hide inspector" : "Show inspector"}
-            icon="sidebar.right"
-            selected={inspectorVisible}
-            onPress={props.onToggleInspector}
-          />
-        ) : null
-      }
       hideBottomBorder
-      compact={composerKeyboardActive}
     />
   );
 }
