@@ -34,6 +34,7 @@ describe("applyAppearanceFontVariables", () => {
       code: "",
       composer: "",
       sizeInterface: 20,
+      sizeChat: null,
       sizePrompt: 14,
       sizeCode: 13,
       smoothing: true,
@@ -56,20 +57,20 @@ describe("applyAppearanceFontVariables", () => {
   it("widens the numbered-list gutter only when the interface font's marker would clip", () => {
     const root = document.documentElement;
     const style = root.getAttribute("style");
-    const gutter = (sans: string) => {
+    const gutter = (sans: string, sizeChat: number | null = null) => {
       applyAppearanceFontVariables(root, {
         sans,
         code: "",
         composer: "",
         sizeInterface: 16,
+        sizeChat,
         sizePrompt: 14,
         sizeCode: 13,
         smoothing: true,
         separate: false,
       });
       const markdown = document.createElement("div");
-      markdown.className = "chat-markdown";
-      markdown.style.fontSize = "14px";
+      markdown.className = "chat-markdown chat-message-markdown";
       const list = document.createElement("ol");
       markdown.append(list);
       document.body.append(markdown);
@@ -81,8 +82,11 @@ describe("applyAppearanceFontVariables", () => {
     };
     try {
       // `0. ` in a 14px monospace font is about 25px, past the 20px default.
-      expect(gutter("monospace")).toBeGreaterThan(24);
+      const monospaceGutter = gutter("monospace");
+      expect(monospaceGutter).toBeGreaterThan(24);
       expect(gutter("sans-serif")).toBe(20);
+      expect(gutter("monospace", 32)).toBeCloseTo(monospaceGutter * (32 / 14));
+      expect(gutter("sans-serif", 32)).toBeCloseTo((32 / 0.875) * 1.25);
     } finally {
       if (style === null) root.removeAttribute("style");
       else root.setAttribute("style", style);

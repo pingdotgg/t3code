@@ -1867,6 +1867,11 @@ code {
 
 /* Chat markdown rendering */
 
+.chat-message-markdown {
+  --chat-markdown-font-unit: calc(var(--font-size-chat, var(--text-sm)) / 0.875);
+  font-size: var(--font-size-chat, var(--text-sm));
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -1903,21 +1908,21 @@ code {
 }
 
 :is(.chat-markdown, .composer-tiptap) h1 {
-  font-size: 1.25rem;
+  font-size: calc(var(--chat-markdown-font-unit, 1rem) * 1.25);
 }
 
 :is(.chat-markdown, .composer-tiptap) h2 {
-  font-size: 1.125rem;
+  font-size: calc(var(--chat-markdown-font-unit, 1rem) * 1.125);
 }
 
 :is(.chat-markdown, .composer-tiptap) h3 {
-  font-size: 1rem;
+  font-size: calc(var(--chat-markdown-font-unit, 1rem) * 1);
 }
 
 :is(.chat-markdown, .composer-tiptap) h4,
 :is(.chat-markdown, .composer-tiptap) h5,
 :is(.chat-markdown, .composer-tiptap) h6 {
-  font-size: 0.875rem;
+  font-size: calc(var(--chat-markdown-font-unit, 1rem) * 0.875);
 }
 
 :is(.chat-markdown, .composer-tiptap) h6 {
@@ -1928,8 +1933,8 @@ code {
   /* Reset for nested uls under a widened ol. --list-gutter is an inherited
      custom property, so without this a task-list under a multi-digit ordered
      list would inherit the outer gutter instead of its own default. */
-  --list-gutter: 1.25rem;
-  padding-inline-start: 1.25rem;
+  --list-gutter: calc(var(--chat-markdown-font-unit, 1rem) * 1.25);
+  padding-inline-start: var(--list-gutter);
   list-style-type: disc;
 }
 
@@ -1937,7 +1942,10 @@ code {
    measured per font in appearanceFonts. ChatMarkdown widens it inline for
    multi-digit markers; setting it here stops a nested ol inheriting that. */
 :is(.chat-markdown, .composer-tiptap) ol {
-  --list-gutter: max(1.25rem, var(--list-marker-sans, 0px));
+  --list-gutter: max(
+    calc(var(--chat-markdown-font-unit, 1rem) * 1.25),
+    var(--list-marker-sans, 0px)
+  );
   padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
@@ -2265,8 +2273,7 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  /* One step under 15px prose. */
-  font-size: 0.875rem;
+  font-size: calc(var(--chat-markdown-font-unit, 1rem) * 0.875);
 }
 
 /* Top-aligned so wrapped rows share a first line, and the outer columns sit
