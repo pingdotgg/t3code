@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { invalidateSettingsSecrets } from "../sourceControl/sourceControlHostSecrets.ts";
 
@@ -71,12 +72,14 @@ export function withoutWorkspaceSnapshots(
 }
 
 const make = Effect.gen(function* () {
+  const projectService = yield* ProjectService.ProjectService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const secretResolver = yield* SecretResolver.SecretResolver;
-  const refresh = Effect.fn("ProviderRefresh.refresh")(function* (input: RefreshInput) {
+  // Request instrumentation already owns the span; keep this helper in that context.
+  const refresh = Effect.fnUntraced(function* (input: RefreshInput) {
     if (input.modelCatalogOnly === true) {
       yield* providerRegistry.refreshModelCatalog;
       return { providers: [] };
@@ -121,6 +124,7 @@ const make = Effect.gen(function* () {
           ? providerRegistry.refreshWorkspaceSnapshot({
               instanceId: input.instanceId,
               cwd: input.cwd,
+              scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
               fresh: input.fresh === true,
             })
           : input.reloadSecrets === true
