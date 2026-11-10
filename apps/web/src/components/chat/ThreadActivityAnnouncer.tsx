@@ -154,8 +154,14 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
       write(label, ACTIVITY_GAP_MS);
     };
     const wait = step.quietUntil - Date.now();
-    if (wait <= 0) speakStep();
-    else step.waiting = { label, timer: setTimeout(speakStep, wait) };
+    if (wait <= 0) {
+      speakStep();
+      return;
+    }
+    const timer = setTimeout(speakStep, wait);
+    step.waiting = { label, timer };
+    // The next run takes the label over; after an unmount nothing is left to speak it.
+    return () => clearTimeout(timer);
   }, [
     threadKey,
     status,
@@ -171,14 +177,6 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
     announceDetail,
     clearDetail,
   ]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops a step still waiting to be spoken when the timeline unmounts
-  useEffect(
-    () => () => {
-      if (stepRef.current.waiting !== null) clearTimeout(stepRef.current.waiting.timer);
-    },
-    [],
-  );
 
   // No role="status": Orca 50 maps it to a status bar in Chromium and drops its updates.
   return (
