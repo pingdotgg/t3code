@@ -1576,6 +1576,7 @@ export function subscribeComposerDraftSettingsReconciliation(input: {
   readonly queuedMessagesByThreadKeyAtom: Atom.Atom<
     Readonly<Record<string, ReadonlyArray<{ readonly runtimeMode?: RuntimeMode }>>>
   >;
+  readonly outboxLoadedAtom: Atom.Atom<boolean>;
 }): () => void {
   const draftsAtom = Atom.make(appAtomRegistry.get(composerDraftsAtom));
   const unsubscribeDrafts = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) =>
@@ -1588,6 +1589,7 @@ export function subscribeComposerDraftSettingsReconciliation(input: {
   const matchesAtom = Atom.make((get) => {
     const threadKeys = get(threadKeysAtom);
     const queuedMessages = get(input.queuedMessagesByThreadKeyAtom);
+    const outboxLoaded = get(input.outboxLoadedAtom);
     const matches: Array<
       readonly [string, ComposerDraft, { readonly model: boolean; readonly runtimeMode: boolean }]
     > = [];
@@ -1602,10 +1604,14 @@ export function subscribeComposerDraftSettingsReconciliation(input: {
       if (!ref || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
       if (!thread) continue;
-      // A queued message sent in another mode can still switch the thread away from this pick.
-      const queuedModeChange = (queuedMessages[key] ?? []).some(
-        (message) => message.runtimeMode !== undefined && message.runtimeMode !== draft.runtimeMode,
-      );
+      // A queued message sent in another mode, including one not loaded yet, can still switch
+      // the thread away from this pick.
+      const queuedModeChange =
+        !outboxLoaded ||
+        (queuedMessages[key] ?? []).some(
+          (message) =>
+            message.runtimeMode !== undefined && message.runtimeMode !== draft.runtimeMode,
+        );
       const pickMatches = (
         candidate: Pick<EnvironmentThreadShell, "modelSelection" | "runtimeMode">,
       ) => ({

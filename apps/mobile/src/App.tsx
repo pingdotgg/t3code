@@ -190,6 +190,7 @@ const appServiceDisposers = [
     shellStateAtom: environmentShell.stateAtom,
     pendingThreadIdsAtom: threadEnvironment.pendingThreadIdsAtom,
     queuedMessagesByThreadKeyAtom: threadOutboxManager.queuedMessagesByThreadKeyAtom,
+    outboxLoadedAtom: threadOutboxManager.loadedAtom,
   }),
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),

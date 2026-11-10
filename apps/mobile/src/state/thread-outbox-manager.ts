@@ -41,6 +41,10 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   const queuedMessagesByThreadKeyAtom = Atom.make<
     Record<string, ReadonlyArray<QueuedThreadMessage>>
   >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-messages"));
+  const loadedAtom = Atom.make(false).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("mobile:thread-outbox:loaded"),
+  );
   const warn =
     options.warn ??
     ((message: string, error: unknown) => {
@@ -85,6 +89,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       if (result.errors.length > 0) {
         throw new AggregateError(result.errors, "Some queued messages could not be read.");
       }
+      options.registry.set(loadedAtom, true);
       return true;
     }).catch((cause) => {
       loadPromise = null;
@@ -341,6 +346,8 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
 
   return {
     queuedMessagesByThreadKeyAtom,
+    /** True once every persisted message has been read into the queue. */
+    loadedAtom,
     serialize,
     load,
     enqueue,

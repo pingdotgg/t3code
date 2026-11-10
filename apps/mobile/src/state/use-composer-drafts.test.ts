@@ -312,6 +312,7 @@ function modelReconciliationHarness(
     ]),
   });
   const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
+  const outboxLoadedAtom = Atom.make(true);
   const queuedModeAtom = Atom.make<RuntimeMode | null>(null);
   const queuedMessagesByThreadKeyAtom = Atom.make((get) => {
     const runtimeMode = get(queuedModeAtom);
@@ -332,6 +333,7 @@ function modelReconciliationHarness(
       shellStateAtom: () => shellResultAtom,
       pendingThreadIdsAtom: () => noPendingThreadIdsAtom,
       queuedMessagesByThreadKeyAtom,
+      outboxLoadedAtom,
     }),
   );
   flush();
@@ -343,6 +345,10 @@ function modelReconciliationHarness(
     },
     setQueuedMode(runtimeMode: RuntimeMode | null) {
       registry.set(queuedModeAtom, runtimeMode);
+      flush();
+    },
+    setOutboxLoaded(loaded: boolean) {
+      registry.set(outboxLoadedAtom, loaded);
       flush();
     },
     update(changes: Partial<OrchestrationV2ThreadShell>, status?: EnvironmentShellStatus) {
@@ -573,8 +579,11 @@ describe("mobile composer drafts", () => {
     const before = getComposerDraftSnapshot(key);
     expect(before.runtimeMode).toBe("auto");
 
-    h.setQueuedMode("full-access");
+    h.setOutboxLoaded(false);
     h.update({ runtimeMode: "auto" });
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    h.setQueuedMode("full-access");
+    h.setOutboxLoaded(true);
     expect(getComposerDraftSnapshot(key)).toEqual(before);
     h.setQueuedMode("auto");
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, runtimeMode: undefined });
