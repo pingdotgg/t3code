@@ -548,6 +548,7 @@ export function ComposerFilePreviewDialog({
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
+  const popupRef = useRef<HTMLDivElement>(null);
   const onClose = () => onPreviewFileIdChange(null);
   return (
     <Dialog
@@ -558,6 +559,8 @@ export function ComposerFilePreviewDialog({
     >
       <DialogPopup
         {...composerFloatingLayerProps}
+        ref={popupRef}
+        initialFocus={popupRef}
         className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
         showCloseButton={false}
       >
