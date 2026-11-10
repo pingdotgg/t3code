@@ -120,7 +120,7 @@ export function SidebarSectionHeader(props: {
   isDropTarget?: boolean;
   /** Keeps the header's layout space while removing it from keyboard and accessibility trees. */
   concealed?: boolean;
-  toggle: { expanded: boolean; onToggle: () => void };
+  toggle: { expanded: boolean; onToggle: (header: HTMLElement) => void } | null;
 }) {
   const shelf =
     props.marker === "working-header"
@@ -141,8 +141,9 @@ export function SidebarSectionHeader(props: {
         // A click must not focus the toggle: Chromium shows the focus ring on
         // a clicked button once any key is pressed, even a lone modifier.
         onPointerDown={(event) => event.preventDefault()}
-        onClick={props.toggle.onToggle}
-        expanded={props.toggle.expanded}
+        onClick={(event) => props.toggle?.onToggle(event.currentTarget)}
+        disabled={props.toggle === null}
+        expanded={props.toggle?.expanded}
         tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "shelf"}
         data-testid={`sidebar-${shelf}-shelf-toggle`}
         accessory={<span className="text-meta tabular-nums">{props.count}</span>}
