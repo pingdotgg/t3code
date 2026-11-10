@@ -695,6 +695,7 @@ describe("makeManagedServerProvider", () => {
         } as const;
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:00:02.000Z",
+          authLabel: "tier-2",
           windows: [liveWindow],
         });
 
@@ -705,15 +706,57 @@ describe("makeManagedServerProvider", () => {
         );
         assert.deepStrictEqual(enriched.models, enrichedSnapshot.models);
         assert.deepStrictEqual(enriched.usageLimits?.windows, [liveWindow]);
+        assert.strictEqual(enriched.auth.label, "tier-2");
 
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.message, refreshedSnapshotSecond.message);
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
         assert.strictEqual(refreshed.auth.workspaceId, "ws-a");
+        assert.strictEqual(refreshed.auth.label, "tier-2");
 
         const switched = yield* provider.refresh;
         assert.strictEqual(switched.auth.workspaceId, "ws-b");
         assert.strictEqual(switched.usageLimits?.unavailable?.reason, "probeFailed");
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("keeps a live plan and limits when an overlapping probe completes late", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const count = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            if ((yield* Ref.updateAndGet(count, (n) => n + 1)) > 1) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            return {
+              ...refreshedSnapshot,
+              auth: { status: "authenticated", label: "tier-1" },
+              usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] },
+            } satisfies ServerProvider;
+          }),
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          authLabel: "tier-2",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+        });
+        yield* Deferred.succeed(release, undefined);
+        const refreshed = yield* Fiber.join(refresh);
+        assert.strictEqual(refreshed.auth.label, "tier-2");
+        assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 70);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

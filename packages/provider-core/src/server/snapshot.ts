@@ -11,6 +11,8 @@ import type { ProviderMaintenanceCapabilities } from "./maintenance.ts";
 export type ProviderUsageLimitsReport = ProviderUsageLimitsUpdate & {
   readonly checkedAt: string;
   readonly authLabel?: string;
+  /** A full reading replaces sparse windows and clears a previous probe failure. */
+  readonly complete?: boolean;
 };
 
 export interface ManagedServerProvider {

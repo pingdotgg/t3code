@@ -359,11 +359,12 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
       driver: ProviderDriverKind.make("antigravity"),
       header: () => ({ Authorization: "Bearer $TOKEN$", "Content-Type": "application/json" }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
+        const project = account.project_id?.trim();
+        if (!project) {
+          return yield* new UsageLimitSourceError({ detail: "No Antigravity project reported." });
+        }
         const requestedAt = DateTime.toEpochMillis(yield* DateTime.now);
-        const summary = yield* call(
-          ANTIGRAVITY_SUMMARY_URL,
-          account.project_id ? { project: account.project_id } : {},
-        );
+        const summary = yield* call(ANTIGRAVITY_SUMMARY_URL, { project });
         const windows = yield* antigravitySummaryWindows(yield* decodeJson(summary), requestedAt);
         if (windows.length === 0) {
           return yield* new UsageLimitSourceError({ detail: "No Antigravity quota reported." });

@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -107,19 +108,25 @@ export const MuseDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    // Only a running CLI reports usage, so probes re-attach the latest report. Before one, an
-    // empty reading lets the first report publish as complete instead of sparse and unreadable.
+    // Only a running CLI reports usage; status probes cannot fetch it.
     const latestUsage = yield* Ref.make<ProviderUsageLimitsReport | undefined>(undefined);
+    const usagePermit = yield* Semaphore.make(1);
     const withLatestUsage = (provider: ServerProvider) =>
       Ref.get(latestUsage).pipe(
-        Effect.map((report): ServerProvider => ({
-          ...provider,
-          ...(report?.authLabel ? { auth: { ...provider.auth, label: report.authLabel } } : {}),
-          usageLimits: makeUsageLimits({
-            checkedAt: report?.checkedAt ?? provider.checkedAt,
-            windows: report?.windows ?? [],
-          }),
-        })),
+        Effect.map((report): ServerProvider =>
+          report
+            ? {
+                ...provider,
+                ...(report?.authLabel
+                  ? { auth: { ...provider.auth, label: report.authLabel } }
+                  : {}),
+                usageLimits: makeUsageLimits({
+                  checkedAt: report.checkedAt,
+                  windows: report.windows,
+                }),
+              }
+            : provider,
+        ),
       );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
@@ -204,7 +211,14 @@ export const MuseDriver: ProviderDriver<
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       continuationRequests,
       onUsageLimits: (report) =>
-        Ref.set(latestUsage, report).pipe(Effect.andThen(snapshot.applyUsageLimits(report))),
+        usagePermit.withPermits(1)(
+          Effect.gen(function* () {
+            const previous = yield* Ref.get(latestUsage);
+            if (previous && Date.parse(report.checkedAt) < Date.parse(previous.checkedAt)) return;
+            yield* Ref.set(latestUsage, report);
+            yield* snapshot.applyUsageLimits({ ...report, complete: true });
+          }),
+        ),
     });
     const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
       environment: processEnvironment,
@@ -217,7 +231,7 @@ export const MuseDriver: ProviderDriver<
       displayName,
       accentColor,
       enabled,
-      snapshot: { ...snapshot, resolveMaintenance },
+      snapshot: { ...snapshot, resolveMaintenance, refreshUsage: Effect.void },
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;

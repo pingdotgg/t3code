@@ -562,12 +562,32 @@ describe("CLIProxyAPI built-in management API", () => {
   ])("reports $name as unreadable", ({ provider, status, body }) =>
     Effect.gen(function* () {
       const test = fixture({
-        accounts: [{ id: `${provider}.json`, auth_index: "a", provider }],
+        accounts: [{ id: `${provider}.json`, auth_index: "a", provider, project_id: "project-7" }],
         upstream: () => ({ status, body }),
       });
       const [account] = yield* (yield* test.api).readAccounts(config);
       expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
     }),
+  );
+
+  it.effect.each([undefined, "", "  "])(
+    "rejects a missing or blank Antigravity project (%s) before upstream calls",
+    (project_id) =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [
+            {
+              id: "antigravity.json",
+              auth_index: "a",
+              provider: "antigravity",
+              ...(project_id === undefined ? {} : { project_id }),
+            },
+          ],
+        });
+        const [account] = yield* (yield* test.api).readAccounts(config);
+        expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
+        expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+      }),
   );
 
   it.effect("skips accounts of providers the hub table does not know", () =>
