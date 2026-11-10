@@ -275,7 +275,6 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarPreferredWidth, setPrimarySidebarPreferredWidth] = useState<number | null>(
     null,
   );
-  const [resizingPrimarySidebar, setResizingPrimarySidebar] = useState(false);
   const sidebarResizeStartWidth = useRef(0);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
@@ -448,6 +447,21 @@ function AdaptiveWorkspaceLayoutContent(
       workspacePage,
     ],
   );
+  const current = { layout, panes, fileInspector };
+  // Workspace readers keep the panes a sidebar drag started from until it ends, so the drag
+  // re-renders only these columns instead of every screen.
+  const [sidebarDragStart, setSidebarDragStart] = useState<typeof current | null>(null);
+  const resizableSidebarWidth =
+    Platform.OS === "android" &&
+    !workspacePage &&
+    panes.primarySidebarVisible &&
+    layout.listPaneGap === undefined
+      ? layout.listPaneWidth
+      : null;
+  // A divider removed mid-drag may never report the drag's end.
+  if (sidebarDragStart !== null && resizableSidebarWidth === null) setSidebarDragStart(null);
+  const resizingPrimarySidebar = sidebarDragStart !== null;
+  const published = sidebarDragStart ?? current;
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
@@ -941,19 +955,25 @@ function AdaptiveWorkspaceLayoutContent(
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
   });
   const contextValue = useMemo(
-    () => ({ ...actions, layout, nativeInspectorWidth, workspacePageWidth }),
-    [actions, layout, nativeInspectorWidth, workspacePageWidth],
+    () => ({ ...actions, layout: published.layout, nativeInspectorWidth, workspacePageWidth }),
+    [actions, published.layout, nativeInspectorWidth, workspacePageWidth],
   );
   const sidebarToggleable = layout.usesSplitView && !primarySidebarPinned && !workspacePage;
   const paneState = useMemo(
     () => ({
-      panes,
-      fileInspector,
+      panes: published.panes,
+      fileInspector: published.fileInspector,
       primarySidebarSearchQuery,
       sidebarToggleable,
       sidebarByOrientation,
     }),
-    [panes, fileInspector, primarySidebarSearchQuery, sidebarToggleable, sidebarByOrientation],
+    [
+      published.panes,
+      published.fileInspector,
+      primarySidebarSearchQuery,
+      sidebarToggleable,
+      sidebarByOrientation,
+    ],
   );
 
   const inspectorSheet = (
@@ -1047,18 +1067,14 @@ function AdaptiveWorkspaceLayoutContent(
           </Animated.View>
         </Animated.View>
       ) : null}
-      {Platform.OS === "android" &&
-      !workspacePage &&
-      panes.primarySidebarVisible &&
-      layout.listPaneWidth !== null &&
-      layout.listPaneGap === undefined ? (
+      {resizableSidebarWidth !== null ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize sidebar"
-          currentWidth={layout.listPaneWidth}
+          currentWidth={resizableSidebarWidth}
           resizeDirection={1}
           onResizeStart={() => {
-            sidebarResizeStartWidth.current = layout.listPaneWidth ?? 0;
-            setResizingPrimarySidebar(true);
+            sidebarResizeStartWidth.current = resizableSidebarWidth;
+            setSidebarDragStart(current);
           }}
           onResizeBy={(delta) =>
             setPrimarySidebarPreferredWidth(
@@ -1071,14 +1087,14 @@ function AdaptiveWorkspaceLayoutContent(
               }),
             )
           }
-          onResizeEnd={() => setResizingPrimarySidebar(false)}
+          onResizeEnd={() => setSidebarDragStart(null)}
           style={
             sidebarFloats
               ? {
                   position: "absolute",
                   top: 0,
                   bottom: 0,
-                  left: navigationRailWidth + layout.listPaneWidth,
+                  left: navigationRailWidth + resizableSidebarWidth,
                   elevation: 8,
                 }
               : undefined
