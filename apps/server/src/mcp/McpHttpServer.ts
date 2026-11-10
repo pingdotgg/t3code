@@ -255,6 +255,8 @@ const layerMcpAuthMiddleware = HttpRouter.middleware<{
 /** Claude Code spills oversized results to files, losing locators; bound both text and its preferred structuredContent. */
 export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
+// Page text and the ARIA tree both shrink to this before either drops below it.
+const SNAPSHOT_TEXT_FLOOR_CHARS = 2_000;
 const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
 const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
@@ -297,6 +299,11 @@ type SnapshotMetadata = {
   readonly actionTimeline: ReadonlyArray<unknown>;
   readonly [key: string]: unknown;
 };
+
+const halveToFloor = (chars: number) =>
+  chars > SNAPSHOT_TEXT_FLOOR_CHARS
+    ? Math.max(SNAPSHOT_TEXT_FLOOR_CHARS, Math.floor(chars / 2))
+    : Math.floor(chars / 2);
 
 const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
@@ -375,18 +382,22 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
       ) ??
-      (visibleTextChars > 0
+      (visibleTextChars > SNAPSHOT_TEXT_FLOOR_CHARS
         ? "visibleText"
-        : lists.interactiveElements.length > 0
-          ? "interactiveElements"
-          : ariaTreeChars > 0
-            ? "accessibilityTree"
-            : undefined);
+        : ariaTreeChars > SNAPSHOT_TEXT_FLOOR_CHARS
+          ? "accessibilityTree"
+          : visibleTextChars > 0
+            ? "visibleText"
+            : lists.interactiveElements.length > 0
+              ? "interactiveElements"
+              : ariaTreeChars > 0
+                ? "accessibilityTree"
+                : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
-      visibleTextChars = Math.floor(visibleTextChars / 2);
+      visibleTextChars = halveToFloor(visibleTextChars);
     } else if (key === "accessibilityTree") {
-      ariaTreeChars = Math.floor(ariaTreeChars / 2);
+      ariaTreeChars = halveToFloor(ariaTreeChars);
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
