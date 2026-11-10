@@ -57,6 +57,14 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
+function outsideCodeFences(markdown: string, tidy: (prose: string) => string): string {
+  // A fence closes only at its own opening run, so split yields [prose, fence, run] triples.
+  return markdown
+    .split(/((`{3,})[\s\S]*?(?:\2|$))/)
+    .map((part, index) => (index % 3 === 0 ? tidy(part) : index % 3 === 1 ? part : ""))
+    .join("");
+}
+
 function resolveCodeBlockLanguage(pre: Element): string | null {
   const declared =
     pre.closest("[data-language]")?.getAttribute("data-language") ??
@@ -120,11 +128,11 @@ function serializeListItem(
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
-  let content = serializeChildren(item, inTableCell)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let content = outsideCodeFences(serializeChildren(item, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
   if (!item.querySelector(":scope > p")) {
-    content = content.replace(/\n{2,}/g, "\n");
+    content = outsideCodeFences(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
   // Continuations align after the bullet; task boxes belong to the item text.
   const continuationIndent = " ".repeat(bullet.length);
@@ -143,9 +151,9 @@ function serializeList(list: Element, ordered: boolean, inTableCell: boolean): s
 }
 
 function serializeBlockquote(quote: Element, inTableCell: boolean): string {
-  const content = serializeChildren(quote, inTableCell)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const content = outsideCodeFences(serializeChildren(quote, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
   if (!content) return "";
   const quoted = content
     .split("\n")
@@ -316,13 +324,9 @@ function soleCodeBlock(container: Node): Element | null {
 }
 
 function tidyMarkdown(markdown: string): string {
-  return markdown
-    .split(/(```[\s\S]*?(?:```|$))/)
-    .map((part, index) =>
-      index % 2 === 1 ? part : part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
-    )
-    .join("")
-    .trim();
+  return outsideCodeFences(markdown, (prose) =>
+    prose.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
+  ).trim();
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
