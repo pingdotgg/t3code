@@ -4,7 +4,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -92,10 +91,17 @@ const readCursorCliUseHttp1ForAgent = Effect.gen(function* () {
     : XDG_CONFIG_HOME?.trim()
       ? path.join(XDG_CONFIG_HOME, "cursor")
       : path.join(yield* HostProcess.HomeDirectory, ".cursor");
-  const config = yield* fileSystem
-    .readFileString(path.join(configDirectory, "cli-config.json"))
-    .pipe(Effect.flatMap(decodeCursorCliConfig), Effect.option);
-  return Option.isSome(config) && config.value.network?.useHttp1ForAgent === true;
+  const configPath = path.join(configDirectory, "cli-config.json");
+  const config = yield* fileSystem.readFileString(configPath).pipe(
+    Effect.flatMap(decodeCursorCliConfig),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+    Effect.catch(() =>
+      Effect.logWarning("Cursor CLI config could not be read; using the default agent transport", {
+        path: configPath,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  return config?.network?.useHttp1ForAgent === true;
 }).pipe(Effect.withSpan("CursorSdk.readCliUseHttp1ForAgent"));
 
 /** Keeps the shell spawn guard armed while in-process agents run. */

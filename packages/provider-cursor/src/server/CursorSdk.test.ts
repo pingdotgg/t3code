@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
@@ -140,9 +141,10 @@ describe("CursorSdk agent transport", () => {
       file: "home/.cursor/cli-config.json",
       text: "{",
       expected: undefined,
+      warns: true,
     },
     { name: "when there is no file", env: {}, file: undefined, text: "", expected: undefined },
-  ])("follows the Cursor CLI's HTTP/1.1 setting $name", ({ env, file, text, expected }) =>
+  ])("follows the Cursor CLI's HTTP/1.1 setting $name", ({ env, file, text, expected, warns }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -154,13 +156,22 @@ describe("CursorSdk agent transport", () => {
       const environment = Object.fromEntries(
         Object.entries(env).map(([key, directory]) => [key, path.join(root, directory)]),
       );
+      const warnings: Array<unknown> = [];
+      const captureWarnings = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
       yield* Effect.gen(function* () {
         const sdk = Context.get(yield* Layer.build(CursorSdk.layer), CursorSdk.CursorSdk);
         assert.isUndefined(sdkDefaults.useHttp1ForAgent);
         sdk.load();
         assert.strictEqual(sdkDefaults.useHttp1ForAgent, expected);
-      }).pipe(Effect.scoped, withHost(environment, path.join(root, "home")));
+      }).pipe(
+        Effect.scoped,
+        withHost(environment, path.join(root, "home")),
+        Effect.provide(Logger.layer([captureWarnings], { mergeWithExisting: false })),
+      );
       assert.isUndefined(sdkDefaults.useHttp1ForAgent);
+      assert.lengthOf(warnings, warns ? 1 : 0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
