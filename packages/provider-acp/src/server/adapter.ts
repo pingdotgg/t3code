@@ -1507,11 +1507,7 @@ function acpPostSettleWakeShouldBuffer(
   );
 }
 
-/**
- * A replaced runtime's commands never report again. Replaying their buffered
- * frames would reopen them on the continuation, so drop the frames of tools
- * already ended on their own run and end the rest after the replay.
- */
+// Buffered commands cannot outlive the runtime that executes them.
 function acpEndKilledWakeTools(
   frames: ReadonlyArray<EffectAcpSchema.SessionNotification>,
   endedToolCallIds: ReadonlySet<string>,
@@ -8166,9 +8162,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
-          // The replaced process took its running commands with it.
           const endedToolCallIds = yield* interruptSurvivingTools();
-          // Only these flavors track the tools themselves; others track monitors their tools started.
           if (flavor.backgroundTasksIncludeForegroundTools === true) {
             yield* Ref.update(wakeBuffer, (frames) =>
               acpEndKilledWakeTools(frames, endedToolCallIds, flavor),
