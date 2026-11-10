@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
+import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
@@ -112,6 +113,7 @@ export default function SideChatPane(props: {
     });
     setDeleting(false);
     if (result._tag === "Success") {
+      releaseComposerDraftUploads(threadRef);
       useComposerDraftStore.getState().clearDraftThread(threadRef);
       useRightPanelStore.getState().closeSurface(parentRef, `side-chat:${threadId}`);
     } else if (!isAtomCommandInterrupted(result)) {
