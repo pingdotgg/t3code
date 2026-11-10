@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -60,7 +61,10 @@ function layerResolver(
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
-    TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+    NodeCrypto.layer,
+    TestProviderHost.layer().pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
     Layer.succeed(HostProcess.Platform, "linux"),
     Layer.succeed(HostProcess.Architecture, "x64"),
     Layer.succeed(HostProcess.Environment, environment),
@@ -89,10 +93,12 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
     npmPath,
   );
   yield* fileSystem.chmod(npmPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_NPM_LOG: logPath,
       FAKE_NPM_PREFIX: path.join(rootDirectory, "external-npm-global"),
       FAKE_NPM_MANIFEST: encodeUnknownJson({
@@ -125,10 +131,12 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
     uvPath,
   );
   yield* fileSystem.chmod(uvPath, 0o755);
+  // The fake toolchain runs on the real host, not the simulated provider environment.
+  const hostEnv = HostProcess.Environment.defaultValue();
   return {
     environment: {
-      ...process.env,
-      PATH: `${toolchainBin}:${process.env.PATH ?? ""}`,
+      ...hostEnv,
+      PATH: `${toolchainBin}:${hostEnv.PATH ?? ""}`,
       FAKE_UV_LOG: logPath,
       FAKE_UV_BIN: path.join(rootDirectory, "external-uv-bin"),
       FAKE_UV_EXECUTABLE: executablePath,
@@ -831,7 +839,10 @@ describe("AcpRegistrySupport", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
-          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+          NodeCrypto.layer,
+          TestProviderHost.layer().pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -1837,6 +1848,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         architecture: "x64",
       });
       expect(missing).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });

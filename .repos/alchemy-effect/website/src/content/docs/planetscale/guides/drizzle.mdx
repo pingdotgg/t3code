@@ -37,7 +37,7 @@ Generate when the schema changes, then review and commit the schema, SQL, and sn
 
 ```typescript
 // src/Db.ts
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const PlanetscaleDb = Effect.gen(function* () {
@@ -63,7 +63,7 @@ Register `Planetscale.providers()` in your Stack; the branch applies committed m
 ## Connect via `origin` / `pooledOrigin`
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Hyperdrive = Effect.gen(function* () {
   const { role } = yield* PlanetscaleDb;
@@ -91,7 +91,7 @@ For Vitess, use `mysql-core` columns and run the same generate, review, and comm
 
 ```typescript
 // src/Db.ts
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const PlanetscaleDb = Effect.gen(function* () {
