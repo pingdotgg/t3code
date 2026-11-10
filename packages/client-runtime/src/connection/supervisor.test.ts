@@ -1764,6 +1764,7 @@ describe("EnvironmentSupervisor routes", () => {
   it.effect("reports a preferred route whose host refuses sign-in once it answers again", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);
+      const lanRefuses = yield* Ref.make(true);
       const checkRoute = (route: ConnectionRoute) =>
         route.target._tag === "BearerConnectionTarget"
           ? Ref.get(lanReachable).pipe(
@@ -1777,9 +1778,13 @@ describe("EnvironmentSupervisor routes", () => {
         preflight: (route) =>
           ConnectionDriver.preflightRoute(
             checkRoute(route),
-            route.target._tag === "BearerConnectionTarget"
-              ? Effect.fail(hostRefusal())
-              : Effect.succeed(preparedFor(route.target)),
+            Ref.get(lanRefuses).pipe(
+              Effect.flatMap((refuses) =>
+                refuses && route.target._tag === "BearerConnectionTarget"
+                  ? Effect.fail(hostRefusal())
+                  : Effect.succeed(preparedFor(route.target)),
+              ),
+            ),
           ),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
@@ -1804,6 +1809,19 @@ describe("EnvironmentSupervisor routes", () => {
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "RelayConnectionTarget",
       );
+
+      yield* Ref.set(lanRefuses, false);
+      yield* harness.wake("network-changed");
+      const overLan = yield* awaitState(
+        supervisor.state,
+        (value) => value.phase === "connected" && value.generation > connected.generation,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(LAN_TARGET.connectionId);
+      expect(overLan.refusedRouteIds).toEqual([]);
     }),
   );
 
