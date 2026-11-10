@@ -341,6 +341,10 @@ const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
+// A CLI that takes a prompt but never sends a frame holds its run forever. Resume work
+// (transcript load, MCP registration) finishes before open returns, so a healthy CLI has
+// frames waiting by the time the prompt is offered; this is only a backstop.
+const CLAUDE_QUERY_FIRST_MESSAGE_TIMEOUT = Duration.minutes(5);
 // Claude Code flushes transcript writes every 100 ms, so a workflow member's
 // reply can land after the progress frame that settles it. Its transcript
 // stays the source of its answer this long after it settles.
@@ -4444,6 +4448,7 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  receivedMessage: boolean;
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
@@ -8380,6 +8385,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+          failureMessage?: string,
         ) {
           const current = yield* Ref.get(activeTurn);
           // A replacement query can reuse the native thread id; only this query's turn is ours.
@@ -8400,6 +8406,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : {
                     failure: makeProviderFailure({
                       cause: cause === undefined ? undefined : Cause.squash(cause),
+                      message: failureMessage,
                       class: "transport_error",
                     }),
                   }),
@@ -11076,6 +11083,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            receivedMessage: false,
             capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
@@ -11105,6 +11113,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return context;
           });
           yield* querySession.messages.pipe(
+            Stream.tap(() =>
+              Effect.sync(() => {
+                context.receivedMessage = true;
+              }),
+            ),
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {
@@ -11178,6 +11191,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.forkIn(sessionScope),
           );
           return context;
+        });
+
+        // Detach before settling, so a late frame or exit from this CLI cannot touch a replacement.
+        // A query already detached without settling its turn is settled here too.
+        const failSilentQuery = Effect.fnUntraced(function* (context: ClaudeLiveQueryContext) {
+          yield* Effect.sleep(CLAUDE_QUERY_FIRST_MESSAGE_TIMEOUT);
+          const turn = context.lastTurn;
+          if (context.receivedMessage || turn === null || (yield* Ref.get(activeTurn)) !== turn) {
+            return;
+          }
+          const ownsQuery = yield* Ref.modify(queryContext, (current) =>
+            current === context || current === null ? [true, null] : [false, current],
+          );
+          if (!ownsQuery) return;
+          const waited = Duration.format(CLAUDE_QUERY_FIRST_MESSAGE_TIMEOUT);
+          yield* finalizeActiveTurnAfterQueryExit(
+            context,
+            Cause.fail(
+              queryRunnerError(new Error(`No Claude frame within ${waited}.`), "firstMessage"),
+            ),
+            `Claude sent nothing for ${waited} after the prompt. Retry the turn.`,
+          );
+          yield* context.query.close.pipe(
+            Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+            Effect.ignore,
+          );
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
@@ -11398,6 +11437,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ),
                 ),
               );
+              if (!querySession.receivedMessage) {
+                yield* failSilentQuery(querySession).pipe(Effect.forkIn(sessionScope));
+              }
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -11554,6 +11596,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               return;
             }
+            if (existing === null && currentTurn?.providerTurnId === turnInput.providerTurnId) {
+              yield* finalizeActiveTurn({
+                context: currentTurn,
+                status: "interrupted",
+                completedAt: yield* DateTime.now,
+              });
+              return;
+            }
             if (existing === null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
@@ -11572,7 +11622,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return next;
             });
             yield* existing.query.interrupt.pipe(Effect.timeoutOption("10 seconds"));
-            yield* existing.query.close.pipe(Effect.ignore);
+            if (!existing.receivedMessage) {
+              // A silent SDK iterator cannot confirm Stop; detach it before settling locally.
+              const ownsQuery = yield* Ref.modify(queryContext, (current) =>
+                current === existing ? [true, null] : [false, current],
+              );
+              if (ownsQuery) yield* finalizeActiveTurnAfterQueryExit(existing);
+              yield* existing.query.close.pipe(
+                Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+                Effect.ignore,
+                Effect.forkIn(sessionScope),
+              );
+              return;
+            }
+            yield* existing.query.close.pipe(
+              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.ignore,
+            );
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
             );

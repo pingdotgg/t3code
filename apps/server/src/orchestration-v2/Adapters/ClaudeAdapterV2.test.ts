@@ -10710,6 +10710,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("fails a resumed query that never produces its first frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: () =>
+            Effect.sync(() => {
+              closes++;
+            }),
+        });
+        const turn = (attempt: string, ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make(attempt),
+            text: "Continue after idle release",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+        yield* harness.runtime.startTurn(turn("silent-resume", 2));
+        assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+        yield* TestClock.adjust("5 minutes");
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.include(terminal.failure?.message, "sent nothing");
+        assert.equal(closes, 1);
+        yield* harness.runtime.startTurn(turn("after-silent-resume", 3));
+        // A late frame/exit from the expired query must not settle the replacement.
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "after-silent-resume-result", result: "Recovered" }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.lengthOf(harness.terminalEvents(), 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles Stop locally when a silent resumed query ignores close", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          close: () => Effect.never,
+        });
+        const attemptId = RunAttemptId.make("silent-resume-stop");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Resume then stop",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        const stopping = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(interruptStarted);
+        yield* TestClock.adjust("11 seconds");
+        yield* Fiber.join(stopping);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        yield* Queue.shutdown(harness.sdkMessages);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves settled background work until an explicit stop", () =>
     Effect.scoped(
       Effect.gen(function* () {
