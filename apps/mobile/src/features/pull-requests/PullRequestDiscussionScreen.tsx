@@ -171,6 +171,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
             ref={scrollRef}
+            onScrollBeginDrag={() => {
+              pendingTop.current = null;
+            }}
             onContentSizeChange={() => {
               if (pendingTop.current === null) return;
               scrollRef.current?.scrollTo({ y: pendingTop.current, animated: false });

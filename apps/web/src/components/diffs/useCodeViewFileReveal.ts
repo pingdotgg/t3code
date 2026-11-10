@@ -34,7 +34,12 @@ interface FileRevealHandle {
  */
 export function createCodeViewFileReveal() {
   let viewer: FileRevealHandle | null = null;
-  let pending: { id: string; range?: SelectedLineRange; positionedFile?: boolean } | null = null;
+  let pending: {
+    id: string;
+    range?: SelectedLineRange;
+    positionedFile?: boolean;
+    settling?: boolean;
+  } | null = null;
   const flush = () => {
     if (pending === null || viewer === null) return;
     const item = viewer.getItem(pending.id);
@@ -77,7 +82,9 @@ export function createCodeViewFileReveal() {
         return;
     }
     const target = pending;
-    pending = null;
+    // The diff's first load can remount the viewer or re-render it right after this scroll, which
+    // loses it; the range is positioned once more on the next render that can hold it.
+    pending = target.range && !target.settling ? { ...target, settling: true } : null;
     viewer.scrollTo(
       target.range
         ? { type: "range", id: target.id, range: target.range, align: "center" }
@@ -86,7 +93,7 @@ export function createCodeViewFileReveal() {
   };
   return {
     attach(next: FileRevealHandle | null) {
-      if (viewer !== null && next !== viewer) pending = null;
+      if (viewer !== null && next !== viewer && !pending?.settling) pending = null;
       viewer = next;
       flush();
     },

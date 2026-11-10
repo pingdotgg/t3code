@@ -140,6 +140,16 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
+  // The URL is user-controlled and stands in for the PR link until detail loads.
+  const selectedLink = search.selectedUrl
+    ? sourceControlClients.parseChangeRequestUrl(search.selectedUrl)?.link
+    : undefined;
+  const selectedUrl =
+    selectedLink !== undefined &&
+    selectedLink.number === search.number &&
+    selectedLink.repository.toLowerCase() === search.repository?.toLowerCase()
+      ? search.selectedUrl
+      : undefined;
   const linkedSelection =
     search.repository && search.number && selectedProject
       ? {
@@ -147,7 +157,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
           repository: search.repository,
           number: search.number,
           projectId: selectedProject.id,
-          ...(search.selectedUrl ? { url: search.selectedUrl, revealUrl: search.selectedUrl } : {}),
+          ...(selectedUrl ? { url: selectedUrl, revealUrl: selectedUrl } : {}),
           ...(selectedHost ? { host: selectedHost } : {}),
         }
       : null;

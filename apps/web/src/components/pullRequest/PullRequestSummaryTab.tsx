@@ -583,10 +583,14 @@ export function PullRequestSummaryTab({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const location = parsePullRequestAnchor(revealUrl);
   const [checksReveals, setChecksReveals] = useState(0);
+  const [descriptionReveals, setDescriptionReveals] = useState(0);
   const [seenRevealUrl, setSeenRevealUrl] = useState<string | undefined>(undefined);
   if (revealUrl !== seenRevealUrl) {
     setSeenRevealUrl(revealUrl);
     if (location?.kind === "checks") setChecksReveals((count) => count + 1);
+    if (location?.kind === "summary" && location.anchor !== "top") {
+      setDescriptionReveals((count) => count + 1);
+    }
   }
   const stopHolding = useRef<(() => void) | null>(null);
   const revealSummary = useEffectEvent(() => {
@@ -626,7 +630,7 @@ export function PullRequestSummaryTab({
   useEffect(() => {
     revealSummary();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown is available
-  }, [revealUrl, description, checksReveals]);
+  }, [revealUrl, description, checksReveals, descriptionReveals]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
   useEffect(() => () => stopHolding.current?.(), []);
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
@@ -912,7 +916,12 @@ export function PullRequestSummaryTab({
         </div>
       </section>
 
-      <Section key={`description:${detail.url}`} title="Description" keepMounted>
+      <Section
+        key={`description:${detail.url}`}
+        title="Description"
+        keepMounted
+        revealCount={descriptionReveals}
+      >
         <div className="group">
           {bodyScope?.url === detail.url ? (
             <PullRequestMarkdownEditor

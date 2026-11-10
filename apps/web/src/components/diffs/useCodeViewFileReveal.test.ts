@@ -91,7 +91,7 @@ describe("createCodeViewFileReveal", () => {
     expect(view.scrolls.at(-1)).toEqual({ type: "range", id: "a", range, align: "center" });
   });
 
-  it("drops a pending reveal when its viewer detaches, and positions the next viewer on request", () => {
+  it("drops a pending reveal when its viewer detaches, but repositions a range a remount loses", () => {
     const reveal = createCodeViewFileReveal();
     const first = viewer([]);
     const second = viewer(["a"]);
@@ -105,5 +105,14 @@ describe("createCodeViewFileReveal", () => {
 
     reveal.request("a");
     expect(second.scrolls).toHaveLength(1);
+
+    // The first diff load remounts the viewer right after a range scroll, so it is repeated once.
+    const range = { start: 3, end: 4, side: "additions" } as const;
+    const remounted = viewer(["a"]);
+    reveal.request("a", range);
+    reveal.attach(null);
+    reveal.attach(remounted);
+    reveal.flush();
+    expect(remounted.scrolls).toEqual([{ type: "range", id: "a", range, align: "center" }]);
   });
 });

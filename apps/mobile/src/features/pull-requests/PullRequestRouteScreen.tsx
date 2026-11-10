@@ -434,7 +434,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     } else if (target?.kind === "commits") {
       selectSection("activity");
       setActivityFilter((filter) => ({ ...filter, kind: "commits" }));
-    } else if (target?.kind === "checks" || target?.kind === "summary") {
+    } else if (target?.kind === "checks") {
+      selectSection("overview");
+      // Checks head Overview, which a reused screen may have scrolled past.
+      scrollViews.current.overview?.scrollToOffset({ offset: -contentTopInset, animated: false });
+    } else if (target?.kind === "summary") {
       selectSection("overview");
     }
   });
@@ -449,6 +453,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     (row) => row.key === activityContent.targetKey,
   );
   const openedDiscussion = useRef<string | null>(null);
+  const positionedActivity = useRef<string | null>(null);
   const revealActivity = useEffectEvent(() => {
     const key = `${params.navigationUrl}:${params.navigationId ?? 0}`;
     if (activityContent.targetThread && openedDiscussion.current !== key) {
@@ -459,12 +464,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       });
       return;
     }
-    if (activityTargetIndex >= 0)
+    // Later filter or refresh changes move the row; they must not pull the user back to it.
+    if (activityTargetIndex >= 0 && positionedActivity.current !== key) {
+      positionedActivity.current = key;
       void scrollViews.current.activity?.scrollToIndex({
         index: activityTargetIndex + 1,
         viewPosition: 0.5,
         animated: false,
       });
+    }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the requested activity once its asynchronous rows arrive
   useEffect(() => {
@@ -933,7 +941,12 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
   const result = usePullRequestDiff(route.params, terminology);
-  const linkAnchor = parsePullRequestAnchor(route.params.navigationUrl);
+  // Other screens open files with the link's params spread in; only the link's own entry follows it.
+  const linkAnchor =
+    route.params.path === "" &&
+    (route.params.commit ?? null) === pullRequestLinkCommit(route.params.navigationUrl)
+      ? parsePullRequestAnchor(route.params.navigationUrl)
+      : null;
   const linkPath =
     linkAnchor?.kind === "diff" && result.parsed.kind === "files"
       ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
