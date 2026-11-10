@@ -1060,10 +1060,14 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
-    // Existing desktop and popup PDFs can start loading before interception attaches.
+    // Existing desktop and popup PDFs, and popups on this server's file links, can start loading
+    // before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+      ((!adopted && !desktop) ||
+        isPdfAssetUrl(snapshot.navStatus.url) ||
+        (adopted !== undefined &&
+          (await loadAssetsFromListenOrigin?.(snapshot.navStatus.url)) !== undefined))
     ) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (

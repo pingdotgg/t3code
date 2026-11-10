@@ -1207,6 +1207,23 @@ it.live.each([
           pause(requestId, url);
           expect(yield* Queue.take(continued)).toEqual(expected);
         }
+
+        // A popup's first request predates interception; only this server's file links reload.
+        const browser = yield* ServerBrowser.ServerBrowser;
+        const popups = [
+          publicUrl.replace("report.html", "child.html"),
+          publicUrl.replace(token!, `${token}x`),
+          "https://accounts.example.com/sign-in",
+        ].map((url) => makeContext(undefined, url).page);
+        for (const popup of popups) {
+          contexts[0]!.page.emit("popup", popup);
+          let opened;
+          do opened = yield* PubSub.take(events);
+          while (opened.type !== "opened");
+          yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+          expect(popup.goto).not.toHaveBeenCalled();
+        }
+        expect(popups.map((popup) => popup.reload.mock.calls.length)).toEqual([1, 0, 0]);
       }),
     ).pipe(
       Effect.provide(
