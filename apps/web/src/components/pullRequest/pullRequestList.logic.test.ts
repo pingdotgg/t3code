@@ -4,6 +4,7 @@ import type {
   ProjectId,
   PullRequestAction,
   PullRequestListEntry,
+  PullRequestSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -33,6 +34,7 @@ import {
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
 } from "./pullRequestList.logic";
@@ -406,6 +408,20 @@ describe("merging the environments' own listings", () => {
       ...overrides,
     }) as Parameters<typeof mergePullRequestLists>[0][number][1];
 
+  it("orders host timestamps by instant across offsets and fractional seconds", () => {
+    const entries = [
+      entry({ number: 1, updatedAt: "2026-07-05T01:00:00+02:00" }),
+      entry({ number: 2, updatedAt: "2026-07-05T00:30:00Z" }),
+      entry({ number: 3, updatedAt: "2026-07-05T00:30:00.5Z" }),
+    ];
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: entries.slice(0, 2) })],
+      [ENV_2, answer({ entries: entries.slice(2) })],
+    ]);
+
+    expect(merged?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+  });
+
   it("tags every row with the environment that read it, newest first", () => {
     const merged = mergePullRequestLists([
       [ENV_1, answer({ entries: [entry({ number: 1, updatedAt: "2026-07-01T00:00:00Z" })] })],
@@ -580,6 +596,26 @@ describe("pull request list overrides", () => {
       [2, "open"],
     ]);
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
+  });
+
+  it("shows a reply's queued merge as open and never un-merges a merged row", () => {
+    const reply = { state: "open", updatedAt: "2026-07-03T00:00:00Z", observedAt: 300 } as const;
+    const override = pullRequestOverrideAfterAction(
+      entry(1, "open"),
+      "merge",
+      new Date(900),
+      1,
+      reply as unknown as PullRequestSummary,
+    )!;
+    const overrides = new Map([["#1", override]]);
+    expect(applyPullRequestOverrides([entry(1, "open")], overrides, key, "open")).toMatchObject([
+      { state: "open", updatedAt: reply.updatedAt, observedAt: 300 },
+    ]);
+    expect(
+      applyPullRequestOverrides([entry(1, "merged")], overrides, key, "all").map(
+        (row) => row.state,
+      ),
+    ).toEqual(["merged"]);
   });
 
   it("keeps a confirmed close hidden when its override is cleared", () => {
