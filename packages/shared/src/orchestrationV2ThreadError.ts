@@ -87,6 +87,51 @@ export function usageLimitBlockedRun(
   return summary.lastErrorClass === "usage_limit" ? executed : null;
 }
 
+const REFUSED_CONTINUATION_BACKOFF_MINUTES = [2, 5, 15] as const;
+
+/** A usage-limit failure's reset when it is after the run ended; null when not limited. */
+function laterUsageLimitReset(
+  run: OrchestrationV2Run,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): { readonly resetAt: string | null } | null {
+  const failure = latestRootProviderFailure(run, turnItems);
+  if (failure?.class !== "usage_limit") return null;
+  const endedMs = DateTime.toEpochMillis(run.completedAt ?? run.requestedAt);
+  return {
+    resetAt: failure.resetAt && Date.parse(failure.resetAt) > endedMs ? failure.resetAt : null,
+  };
+}
+
+/**
+ * When usage-limit recovery may resume `run`: the provider's reset when it is after the run
+ * ended. A continuation refused with no later reset retries after a backoff, giving up after
+ * the last step; any other limited run without a later reset has nothing to wait for.
+ */
+export function usageLimitRecoveryResetAt(
+  run: OrchestrationV2Run | null,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): string | null {
+  const limit = run === null ? null : laterUsageLimitReset(run, turnItems);
+  if (run === null || limit === null) return null;
+  if (limit.resetAt !== null) return limit.resetAt;
+  // Bounded by the backoff steps, so a long or cyclic chain costs at most that many walks.
+  let refusals = 0;
+  let current: OrchestrationV2Run | undefined = run;
+  while (current?.usageLimitContinuationOfRunId !== undefined) {
+    const refused = laterUsageLimitReset(current, turnItems);
+    if (refused === null || refused.resetAt !== null) break;
+    refusals += 1;
+    if (refusals > REFUSED_CONTINUATION_BACKOFF_MINUTES.length) return null;
+    const sourceRunId: string = current.usageLimitContinuationOfRunId;
+    current = runs.find((candidate) => candidate.id === sourceRunId);
+  }
+  const minutes = REFUSED_CONTINUATION_BACKOFF_MINUTES[refusals - 1];
+  return minutes === undefined
+    ? null
+    : DateTime.formatIso(DateTime.add(run.completedAt ?? run.requestedAt, { minutes }));
+}
+
 /** Retains a limited run's outcome when higher-ordinal runs never started. */
 export function usageLimitRunPresentedAsLatest(
   runs: ReadonlyArray<OrchestrationV2Run>,

@@ -10,6 +10,7 @@ import {
   latestRootProviderFailure,
   runRanAfter,
   usageLimitBlockedRun,
+  usageLimitRecoveryResetAt,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -3688,7 +3689,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { turnItemTypes: ["error"] },
       );
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
-      const failure = latestRootProviderFailure(run, projection.turnItems);
+      const resetAt = usageLimitRecoveryResetAt(run, projection.runs, projection.turnItems);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
       if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
         return yield* new OrchestratorDispatchError({
@@ -3702,9 +3703,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
-        failure?.class !== "usage_limit" ||
-        failure.resetAt !== command.limitRecovery.resetAt ||
-        resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
+        resetAt !== command.limitRecovery.resetAt ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
         return yield* new OrchestratorDispatchError({
@@ -5745,17 +5744,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
-      const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
       const now = yield* DateTime.now;
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
-        failure?.class !== "usage_limit" ||
         threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
+        recovery.resetAt !==
+          usageLimitRecoveryResetAt(run, projection.runs, projection.turnItems) ||
         Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -11207,22 +11205,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let recovery = thread.limitRecovery;
     const latest = latestExecutedRun(runs);
     if (latest?.status === "failed") {
+      // A refused continuation's retry reads the failures of the runs it continued.
       const { turnItems } = yield* projectionStore
-        .getThreadRecords(thread.id, ["turnItems"], {
-          turnItemTypes: ["error"],
-          turnItemRunIds: [latest.id],
-        })
+        .getThreadRecords(thread.id, ["turnItems"], { turnItemTypes: ["error"] })
         .pipe(mapDispatchError(input.command));
       const failure = latestRootProviderFailure(latest, turnItems);
+      const resetAt =
+        usageLimitRecoveryResetAt(latest, runs, turnItems) ??
+        (failure?.class === "usage_limit" ? failure.resetAt : null);
       if (
-        failure?.class === "usage_limit" &&
-        failure.resetAt != null &&
-        Number.isFinite(Date.parse(failure.resetAt)) &&
-        (recovery?.runId !== latest.id || recovery.resetAt !== failure.resetAt)
+        resetAt != null &&
+        Number.isFinite(Date.parse(resetAt)) &&
+        (recovery?.runId !== latest.id || recovery.resetAt !== resetAt)
       ) {
         recovery = {
           runId: latest.id,
-          resetAt: failure.resetAt,
+          resetAt,
           autoResume: false,
           snooze: false,
         };

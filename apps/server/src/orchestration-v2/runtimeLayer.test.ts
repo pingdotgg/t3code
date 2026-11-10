@@ -8933,17 +8933,31 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const continuation = yield* continuationOf(source.id);
         assert.isDefined(continuation, "the first reset should resume the limited run");
 
-        yield* TestClock.adjust("6 seconds");
-        // Codex reports no reset; a probe can report the window that just expired.
-        yield* failRun(continuation!, scenario === "no-reset" ? null : resetAt);
-        for (let minute = 0; minute < 20; minute++) {
-          yield* TestClock.adjust("1 minute");
-          yield* sweep;
+        // Three refusals in a row retry; the fourth gives up.
+        let refused = continuation!;
+        for (let refusal = 1; refusal <= 4; refusal++) {
+          yield* TestClock.adjust("6 seconds");
+          // Codex reports no reset; a probe can report the window that just expired.
+          yield* failRun(refused, scenario === "no-reset" ? null : resetAt);
+          for (let minute = 0; minute < 20; minute++) {
+            yield* TestClock.adjust("1 minute");
+            yield* sweep;
+          }
+          const retry = yield* continuationOf(refused.id);
+          if (refusal === 4) {
+            assert.isUndefined(retry, "the fourth refused continuation should not retry");
+            assert.notStrictEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery?.runId,
+              refused.id,
+            );
+          } else {
+            assert.isDefined(
+              retry,
+              "a refused continuation with no later reset should be retried after a backoff",
+            );
+            refused = retry!;
+          }
         }
-        assert.isDefined(
-          yield* continuationOf(continuation!.id),
-          "a refused continuation with no later reset should be retried after a backoff",
-        );
       }),
   );
 });

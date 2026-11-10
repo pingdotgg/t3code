@@ -41,7 +41,11 @@ export function limitRecoveryCommand(
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
     if (nowMs - resetMs > MAX_OVERDUE_ARM_MS) return null;
-    if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
+    // A per-thread resume of the run a refused continuation retries still applies.
+    const resumes =
+      autoResume ||
+      (recovery?.autoResume === true && recovery.runId === thread.refusedContinuationOfRunId);
+    if (!resumes && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
@@ -49,7 +53,7 @@ export function limitRecoveryCommand(
       limitRecovery: {
         runId: thread.latestRunId,
         resetAt: thread.usageLimitResetAt,
-        autoResume,
+        autoResume: resumes,
         snooze: snooze && resetMs > nowMs,
       },
     };
