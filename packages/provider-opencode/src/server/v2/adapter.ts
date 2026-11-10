@@ -3469,11 +3469,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       const childrenOf = (call: SubagentCall) =>
         call.child === undefined ? announcedTo(call.state) : [call.child.sessionId];
-      const interrupted = new Set<string>();
-      const unstopped = () =>
+      // Keyed by session, or by wake since each wake is its own execution of the thread's session.
+      const interrupted = new Set<string | Wake>();
+      const unstopped = (wakes: boolean) =>
         [
           ...backgroundCalls().flatMap((call) =>
-            childrenOf(call).map((sessionId) => ({ sessionId, caller: call.state })),
+            childrenOf(call).map((sessionId) => ({
+              key: sessionId,
+              sessionId,
+              caller: call.state,
+            })),
           ),
           // Ended subagent calls can run again to answer their own background reports.
           ...sessionsOf(state)
@@ -3483,14 +3488,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 busy.has(caller.sessionId) &&
                 !isOrchestrationV2WorkActive(caller.subagent.call.status),
             )
-            .map((caller) => ({ sessionId: caller.sessionId, caller: undefined })),
-        ].filter(({ sessionId }) => !interrupted.has(sessionId));
+            .map((caller) => ({
+              key: caller.sessionId,
+              sessionId: caller.sessionId,
+              caller: undefined,
+            })),
+          ...(wakes ? state.wakes : [])
+            .filter((wake) => wake.running)
+            .map((wake) => ({ key: wake, sessionId: state.sessionId, caller: undefined })),
+        ].filter(({ key }) => !interrupted.has(key));
       const unreached = new Set<string>();
-      const stopSessions = Effect.fnUntraced(function* () {
-        for (let sessions = unstopped(); sessions.length > 0; sessions = unstopped()) {
-          for (const { sessionId, caller } of sessions) {
-            if (interrupted.has(sessionId)) continue;
-            interrupted.add(sessionId);
+      // Succeeds with the sessions it interrupted.
+      const stopSessions = Effect.fnUntraced(function* (wakes: boolean) {
+        const stopped = new Set<string>();
+        for (let sessions = unstopped(wakes); sessions.length > 0; sessions = unstopped(wakes)) {
+          for (const { key, sessionId, caller } of sessions) {
+            if (interrupted.has(key)) continue;
+            interrupted.add(key);
+            stopped.add(sessionId);
             caller?.stopped.add(sessionId);
             const reached = yield* client.session
               .interrupt({ sessionID: Session.ID.make(sessionId) })
@@ -3498,7 +3513,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
                 Effect.timeout(INTERRUPT_TIMEOUT),
                 Effect.tapCause((cause) =>
-                  Effect.logWarning("Could not stop an OpenCode subagent.", cause),
+                  Effect.logWarning("Could not stop an OpenCode session.", cause),
                 ),
                 Effect.exit,
                 Effect.map(Exit.isSuccess),
@@ -3506,7 +3521,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             if (!reached && caller !== undefined) unreached.add(sessionId);
           }
         }
+        return stopped;
       });
+      // An interrupted execution can launch work until it ends; its end means all of it has been seen.
+      const awaitEnds = (sessionIds: Iterable<string>) =>
+        Effect.forEach(sessionIds, awaitIdle, { concurrency: "unbounded", discard: true });
       const attempted = new Set<string>();
       const unremoved = () =>
         sessionsOf(state)
@@ -3528,32 +3547,39 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             attempted.add(id);
             caller.stopped.add(id);
           }
-          const reached = yield* Effect.filter(shells, ({ id, directory }) =>
-            client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
-              // OpenCode declares no not-found error for remove; only the directory can be gone.
-              Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
-              Effect.timeout(INTERRUPT_TIMEOUT),
-              Effect.tapCause((cause) =>
-                Effect.logWarning("Could not stop an OpenCode background shell.", cause),
+          const reached = yield* Effect.filter(
+            shells,
+            ({ id, directory }) =>
+              client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
+                // OpenCode declares no not-found error for remove; only the directory can be gone.
+                Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
+                Effect.timeout(INTERRUPT_TIMEOUT),
+                Effect.tapCause((cause) =>
+                  Effect.logWarning("Could not stop an OpenCode background shell.", cause),
+                ),
+                Effect.exit,
+                Effect.map(Exit.isSuccess),
               ),
-              Effect.exit,
-              Effect.map(Exit.isSuccess),
-            ),
+            { concurrency: "unbounded" },
           );
           removed.push(...reached);
         }
       });
       yield* removeShells();
-      yield* stopSessions();
+      // Wakes wait for the foreground stop, which may end the same execution of the thread's session.
+      const stopped = yield* stopSessions(false);
       const foreground = yield* Effect.exit(stopForeground);
-      if (Exit.isSuccess(foreground) && foreground.value) yield* awaitIdle(state.sessionId);
-      // Checked under the lock, so no shell launched before Stop settles outlives it.
+      if (Exit.isSuccess(foreground) && foreground.value) stopped.add(state.sessionId);
+      yield* awaitEnds(stopped);
+      // Checked under the lock, so no shell launched before Stop settles outlives it. A pass that does
+      // not settle found a shell or execution it had not stopped yet; both sets only grow, and stopped
+      // executions launch nothing after the end awaited here, so the loop ends.
       for (let settled = false; !settled;) {
         yield* removeShells();
-        yield* stopSessions();
+        yield* awaitEnds(yield* stopSessions(true));
         settled = yield* lock.withPermit(
           Effect.gen(function* () {
-            if (unremoved().length > 0 || unstopped().length > 0) return false;
+            if (unremoved().length > 0 || unstopped(true).length > 0) return false;
             for (const call of backgroundCalls()) {
               if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
               yield* settleCall(call, "interrupted");
@@ -3565,15 +3591,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             for (const caller of new Set(removed.map(({ caller }) => caller))) {
               yield* syncRosterAncestors(caller);
             }
-            const running = state.wakes.some((wake) => wake.running);
+            // Interrupted above but not yet ended: its end must not finish the thread's next turn.
+            if (state.wakes.some((wake) => wake.running)) markUnsettled(state);
             discardWakes(state, state.wakes.splice(0));
             yield* syncRosterAncestors(state);
-            if (running) {
-              markUnsettled(state);
-              yield* client.session
-                .interrupt({ sessionID: Session.ID.make(state.sessionId) })
-                .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
-            }
             return true;
           }),
         );

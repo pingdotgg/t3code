@@ -1353,6 +1353,77 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("removes a shell a background subagent launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(CHILD, "sh_late");
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...launch.slice(0, -1),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        // The child's shell starts after the interrupt returns, before its execution ends.
+        launch.at(-1)!,
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        removeShell("sh_late"),
+        shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell a held wake launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(SESSION, "sh_late");
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...shellLaunched(SESSION, "sh_first"),
+        ...launch.slice(0, -1),
+        removeShell("sh_first"),
+        shellReport(SESSION, "sh_first", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        // The wake's shell starts after the interrupt returns, before its execution ends.
+        launch.at(-1)!,
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        removeShell("sh_late"),
+        shellReport(SESSION, "sh_late", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        drained,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops a subagent launched while Stop removes a shell", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
