@@ -145,7 +145,8 @@ vi.mock("@effect/atom-react", () => ({
       : testServerConfigs(),
 }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
-  scopedProjectKey: () => "remote-project",
+  scopedProjectKey: (ref: { environmentId: string; projectId: string }) =>
+    `${ref.environmentId}:${ref.projectId}`,
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
@@ -184,7 +185,7 @@ vi.mock("react", () => ({
   useMemo: <T>(factory: () => T) => factory(),
 }));
 vi.mock("../components/Sidebar.logic", () => ({
-  orderItemsByPreferredIds: <T>(input: { items: readonly T[] }) => [...input.items],
+  orderItemsByPreferredIds: ({ items }: { items: unknown[] }) => items,
 }));
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {
@@ -232,6 +233,7 @@ vi.mock("../state/entities", () => {
     useThread: () => null,
   };
 });
+vi.mock("../state/projects", () => ({ defaultProjectFallbackReadyAtom: () => true }));
 vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/presentation", () => ({
   environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
@@ -368,7 +370,41 @@ describe("useNewThreadHandler", () => {
   });
 });
 
-describe("resolveDefaultProjectRef", () => {
+describe("default project selection", () => {
+  it("prefers the last used project in its environment and falls back when unavailable", () => {
+    const projects = [
+      { id: "project", environmentId: "first", workspaceRoot: "/first" },
+      { id: "project", environmentId: "last-used", workspaceRoot: "/last-used" },
+    ].map((project) => ({
+      ...project,
+      id: project.id as ProjectId,
+      environmentId: project.environmentId as EnvironmentId,
+      title: project.environmentId,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-11-09T00:00:00.000Z",
+      updatedAt: "2026-11-09T00:00:00.000Z",
+    }));
+    expect(resolveDefaultProjectRef(projects, [], "last-used:project")).toEqual({
+      environmentId: "last-used",
+      projectId: "project",
+    });
+    expect(
+      resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project", false),
+    ).toBeNull();
+    expect(resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project")).toEqual({
+      environmentId: "first",
+      projectId: "project",
+    });
+    expect(
+      resolveDefaultProjectRef(
+        [projects[0]!, { ...projects[1]!, archivedAt: "2026-11-09T00:00:00.000Z" }],
+        [],
+        "last-used:project",
+      ),
+    ).toEqual({ environmentId: "first", projectId: "project" });
+  });
+
   it("keeps a scratch destination for captures without preferring it over a real project", () => {
     const project = {
       id: "project" as ProjectId,
@@ -382,17 +418,17 @@ describe("resolveDefaultProjectRef", () => {
     };
     const scratch = { ...project, id: "scratch" as ProjectId, isScratch: true as const };
     const scratchRef = { environmentId: scratch.environmentId, projectId: scratch.id };
-    expect(resolveDefaultProjectRef([scratch], [])).toEqual(scratchRef);
-    expect(resolveDefaultProjectRef([scratch, project], [])).toEqual({
+    expect(resolveDefaultProjectRef([scratch], [], null)).toEqual(scratchRef);
+    expect(resolveDefaultProjectRef([scratch, project], [], null)).toEqual({
       environmentId: project.environmentId,
       projectId: project.id,
     });
     expect(
-      resolveDefaultProjectRef([scratch, { ...project, archivedAt: scratch.createdAt }], []),
+      resolveDefaultProjectRef([scratch, { ...project, archivedAt: scratch.createdAt }], [], null),
     ).toEqual(scratchRef);
     expect(
-      resolveDefaultProjectRef([{ ...scratch, archivedAt: scratch.createdAt }], []),
+      resolveDefaultProjectRef([{ ...scratch, archivedAt: scratch.createdAt }], [], null),
     ).toBeNull();
-    expect(resolveDefaultProjectRef([], [])).toBeNull();
+    expect(resolveDefaultProjectRef([], [], null)).toBeNull();
   });
 });
