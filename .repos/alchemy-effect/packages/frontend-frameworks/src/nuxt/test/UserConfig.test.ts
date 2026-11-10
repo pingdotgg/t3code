@@ -99,9 +99,7 @@ describe("makeNuxtOverrides", () => {
 
   it("adds no plugins key when none are given", () => {
     const overrides = makeNuxtOverrides({ nitroPreset: "cloudflare_module" });
-    expect("plugins" in (overrides["nitro"] as Record<string, unknown>)).toBe(
-      false,
-    );
+    expect("plugins" in (overrides["nitro"] as Record<string, unknown>)).toBe(false);
   });
 });
 
@@ -112,29 +110,19 @@ describe("findPresetConflict", () => {
   });
 
   it("returns undefined when no layer sets a preset", () => {
-    expect(
-      findPresetConflict([layer(undefined)], "cloudflare_module"),
-    ).toBeUndefined();
+    expect(findPresetConflict([layer(undefined)], "cloudflare_module")).toBeUndefined();
     expect(findPresetConflict([], "cloudflare_module")).toBeUndefined();
     expect(findPresetConflict(undefined, "cloudflare_module")).toBeUndefined();
   });
 
   it("accepts the target preset and its spelling aliases", () => {
-    expect(
-      findPresetConflict([layer("cloudflare_module")], "cloudflare_module"),
-    ).toBeUndefined();
-    expect(
-      findPresetConflict([layer("cloudflare-module")], "cloudflare_module"),
-    ).toBeUndefined();
-    expect(
-      findPresetConflict([layer("cloudflareModule")], "cloudflare_module"),
-    ).toBeUndefined();
+    expect(findPresetConflict([layer("cloudflare_module")], "cloudflare_module")).toBeUndefined();
+    expect(findPresetConflict([layer("cloudflare-module")], "cloudflare_module")).toBeUndefined();
+    expect(findPresetConflict([layer("cloudflareModule")], "cloudflare_module")).toBeUndefined();
   });
 
   it("surfaces a foreign preset from any layer", () => {
-    expect(findPresetConflict([layer("vercel")], "cloudflare_module")).toBe(
-      "vercel",
-    );
+    expect(findPresetConflict([layer("vercel")], "cloudflare_module")).toBe("vercel");
     expect(
       findPresetConflict(
         [layer(undefined), layer("cloudflare_pages", "/project/base")],
@@ -144,9 +132,7 @@ describe("findPresetConflict", () => {
   });
 
   it("ignores empty-string presets", () => {
-    expect(
-      findPresetConflict([layer("")], "cloudflare_module"),
-    ).toBeUndefined();
+    expect(findPresetConflict([layer("")], "cloudflare_module")).toBeUndefined();
   });
 });
 

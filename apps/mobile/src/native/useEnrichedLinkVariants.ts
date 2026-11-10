@@ -1,3 +1,4 @@
+import { modelChipIcon } from "../lib/contextChipIconSource";
 import { useMemo } from "react";
 import { Image } from "react-native";
 import type {
@@ -22,6 +23,7 @@ import type {
 import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
+  enrichedModelReference,
   enrichedSkillDisplayName,
   enrichedSkillReference,
   enrichedThreadLinkPresentation,
@@ -71,7 +73,7 @@ function isLinkTextOfUrl(label: string, url: string) {
 
 function presentation(
   url: string,
-  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
+  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "models" | "textStyle">,
   authoredLabels: ReadonlyArray<string>,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
@@ -85,6 +87,18 @@ function presentation(
       icon: CONTEXT_CHIP_ICON_SOURCES.skill,
       chip: { accent: contextChipPresentation("skill").accent, tintsIcon: true },
     };
+  const model = enrichedModelReference(url, props.models);
+  if (model) {
+    const icon = modelChipIcon(model);
+    return {
+      label: model.label,
+      icon: icon.source,
+      chip: {
+        accent: icon.accent,
+        tintsIcon: icon.tintsIcon,
+      },
+    };
+  }
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
@@ -113,7 +127,7 @@ export function useEnrichedLinkVariants(
   fileHrefs: ReadonlySet<string>,
   occurrences: ReadonlyArray<MarkdownLinkOccurrence>,
 ) {
-  const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
+  const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const labelsByUrl = new Map<string, string[]>();
@@ -132,11 +146,15 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, textStyle }, labelsByUrl.get(url) ?? []);
+        : presentation(
+            url,
+            { linkCustomization, skills, models, textStyle },
+            labelsByUrl.get(url) ?? [],
+          );
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel, occurrences]);
+  }, [urls, linkCustomization, skills, models, textStyle, fileHrefs, fileEmbedLabel, occurrences]);
   const chipForegrounds = useMemo(
     () =>
       new Map(
