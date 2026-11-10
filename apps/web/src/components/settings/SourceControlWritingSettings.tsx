@@ -225,7 +225,8 @@ export function SourceControlWritingSettingsSection() {
             }}
           >
             <SelectTrigger
-              size="sm"
+              variant="well"
+              size="compact"
               className="w-full sm:w-56"
               aria-label="Commit and pull request writing"
               leadingIcon={<GitCommitHorizontalIcon />}
