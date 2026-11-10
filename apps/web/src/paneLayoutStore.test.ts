@@ -24,6 +24,7 @@ describe("sanitizePersistedLayout", () => {
         entry("p1", "a"),
         entry("p2", "a"),
         { id: "p3", ref: { environmentId: "env" } },
+        entry("p4", " "),
         null,
         ...["b", "c", "d", "e", "f", "g"].map((name) => entry(`x-${name}`, name)),
       ],

@@ -2627,7 +2627,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
-              canOpenInPane: canAddPane(routeThreadRef),
+              canOpenInPane: canAddPane(routeThreadRef, threadRef),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

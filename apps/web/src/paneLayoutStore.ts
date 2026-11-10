@@ -1,5 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -115,6 +116,9 @@ export const usePaneLayoutStore = create<PaneLayoutStoreState>()(
   ),
 );
 
+const isEnvironmentId = Schema.is(EnvironmentId);
+const isThreadId = Schema.is(ThreadId);
+
 /** Storage is user-editable and survives upgrades, so keep only well-formed panes. */
 export function sanitizePersistedLayout(value: unknown): PaneLayout {
   if (typeof value !== "object" || value === null) return EMPTY_PANE_LAYOUT;
@@ -125,12 +129,9 @@ export function sanitizePersistedLayout(value: unknown): PaneLayout {
   for (const entry of panes) {
     if (clean.length >= MAX_PANES) break;
     const { id, ref } = (entry ?? {}) as { id?: unknown; ref?: Partial<ScopedThreadRef> };
-    if (typeof id !== "string" || typeof ref?.environmentId !== "string") continue;
-    if (typeof ref.threadId !== "string") continue;
-    const threadRef = {
-      environmentId: EnvironmentId.make(ref.environmentId),
-      threadId: ThreadId.make(ref.threadId),
-    };
+    if (typeof id !== "string" || !isEnvironmentId(ref?.environmentId)) continue;
+    if (!isThreadId(ref.threadId)) continue;
+    const threadRef = { environmentId: ref.environmentId, threadId: ref.threadId };
     const key = scopedThreadKey(threadRef);
     if (seen.has(key) || clean.some((pane) => pane.id === id)) continue;
     seen.add(key);
