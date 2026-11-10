@@ -39,6 +39,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import { rootCheckpointScopeName } from "./CheckpointService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import { nativeStorageFolders } from "./NativeStorageFolder.ts";
 import {
@@ -1565,15 +1566,23 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
-      const runningRootNode: OrchestrationV2ExecutionNode = {
-        ...rootNode,
-        status: "running",
-        startedAt: now,
-      };
       const startCheckpointScope =
         resolvedRuntimePolicy.cwd === null || resolvedRuntimePolicy.cwd === checkpointScope.cwd
           ? checkpointScope
-          : { ...checkpointScope, cwd: resolvedRuntimePolicy.cwd };
+          : {
+              ...checkpointScope,
+              id: yield* idAllocator.allocate.checkpointScope({
+                threadId: projection.thread.id,
+                name: rootCheckpointScopeName(resolvedRuntimePolicy.cwd),
+              }),
+              cwd: resolvedRuntimePolicy.cwd,
+            };
+      const runningRootNode: OrchestrationV2ExecutionNode = {
+        ...rootNode,
+        checkpointScopeId: startCheckpointScope.id,
+        status: "running",
+        startedAt: now,
+      };
       const events: Array<OrchestrationV2DomainEvent> = [
         {
           id: yield* idAllocator.allocate.event({

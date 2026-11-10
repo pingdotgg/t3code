@@ -175,9 +175,17 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
+      const firstRun = projection.runs.find((run) => run.ordinal === 1);
+      const firstScopeId = projection.checkpoints.find(
+        (checkpoint) => checkpoint.status === "ready" && checkpoint.runId === firstRun?.id,
+      )?.scopeId;
       const firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? projection.checkpointScopes.find((scope) =>
+              firstScopeId === undefined
+                ? scope.kind === "root_run" && scope.runId === firstRun?.id
+                : scope.id === firstScopeId,
+            )
           : undefined;
       const fromCheckpoint =
         parentCheckpoint ??
@@ -194,7 +202,7 @@ export const make = Effect.gen(function* () {
       // Run 1 captured the thread baseline, and each run captures its own baseline in its folder.
       const fromEnd =
         input.fromTurnCount === 0
-          ? { runId: projection.runs.find((run) => run.ordinal === 1)?.id, scopeId: firstScope?.id }
+          ? { runId: firstRun?.id, scopeId: firstScope?.id }
           : fromCheckpoint;
       const { runs } = yield* threads
         .getThreadRecords(input.threadId, ["runs"], {

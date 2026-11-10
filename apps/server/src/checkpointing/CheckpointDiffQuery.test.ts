@@ -201,7 +201,10 @@ it.effect("diffs a past turn in the folder its run recorded", () => {
     projection: Effect.succeed({
       ...moved,
       runs: moved.runs.map((run) => ({ ...run, status: "completed" as const })),
-      checkpointScopes: moved.checkpointScopes.map((scope) => ({ ...scope, cwd: "/repo-c" })),
+      checkpointScopes: [
+        { id: secondScopeId, runId: thirdRunId, kind: "root_run", cwd: "/repo-c" },
+        { ...moved.checkpointScopes[0]!, cwd: "/repo-c" },
+      ],
     }),
     runs: [
       { id: firstRunId },
@@ -225,6 +228,10 @@ it.effect("diffs a past turn in the folder its run recorded", () => {
     assert.deepEqual(
       diffCheckpoints.mock.calls.map(([input]) => input.cwd),
       ["/repo-a", "/repo-c", "/repo-b"],
+    );
+    assert.strictEqual(
+      diffCheckpoints.mock.calls[1]![0].fromCheckpointRef,
+      yield* checkpointRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 0 }),
     );
   }).pipe(Effect.provide(layer));
 });

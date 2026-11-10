@@ -1720,6 +1720,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         fileSystem,
         failReadsAfterRunning: true,
       });
+      const dispatchedScopeId = harness.projection().checkpointScopes[0]!.id;
       harness.createWorktree.mockImplementation(() =>
         fileSystem.makeDirectory(worktreePath).pipe(Effect.as({} as never), Effect.orDie),
       );
@@ -1778,7 +1779,10 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
           runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
         }),
       );
-      expect(harness.projection().checkpointScopes).toMatchObject([{ cwd: worktreePath }]);
+      const startedScope = harness.startRootRun.mock.calls[0]![0].checkpointScope;
+      expect(startedScope.cwd).toBe(worktreePath);
+      expect(startedScope.id).not.toBe(dispatchedScopeId);
+      expect(harness.projection().nodes.at(-1)?.checkpointScopeId).toBe(startedScope.id);
       expect(harness.projection().runs.at(-1)).toMatchObject({
         cwd: worktreePath,
         repositoryRoot: undefined,
@@ -1787,7 +1791,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         expect.objectContaining({
           appThread: expect.objectContaining({ worktreePath }),
           run: expect.objectContaining({ cwd: worktreePath }),
-          checkpointScope: harness.projection().checkpointScopes[0],
+          checkpointScope: startedScope,
           runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
         }),
       );

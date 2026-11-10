@@ -24,7 +24,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
-const ROOT_CHECKPOINT_SCOPE_NAME = "root";
+export const rootCheckpointScopeName = (cwd: string) => `root:${cwd}`;
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
@@ -185,7 +185,7 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
 }) {
   const scopeId = yield* input.idAllocator.allocate.checkpointScope({
     threadId: input.threadId,
-    name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${input.cwd}`,
+    name: rootCheckpointScopeName(input.cwd),
   });
   return {
     id: scopeId,
