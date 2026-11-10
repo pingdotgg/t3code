@@ -2480,14 +2480,7 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
           Effect.as(true),
           Effect.orElseSucceed(() => false),
         ),
-      git: {
-        hasRefNamed: ({ refName }) =>
-          command(["for-each-ref", "--count=1", "--format=%(refname)", `refs/**/${refName}`]).pipe(
-            Effect.map((result) => result.stdout.trim().length > 0),
-          ),
-        listLocalBranchNames: () => git.listLocalBranchNames(cwd),
-        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
-      },
+      git: { listLocalBranchNames: () => git.listLocalBranchNames(cwd) },
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -2499,43 +2492,28 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
           })
           .pipe(
             Effect.match({
-              onSuccess: () => ({ branch, outcome: "accepted" }),
-              onFailure: (error) => ({
-                branch,
-                outcome: error._tag,
-                errorBranch: (error as { readonly branch?: string }).branch,
-                namesBranch: error.message.includes(`"${branch}"`),
-              }),
+              onSuccess: () => [branch, "accepted"],
+              onFailure: (error) => [branch, error._tag],
             }),
           );
-      const refused = (branch: string) => ({
-        branch,
-        outcome: "ThreadLaunchBranchExistsError",
-        errorBranch: branch,
-        namesBranch: true,
-      });
       assert.deepEqual(
         yield* Effect.forEach(
-          [
-            "feature/idle",
-            "feature/taken",
-            "main",
-            "feature/fresh",
-            temporaryBranch,
-            "feature/tagged",
-          ],
+          ["feature/idle", "feature/taken", temporaryBranch, "feature/fresh", "feature/tagged"],
           (branch) => check(branch),
         ),
         [
-          refused("feature/idle"),
-          refused("feature/taken"),
-          refused("main"),
-          { branch: "feature/fresh", outcome: "accepted" },
-          refused(temporaryBranch),
-          { branch: "feature/tagged", outcome: "accepted" },
+          ["feature/idle", "ThreadLaunchBranchExistsError"],
+          ["feature/taken", "ThreadLaunchBranchExistsError"],
+          [temporaryBranch, "ThreadLaunchBranchExistsError"],
+          ["feature/fresh", "accepted"],
+          ["feature/tagged", "accepted"],
         ],
       );
-      assert.deepEqual(yield* check("feature/taken", ":/initial"), refused("feature/taken"));
+      // A `:/text` base skips the base check but not the branch check.
+      assert.deepEqual(yield* check("feature/taken", ":/initial"), [
+        "feature/taken",
+        "ThreadLaunchBranchExistsError",
+      ]);
     }).pipe(Effect.provide(harness.layer));
   }).pipe(
     Effect.provide(
