@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { unified } from "unified";
+import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -8,6 +8,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
 
 it.each([
@@ -309,21 +310,27 @@ it("keeps an image on its own line under a label but leaves inline images inline
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
 
-it("keeps the number written on each ordered list item", () => {
-  const processor = unified()
-    .use(remarkParse)
-    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+it("keeps the number written on each ordered list item only when enabled", () => {
   type Node = { tagName?: string; properties?: { value?: unknown }; children?: Node[] };
   const values = (node: Node): unknown[] => [
     ...(node.tagName === "li" ? [node.properties?.value] : []),
     ...(node.children ?? []).flatMap(values),
   ];
-  const render = (markdown: string) =>
-    values(processor.runSync(processor.parse(markdown), markdown) as Node);
+  const renderer = (plugins: PluggableList) => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(plugins)
+      .use(remarkRehype, { allowDangerousHtml: true });
+    return (markdown: string) =>
+      values(processor.runSync(processor.parse(markdown), markdown) as Node);
+  };
+  const render = renderer([
+    ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    remarkEnableOrderedListNumbers,
+  ]);
 
   expect(render("3. first\n5. second\n6. third")).toEqual([undefined, "5", undefined]);
+  expect(render("1. one\n1. one again")).toEqual([undefined, "1"]);
   expect(render("> 1. quoted\n> 4. skipped")).toEqual([undefined, "4"]);
   expect(render("1. outer\n   1. nested\n   7. jump\n9. back")).toEqual([
     undefined,
@@ -337,6 +344,11 @@ it("keeps the number written on each ordered list item", () => {
     undefined,
     "5",
   ]);
+  expect(
+    renderer(CHAT_MARKDOWN_REMARK_PLUGINS)(
+      "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
+    ),
+  ).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {

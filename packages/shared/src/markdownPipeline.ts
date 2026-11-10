@@ -19,6 +19,8 @@ import {
 import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
+export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
+
 type MarkdownImageHastNode = {
   type?: string;
   value?: string;
@@ -200,7 +202,6 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
-    li: [...(defaultSchema.attributes?.li ?? []), "value"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
       "dataDarkSrc",
