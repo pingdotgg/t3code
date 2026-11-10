@@ -2386,39 +2386,88 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
 
-  it.effect("recovers a steer's missed delivery from history after reconnect", () =>
-    Effect.gen(function* () {
-      const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
-        promptAccepted,
-        out("session.prompt", "<any>"),
-        replyData("session.prompt", {
-          id: steerId,
-          sessionID: SESSION,
-          time: { created: 2 },
-          type: "user",
-          payload: { text: "steered" },
-          delivery: "steer",
-        }),
-        ...reconnected({}, "succeeded", {}, steerId),
-        event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
-      ]);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
-      yield* runtime.steerTurn({
-        providerThread: thread,
-        providerTurnId: yield* providerTurnId,
-        threadId,
-        runId: turnInput(thread).runId,
-        message: {
-          ...turnInput(thread).message,
-          messageId: MessageId.make("message:opencode2-adapter:steer"),
-          text: "steered",
-        },
-      });
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }).pipe(Effect.scoped),
+  it.effect.each(["delivered", "pending"] as const)(
+    "reconciles a %s steer after reconnect without losing its execution",
+    (delivery) =>
+      Effect.gen(function* () {
+        const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
+        const reconnect = reconnected(
+          {},
+          "succeeded",
+          {},
+          delivery === "delivered" ? steerId : undefined,
+        );
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            ...(delivery === "pending"
+              ? [
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal("active"),
+                  }),
+                ]
+              : []),
+            out("session.prompt", "<any>"),
+            replyData("session.prompt", {
+              id: steerId,
+              sessionID: SESSION,
+              time: { created: 2 },
+              type: "user",
+              payload: { text: "steered" },
+              delivery: "steer",
+            }),
+            ...reconnect.slice(0, 2),
+            ...(delivery === "pending"
+              ? [out("rpc.call", "<any>"), reply("rpc.call", { output: { unreadable: true } })]
+              : []),
+            ...reconnect.slice(2),
+            ...(delivery === "pending"
+              ? [
+                  event("session.execution.started", { sessionID: SESSION }),
+                  event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
+                  event("session.text.ended", {
+                    sessionID: SESSION,
+                    assistantMessageID: "msg_delayed_steer",
+                    ordinal: 0,
+                    text: "Steer processed",
+                  }),
+                  event("session.execution.succeeded", { sessionID: SESSION }),
+                ]
+              : [event("session.execution.interrupted", { sessionID: SESSION, reason: "user" })]),
+          ],
+          delivery === "pending" ? { version: "2.2.5" } : undefined,
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        yield* runtime.steerTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          threadId,
+          runId: turnInput(thread).runId,
+          message: {
+            ...turnInput(thread).message,
+            messageId: MessageId.make("message:opencode2-adapter:steer"),
+            text: "steered",
+          },
+        });
+        const collected = yield* Fiber.join(events);
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+        if (delivery === "pending")
+          assert.isTrue(
+            collected.some(
+              (e) =>
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "assistant_message" &&
+                e.turnItem.text === "Steer processed",
+            ),
+          );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("does not end a turn from an earlier turn's history when its prompt is not there", () =>

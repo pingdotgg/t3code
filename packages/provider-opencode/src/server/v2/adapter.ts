@@ -292,6 +292,7 @@ interface ThreadState {
   providerThread: OrchestrationV2ProviderThread;
   publishedBackgroundWork?: boolean;
   goalRevision: number;
+  goalFresh: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -715,7 +716,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     let connection = initial.connection;
     const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
     const hasActiveGoal = (state: ThreadState) =>
-      supportsNativeGoals() && state.providerThread.goal?.status === "active";
+      supportsNativeGoals() && state.goalFresh && state.providerThread.goal?.status === "active";
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
@@ -771,6 +772,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       sessionId,
       providerThread,
       goalRevision: 0,
+      goalFresh: false,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
@@ -868,6 +870,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       goal: typeof NativeGoal.Type,
     ) {
       state.goalRevision += 1;
+      state.goalFresh = true;
       state.providerThread = {
         ...state.providerThread,
         goal:
@@ -2651,9 +2654,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
-    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* (
-      freshGoals: ReadonlySet<ThreadState>,
-    ) {
+    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* () {
       // Read deepest sessions first; subagent turns end before their waiting parents.
       const running = [...threads]
         .filter(([, state]) => state.active !== undefined)
@@ -2696,8 +2697,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   }),
                 }
               : { status: "interrupted" };
-        if (supportsNativeGoals() && !freshGoals.has(state)) yield* finishTurn(state, terminal);
-        else yield* endExecution(state, turn, terminal);
+        yield* endExecution(state, turn, terminal);
       }
       for (const state of background) {
         for (const call of runningCalls(state)) {
@@ -2754,24 +2754,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
-      const freshGoals = new Set<ThreadState>();
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        state.goalFresh = false;
+        state.goalRevision += 1;
+      }
       if (supportsNativeGoals()) {
         yield* Effect.forEach(
           [...threads.values()],
-          (state) =>
-            readGoal(state).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  freshGoals.add(state);
-                }),
-              ),
-              Effect.ignore({ log: true }),
-            ),
+          (state) => readGoal(state).pipe(Effect.ignore({ log: true })),
           { concurrency: 4, discard: true },
         ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
       }
-      yield* lock.withPermit(reconcile(freshGoals)).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      yield* lock.withPermit(reconcile()).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
       Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
