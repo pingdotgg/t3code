@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -34,10 +34,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -94,10 +91,7 @@ test(
   "serves the api route with the environment value",
   Effect.gen(function* () {
     const url = yield* base;
-    const body = yield* getBodyWhenReady(
-      `${url}/api/hello`,
-      "Hello from Nuxt on Fly!",
-    );
+    const body = yield* getBodyWhenReady(`${url}/api/hello`, "Hello from Nuxt on Fly!");
     expect(JSON.parse(body)).toEqual({
       greeting: "Hello from Nuxt on Fly!",
     });
@@ -128,9 +122,7 @@ test(
     // Nuxt either links the compiled stylesheet (/_nuxt/*.css) or inlines it
     // into a <style> tag depending on its inlineStyles feature — accept both.
     const links = [...html.matchAll(/href="([^"]+\.css)"/g)].map((m) => m[1]!);
-    let css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)]
-      .map((m) => m[1]!)
-      .join("\n");
+    let css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]!).join("\n");
     for (const link of links) {
       const href = link.startsWith("http") ? link : `${url}${link}`;
       css += yield* getBodyWhenReady(href, "{");
