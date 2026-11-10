@@ -314,6 +314,7 @@ function modelReconciliationHarness(
       ],
     ]),
   });
+  const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
     snapshotAtom: () => snapshotAtom,
@@ -328,6 +329,7 @@ function modelReconciliationHarness(
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
       providersAtom: () => providersAtom,
+      pendingThreadIdsAtom: () => noPendingThreadIdsAtom,
     }),
   );
   flush();
