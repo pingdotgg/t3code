@@ -1704,6 +1704,39 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   transition: translate var(--panel-animation-duration) ease-out;
 }
 
+[data-slot="sidebar-slide-frame"] {
+  --sidebar-slide-corner: 14px;
+
+  & > [data-corner] {
+    position: absolute;
+    right: 100%;
+    width: var(--sidebar-slide-corner);
+    height: var(--sidebar-slide-corner);
+    background: inherit;
+    mask: radial-gradient(
+      circle var(--sidebar-slide-corner) at var(--sidebar-slide-corner-center),
+      transparent var(--sidebar-slide-corner),
+      #000 calc(var(--sidebar-slide-corner) + 0.5px)
+    );
+  }
+
+  & > [data-corner="top"] {
+    --sidebar-slide-corner-center: 0 100%;
+  }
+
+  & > [data-corner="bottom"] {
+    --sidebar-slide-corner-center: 0 0;
+    translate: 0 -100%;
+  }
+}
+
+[data-chrome-art] [data-slot="sidebar-slide-frame"],
+[data-chrome-art] [data-slot="sidebar-slide-frame"] > [data-corner] {
+  background: var(--chrome-art-paint);
+  background-attachment: fixed;
+  background-blend-mode: var(--chrome-art-blend, normal);
+}
+
 /* Over the art the sidebar goes transparent and its secondary text takes the
    art's tint, as alpha over the image instead of fixed grays. */
 @media (width >= 48rem) {
