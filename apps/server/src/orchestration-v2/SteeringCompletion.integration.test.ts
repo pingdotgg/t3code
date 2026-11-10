@@ -1606,6 +1606,46 @@ it.effect("stops the running turn and starts a goal sent into it next", () =>
   ),
 );
 
+it.effect("starts a goal that names no model on the thread's model ahead of a queued pick", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn, read } = yield* goalHarness("goal-ahead-of-pick");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        for (const [id, text, modelSelection] of [
+          ["picked", "picked", composerSelection],
+          ["goal", "/goal all tests pass", undefined],
+        ] as const) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text,
+            attachments: [],
+            ...(modelSelection === undefined ? {} : { modelSelection }),
+            dispatchMode:
+              id === "picked" ? { type: "queue_after_active" } : { type: "start_immediately" },
+            ...(id === "picked" ? {} : { deliveryIntent: "auto" as const }),
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        yield* worker.drain();
+
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["picked"],
+          started: ["first", "/goal all tests pass"],
+          stopRequested: true,
+        });
+        assert.deepEqual(started[1]?.modelSelection, runSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("queues a goal clear without stopping work when no goal drives it", () =>
   Effect.scoped(
     Effect.gen(function* () {
