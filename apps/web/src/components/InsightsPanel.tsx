@@ -543,7 +543,7 @@ function FlameViewport({
                 "cursor-pointer hover:brightness-110",
                 node.kind === "turn"
                   ? "border-foreground/40 bg-card/90 font-medium text-foreground"
-                  : cn("border-black/10 text-white", SPAN_BAR_CLASS[node.kind]),
+                  : cn("border-black/10 text-background", SPAN_BAR_CLASS[node.kind]),
                 selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
               )}
               style={{
