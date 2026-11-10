@@ -1659,6 +1659,8 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const cursor = makeFakeCursor();
+      let inFlight = 0;
+      let mostInFlight = 0;
       const started = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
@@ -1666,17 +1668,28 @@ describe("UsageService", () => {
           layerCursorUsageAccounts(
             Layer.succeed(CursorAccountReader.CursorAccountReader, {
               read: (credential, sinceMs, untilMs) =>
-                (credential as { apiKey?: string }).apiKey === "failing-key"
-                  ? Effect.succeed({
+                Effect.gen(function* () {
+                  inFlight++;
+                  mostInFlight = Math.max(mostInFlight, inFlight);
+                  if (credential.apiKey === "failing-key") {
+                    yield* Deferred.await(started);
+                    return {
                       accountKey: null,
                       records: [],
                       missing: false,
                       error: "Cursor account usage could not be read.",
-                    })
-                  : Deferred.succeed(started, undefined).pipe(
-                      Effect.andThen(Deferred.await(gate)),
-                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
-                    ),
+                    };
+                  }
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(gate);
+                  return yield* cursor.read(credential, sinceMs, untilMs);
+                }).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      inFlight--;
+                    }),
+                  ),
+                ),
             }),
           ),
         );
@@ -1692,6 +1705,14 @@ describe("UsageService", () => {
                 instanceId: ProviderInstanceId.make("cursor-work"),
                 environment: { CURSOR_API_KEY: "new-key" },
               },
+              {
+                instanceId: ProviderInstanceId.make("cursor-third"),
+                environment: { CURSOR_API_KEY: "third-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-fourth"),
+                environment: { CURSOR_API_KEY: "fourth-key" },
+              },
             ],
             windowStartMs: 0,
             retentionCutoffMs: 0,
@@ -1703,6 +1724,8 @@ describe("UsageService", () => {
         assert.isTrue(sources.some((source) => source.refreshing === true));
         yield* Deferred.succeed(gate, undefined);
         yield* Fiber.join(first);
+        assert.strictEqual(mostInFlight, 2);
+        assert.strictEqual(inFlight, 0);
       }).pipe(
         Effect.provide(
           layerService({

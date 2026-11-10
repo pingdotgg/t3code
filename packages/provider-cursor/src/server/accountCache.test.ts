@@ -79,6 +79,16 @@ describe("cursorAccountCache", () => {
     assert.isFalse(
       mergeCursorFetch(cache, "a", range, [record(10 * DAY_MS)], 11 * DAY_MS, 0).changed,
     );
+    const pruned = mergeCursorFetch(
+      cache,
+      "a",
+      range,
+      [record(10 * DAY_MS)],
+      11 * DAY_MS,
+      2 * DAY_MS,
+    );
+    assert.isTrue(pruned.changed);
+    assert.deepStrictEqual(pruned.cache.records, [record(10 * DAY_MS)]);
     assert.isTrue(
       mergeCursorFetch(cache, "a", range, [record(10 * DAY_MS)], 11 * DAY_MS, 2 * DAY_MS).changed,
     );
