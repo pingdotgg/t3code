@@ -62,6 +62,10 @@ function protoText(field: number, value: string): number[] {
   return protoBytes(field, [...Buffer.from(value)]);
 }
 
+function lastStepIndex(index: number): number[] {
+  return protoBytes(20, [...protoText(1, "last_step_index"), ...protoText(2, String(index))]);
+}
+
 const TABLES =
   "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)";
 
@@ -130,7 +134,7 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps explicit model evidence separate from retries and conflicting names", () =>
+  it.effect("keeps explicit model evidence separate from conflicting names", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
@@ -149,10 +153,6 @@ describe("readAntigravityUsage", () => {
                     ...protoNumber(2, 10),
                     ...protoText(11, `r-${idx}`),
                   ]),
-                  ...protoBytes(
-                    17,
-                    protoBytes(2, [...protoNumber(1, 1026), ...protoNumber(2, 12)]),
-                  ),
                 ]),
               ),
             ]);
@@ -173,15 +173,6 @@ describe("readAntigravityUsage", () => {
             2,
             new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 10)])),
           ]);
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            3,
-            new Uint8Array(
-              protoBytes(1, [
-                ...protoText(19, "Gemini 9.3 Flash"),
-                ...protoBytes(17, protoBytes(2, [...protoNumber(1, 9004), ...protoNumber(2, 10)])),
-              ]),
-            ),
-          ]);
           yield* db.run("INSERT INTO steps VALUES (?, ?)", [
             4,
             new Uint8Array([
@@ -201,78 +192,95 @@ describe("readAntigravityUsage", () => {
           "gemini-9.1-flash",
           "antigravity-model-9003",
           "antigravity-model-1319",
-          "claude-opus-4-6",
           "gemini-9.2-flash",
-          "claude-opus-4-6",
-          "antigravity-model-9004",
           "claude-opus-5-5-thinking",
         ].sort(),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "deduplicates Antigravity generation and step usage while preserving retry model and token buckets",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const dir = yield* tempDir;
-        const stamp = protoNumber(1, 1780000000);
-        const usage = [
-          ...protoNumber(2, 100),
-          ...protoNumber(3, 40),
-          ...protoNumber(4, 5),
-          ...protoNumber(5, 20),
-          ...protoNumber(9, 10),
-          ...protoText(11, "response-1"),
-        ];
-        const retry = [
-          ...protoNumber(1, 1026),
-          ...protoNumber(2, 12),
-          ...protoNumber(3, 3),
-          ...protoText(11, "retry-1"),
-        ];
-        const generation = protoBytes(1, [
-          ...protoBytes(4, usage),
-          ...protoText(19, "Gemini 3 Pro"),
-          ...protoBytes(9, protoBytes(4, stamp)),
-        ]);
-        const step = [
-          ...protoBytes(9, usage),
-          ...protoBytes(8, stamp),
-          ...protoBytes(28, protoBytes(2, retry)),
-        ];
-        yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
-          Effect.gen(function* () {
-            yield* createTables(db);
-            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-              0,
-              new Uint8Array(generation),
-            ]);
-            yield* db.run("INSERT INTO steps VALUES (?, ?)", [0, new Uint8Array(step)]);
-          }),
-        );
-        const result = yield* readAntigravityUsage(dir, 0);
-        assert.deepStrictEqual(result.errors, []);
-        const read = records(result);
-        assert.strictEqual(read.length, 2);
-        const main = read.find((record) => record.model === "gemini-3-pro");
-        assert.isDefined(main);
-        assert.strictEqual(main?.timestampMs, 1780000000000);
-        assert.strictEqual(main?.sessionId, "session-1");
-        assert.deepStrictEqual(main?.totals, {
-          uncachedInputTokens: 100,
-          cachedInputTokens: 20,
-          cacheCreationTokens: 5,
-          outputTokens: 40,
-          reasoningTokens: 10,
-        });
-        assert.strictEqual(
-          read.find((record) => record.model === "claude-opus-4-6")?.totals.uncachedInputTokens,
-          12,
-        );
-        assert.deepStrictEqual(records(yield* readAntigravityUsage(dir, 1780000000001)), []);
-      }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect("counts each Antigravity generation once across its attempt list and step", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const stamp = protoNumber(1, 1780000000);
+      const usage = [
+        ...protoNumber(2, 100),
+        ...protoNumber(3, 40),
+        ...protoNumber(4, 5),
+        ...protoNumber(5, 20),
+        ...protoNumber(9, 10),
+      ];
+      yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoBytes(4, usage),
+                ...protoText(19, "Gemini 3 Pro"),
+                ...protoBytes(9, protoBytes(4, stamp)),
+                ...protoBytes(17, protoBytes(2, usage)),
+                ...lastStepIndex(0),
+              ]),
+            ),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            1,
+            new Uint8Array([...protoBytes(9, usage), ...protoBytes(8, stamp)]),
+          ]);
+          // A step without a generation row whose usage sums a failed attempt and its retry.
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            2,
+            new Uint8Array([
+              ...protoBytes(9, [...protoNumber(2, 12), ...protoNumber(3, 3)]),
+              ...protoBytes(8, stamp),
+              ...protoBytes(28, protoBytes(2, [...protoNumber(2, 7), ...protoNumber(3, 1)])),
+              ...protoBytes(28, protoBytes(2, [...protoNumber(2, 5), ...protoNumber(3, 2)])),
+            ]),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      const read = records(result);
+      assert.deepStrictEqual(
+        read.map(({ model, sessionId, timestampMs, totals }) => [
+          model,
+          sessionId,
+          timestampMs,
+          totals,
+        ]),
+        [
+          [
+            "antigravity-unknown",
+            "session-1",
+            1780000000000,
+            {
+              uncachedInputTokens: 12,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 3,
+              reasoningTokens: 0,
+            },
+          ],
+          [
+            "gemini-3-pro",
+            "session-1",
+            1780000000000,
+            {
+              uncachedInputTokens: 100,
+              cachedInputTokens: 20,
+              cacheCreationTokens: 5,
+              outputTokens: 40,
+              reasoningTokens: 10,
+            },
+          ],
+        ],
+      );
+      assert.deepStrictEqual(records(yield* readAntigravityUsage(dir, 1780000000001)), []);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the matching Antigravity generation model for each model-less step", () =>
@@ -285,10 +293,10 @@ describe("readAntigravityUsage", () => {
           for (const [idx, name] of ["Gemini 3 Pro", "Claude Opus 4.6"].entries()) {
             yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
               idx,
-              new Uint8Array(protoBytes(1, protoText(19, name))),
+              new Uint8Array(protoBytes(1, [...protoText(19, name), ...lastStepIndex(idx * 2)])),
             ]);
             yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-              idx,
+              idx * 2 + 1,
               new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
             ]);
           }
@@ -312,18 +320,20 @@ describe("readAntigravityUsage", () => {
           yield* createTables(db);
           yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
             0,
-            new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))),
-          ]);
-          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-            0,
-            new Uint8Array(protoBytes(9, protoNumber(2, 10))),
+            new Uint8Array(
+              protoBytes(1, [...protoText(19, "Gemini 3.7 Flash Control"), ...lastStepIndex(0)]),
+            ),
           ]);
           yield* db.run("INSERT INTO steps VALUES (?, ?)", [
             1,
-            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])),
+            new Uint8Array(protoBytes(9, protoNumber(2, 10))),
           ]);
           yield* db.run("INSERT INTO steps VALUES (?, ?)", [
             2,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            3,
             new Uint8Array(protoBytes(9, [...protoNumber(1, 1132), ...protoNumber(2, 12)])),
           ]);
           // A model-less step that only learns its model by merging with a named generation.
@@ -386,10 +396,10 @@ describe("readAntigravityUsage", () => {
           ].entries()) {
             yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
               idx,
-              new Uint8Array(protoBytes(1, protoText(19, name))),
+              new Uint8Array(protoBytes(1, [...protoText(19, name), ...lastStepIndex(idx * 2)])),
             ]);
             yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-              idx,
+              idx * 2 + 1,
               new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
             ]);
           }

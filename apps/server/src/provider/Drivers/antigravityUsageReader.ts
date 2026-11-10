@@ -176,9 +176,11 @@ interface Metadata {
   model: string;
   modelId: number;
   timestampMs: number | null;
-  usages: Fields[];
+  usage: Fields | undefined;
+  stepIndex: number | undefined;
 }
 
+// Usage in fields 4 and 9 sums every attempt; the per-attempt lists in fields 17 and 28 repeat it.
 function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const root = fields(bytes);
   if (!step && bytesAt(root, 1) === undefined) {
@@ -186,25 +188,26 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   }
   const data = step ? root : nested(root, 1);
   const model = step ? nested(data, 24) : data;
-  const usage = bytesAt(data, step ? 9 : 4);
-  // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
-  const primaryUsage = usage === undefined ? undefined : fields(usage.slice());
-  const usages = primaryUsage === undefined ? [] : [primaryUsage];
-  for (const retry of data.get(step ? 28 : 17) ?? []) {
-    if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
-    const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) usages.push(fields(retryUsage.slice()));
-  }
+  const usageBytes = bytesAt(data, step ? 9 : 4);
+  // Copy the usage bytes: a subarray would hold the row's whole blob alive.
+  const usage = usageBytes === undefined ? undefined : fields(usageBytes.slice());
+  // A generation's usage is repeated on the step after its last_step_index.
+  const lastStep = step
+    ? undefined
+    : (data.get(20) ?? [])
+        .map((entry) => fields(blob(entry)))
+        .find((pair) => textAt(pair, 1) === "last_step_index");
+  const lastStepIndex = lastStep === undefined ? "" : textAt(lastStep, 2);
   const names = [textAt(model, step ? 12 : 19), textAt(model, step ? 8 : 21)].map(modelName);
   return {
     model:
       names.find(isConcreteModel) ?? names.find((name) => name && !/^model[_-]/.test(name)) ?? "",
-    modelId:
-      numberAt(model, step ? 1 : 3) || (primaryUsage === undefined ? 0 : numberAt(primaryUsage, 1)),
+    modelId: numberAt(model, step ? 1 : 3) || (usage === undefined ? 0 : numberAt(usage, 1)),
     timestampMs: step
       ? (timestamp(nested(data, 8)) ?? timestamp(nested(data, 1)))
       : timestamp(nested(nested(data, 9), 4)),
-    usages,
+    usage,
+    stepIndex: /^\d+$/.test(lastStepIndex) ? Number(lastStepIndex) + 1 : undefined,
   };
 }
 
@@ -338,61 +341,69 @@ function usageCandidates(
   fallbackTimestamp: number,
 ): UsageCandidate[] {
   const records: UsageCandidate[] = [];
-  const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry]));
+  const generationsByStep = new Map(
+    generations.flatMap(({ entry }) =>
+      entry.stepIndex === undefined ? [] : [[entry.stepIndex, entry] as const],
+    ),
+  );
   for (const [source, entries] of [
     ["step", steps],
     ["generation", generations],
   ] as const) {
     for (const [index, { idx, entry }] of entries.entries()) {
-      for (const [usageIndex, usage] of entry.usages.entries()) {
-        const modelId = numberAt(usage, 1) || entry.modelId;
-        const generation = source === "step" ? generationModels.get(idx) : undefined;
-        // A retry can use a different model than its enclosing generation or step.
-        const matches = (metadata: Metadata) => modelId === 0 || metadata.modelId === modelId;
-        const model =
-          matches(entry) && entry.model
-            ? entry.model
-            : generation && matches(generation)
-              ? generation.model
-              : "";
-        const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
-        const totals = {
-          uncachedInputTokens: numberAt(usage, 2),
-          cachedInputTokens: numberAt(usage, 5),
-          cacheCreationTokens: numberAt(usage, 4),
-          outputTokens,
-          reasoningTokens: Math.min(outputTokens, numberAt(usage, 9)),
-        };
-        if (
-          totals.uncachedInputTokens +
-            totals.cachedInputTokens +
-            totals.cacheCreationTokens +
-            outputTokens ===
-          0
-        )
-          continue;
-        const keys = ([11, 12, 7] as const).flatMap((key) => {
-          const id = textAt(usage, key);
-          return id ? [`antigravity:${key}:${id}`] : [];
-        });
-        const record: UsageRecord = {
-          provider: "antigravity",
-          sessionId,
-          timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-          model,
-          totals,
-          reportedCostUsd: null,
-          speed: "standard",
-          dedupeKey: keys[0] ?? `antigravity:${sessionId}:${source}:${index}:${usageIndex}`,
-        };
-        records.push({
-          record,
-          modelId,
-          modelQuality: isConcreteModel(model) ? 4 : model ? 1 : 0,
-          keys,
-          timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
-        });
-      }
+      const usage = entry.usage;
+      if (usage === undefined) continue;
+      const modelId = numberAt(usage, 1) || entry.modelId;
+      const generation = source === "step" ? generationsByStep.get(idx) : undefined;
+      const matches = (metadata: Metadata) => modelId === 0 || metadata.modelId === modelId;
+      const model =
+        matches(entry) && entry.model
+          ? entry.model
+          : generation && matches(generation)
+            ? generation.model
+            : "";
+      const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
+      const totals = {
+        uncachedInputTokens: numberAt(usage, 2),
+        cachedInputTokens: numberAt(usage, 5),
+        cacheCreationTokens: numberAt(usage, 4),
+        outputTokens,
+        reasoningTokens: Math.min(outputTokens, numberAt(usage, 9)),
+      };
+      if (
+        totals.uncachedInputTokens +
+          totals.cachedInputTokens +
+          totals.cacheCreationTokens +
+          outputTokens ===
+        0
+      )
+        continue;
+      const stepIndex = source === "step" ? idx : entry.stepIndex;
+      const responseKeys = ([11, 12, 7] as const).flatMap((key) => {
+        const id = textAt(usage, key);
+        return id ? [`antigravity:${key}:${id}`] : [];
+      });
+      const identity =
+        stepIndex === undefined
+          ? `antigravity:${sessionId}:generation:${index}`
+          : `antigravity:${sessionId}:step:${stepIndex}`;
+      const record: UsageRecord = {
+        provider: "antigravity",
+        sessionId,
+        timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
+        model,
+        totals,
+        reportedCostUsd: null,
+        speed: "standard",
+        dedupeKey: responseKeys[0] ?? identity,
+      };
+      records.push({
+        record,
+        modelId,
+        modelQuality: isConcreteModel(model) ? 4 : model ? 1 : 0,
+        keys: [...responseKeys, identity],
+        timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
+      });
     }
   }
   return records;
