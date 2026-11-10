@@ -16,7 +16,7 @@ implementation:
 
 ```typescript
 // src/api.ts
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Box } from "./server.ts";
@@ -131,8 +131,8 @@ long-running loop — a worker, a queue consumer, a cron-ish daemon:
 
 ```typescript
 // src/worker.ts
-import * as Hetzner from "alchemy/Hetzner";
-import { ServerHost } from "alchemy/Server";
+import * as Hetzner from "@alchemy.run/hetzner";
+import { ServerHost } from "alchemy/Runtime/Process";
 import * as Effect from "effect/Effect";
 
 export default class Worker extends Hetzner.Service<Worker>()(
