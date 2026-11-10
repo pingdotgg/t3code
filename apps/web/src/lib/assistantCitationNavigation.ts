@@ -62,7 +62,7 @@ function sideChatParentId(sourceThread: SourceThread) {
   return sourceThread?.lineage.sideChat ? sourceThread.lineage.parentThreadId : null;
 }
 
-/** A side chat has no route of its own, so its quotes open on its parent thread. */
+/** Side chat quotes open on their parent thread, where the side chat is a tab. */
 export function assistantCitationRoute(citation: AssistantCitation, sourceThread: SourceThread) {
   return {
     to: "/$environmentId/$threadId" as const,
