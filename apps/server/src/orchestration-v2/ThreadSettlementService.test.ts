@@ -1542,9 +1542,46 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(marker));
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          yield* service.drain;
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
             [{ threadId: settled.id, hostId: "slow-ssh", deviceId: "pixel" }],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("closes another thread's terminals while a device release waits on the lock", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseStarted = yield* Deferred.make<void>();
+        const lockFreed = yield* Deferred.make<void>();
+        const waiting = appThread("waiting-device-thread", "settled");
+        const other = appThread("other-thread", "settled");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [waiting, other],
+          deviceSessions: [{ hostId: "starting-ssh", deviceId: "pixel" }],
+          onDeviceClose: () =>
+            Deferred.succeed(releaseStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(lockFreed)),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(waiting));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: waiting.id });
+          yield* Deferred.await(releaseStarted);
+          yield* fixture.publishEvent(settledEvent(other));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: other.id });
+          yield* Deferred.succeed(lockFreed, undefined);
+          yield* service.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.deviceCloses)).map((close) => close.threadId),
+            [waiting.id, other.id],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -1568,6 +1605,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(marker));
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          yield* service.drain;
           const closes = yield* Ref.get(fixture.deviceCloses);
           assert.deepStrictEqual(
             closes.filter((close) => close.threadId === settled.id),
@@ -1603,6 +1641,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
           const run = yield* Queue.take(fixture.scriptRuns);
           assert.strictEqual(run.threadId, settled.id);
+          yield* service.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [
             { threadId: settled.id, hostId: "ssh-host", deviceId: "remote-pixel" },
             { threadId: settled.id, hostId: "local", deviceId: "emulator-5554" },
@@ -1628,6 +1667,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(settled));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, settled.id);
+          yield* service.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), []);
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -1683,6 +1723,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+          yield* service.drain;
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
             [],
