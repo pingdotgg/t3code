@@ -130,6 +130,11 @@ export async function writeTextToClipboard(
     });
   }
 
+  // Without ClipboardItem (Firefox before 127), only the copy event can carry extra flavors.
+  if (extraFlavors && (typeof ClipboardItem === "undefined" || !navigator.clipboard.write)) {
+    if (writeTextWithExecCommand(value, extraFlavors)) return true;
+  }
+
   try {
     if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
       try {
@@ -204,33 +209,42 @@ export function useCopyToClipboard<TContext = void>({
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
   extraFlavors?: Readonly<Record<string, string>>;
-} = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
+} = {}): {
+  copyToClipboard: (
+    value: string,
+    ctx: TContext,
+    flavors?: Readonly<Record<string, string>>,
+  ) => void;
+  isCopied: boolean;
+} {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
-  const copyToClipboard = useStableCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, target, extraFlavors).then(
-      (didCopy) => {
-        if (!didCopy) return;
-        if (timeoutIdRef.current) {
-          clearTimeout(timeoutIdRef.current);
-        }
-        setIsCopied(true);
+  const copyToClipboard = useStableCallback(
+    (value: string, ctx: TContext, flavors?: Readonly<Record<string, string>>): void => {
+      void writeTextToClipboard(value, target, flavors ?? extraFlavors).then(
+        (didCopy) => {
+          if (!didCopy) return;
+          if (timeoutIdRef.current) {
+            clearTimeout(timeoutIdRef.current);
+          }
+          setIsCopied(true);
 
-        onCopy?.(ctx);
+          onCopy?.(ctx);
 
-        if (timeout !== 0) {
-          timeoutIdRef.current = setTimeout(() => {
-            setIsCopied(false);
-            timeoutIdRef.current = null;
-          }, timeout);
-        }
-      },
-      (error) => {
-        console.error(error);
-        onError?.(error, ctx);
-      },
-    );
-  });
+          if (timeout !== 0) {
+            timeoutIdRef.current = setTimeout(() => {
+              setIsCopied(false);
+              timeoutIdRef.current = null;
+            }, timeout);
+          }
+        },
+        (error) => {
+          console.error(error);
+          onError?.(error, ctx);
+        },
+      );
+    },
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copied-state reset timer on unmount
   React.useEffect(() => {

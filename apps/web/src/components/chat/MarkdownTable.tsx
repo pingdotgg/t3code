@@ -4,6 +4,7 @@ import { useRef, type ComponentProps } from "react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   serializeTableElementToCsv,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "../../markdown-clipboard";
 import { MorphIcon } from "../MorphIcon";
@@ -15,21 +16,23 @@ import { reportMarkdownActionFailure } from "./markdownActionFailure";
 
 export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv" | "html">({
     timeout: 1200,
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
   const copyLabel = copied ? "Copied" : "Copy table";
 
-  const handleCopy = (format: "markdown" | "csv") => {
+  const handleCopy = (format: "markdown" | "csv" | "html") => {
     const table = containerRef.current?.querySelector("table");
     if (!table) return;
+    const text =
+      format === "csv" ? serializeTableElementToCsv(table) : serializeTableElementToMarkdown(table);
+    // Teams, Word, and Excel build a real table only from the HTML flavor.
     copyToClipboard(
-      format === "markdown"
-        ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table),
+      text,
       format,
+      format === "html" ? { "text/html": serializeTableElementToHtml(table) } : undefined,
     );
   };
 
@@ -63,6 +66,7 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
             <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("html")}>Copy as rich text</MenuItem>
           </MenuPopup>
         </Menu>
       </div>
