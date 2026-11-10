@@ -13,7 +13,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { isClientHostEnvironment } from "~/state/clientHostEnvironment";
 import { environmentPresentations } from "~/state/presentation";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -53,9 +55,13 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
+  readonly isClientHostEnvironment?: boolean;
 }): RemoteOpenState {
   const { target } = input;
   if (target === null) {
+    return LOCAL_EXEC;
+  }
+  if (input.isClientHostEnvironment === true) {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
@@ -120,6 +126,12 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        isClientHostEnvironment: isClientHostEnvironment(
+          environmentId,
+          get(hostEnvironmentIdAtom),
+          entry.target,
+          window.desktopBridge !== undefined,
+        ),
       }),
       isResolved: true,
     };

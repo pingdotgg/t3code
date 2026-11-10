@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -127,6 +128,62 @@ describe("resolveRemoteOpenState", () => {
     expect(
       buildRemoteOpenUrl({ editor: "cursor", ...state.host, absolutePath: "/work/project" }),
     ).toBe("cursor://vscode-remote/ssh-remote+admin-user%40server.tail1234.ts.net/work/project");
+  });
+
+  it("opens the client host environment's editor locally over a bearer target", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "sol",
+          connectionId: "service-1",
+        }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: [],
+        isClientHostEnvironment: true,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("keeps reporting unavailable for a non-host bearer target", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "sol",
+          connectionId: "service-1",
+        }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: [],
+        isClientHostEnvironment: false,
+      }),
+    ).toEqual({ mode: "remote-unavailable" });
+  });
+
+  it("prefers local exec for the client host environment even when an SSH route exists", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+        sshTarget: { alias: "sol", username: null },
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        isClientHostEnvironment: true,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("still uses deep links for an SSH environment that is not the client host", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+        sshTarget: { alias: "sol", username: null },
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        isClientHostEnvironment: false,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
   });
 
   it("reports unavailable when a remote environment advertises no hosts", () => {
