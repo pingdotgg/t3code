@@ -2,6 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   enrichedLinkVariantPattern,
+  buildEnrichedModelReferences,
+  enrichedModelLinkRegex,
+  enrichedModelReference,
+  enrichedTextLinkRegex,
   enrichedSkillLinkRegex,
   enrichedThreadLinkPresentation,
   ENRICHED_INLINE_FILE_LINK_REGEX,
@@ -40,6 +44,49 @@ describe("Enriched link presentation", () => {
     expect(regex?.exec("Try $checkXmobile next")).toBeNull();
     expect(regex?.exec("prefix$check next")).toBeNull();
     expect(enrichedSkillLinkRegex([])).toBeNull();
+  });
+
+  it("recognizes only complete known models in prose and resolves their display names", () => {
+    const models = buildEnrichedModelReferences([
+      {
+        instanceId: "codex",
+        driver: "codex",
+        models: [
+          { slug: "gpt-6.1", name: "OpenAI GPT-6.1", subProvider: "OpenAI" },
+          { slug: "gpt-6.1-sol[1m]", name: "GPT-6.1 Sol" },
+        ],
+      },
+    ]);
+    const regex = enrichedModelLinkRegex(models);
+    for (const text of [
+      "Try model:codex/gpt-6.1 next",
+      "Try (model:codex/gpt-6.1).",
+      "Try [model:codex/gpt-6.1] next",
+      '"model:codex/gpt-6.1"',
+    ]) {
+      const source = regex?.exec(text)?.[0];
+      expect(source, text).toBe("model:codex/gpt-6.1");
+      expect(enrichedModelReference(source!, models)?.label).toBe("GPT-6.1");
+    }
+    expect(regex?.exec("Try model:codex/gpt-6.1-sol[1m].")?.[0]).toBe(
+      "model:codex/gpt-6.1-sol[1m]",
+    );
+    for (const text of [
+      "model:openai/gpt-4o",
+      "model:codex/gpt-6.1-extra",
+      "model:codex/gpt-6.1.2",
+      "model:codex/gpt-6X1",
+      "premodel:codex/gpt-6.1",
+    ]) {
+      expect(regex?.exec(text), text).toBeNull();
+    }
+    expect(enrichedModelReference("model:openai/gpt-4o", models)).toBeUndefined();
+    expect(enrichedModelLinkRegex([])).toBeNull();
+    expect(enrichedTextLinkRegex([], [])).toBeNull();
+    const combined = enrichedTextLinkRegex([{ name: "review" }], models);
+    expect(
+      "Use $review with (model:codex/gpt-6.1).".match(new RegExp(combined!.source, "gu")),
+    ).toEqual(["$review", "model:codex/gpt-6.1"]);
   });
 
   it("matches only the complete URL, including literal regex metacharacters", () => {
@@ -102,5 +149,17 @@ describe("Enriched link presentation", () => {
       },
     ]);
     expect(threadChipTargets(here, "No links here.")).toEqual([]);
+  });
+
+  it("finds thread links with angle-bracketed destinations", () => {
+    const here = "env-here" as EnvironmentId;
+    expect(threadChipTargets(here, "See [A](<t3-thread://v2/env-here/thread_a>).")).toEqual([
+      {
+        href: "t3-thread://v2/env-here/thread_a",
+        environmentId: here,
+        threadId: "thread_a",
+        link: true,
+      },
+    ]);
   });
 });

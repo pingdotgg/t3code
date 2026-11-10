@@ -2,9 +2,9 @@
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 // Alchemy modifications: uses Effect Schema instead of Zod, preserving strict option validation.
 import { RpcTarget } from "cloudflare:workers";
-import { ms } from "itty-time";
-import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { ms } from "itty-time";
 import type { ResolvedStepConfig } from "./context.ts";
 
 const WorkflowSubscriptionEventCommonSchema = Schema.Struct({
@@ -14,24 +14,17 @@ const WorkflowSubscriptionEventCommonSchema = Schema.Struct({
 });
 const StepDurationSchema = Schema.declare<ResolvedStepConfig["timeout"]>(
   (value): value is ResolvedStepConfig["timeout"] =>
-    typeof value === "number" ||
-    (typeof value === "string" && !Number.isNaN(ms(value))),
+    typeof value === "number" || (typeof value === "string" && !Number.isNaN(ms(value))),
 );
-const ResolvedStepDelaySchema = Schema.Union([
-  StepDurationSchema,
-  Schema.Literal("[dynamic]"),
-]);
+const ResolvedStepDelaySchema = Schema.Union([StepDurationSchema, Schema.Literal("[dynamic]")]);
 const ResolvedStepConfigSchema = Schema.Struct({
   retries: Schema.Struct({
     limit: Schema.declare<number>(
       (value): value is number =>
-        typeof value === "number" &&
-        (Number.isFinite(value) || value === Infinity),
+        typeof value === "number" && (Number.isFinite(value) || value === Infinity),
     ),
     delay: ResolvedStepDelaySchema,
-    backoff: Schema.optional(
-      Schema.Literals(["constant", "linear", "exponential"]),
-    ),
+    backoff: Schema.optional(Schema.Literals(["constant", "linear", "exponential"])),
   }),
   timeout: StepDurationSchema,
   sensitive: Schema.optional(Schema.Literal("output")),
@@ -202,22 +195,15 @@ const WorkflowSubscriptionEventSchema = Schema.Union([
   }),
 ]);
 
-export type WorkflowSubscriptionEvent =
-  typeof WorkflowSubscriptionEventSchema.Type;
+export type WorkflowSubscriptionEvent = typeof WorkflowSubscriptionEventSchema.Type;
 
 const workflowSubscriptionEventTypeNames = new Set(
-  WorkflowSubscriptionEventSchema.members.map(
-    (option) => option.fields.type.literal,
-  ),
+  WorkflowSubscriptionEventSchema.members.map((option) => option.fields.type.literal),
 );
-const WorkflowSubscriptionEventTypeSchema = Schema.declare<
-  WorkflowSubscriptionEvent["type"]
->(
+const WorkflowSubscriptionEventTypeSchema = Schema.declare<WorkflowSubscriptionEvent["type"]>(
   (value): value is WorkflowSubscriptionEvent["type"] =>
     typeof value === "string" &&
-    workflowSubscriptionEventTypeNames.has(
-      value as WorkflowSubscriptionEvent["type"],
-    ),
+    workflowSubscriptionEventTypeNames.has(value as WorkflowSubscriptionEvent["type"]),
 );
 
 export type WorkflowSubscriptionOptions = {
@@ -227,15 +213,9 @@ export type WorkflowSubscriptionOptions = {
 
 const WORKFLOW_SUBSCRIPTION_OPTIONS_SCHEMA = Schema.Struct({
   cursor: Schema.optional(
-    Schema.Number.check(
-      Schema.isFinite(),
-      Schema.isInt(),
-      Schema.isGreaterThanOrEqualTo(0),
-    ),
+    Schema.Number.check(Schema.isFinite(), Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   ),
-  filter: Schema.optional(
-    Schema.mutable(Schema.Array(WorkflowSubscriptionEventTypeSchema)),
-  ),
+  filter: WorkflowSubscriptionEventTypeSchema.pipe(Schema.Array, Schema.mutable, Schema.optional),
 });
 
 export function parseWorkflowSubscriptionOptions(options: unknown) {
@@ -243,9 +223,9 @@ export function parseWorkflowSubscriptionOptions(options: unknown) {
     return {} satisfies WorkflowSubscriptionOptions;
   }
 
-  const parsed = Schema.decodeUnknownResult(
-    WORKFLOW_SUBSCRIPTION_OPTIONS_SCHEMA,
-  )(options, { onExcessProperty: "error" });
+  const parsed = Schema.decodeUnknownResult(WORKFLOW_SUBSCRIPTION_OPTIONS_SCHEMA)(options, {
+    onExcessProperty: "error",
+  });
   if (Result.isFailure(parsed)) {
     throw new Error("Invalid Workflow subscription options");
   }
@@ -274,21 +254,14 @@ export function isTerminalEvent(event: WorkflowSubscriptionEvent): boolean {
   );
 }
 
-export class WorkflowSubscriptionTarget
-  extends RpcTarget
-  implements WorkflowSubscription
-{
-  readonly #nextEvent: () => Promise<
-    IteratorResult<WorkflowSubscriptionEvent, undefined>
-  >;
+export class WorkflowSubscriptionTarget extends RpcTarget implements WorkflowSubscription {
+  readonly #nextEvent: () => Promise<IteratorResult<WorkflowSubscriptionEvent, undefined>>;
   readonly #onClose: () => void;
   #nextRequest = Promise.resolve<unknown>(undefined);
   #closed = false;
 
   constructor(
-    nextEvent: () => Promise<
-      IteratorResult<WorkflowSubscriptionEvent, undefined>
-    >,
+    nextEvent: () => Promise<IteratorResult<WorkflowSubscriptionEvent, undefined>>,
     onClose: () => void,
   ) {
     super();

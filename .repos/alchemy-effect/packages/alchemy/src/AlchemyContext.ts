@@ -33,9 +33,7 @@ export class AlchemyContext extends EffectContext.Service<
 
 /** Use the configured runtime directory, with a relative fallback for standalone callers. */
 export const dotAlchemyDirectory = Effect.serviceOption(AlchemyContext).pipe(
-  Effect.map((context) =>
-    Option.isSome(context) ? context.value.dotAlchemy : ".alchemy",
-  ),
+  Effect.map((context) => (Option.isSome(context) ? context.value.dotAlchemy : ".alchemy")),
 );
 
 export const AlchemyContextLive = Layer.effect(
