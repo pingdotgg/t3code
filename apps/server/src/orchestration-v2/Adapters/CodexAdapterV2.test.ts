@@ -480,6 +480,8 @@ describe("CodexAdapterV2 fork boundary", () => {
 });
 
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
+const CHATGPT_SHARING_LIMIT_MESSAGE =
+  "stream disconnected before completion: The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.";
 const CODEX_TEST_MODEL_SELECTION = {
   instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
   model: "gpt-5.4",
@@ -1235,6 +1237,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
+    promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1292,6 +1296,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        ...(onUsageLimits ? { onUsageLimits } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -1309,6 +1314,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        promptSuggestions,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -1623,6 +1629,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           config: {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
+            "features.concurrent_reasoning_summaries": true,
             "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
@@ -1811,6 +1818,211 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["subagent", "remote", "toggled-off"] as const)(
+    "never samples a suggestion for a %s thread",
+    (delegation) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `suggest-${delegation}-thread`;
+        const prompt = "Continue the task.";
+        const first = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: `${delegation}-turn-1`,
+          prompt,
+        });
+        const second = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: `${delegation}-turn-2`,
+          prompt,
+        });
+        const completed = (nativeTurnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `${nativeTurnId} completed`,
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+            },
+          },
+        });
+        // The second turn is a barrier: a stray sample from the first turn is sent before it ends.
+        const requests: Array<string> = [];
+        const enabled = yield* Ref.make(true);
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `prompt-suggestion-${delegation}`,
+            entries: [
+              ...first,
+              completed(`${delegation}-turn-1`),
+              ...second.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+              completed(`${delegation}-turn-2`),
+            ],
+          }),
+          undefined,
+          (method) => Effect.sync(() => requests.push(method)),
+          undefined,
+          undefined,
+          undefined,
+          Ref.get(enabled),
+        );
+        // The flag is read per turn: turning it off after the session opened stops sampling.
+        if (delegation === "toggled-off") yield* Ref.set(enabled, false);
+        const base = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`${delegation}-attempt-1`),
+          text: prompt,
+        });
+        const parentThreadId = ThreadId.make("thread-codex-suggestion-parent");
+        const turn = {
+          ...base,
+          appThread:
+            delegation === "toggled-off"
+              ? base.appThread
+              : delegation === "subagent"
+                ? {
+                    ...base.appThread,
+                    lineage: {
+                      parentThreadId,
+                      relationshipToParent: "subagent" as const,
+                      rootThreadId: parentThreadId,
+                    },
+                  }
+                : {
+                    ...base.appThread,
+                    delegatedFrom: {
+                      environmentId: EnvironmentId.make("environment-codex-suggestion-parent"),
+                      threadId: parentThreadId,
+                      title: "Parent",
+                    },
+                  },
+        };
+        yield* harness.runtime.startTurn(turn);
+        yield* harness.awaitTerminal(1);
+        yield* harness.runtime.startTurn({
+          ...turn,
+          runId: RunId.make(`${delegation}-run-2`),
+          attemptId: RunAttemptId.make(`${delegation}-attempt-2`),
+          rootNodeId: NodeId.make(`${delegation}-root-2`),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+        });
+        yield* harness.awaitTerminal(2);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed", "completed"],
+        );
+        assert.notInclude(requests, "thread/sample");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("samples a next-prompt suggestion after a completed root turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "suggest-thread";
+      const nativeTurnId = "suggest-turn";
+      const prompt = "Add a subtract function.";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "prompt-suggestion",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "thread/sample",
+            frame: {
+              id: 4,
+              method: "thread/sample",
+              params: {
+                threadId: nativeThreadId,
+                expectedTurnId: nativeTurnId,
+                prompt: CodexAdapterV2.CODEX_PROMPT_SUGGESTION_PROMPT,
+                effort: "low",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/sample",
+            frame: {
+              id: 4,
+              result: {
+                sourceTurnId: nativeTurnId,
+                responseId: "resp-suggest",
+                text: "  add tests for subtract\n",
+                inputTokens: 11448,
+                cachedInputTokens: 11264,
+                outputTokens: 16,
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        Effect.succeed(true),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("suggest-attempt"),
+        text: prompt,
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      yield* harness.until(() =>
+        harness.events.some((event) => event.type === "prompt_suggestion.updated"),
+      );
+      assert.deepEqual(
+        harness.events.filter((event) => event.type === "prompt_suggestion.updated"),
+        [
+          {
+            type: "prompt_suggestion.updated",
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            threadId: harness.threadId,
+            runId: turnInput.runId,
+            text: "add tests for subtract",
+          },
+        ],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -5612,14 +5824,58 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       code: "other",
       details: "subscription_sharing_workplace_individual_usage_limit_exceeded",
       notification: true,
+      usedBefore: 100,
+      expectedClass: "usage_limit",
+      expectedCode: "subscription_sharing_workplace_individual_usage_limit_exceeded",
+      expectedMessage: "workspace admin",
+    },
+    // regression: #25333 ChatGPT sharing limit prose classifies as a usage limit
+    {
+      name: "chatgpt-sharing-prose-retry",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: CHATGPT_SHARING_LIMIT_MESSAGE,
+      notification: true,
+      willRetry: true,
+      usedBefore: 100,
+      expectedClass: "usage_limit",
+      expectedCode: "subscription_sharing_usage_limit_exceeded",
+      expectedMessage: "Usage settings",
+    },
+    {
+      name: "chatgpt-sharing-prose",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: CHATGPT_SHARING_LIMIT_MESSAGE,
+      notification: false,
+      resetAfter: true,
+      expectedClass: "usage_limit",
+      expectedCode: "subscription_sharing_usage_limit_exceeded",
+      expectedMessage: "Usage settings",
+    },
+    {
+      name: "sharing-code-mention",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
+      notification: false,
       expectedClass: "provider_error",
+    },
+    {
+      name: "sharing-code-mention-retry",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
+      notification: true,
+      willRetry: true,
+      expectedClass: "transport_error",
     },
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = `native-limit-${scenario.name}`;
         const nativeTurnId = `turn-limit-${scenario.name}`;
-        const message = "Provider stopped this request.";
+        const message = "message" in scenario ? scenario.message : "Provider stopped this request.";
         const errorInfo = "errorInfo" in scenario ? scenario.errorInfo : scenario.code;
         const resetAt = "2033-05-19T07:20:00.000Z";
         const snapshot = {
@@ -5639,6 +5895,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            ...("usedBefore" in scenario
+              ? [
+                  {
+                    ...snapshot,
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: {
+                          limitId: "codex",
+                          primary: {
+                            usedPercent: scenario.usedBefore,
+                            resetsAt: 2000100000,
+                            windowDurationMins: 300,
+                          },
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "deferred-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5686,7 +5962,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       params: {
                         threadId: nativeThreadId,
                         turnId: nativeTurnId,
-                        willRetry: scenario.name === "retry",
+                        willRetry: scenario.name === "retry" || "willRetry" in scenario,
                         error: {
                           message,
                           codexErrorInfo: errorInfo,
@@ -5723,7 +5999,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
-            ...(scenario.name === "late-reset" ? [snapshot] : []),
+            ...(scenario.name === "late-reset" || "resetAfter" in scenario ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
                   {
@@ -5761,12 +6037,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const resetReceipt = yield* Deferred.make<void>();
-        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "error" &&
-          event.turnItem.failure.resetAt === resetAt
-            ? Deferred.succeed(resetReceipt, undefined)
-            : Effect.void,
+        const snapshotReceipt = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.resetAt === resetAt
+              ? Deferred.succeed(resetReceipt, undefined)
+              : Effect.void,
+          undefined,
+          undefined,
+          undefined,
+          () => Deferred.succeed(snapshotReceipt, undefined),
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -5786,6 +6069,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
+        if ("resetAfter" in scenario) {
+          yield* Deferred.await(snapshotReceipt);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.failure.resetAt != null,
+            ),
+          );
+        }
         if (scenario.name === "late-reset") {
           yield* Deferred.await(resetReceipt);
           const item = harness.events.find(
@@ -5796,10 +6090,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.isDefined(item);
         }
-        if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
-        if (scenario.name === "chatgpt-workspace-limit") {
-          assert.equal(terminal.failure.code, scenario.details);
-          assert.include(terminal.failure.message, "workspace admin");
+        if (scenario.name === "retry" || "willRetry" in scenario)
+          assert.equal(terminal.retry?.attempt, 1);
+        if ("expectedCode" in scenario && "expectedMessage" in scenario) {
+          assert.equal(terminal.failure.code, scenario.expectedCode);
+          assert.include(terminal.failure.message, scenario.expectedMessage);
+          assert.equal(terminal.failure.resetAt, null);
         }
       }).pipe(
         Effect.provide(
@@ -8404,7 +8700,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeThreadId,
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
-                sentPrompt: `Start working toward this goal: ${objective}`,
+                sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${objective}`,
               }).slice(5),
               5,
             ),
@@ -8544,7 +8840,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeThreadId,
                 nativeTurnId: "goal-turn-limit",
                 prompt: atLimit,
-                sentPrompt: `Start working toward this goal: ${atLimit}`,
+                sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${atLimit}`,
               }).slice(5),
               5,
             ),
