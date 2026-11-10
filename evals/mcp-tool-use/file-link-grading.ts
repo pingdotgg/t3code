@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import {
@@ -18,6 +20,17 @@ export const FileLinksExpect = Schema.Struct({
   /** The final answer has at least this many file pills that open a world file. */
   minWorking: Schema.Number,
 });
+
+/** The client opens an exact basename match, or a case-insensitive one when only one exists. */
+const uniqueBasename = (name: string, entries: ReadonlyArray<{ readonly path: string }>) => {
+  const basenames = entries.map((entry) => entry.path.split("/").at(-1) ?? "");
+  const exact = basenames.filter((basename) => basename === name).length;
+  return (
+    exact === 1 ||
+    (exact === 0 &&
+      basenames.filter((basename) => basename.toLowerCase() === name.toLowerCase()).length === 1)
+  );
+};
 
 /**
  * Chat turns every file-shaped markdown link and inline code span into a pill resolved against
@@ -47,7 +60,7 @@ export const fileLinkPills = (
   return [...new Set(sources)].flatMap((source) => {
     const target = resolveMarkdownFileLinkTarget(source, cwd);
     if (target === null) return [];
-    const path = splitFilePathPosition(target).path.replace(/\/+$/, "");
+    const path = NodePath.posix.normalize(splitFilePathPosition(target).path).replace(/\/+$/, "");
     // System paths such as /usr/bin/node are not what these cases test.
     if (!/^\/(?:home|Users)\//.test(path)) return [];
     const relative = parseMarkdownFileLink(source)?.path ?? path;
@@ -61,7 +74,7 @@ export const fileLinkPills = (
       (!relative.startsWith("/") &&
         // The client opens the first of several same-named files, which may be the wrong one.
         (needsWorkspaceBasenameLookup(relative)
-          ? entries.filter((entry) => entry.path.split("/").at(-1) === relative).length === 1
+          ? uniqueBasename(relative, entries)
           : pickWorkspaceLinkMatch(relative, cwd, entries) !== null));
     return [{ source, path, works }];
   });
