@@ -194,6 +194,19 @@ it.effect(
       });
 
       expect(dispatched).toEqual(["message.dispatch"]);
+
+      const rejectedCommandId = CommandId.make("command:thread-management:chokepoint-rejected");
+      yield* receipts.insertIfAbsent({
+        commandId: rejectedCommandId,
+        threadId,
+        commandType: "message.dispatch",
+        acceptedAt: yield* DateTime.now,
+        resultSequence: 2,
+        status: "rejected",
+        error: "rejected",
+      });
+      expect(yield* threads.hasReceipt(commandId)).toBe(true);
+      expect(yield* threads.hasReceipt(rejectedCommandId)).toBe(false);
     }).pipe(Effect.provide(layerTest));
   },
 );
