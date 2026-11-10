@@ -994,6 +994,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --surface-shadow: var(--surface-base-shadow);
 }
 
+@utility surface-dismiss {
+  background: var(--dismiss-background, var(--popover));
+  border-color: var(--dismiss-border, var(--contrast-border));
+  box-shadow: var(--dismiss-shadow, var(--shadow-xs));
+}
+
 /* The composer's mic + send pill. */
 @utility surface-pill {
   /* Labels and icons inside read the pill's foreground, so a colored pill keeps them legible. */
@@ -3396,6 +3402,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --dismiss-background: initial;
+  --dismiss-border: initial;
+  --dismiss-shadow: initial;
   --floating-background: initial;
   --floating-hover-background: initial;
   --floating-border: initial;
@@ -4152,6 +4161,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --floating-hover-border: transparent;
   --floating-shadow: var(--raised-shadow);
   --floating-hover-shadow: var(--raised-hover-shadow);
+  --dismiss-background: var(--floating-background);
+  --dismiss-border: var(--floating-border);
+  --dismiss-shadow: var(--floating-shadow);
   --gloss-on-background:
     var(--lit-fill) padding-box, var(--lit-rim) border-box, var(--lit-fill) border-box;
   --slider-bar-fill: var(--lit-fill);
