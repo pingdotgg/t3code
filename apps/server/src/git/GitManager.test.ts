@@ -3503,9 +3503,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect(
-    "commit_push_pr refuses to commit or push on the default branch when origin/HEAD is missing",
-    () =>
+  it.effect.each([
+    { localBranch: "develop" },
+    // Pushes to origin's develop under a name that differs from the base.
+    { localBranch: "origin/develop" },
+  ] as const)(
+    "commit_push_pr refuses to commit or push on the default branch when origin/HEAD is missing ($localBranch)",
+    ({ localBranch }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -3513,6 +3517,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        if (localBranch !== "develop") yield* runGit(repoDir, ["checkout", "-b", localBranch]);
         const readRemoteDevelop = runGit(repoDir, [
           "ls-remote",
           "origin",
@@ -4466,6 +4471,74 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
         ),
       ).toBe(false);
+    }),
+  );
+
+  it.effect("commit_push_pr publishes the default branch to the push remote's fork", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["push", "fork", "main"]);
+      yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "git@github.com:octocat/codething-mvp.git",
+        forkDir,
+      );
+      const readOriginMain = runGit(repoDir, ["ls-remote", "origin", "refs/heads/main"]).pipe(
+        Effect.map((output) => output.stdout),
+      );
+      const originBefore = yield* readOriginMain;
+      NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          defaultBranch: "main",
+          prListSequenceByHeadSelector: {
+            "octocat:main": [
+              [],
+              [
+                {
+                  number: 189,
+                  title: "Contribute from main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/189",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state: "open",
+                  isCrossRepository: true,
+                  headRepositoryNameWithOwner: "octocat/codething-mvp",
+                  headRepositoryOwnerLogin: "octocat",
+                },
+              ],
+            ],
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(yield* readOriginMain).toBe(originBefore);
+      expect(
+        created(providerCalls).some(
+          (call) => call.baseRefName === "main" && call.headSelector === "octocat:main",
+        ),
+      ).toBe(true);
     }),
   );
 

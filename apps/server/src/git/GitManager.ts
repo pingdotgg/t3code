@@ -2284,15 +2284,24 @@ export const make = Effect.gen(function* () {
 
   const ensurePrHeadIsNotBase = Effect.fn("ensurePrHeadIsNotBase")(function* (
     cwd: string,
-    branch: string,
-    upstreamRef: string | null,
+    status: { branch: string; upstreamRef: string | null; hasUpstream: boolean },
     changeRequestLabel: string,
   ) {
-    const headContext = yield* resolveBranchHeadContext(cwd, { branch, upstreamRef });
+    const target = yield* gitCore.resolvePushTarget(cwd, status);
+    if (!target) return;
+    const headContext = yield* resolveBranchHeadContext(cwd, {
+      branch: status.branch,
+      upstreamRef: `${target.remoteName}/${target.branchName}`,
+      remoteName: target.remoteName,
+    });
     if (headContext.isCrossRepository) return;
-    const { baseBranch } = yield* resolvePrBase(cwd, branch, upstreamRef, headContext);
-    // A differently named upstream is a base: the push publishes the branch under its own name.
-    if (baseBranch !== branch) return;
+    const { baseBranch } = yield* resolvePrBase(
+      cwd,
+      status.branch,
+      status.upstreamRef,
+      headContext,
+    );
+    if (baseBranch !== target.branchName) return;
     if (yield* findOpenPr(cwd, headContext)) return;
     return yield* new GitManagerError({
       operation: "runStackedAction",
@@ -3275,8 +3284,7 @@ export const make = Effect.gen(function* () {
         if (changeRequestTerms && !input.featureBranch && initialStatus.branch) {
           yield* ensurePrHeadIsNotBase(
             input.cwd,
-            initialStatus.branch,
-            initialStatus.upstreamRef,
+            { ...initialStatus, branch: initialStatus.branch },
             changeRequestTerms.shortLabelWithArticle,
           );
         }
