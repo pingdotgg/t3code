@@ -381,7 +381,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch open PR; link if needed. Wake on `events` (default all; checks_passed: required), close/T3 watch end. Old comments first; only later wake. End turn. Watch stays on; don't re-call. Wake isn't approval; check readiness.",
+    "Watch open PR; link if needed. Wake on `events` (default all; checks_passed=required), unmerged close/unreadable. Old comments first; only later wake. End turn. Stays on; don't re-call. Wake isn't approval; check readiness.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
