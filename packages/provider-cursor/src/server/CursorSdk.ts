@@ -96,7 +96,7 @@ const readCursorCliUseHttp1ForAgent = Effect.gen(function* () {
     .readFileString(path.join(configDirectory, "cli-config.json"))
     .pipe(Effect.flatMap(decodeCursorCliConfig), Effect.option);
   return Option.isSome(config) && config.value.network?.useHttp1ForAgent === true;
-});
+}).pipe(Effect.withSpan("CursorSdk.readCliUseHttp1ForAgent"));
 
 /** Keeps the shell spawn guard armed while in-process agents run. */
 export class CursorSdk extends Context.Service<
@@ -121,9 +121,7 @@ export const layer = Layer.effect(
         }),
     );
     // The SDK picks the agent transport per process, so no provider instance can own this.
-    if (!(yield* readCursorCliUseHttp1ForAgent)) {
-      return CursorSdk.of({ load: loadCursorSdk, loadSqlite: loadCursorSqlite });
-    }
+    const useHttp1ForAgent = yield* readCursorCliUseHttp1ForAgent;
     let configured = false;
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
@@ -133,7 +131,7 @@ export const layer = Layer.effect(
     return CursorSdk.of({
       load: () => {
         const sdk = loadCursorSdk();
-        if (!configured) {
+        if (useHttp1ForAgent && !configured) {
           sdk.Cursor.configure({ local: { useHttp1ForAgent: true } });
           configured = true;
         }

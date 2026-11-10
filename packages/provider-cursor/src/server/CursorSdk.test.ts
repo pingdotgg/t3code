@@ -107,42 +107,42 @@ const http1 = JSON.stringify({ network: { useHttp1ForAgent: true } });
 describe("CursorSdk agent transport", () => {
   it.effect.each([
     {
-      name: "CURSOR_CONFIG_DIR before XDG_CONFIG_HOME",
+      name: "when set in CURSOR_CONFIG_DIR over XDG_CONFIG_HOME",
       env: { CURSOR_CONFIG_DIR: "config", XDG_CONFIG_HOME: "xdg" },
       file: "config/cli-config.json",
       text: http1,
       expected: true,
     },
     {
-      name: "XDG_CONFIG_HOME",
+      name: "when set in XDG_CONFIG_HOME",
       env: { XDG_CONFIG_HOME: "xdg" },
       file: "xdg/cursor/cli-config.json",
       text: http1,
       expected: true,
     },
     {
-      name: "the home directory",
+      name: "when set in the home directory",
       env: {},
       file: "home/.cursor/cli-config.json",
       text: http1,
       expected: true,
     },
     {
-      name: "an HTTP/2 setting",
+      name: "when it is off",
       env: {},
       file: "home/.cursor/cli-config.json",
       text: JSON.stringify({ network: { useHttp1ForAgent: false } }),
       expected: undefined,
     },
     {
-      name: "a damaged file",
+      name: "when the file is damaged",
       env: {},
       file: "home/.cursor/cli-config.json",
       text: "{",
       expected: undefined,
     },
-    { name: "no file", env: {}, file: undefined, text: "", expected: undefined },
-  ])("follows the Cursor CLI's HTTP/1.1 setting from $name", ({ env, file, text, expected }) =>
+    { name: "when there is no file", env: {}, file: undefined, text: "", expected: undefined },
+  ])("follows the Cursor CLI's HTTP/1.1 setting $name", ({ env, file, text, expected }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
