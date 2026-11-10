@@ -144,6 +144,8 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const packageDir = path.join(installed, "package");
 
         const release = yield* serveFakeRelease(root);
+        // regression: #32897
+        release.failNextRequests(504, 524);
         const home = path.join(root, "home");
         const env = {
           PATH: (yield* HostProcess.Environment).PATH,
@@ -346,48 +348,6 @@ fs.readFileSync = (file, ...rest) => {
         assert.deepStrictEqual(
           yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
           [],
-        );
-      }),
-  );
-  // regression: #32897
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "installs when GitHub answers the first release requests with HTTP 504 and 524",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-retry-test-" });
-        const output = yield* buildNpmLauncher({
-          version: VERSION,
-          outputDir: path.join(root, "out"),
-        });
-        const release = yield* serveFakeRelease(root);
-        release.failNextRequests(504, 524);
-        const home = path.join(root, "home");
-        const installed = yield* run(
-          process.execPath,
-          [path.join(output.packageDir, "bin/t3.mjs"), "--version"],
-          {
-            cwd: root,
-            env: {
-              PATH: (yield* HostProcess.Environment).PATH,
-              T3CODE_HOME: home,
-              T3CODE_RELEASE_BASE_URL: release.baseUrl,
-            },
-          },
-        );
-        assert.equal(release.requests[0], `/v${VERSION}/SHA256SUMS`);
-        assert.equal(
-          installed.exitCode,
-          0,
-          `the launcher gave up on a transient 5xx: ${installed.stderr}`,
-        );
-        assert.equal(installed.stdout.trim(), VERSION);
-        assert.equal(
-          (yield* fs.readFileString(
-            path.join(home, "runtime/versions", VERSION, ".install-complete"),
-          )).trim(),
-          VERSION,
         );
       }),
   );
