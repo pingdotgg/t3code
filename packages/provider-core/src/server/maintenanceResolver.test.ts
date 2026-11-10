@@ -332,14 +332,24 @@ it.layer(
   );
 
   it.effect.each([
-    { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
-    { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
-    { install: "npm", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    {
+      install: "native",
+      stdout: "latest: 1.2.0\nnext: 1.3.0-beta.1\n",
+      exitCode: 0,
+      latest: "1.2.0",
+    },
+    {
+      install: "manual",
+      stdout: "next: 1.3.0-beta.1\r\nlatest: 1.2.0\r\n",
+      exitCode: 0,
+      latest: "1.2.0",
+    },
+    { install: "npm", stdout: "latest: 1.2.0\n", exitCode: 0, latest: "1.2.0" },
     { install: "native", stdout: "", exitCode: 1, latest: null },
-    { install: "npm", stdout: '"1.2.0"', exitCode: 1, latest: null },
-    { install: "native", stdout: "not json", exitCode: 0, latest: null },
-    { install: "manual", stdout: '["1.2.0", "1.3.0"]', exitCode: 0, latest: null },
-    { install: "manual", stdout: '""', exitCode: 0, latest: null },
+    { install: "npm", stdout: "latest: 1.2.0\n", exitCode: 1, latest: null },
+    { install: "native", stdout: "not tags", exitCode: 0, latest: null },
+    { install: "manual", stdout: "next: 1.3.0-beta.1\n", exitCode: 0, latest: null },
+    { install: "manual", stdout: "latest: \n", exitCode: 0, latest: null },
   ])(
     "uses npm's registry for $install installs (exit $exitCode, output $stdout)",
     (fixture) =>
@@ -370,12 +380,11 @@ it.layer(
                 probes++;
                 expect(command).toBe(NodePath.join(npmBinDir, "npm"));
                 expect(args).toEqual([
-                  "view",
+                  "dist-tag",
+                  "ls",
                   "--global",
                   ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
-                  "--json",
-                  `${capabilities.packageName}@latest`,
-                  "version",
+                  capabilities.packageName,
                 ]);
                 return fixture.stdout;
               },
@@ -1055,14 +1064,14 @@ it.layer(
       inheritPath: true,
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
-      npmOutput: '"1.2.0"',
+      npmOutput: "latest: 1.2.0\n",
       expected: "1.1.0",
     },
     {
       case: "no update during cooldown",
       outdated: {},
       exitCode: 0,
-      npmOutput: '"1.2.0"',
+      npmOutput: "latest: 1.2.0\n",
       expected: "1.0.0",
     },
     {
@@ -1075,14 +1084,14 @@ it.layer(
       case: "the configured npm registry when the pnpm probe fails",
       outdated: {},
       exitCode: 2,
-      npmOutput: '"1.2.0"',
+      npmOutput: "latest: 1.2.0\n",
       expected: "1.2.0",
     },
     {
       case: "an unknown version when both configured lookups fail",
       outdated: {},
       exitCode: 2,
-      npmOutput: "not json",
+      npmOutput: "next: 1.3.0-beta.1\n",
       expected: null,
     },
   ])(
@@ -1116,7 +1125,7 @@ it.layer(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
               (_command, args) => {
-                if (args[0] === "view") {
+                if (args[0] === "dist-tag") {
                   npmProbes++;
                   return fixture.npmOutput ?? "";
                 }

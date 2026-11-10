@@ -6,8 +6,11 @@ import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
@@ -25,6 +28,8 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopState from "../../app/DesktopState.ts";
+import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -32,11 +37,60 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  getLocalEnvironmentBearerToken,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
   syncHtmlFullscreen,
 } from "./window.ts";
+
+it.effect.each(["ready before request", "ready after request", "restart before ready"])(
+  "exchanges a renderer's bearer token with %s",
+  (ordering) =>
+    Effect.gen(function* () {
+      const primaryBackendStartup = yield* SubscriptionRef.make<DesktopState.PrimaryBackendStartup>(
+        {
+          _tag: "Starting",
+        },
+      );
+      const exchanges = yield* Ref.make(0);
+      const backendReady = yield* Ref.make(false);
+      const quitting = yield* Ref.make(false);
+      const request = getLocalEnvironmentBearerToken.handler(undefined).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(DesktopState.DesktopState, {
+              primaryBackendStartup,
+              backendReady,
+              quitting,
+            }),
+            Layer.succeed(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+              getBearerToken: Ref.update(exchanges, (count) => count + 1).pipe(Effect.as("bearer")),
+            }),
+          ),
+        ),
+      );
+      if (ordering === "ready before request") {
+        yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" });
+      }
+      const fiber = yield* request.pipe(Effect.forkChild({ startImmediately: true }));
+      if (ordering !== "ready before request") {
+        assert.equal(yield* Ref.get(exchanges), 0);
+        if (ordering === "restart before ready") {
+          yield* SubscriptionRef.set(primaryBackendStartup, {
+            _tag: "Failing",
+            reason: "backend restarting",
+            managedPolicy: false,
+            output: "process exited",
+          });
+          assert.equal(yield* Ref.get(exchanges), 0);
+        }
+        yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" });
+      }
+      assert.equal(yield* Fiber.join(fiber), "bearer");
+      assert.equal(yield* Ref.get(exchanges), 1);
+    }),
+);
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",

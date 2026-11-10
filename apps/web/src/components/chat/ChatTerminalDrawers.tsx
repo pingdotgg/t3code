@@ -4,7 +4,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import type { TerminalContextSelection } from "../../lib/terminalContext";
@@ -15,10 +15,21 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   reconcileMountedTerminalThreadIds,
 } from "../ChatView.logic";
-import {
-  PersistentThreadTerminalDrawer,
-  type PersistentTerminalLaunchContext,
-} from "../PersistentThreadTerminals";
+import type { PersistentTerminalLaunchContext } from "../PersistentThreadTerminals";
+
+import { loadTerminalPanel } from "./panelModules";
+import { loadCommandPaletteDialog } from "../../commandPaletteModule";
+import { idleAfterPaint } from "../../lib/idleAfterPaint";
+
+let loadedTerminalDrawer:
+  | typeof import("../PersistentThreadTerminals").PersistentThreadTerminalDrawer
+  | undefined;
+const loadTerminalDrawer = () =>
+  loadTerminalPanel().then((module) => {
+    void module.preloadTerminalSymbolsFont();
+    loadedTerminalDrawer = module.PersistentThreadTerminalDrawer;
+    return module.PersistentThreadTerminalDrawer;
+  });
 
 interface ChatTerminalDrawersProps {
   readonly activeThreadKey: string | null;
@@ -39,6 +50,24 @@ interface ChatTerminalDrawersProps {
  * state feeds the reconcile, so it subscribes here instead of in ChatView.
  */
 export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
+  const [TerminalDrawer, setTerminalDrawer] = useState(() => loadedTerminalDrawer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- This mounts with the thread shell; preload closed features only after that shell paints.
+  useEffect(() => {
+    let active = true;
+    const cancel = idleAfterPaint(() => {
+      void loadTerminalDrawer().then(
+        (Drawer) => {
+          if (active) setTerminalDrawer(() => Drawer);
+        },
+        () => {},
+      );
+      void loadCommandPaletteDialog().catch(() => {});
+    });
+    return () => {
+      active = false;
+      cancel();
+    };
+  }, []);
   const { activeThreadKey } = props;
   const openTerminalThreadKeys = useTerminalUiStateStore(
     useShallow((state) =>
@@ -83,25 +112,53 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
   ) {
     setMountedTerminalThreadKeys(reconciledMountedTerminalThreadKeys);
   }
-  const mountedTerminalThreadRefs = mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
+  // Prepare metadata at idle without creating a surface or attaching a session.
+  const preparedThreadKeys =
+    activeThreadKey && !mountedTerminalThreadKeys.includes(activeThreadKey)
+      ? [...mountedTerminalThreadKeys, activeThreadKey]
+      : mountedTerminalThreadKeys;
+  const preparedTerminalThreadRefs = preparedThreadKeys.flatMap((mountedThreadKey) => {
     const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
     return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
   });
 
-  return mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-    <PersistentThreadTerminalDrawer
-      key={mountedThreadKey}
-      threadRef={mountedThreadRef}
-      threadId={mountedThreadRef.threadId}
-      active={mountedThreadKey === activeThreadKey}
-      composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
-      launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
-      splitShortcutLabel={props.splitShortcutLabel}
-      splitVerticalShortcutLabel={props.splitVerticalShortcutLabel}
-      newShortcutLabel={props.newShortcutLabel}
-      closeShortcutLabel={props.closeShortcutLabel}
-      keybindings={props.keybindings}
-      onAddTerminalContext={props.onAddTerminalContext}
-    />
-  ));
+  const needsDrawer = mountedTerminalThreadKeys.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- An explicit open loads the drawer when it precedes optional idle preloading.
+  useEffect(() => {
+    if (!needsDrawer || TerminalDrawer) return;
+    let active = true;
+    void loadTerminalDrawer().then(
+      (Drawer) => {
+        if (active) setTerminalDrawer(() => Drawer);
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, [needsDrawer, TerminalDrawer]);
+
+  if (!TerminalDrawer) return null;
+
+  return preparedTerminalThreadRefs.map(
+    ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+      <TerminalDrawer
+        key={mountedThreadKey}
+        threadRef={mountedThreadRef}
+        threadId={mountedThreadRef.threadId}
+        active={
+          mountedThreadKey === activeThreadKey &&
+          mountedTerminalThreadKeys.includes(mountedThreadKey)
+        }
+        composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
+        launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
+        splitShortcutLabel={props.splitShortcutLabel}
+        splitVerticalShortcutLabel={props.splitVerticalShortcutLabel}
+        newShortcutLabel={props.newShortcutLabel}
+        closeShortcutLabel={props.closeShortcutLabel}
+        keybindings={props.keybindings}
+        onAddTerminalContext={props.onAddTerminalContext}
+      />
+    ),
+  );
 }

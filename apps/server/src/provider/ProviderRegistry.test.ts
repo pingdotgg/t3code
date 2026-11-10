@@ -53,6 +53,8 @@ import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
@@ -1204,10 +1206,19 @@ it.layer(
       it.effect("persists removals across failed refreshes and registry restarts", () =>
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
           const filePath = yield* resolveProviderStatusCachePath({
             cacheDir: config.providerStatusCacheDir,
             instanceId: cachedProvider.instanceId,
           });
+          yield* writeProviderStatusCache({
+            filePath,
+            provider: { ...pendingProvider, version: null },
+          });
+          assert.isFalse(yield* fs.exists(filePath));
+          yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
+          yield* writeProviderStatusCache({ filePath, provider: pendingProvider });
+          assert.deepEqual(yield* readProviderStatusCache(filePath), pendingProvider);
           yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
           const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
           const currentProvider = yield* Ref.make<ServerProvider>(pendingProvider);
@@ -2645,6 +2656,48 @@ it.layer(
           slashCommands: [],
           skills: [],
         } as const satisfies ServerProvider;
+        const discoveryStarted = yield* Deferred.make<void>();
+        const discoveryResult = yield* Deferred.make<ServerProvider>();
+        const releaseEnrichment = yield* Deferred.make<void>();
+        const enrichmentCalls = yield* Ref.make(0);
+        const models = [
+          { slug: "live-model", name: "Live model", isCustom: false, capabilities: null },
+        ];
+        const snapshot = yield* makeManagedServerProvider({
+          resolveMaintenance: () => Effect.die("unused maintenance"),
+          getSettings: Effect.succeed({}),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(cachedProvider),
+          checkProvider: Deferred.succeed(discoveryStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(discoveryResult)),
+          ),
+          enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+            Ref.update(enrichmentCalls, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.await(releaseEnrichment)),
+              Effect.andThen(publishSnapshot({ ...snapshot, models })),
+            ),
+          refreshInterval: "1 hour",
+        }).pipe(
+          Effect.provideService(ProviderHost.ProviderHost, {
+            paths: {
+              cwd: process.cwd(),
+              baseDir: "/t3",
+              stateDir: "/t3/userdata",
+              providerStatusCacheDir: "/t3/caches",
+              attachmentsDir: "/t3/userdata/attachments",
+            },
+            settings: {
+              get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+              withSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
+              changes: Stream.empty,
+              subscribe: Effect.succeed(Stream.empty),
+            },
+            shouldRunBackgroundWork: () => Effect.succeed(false),
+            resolveAttachmentPath: () => null,
+            credentials: () => Effect.die("unused credentials"),
+          }),
+        );
         const instance = {
           instanceId: codexInstanceId,
           driverKind: codexDriver,
@@ -2655,17 +2708,8 @@ it.layer(
           displayName: undefined,
           enabled: true,
           snapshot: {
-            resolveMaintenance: () =>
-              Effect.succeed(
-                makeManualOnlyProviderMaintenanceCapabilities({
-                  provider: codexDriver,
-                  packageName: null,
-                }),
-              ),
-            getSnapshot: Effect.succeed(cachedProvider),
+            ...snapshot,
             refresh: Effect.die(new Error("simulated refresh failure")),
-            streamChanges: Stream.empty,
-            applyUsageLimits: () => Effect.void,
           },
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
@@ -2711,6 +2755,35 @@ it.layer(
           assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
             withBundledCompatibility(cachedProvider),
           ]);
+          yield* Deferred.await(discoveryStarted);
+          const discovery = yield* registry.discoverProviders.pipe(Effect.forkChild);
+          assert.deepStrictEqual(yield* registry.getProviders, [
+            withBundledCompatibility(cachedProvider),
+          ]);
+          const signedOut = {
+            ...cachedProvider,
+            status: "error" as const,
+            auth: { status: "unauthenticated" as const },
+          };
+          yield* Deferred.succeed(discoveryResult, signedOut);
+          assert.deepStrictEqual(yield* Fiber.join(discovery), [
+            withBundledCompatibility(signedOut),
+          ]);
+          const enriched = yield* registry.streamChanges.pipe(
+            Stream.filter((providers) => providers.some((provider) => provider.models.length > 0)),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(releaseEnrichment, undefined);
+          yield* TestClock.adjust("0 seconds");
+          assert.strictEqual(yield* Ref.get(enrichmentCalls), 1);
+          yield* Fiber.join(enriched);
+          // Agent discovery and reconnects reuse the completed enrichment.
+          assert.deepStrictEqual(yield* registry.discoverProviders, [
+            withBundledCompatibility({ ...signedOut, models }),
+          ]);
+          assert.strictEqual(yield* Ref.get(enrichmentCalls), 1);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

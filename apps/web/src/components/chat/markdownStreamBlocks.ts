@@ -9,7 +9,7 @@ const CONTINUATION_PATTERN = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
  * would inside the whole text. Returns null when the text uses syntax that spans blocks.
  */
 export function splitMarkdownBlocks(text: string): string[] | null {
-  if (text.includes("\r") || DOCUMENT_WIDE_SYNTAX.test(text)) return null;
+  if (text.includes("\r") || text.includes("\uFEFF")) return null;
   const blocks: string[] = [];
   let blockStart = 0;
   let lineStart = 0;
@@ -17,7 +17,12 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   let fenceIndent = 0;
   let afterBlankLine = false;
   for (const line of text.split("\n")) {
-    const opener = FENCE_PATTERN.exec(line)?.[1];
+    if (fence === null && DOCUMENT_WIDE_SYNTAX.test(line)) return null;
+    const match = FENCE_PATTERN.exec(line);
+    const opener =
+      match && !(match[1]![0] === "`" && line.slice(match[0].length).includes("`"))
+        ? match[1]
+        : undefined;
     if (fence !== null) {
       // A line left of an indented fence may end the list item holding it, which isn't tracked.
       if (/\S/.test(line.slice(0, fenceIndent))) break;
@@ -44,4 +49,31 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   }
   blocks.push(text.slice(blockStart));
   return blocks;
+}
+
+/** Keeps closed blocks while rescanning the open tail of an append-only reply. */
+export function createMarkdownBlockSplitter() {
+  let previous = "";
+  let offset = 0;
+  let closed: string[] = [];
+  let documentWide = false;
+  return (text: string): string[] | null => {
+    if (!text.startsWith(previous)) {
+      offset = 0;
+      closed = [];
+      documentWide = false;
+    }
+    previous = text;
+    if (documentWide) return null;
+    const tail = splitMarkdownBlocks(text.slice(offset));
+    if (tail === null) {
+      documentWide = true;
+      return null;
+    }
+    // A partial first line can still turn into a list continuation, joining the prior block.
+    const finished = tail.slice(0, -2);
+    closed = closed.concat(finished);
+    for (const block of finished) offset += block.length;
+    return closed.concat(tail.slice(-2));
+  };
 }

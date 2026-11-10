@@ -200,7 +200,8 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         }
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
-          db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+          // This database holds only a lock, so there is nothing to roll back.
+          db.exec("PRAGMA busy_timeout = 0; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE;");
           const identity = NodeFS.statSync(lockPath, { bigint: true });
           return {
             db,

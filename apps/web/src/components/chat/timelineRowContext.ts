@@ -51,6 +51,8 @@ export interface TimelineRowSharedState {
     | undefined;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
+  imperativeLiveRowId?: string | undefined;
+  liveFollowEnabled?: boolean | undefined;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
   threadRef: ScopedThreadRef | null;

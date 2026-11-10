@@ -184,11 +184,13 @@ const valuesOf = (stored: Map<string, Uint8Array>) =>
 it.effect("a saved answer becomes a one-use ref, and the thread only learns it was saved", () =>
   withService(({ service, stored, dispatched }) =>
     Effect.gen(function* () {
+      assert.isFalse(stored.has("secret-request-salt"));
       yield* service.answer({
         threadId,
         turnItemId,
         answer: { type: "save", secret: "ghp_secret" },
       });
+      assert.isTrue(stored.has("secret-request-salt"));
       assert.equal(dispatched.length, 1);
       assert.include(dispatched[0] as object, {
         type: "secret_request.record",

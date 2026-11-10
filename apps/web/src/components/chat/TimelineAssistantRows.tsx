@@ -23,16 +23,10 @@ import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../times
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
+import { ImperativeLiveMarkdown } from "./ImperativeLiveMarkdown";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  // The timeline holds a streaming message's row while only its text grows.
-  const liveText = useAssistantMessageText(
-    row.message.streaming ? ctx.threadRef : null,
-    row.projectedItem?.item.id,
-  );
-  const text = liveText ?? row.message.text;
-  const messageText = text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
@@ -46,18 +40,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
+            <AssistantMessageMarkdown row={row} />
           </AssistantCitationSource>
         </div>
         {ctx.onOpenTurnDiff ? (
@@ -79,6 +62,58 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
         ) : null}
       </div>
     </>
+  );
+}
+
+function AssistantMessageMarkdown({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const [fallback, setFallback] = useState(false);
+  if (
+    !fallback &&
+    row.message.streaming &&
+    ctx.threadRef &&
+    row.projectedItem &&
+    ctx.imperativeLiveRowId === row.id
+  ) {
+    return (
+      <ImperativeLiveMarkdown
+        threadRef={ctx.threadRef}
+        itemId={row.projectedItem.item.id}
+        initialText={row.message.text}
+        theme={ctx.resolvedTheme}
+        followEnabled={ctx.liveFollowEnabled ?? true}
+        onFallback={() => setFallback(true)}
+      />
+    );
+  }
+  return <ReactAssistantMessageMarkdown row={row} />;
+}
+
+function ReactAssistantMessageMarkdown({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const liveText = useAssistantMessageText(
+    row.message.streaming ? ctx.threadRef : null,
+    row.projectedItem?.item.id,
+  );
+  const text = liveText ?? row.message.text;
+  const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  return (
+    <ChatMarkdown
+      text={messageText}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      isStreaming={Boolean(row.message.streaming)}
+      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+      skills={ctx.skills}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onRunShellCommand={ctx.onRunShellCommand}
+      onImageExpand={ctx.onImageExpand}
+    />
   );
 }
 

@@ -42,6 +42,7 @@ import {
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpClientAuthenticator from "./McpClientAuthenticator.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -118,15 +119,6 @@ const unauthorized = (input: {
   );
 };
 
-export class McpClientAuthenticator extends Context.Service<
-  McpClientAuthenticator,
-  {
-    readonly authenticate: (
-      request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<McpInvocationContext.McpInvocationScope | undefined>;
-  }
->()("t3/mcp/McpHttpServer/McpClientAuthenticator") {}
-
 type AuthenticatedHttpEffect = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   Types.unhandled,
@@ -196,7 +188,7 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
-  const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const clients = yield* Effect.serviceOption(McpClientAuthenticator.McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const linksEnabled = serverSettings.getSettings.pipe(

@@ -1,5 +1,6 @@
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { registerCommands } from "../../shortcuts/dispatcher";
+import { observeResize } from "../../lib/observeResize";
 import {
   eventPathContainsSelector,
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
@@ -113,9 +114,12 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
-  const scrolledUp = createUpwardScrollDetector({
-    top: scrollNode.scrollTop,
-    height: scrollNode.scrollHeight,
+  let height = scrollNode.scrollHeight;
+  let viewportHeight = scrollNode.clientHeight;
+  const content = scrollNode.firstElementChild;
+  const stopObservingSize = observeResize(content ? [scrollNode, content] : scrollNode, () => {
+    height = scrollNode.scrollHeight;
+    viewportHeight = scrollNode.clientHeight;
   });
   // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
   // the reader's: the browser clamps scrollTop when content briefly shrinks.
@@ -123,23 +127,38 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     scrollNode.querySelector("iframe:hover") !== null ||
     (document.activeElement instanceof HTMLIFrameElement &&
       scrollNode.contains(document.activeElement));
-  const handleScroll = () => {
+  const scrolledUp = createUpwardScrollDetector({ top: scrollNode.scrollTop, height });
+  let scrollFrame: number | null = null;
+  let programmaticScroll = false;
+  const measureScroll = () => {
+    scrollFrame = null;
+    if (typeof ResizeObserver === "undefined") {
+      height = scrollNode.scrollHeight;
+      viewportHeight = scrollNode.clientHeight;
+    }
+    const top = scrollNode.scrollTop;
+    const programmatic = programmaticScroll || programmaticHolds > 0;
+    programmaticScroll = false;
     if (
       scrolledUp({
-        top: scrollNode.scrollTop,
-        height: scrollNode.scrollHeight,
-        programmatic: programmaticHolds > 0,
+        top,
+        height,
+        programmatic,
       }) &&
       frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
-        contentLength: scrollNode.scrollHeight,
-        scroll: scrollNode.scrollTop,
-        scrollLength: scrollNode.clientHeight,
+        contentLength: height,
+        scroll: top,
+        scrollLength: viewportHeight,
       }) === false
     ) {
       emit({ source: "scroll" });
     }
+  };
+  const handleScroll = () => {
+    programmaticScroll ||= programmaticHolds > 0;
+    scrollFrame ??= requestAnimationFrame(measureScroll);
   };
   scrollNode.addEventListener("scroll", handleScroll, { passive: true });
   scrollNode.addEventListener("wheel", handleWheel, { passive: true });
@@ -170,6 +189,8 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       return () => followReleasedListeners.delete(listener);
     },
     dispose: () => {
+      stopObservingSize();
+      if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
       listeners.clear();
       followReleasedListeners.clear();
       scrollNode.removeEventListener("scroll", handleScroll);

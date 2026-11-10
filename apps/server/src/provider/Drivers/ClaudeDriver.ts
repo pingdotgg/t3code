@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
+import { makeLazyTextGeneration } from "../../textGeneration/lazyTextGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
@@ -171,10 +171,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           }),
       ),
     );
-    const textGeneration = yield* makeClaudeTextGeneration(
-      effectiveConfig,
-      processEnv,
-      modelCatalog,
+    const textGeneration = yield* makeLazyTextGeneration(
+      Effect.promise(() => import("../../textGeneration/ClaudeTextGeneration.ts")).pipe(
+        Effect.flatMap((module) =>
+          module.makeClaudeTextGeneration(effectiveConfig, processEnv, modelCatalog),
+        ),
+      ),
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so

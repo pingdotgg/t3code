@@ -8,6 +8,7 @@ import type {
   ThreadStructureVisibleTurnItem,
 } from "@t3tools/client-runtime/state/shell";
 import {
+  subscribeAssistantMessageText as subscribeLiveAssistantMessageText,
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
@@ -252,6 +253,19 @@ export function useAssistantMessageText(
     ref === null || itemId === undefined
       ? EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM
       : environmentThreadDetails.assistantMessageTextAtom(ref, itemId),
+  );
+}
+
+export function subscribeAssistantMessageText(
+  ref: ScopedThreadRef,
+  itemId: string,
+  listener: (text: string | null) => void,
+): () => void {
+  return subscribeLiveAssistantMessageText(
+    appAtomRegistry,
+    environmentThreadDetails.stateAtom(ref),
+    itemId,
+    listener,
   );
 }
 

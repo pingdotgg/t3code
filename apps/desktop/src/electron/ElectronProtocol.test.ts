@@ -1,3 +1,4 @@
+import * as NodeZlib from "node:zlib";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -58,10 +59,28 @@ describe("ElectronProtocol", () => {
       assert.equal(yield* Effect.promise(() => script.text()), "export default 1;");
       assert.include(script.headers.get("content-type") ?? "", "javascript");
 
+      const source = "export const compressed = true;".repeat(4_096);
+      for (const [suffix, compress] of [
+        ["gz", NodeZlib.gzipSync],
+        ["br", NodeZlib.brotliCompressSync],
+      ] as const) {
+        yield* fileSystem.writeFile(`${directory}/compressed.js.${suffix}`, compress(source));
+        const compressedScript = yield* request("/compressed.js");
+        assert.equal(compressedScript.status, 200);
+        assert.equal(yield* Effect.promise(() => compressedScript.text()), source);
+        assert.include(compressedScript.headers.get("content-type") ?? "", "javascript");
+        const head = yield* request("/compressed.js", { method: "HEAD" });
+        assert.equal(head.status, 200);
+        assert.equal(yield* Effect.promise(() => head.text()), "");
+
+        yield* fileSystem.remove(`${directory}/compressed.js.${suffix}`);
+      }
       assert.equal((yield* request("/missing.js")).status, 404);
       assert.equal((yield* request("/%2e%2e%2fsecret.txt")).status, 404);
       assert.equal((yield* request("/%invalid")).status, 400);
       assert.equal((yield* request("/", { method: "POST" })).status, 405);
+      yield* fileSystem.remove(`${directory}/index.html`);
+      assert.equal((yield* request("/missing-route", { method: "HEAD" })).status, 404);
       assert.equal(netFetchMock.mock.calls.length, 0);
     }).pipe(Effect.provide(Layer.merge(layerProtocol, NodeServices.layer)), Effect.scoped),
   );

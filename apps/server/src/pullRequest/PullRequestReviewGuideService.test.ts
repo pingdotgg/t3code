@@ -205,6 +205,7 @@ const makeLayer = (input: {
     Layer.provide(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
         getProviders: Effect.succeed([]),
+        discoverProviders: Effect.succeed([]),
       } as unknown as ProviderRegistry.ProviderRegistry["Service"]),
     ),
     Layer.provide(

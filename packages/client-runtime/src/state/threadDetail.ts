@@ -5,8 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   deriveThreadQueueWorkflowState,
@@ -41,6 +40,7 @@ import {
 } from "./threadRequests.ts";
 import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
+import { lazySchemaEquivalence } from "./schemaEquivalence.ts";
 
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
   [],
@@ -137,8 +137,8 @@ function toThreadStructure(projection: OrchestrationV2ThreadProjection): ThreadS
   };
 }
 
-const sameTurnItem = Schema.toEquivalence(OrchestrationV2TurnItem);
-const sameAppThread = Schema.toEquivalence(OrchestrationV2AppThread);
+const sameTurnItem = lazySchemaEquivalence(OrchestrationV2TurnItem);
+const sameAppThread = lazySchemaEquivalence(OrchestrationV2AppThread);
 
 // Overlays previous's structure on next, so the fields the strip functions
 // remove are exactly the ones ignored here.
@@ -150,7 +150,10 @@ function sameApartFromStripped<T extends object>(
 ): boolean {
   return (
     Object.keys(previous).length === Object.keys(next).length &&
-    same(Object.assign({}, next, previousStructure), next)
+    (Object.keys(previousStructure).every(
+      (key) => Reflect.get(previous, key) === Reflect.get(next, key),
+    ) ||
+      same(Object.assign({}, next, previousStructure), next))
   );
 }
 
@@ -249,6 +252,29 @@ export function sameThreadStructure(
   );
 }
 
+export function subscribeAssistantMessageText(
+  registry: AtomRegistry.AtomRegistry,
+  stateAtom: Atom.Atom<EnvironmentThreadState>,
+  itemId: string,
+  listener: (text: string | null) => void,
+): () => void {
+  let previous: string | null | undefined;
+  return registry.subscribe(
+    stateAtom,
+    (state) => {
+      const item = Option.getOrNull(state.data)?.visibleTurnItems.findLast(
+        (visible) => visible.item.id === itemId,
+      )?.item;
+      const text = item?.type === "assistant_message" ? item.text : null;
+      if (text !== previous) {
+        previous = text;
+        listener(text);
+      }
+    },
+    { immediate: true },
+  );
+}
+
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
     environmentId: ScopedThreadRef["environmentId"],
@@ -278,6 +304,38 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread:${key}`));
   });
 
+  // Subscribe across the boundary: equality in a derived atom still invalidates its children.
+  const structureStateAtomFamily = Atom.family((key: string) =>
+    Atom.make((get) => {
+      let previous = get.once(threadStateValueAtomFamily(key));
+      get.subscribe(threadStateValueAtomFamily(key), (next) => {
+        const before = Option.getOrNull(previous.data);
+        const after = Option.getOrNull(next.data);
+        const same =
+          previous.status === next.status &&
+          (previous.error === next.error ||
+            (Option.isNone(previous.error) && Option.isNone(next.error))) &&
+          previous.history === next.history &&
+          before !== null &&
+          after !== null &&
+          sameThreadStructure(before, after) &&
+          sameApartFromStreamedAssistantText(before.visibleTurnItems, after.visibleTurnItems) &&
+          before.thread.lastVisitedAt === after.thread.lastVisitedAt;
+        previous = next;
+        if (!same) get.setSelf(next);
+      });
+      return previous;
+    }).pipe(Atom.setIdleTTL(0)),
+  );
+
+  const structureThreadAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
+      return projection === null ? null : { environmentId: ref.environmentId, projection };
+    }).pipe(Atom.setIdleTTL(0));
+  });
+
   // Streamed assistant and reasoning text replaces an item several times a
   // second. Readers of the thread's structure (runs, requests, which items
   // exist and their status) keep the previous value through those updates.
@@ -285,7 +343,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     let previousProjection: OrchestrationV2ThreadProjection | null = null;
     let previous: EnvironmentThreadStructure | null = null;
     return Atom.make((get) => {
-      const next = get(threadAtomFamily(key));
+      const next = get(structureThreadAtomFamily(key));
       if (next === null) {
         previousProjection = null;
         previous = null;
@@ -354,11 +412,16 @@ export function createEnvironmentThreadDetailAtoms<E>(
   // Holds while only streamed assistant text moves, so the timeline re-renders on structure;
   // each streaming message reads its text through assistantMessageTextAtom.
   const timelineVisibleTurnItemsAtomFamily = Atom.family((key: string) => {
+    const projectQuestionHistory = createQuestionHistoryProjector();
     let previous = EMPTY_VISIBLE_TURN_ITEMS;
+    let value = EMPTY_VISIBLE_TURN_ITEMS;
     return Atom.make((get) => {
-      const next = get(visibleTurnItemsAtomFamily(key));
-      if (!sameApartFromStreamedAssistantText(previous, next)) previous = next;
-      return previous;
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
+      const next =
+        projection === null ? EMPTY_VISIBLE_TURN_ITEMS : projectQuestionHistory(projection);
+      if (!sameApartFromStreamedAssistantText(previous, next)) value = next;
+      previous = next;
+      return value;
     }).pipe(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-thread-timeline-visible-turn-items:${key}`),
@@ -370,7 +433,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     const thread = key.slice(0, separator);
     const itemId = key.slice(separator + 1);
     return Atom.make((get) => {
-      const item = get(visibleTurnItemsAtomFamily(thread)).find(
+      const item = get(visibleTurnItemsAtomFamily(thread)).findLast(
         (visibleItem) => visibleItem.item.id === itemId,
       )?.item;
       return item?.type === "assistant_message" ? item.text : null;
@@ -384,7 +447,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     > | null = null;
     let value: ThreadQueueWorkflowState | null = null;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         value = null;
@@ -409,7 +472,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems"> | null = null;
     let stop: RunStopPresentation | null = null;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         stop = null;
@@ -435,7 +498,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
     let count = 0;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         count = 0;
@@ -452,7 +515,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents"> | null = null;
     let value: ThreadTurnSubagents | null = null;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         value = null;
@@ -472,7 +535,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     let previous: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "messages"> | null = null;
     let value = EMPTY_CHECKPOINT_SUMMARIES;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         value = EMPTY_CHECKPOINT_SUMMARIES;
@@ -491,7 +554,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
   const lastVisitedAtAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get) =>
-        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.lastVisitedAt ?? null,
+        Option.getOrNull(get(structureStateAtomFamily(key)).data)?.thread.lastVisitedAt ?? null,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-last-visited:${key}`)),
   );
   const updatedAtAtomFamily = Atom.family((key: string) =>
@@ -502,7 +565,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
   const worktreePathAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get) =>
-        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.worktreePath ?? null,
+        Option.getOrNull(get(structureStateAtomFamily(key)).data)?.thread.worktreePath ?? null,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
@@ -510,7 +573,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       null;
     let value: PendingThreadRequests | null = null;
     return Atom.make((get) => {
-      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const projection = Option.getOrNull(get(structureStateAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         value = null;
@@ -541,7 +604,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
   });
 
   const statusAtomFamily = Atom.family((key: string) =>
-    Atom.make((get) => get(threadStateValueAtomFamily(key)).status).pipe(
+    Atom.make((get) => get(structureStateAtomFamily(key)).status).pipe(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-thread-status:${key}`),
     ),
@@ -589,6 +652,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       checkpointSummariesAtomFamily(threadKey(ref)),
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
+    structureThreadAtom: (ref: ScopedThreadRef) => structureThreadAtomFamily(threadKey(ref)),
     quietThreadAtom: (ref: ScopedThreadRef) => quietThreadAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>

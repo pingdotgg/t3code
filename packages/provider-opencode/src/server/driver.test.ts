@@ -475,6 +475,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             Effect.forkChild,
           )
         : undefined;
+      if (!scenario.demand) {
+        yield* TestClock.adjust("5 seconds");
+        assert.strictEqual(usageReads, 0);
+        yield* instance.snapshot.ensureReady!.pipe(Effect.forkChild);
+      }
       if (scenario.enabled && !scenario.unsupported) yield* Deferred.await(usageStarted);
       yield* TestClock.adjust("5 seconds");
       const failed = initial

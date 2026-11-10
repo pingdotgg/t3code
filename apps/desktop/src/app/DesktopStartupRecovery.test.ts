@@ -1,22 +1,25 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
+import type * as Electron from "electron";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import * as DesktopState from "./DesktopState.ts";
+import { describe, expect, vi } from "vite-plus/test";
+
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
-
 import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopState from "./DesktopState.ts";
 import { listen, resolveStartupRecoveryOffer } from "./DesktopStartupRecovery.ts";
 
 const updateState = (patch: Partial<DesktopUpdateState>): DesktopUpdateState => ({
@@ -28,6 +31,65 @@ const updateState = (patch: Partial<DesktopUpdateState>): DesktopUpdateState => 
   enabled: true,
   ...patch,
 });
+
+it.effect(
+  "shows startup recovery when the early main window is still waiting for its backend",
+  () =>
+    Effect.gen(function* () {
+      const loadURL = vi.fn();
+      const recoveryWindow = {
+        isDestroyed: () => false,
+        loadURL,
+        once: vi.fn(),
+        webContents: { setWindowOpenHandler: vi.fn(), on: vi.fn() },
+      } as unknown as Electron.BrowserWindow;
+      const checked = yield* Deferred.make<void>();
+      const main = yield* Ref.make(Option.some({} as Electron.BrowserWindow));
+      const backendReady = yield* Ref.make(false);
+      const quitting = yield* Ref.make(false);
+      const primaryBackendStartup = yield* SubscriptionRef.make<DesktopState.PrimaryBackendStartup>(
+        {
+          _tag: "Failing",
+          reason: "Backend could not start",
+          managedPolicy: false,
+          output: "startup failed",
+        },
+      );
+      const path = yield* Path.Path;
+      yield* listen.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(DesktopState.DesktopState, {
+              backendReady,
+              quitting,
+              primaryBackendStartup,
+            }),
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              path,
+              stateDir: "/state",
+              appVersion: "0.1.3",
+              logDir: "/logs",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+            Layer.mock(ElectronApp.ElectronApp)({ on: () => Effect.void }),
+            Layer.mock(ElectronShell.ElectronShell)({}),
+            Layer.mock(ElectronTheme.ElectronTheme)({ shouldUseDarkColors: Effect.succeed(false) }),
+            Layer.mock(ElectronWindow.ElectronWindow)({
+              main: Ref.get(main),
+              create: () => Effect.succeed(recoveryWindow),
+            }),
+            Layer.mock(DesktopUpdates.DesktopUpdates)({
+              subscribe: Effect.succeed({ latest: updateState({}), changes: Stream.empty }),
+              check: () => Deferred.succeed(checked, undefined).pipe(Effect.andThen(Effect.never)),
+            }),
+            FileSystem.layerNoop({ readFileString: () => Effect.succeed("0.1.3") }),
+          ),
+        ),
+      );
+      yield* Deferred.await(checked);
+      expect(loadURL).toHaveBeenCalledOnce();
+      expect(decodeURIComponent(loadURL.mock.calls[0]?.[0] as string)).toContain("startup failed");
+    }).pipe(Effect.scoped, Effect.provide(Path.layer)),
+);
 
 describe("resolveStartupRecoveryOffer", () => {
   it("offers a newer version before going back", () => {

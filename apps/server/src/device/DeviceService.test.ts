@@ -100,6 +100,7 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
+  const commands: Array<{ command: string; args: ReadonlyArray<string> }> = [];
   const closedSessions: unknown[] = [];
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
@@ -200,10 +201,12 @@ const fixture = Effect.fn("fixture")(function* (
       );
     }),
   );
-  const run = (command: string) =>
-    command === "emulator"
+  const run: DeviceHost.DeviceHostReady["run"] = (command, args) => {
+    commands.push({ command, args });
+    return command === "emulator"
       ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
       : Ref.get(encoderResult);
+  };
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -332,6 +335,7 @@ const fixture = Effect.fn("fixture")(function* (
     agentStarts,
     agentStops,
     requests,
+    commands,
     settings,
     closedSessions,
     connection,
@@ -465,7 +469,7 @@ describe("device setup consent", () => {
 
   it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
     Effect.gen(function* () {
-      const { service, requests } = yield* fixture();
+      const { service, requests, commands } = yield* fixture();
       yield* service.configure({ enabled: true });
       const session = yield* service.open({
         threadId: ThreadId.make("thread-1"),
@@ -477,6 +481,19 @@ describe("device setup consent", () => {
       const state = yield* service.state;
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
+      expect(yield* service.detail({ deviceId: session.deviceId })).toMatchObject({
+        deviceId: "emulator-5554",
+        foregroundApp: null,
+      });
+      expect(
+        yield* service.action({ deviceId: session.deviceId, type: "setAppearance", value: "dark" }),
+      ).toMatchObject({
+        deviceId: "emulator-5554",
+      });
+      expect(commands).toContainEqual({
+        command: "adb",
+        args: ["-s", "emulator-5554", "shell", "cmd", "uimode", "night", "yes"],
+      });
     }).pipe(Effect.scoped),
   );
 

@@ -133,6 +133,7 @@ it.effect.each([false, true])(
           }),
           Effect.provideService(DesktopClerk.DesktopClerk, {
             configure: Effect.void,
+            registerProtocolClient: Effect.void,
           } as DesktopClerk.DesktopClerk["Service"]),
           Effect.provideService(ElectronSafeStorage.ElectronSafeStorage, {
             selectedStorageBackend: Effect.succeedNone,
@@ -167,6 +168,7 @@ it.effect.each([false, true])(
             quitting,
           } as DesktopState.DesktopState["Service"]),
           Effect.provideService(DesktopWindow.DesktopWindow, {
+            createMain: record("create window"),
             ensureMain: record("window").pipe(
               Effect.andThen(Deferred.succeed(windowStarted, undefined)),
             ),
@@ -248,7 +250,14 @@ it.effect.each([false, true])(
       );
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
-      assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
+      assert.deepEqual(events, [
+        "identity",
+        "ready",
+        "identity",
+        "create window",
+        "backend",
+        "window",
+      ]);
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       const shutdown = yield* DesktopShutdown.DesktopShutdown;
       yield* shutdown.request;

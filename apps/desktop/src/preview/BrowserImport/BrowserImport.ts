@@ -24,10 +24,10 @@ import type { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserSession from "../BrowserSession.ts";
-import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
+import type { ChromiumCookieReadError } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
-import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
-import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
+import type { FirefoxCookieReadError } from "./FirefoxCookies.ts";
+import type { SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   resolveCookieDatabase,
@@ -140,6 +140,7 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
   // TCC permits stat without Full Disk Access, so a listed Safari jar may still be unreadable.
   if (definition.engine === "safari") {
+    const { safariAccessDenied } = yield* Effect.promise(() => import("./SafariCookies.ts"));
     const jar = yield* resolveCookieDatabase(definition, context, ".");
     if (jar !== undefined && (yield* safariAccessDenied(jar))) return "needsFullDiskAccess";
   }
@@ -293,14 +294,16 @@ export const make = Effect.gen(function* BrowserImportMake() {
       FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
     > =
       definition.engine === "safari"
-        ? readSafariCookies(databasePath).pipe(
-            Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
-          )
+        ? (yield* Effect.promise(() => import("./SafariCookies.ts")))
+            .readSafariCookies(databasePath)
+            .pipe(Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })))
         : definition.engine === "firefox"
-          ? readFirefoxCookies(databasePath).pipe(
-              Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
-            )
-          : readChromiumCookies({
+          ? (yield* Effect.promise(() => import("./FirefoxCookies.ts")))
+              .readFirefoxCookies(databasePath)
+              .pipe(
+                Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
+              )
+          : (yield* Effect.promise(() => import("./ChromiumCookies.ts"))).readChromiumCookies({
               cookieDatabasePath: databasePath,
               keychainService: definition.keychainService,
               keychainAccount: definition.keychainAccount,

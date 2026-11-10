@@ -1233,7 +1233,7 @@ export const layer = Layer.effect(
       ),
     );
 
-    yield* scheduler.register("scheduled-tasks", runDueTasks());
+    yield* scheduler.register("scheduled-tasks", runDueTasks(), dueTasks.awaitNext);
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
@@ -2500,7 +2500,7 @@ export const layer = Layer.effect(
         { discard: true },
       );
     });
-    yield* scheduler.register("webhook-coalescing", dispatchPending());
+    yield* scheduler.register("webhook-coalescing", dispatchPending(), pendingWebhooks.awaitNext);
 
     return ScheduledTaskService.of({
       list,

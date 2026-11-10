@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -55,7 +55,8 @@ describe("attachTimelineViewport", () => {
     scroll = scrolled();
     timeline.scrollTop -= 100;
     await scroll;
-    expect(sources).toEqual(["scroll"]);
+    // Measured on the next frame; one source also proves the earlier moves emitted none.
+    await vi.waitFor(() => expect(sources).toEqual(["scroll"]));
     viewport.dispose();
   });
 });

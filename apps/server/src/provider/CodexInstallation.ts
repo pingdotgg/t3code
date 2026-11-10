@@ -792,7 +792,6 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
     yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove }));
-    if (yield* reuseLocal()) return;
     if (!(yield* fs.exists(activePath))) return;
     const active = yield* readRecord(activePath, ActiveRelease);
     const installed = yield* completedRelease(active.version);
@@ -823,6 +822,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
 
+  const observe = yield* Effect.cached(gate.withPermit(reuseLocal()));
+
   return CodexInstallation.of({
     managedDirectory,
     resolve,
@@ -830,7 +831,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     compatibility,
     start,
     cancel,
-    state: SubscriptionRef.get(state),
+    state: observe.pipe(Effect.andThen(SubscriptionRef.get(state))),
     changes: SubscriptionRef.changes(state),
     remove,
   });

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -102,6 +103,7 @@ describe("DesktopWslBackend", () => {
         ),
       list: Effect.sync(() => (registeredWsl === undefined ? [primary] : [primary, registeredWsl])),
       primary: Effect.succeed(primary),
+      changes: Stream.empty,
       register: (spec) =>
         Effect.sync(() => {
           registeredSpec = spec;

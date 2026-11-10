@@ -1415,6 +1415,7 @@ interface TerminalManagerOptions {
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
     TerminalSubprocessCheckError
   >;
+  retainProcessTable?: Effect.Effect<void, never, Scope.Scope>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -1503,6 +1504,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
         (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
       ),
     ),
+    retainProcessTable: nativeTelemetry.retain,
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
@@ -1689,10 +1691,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   };
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
+  let subprocessPollWake: Deferred.Deferred<void> | undefined;
 
   const modifyManagerState = <A>(
     f: (state: TerminalManagerState) => readonly [A, TerminalManagerState],
-  ) => SynchronizedRef.modify(managerStateRef, f);
+  ) =>
+    SynchronizedRef.modify(managerStateRef, f).pipe(
+      Effect.tap(() =>
+        subprocessPollWake ? Deferred.succeed(subprocessPollWake, undefined) : Effect.void,
+      ),
+    );
 
   const withThreadLock = <A, E, R>(
     threadId: string,
@@ -2780,22 +2788,37 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     hasRunningSessions.pipe(
       Effect.flatMap((active) =>
         active
-          ? pollSubprocessActivity().pipe(
-              Effect.flatMap(({ snapshotSucceeded, queryElapsedMs }) => {
-                subprocessSnapshotFailureCount = snapshotSucceeded
-                  ? 0
-                  : Math.min(subprocessSnapshotFailureCount + 1, 30);
-                const delayMs = subprocessSnapshotPollDelayMs(
-                  subprocessPollIntervalMs,
-                  subprocessSnapshotFailureCount,
-                  queryElapsedMs,
-                );
-                return Effect.sleep(delayMs);
+          ? Effect.scoped(
+              Effect.gen(function* () {
+                yield* options.retainProcessTable ?? Effect.void;
+                while (yield* hasRunningSessions) {
+                  const { snapshotSucceeded, queryElapsedMs } = yield* pollSubprocessActivity();
+                  subprocessSnapshotFailureCount = snapshotSucceeded
+                    ? 0
+                    : Math.min(subprocessSnapshotFailureCount + 1, 30);
+                  const delayMs = subprocessSnapshotPollDelayMs(
+                    subprocessPollIntervalMs,
+                    subprocessSnapshotFailureCount,
+                    queryElapsedMs,
+                  );
+                  yield* Effect.sleep(delayMs);
+                }
               }),
             )
-          : Effect.sync(() => {
+          : Effect.gen(function* () {
               subprocessSnapshotFailureCount = 0;
-            }).pipe(Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs))),
+              const wake = yield* Deferred.make<void>();
+              subprocessPollWake = wake;
+              // Recheck after installing the waiter so an opening terminal cannot lose its wakeup.
+              yield* hasRunningSessions.pipe(
+                Effect.flatMap((running) => (running ? Effect.void : Deferred.await(wake))),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    subprocessPollWake = undefined;
+                  }),
+                ),
+              );
+            }),
       ),
     ),
   ).pipe(Effect.forkIn(workerScope));

@@ -314,6 +314,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     requestAnimationFrame(() => {
       const list = legendListRef.current;
       if (!list) return;
+      const viewport = list.getScrollableNode();
+      if (viewport?.querySelector("[data-imperative-live]")) {
+        viewport.scrollTop = measuredEndOffset(viewport);
+        return;
+      }
       void Promise.resolve(
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -338,13 +343,38 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     if (grew && readCurrentFollow().mode === "following") scrollToEndStable();
   }, [composerTimelineInset, readCurrentFollow, scrollToEndStable]);
 
+  const onIsAtEndChange = (isAtEnd: boolean) => {
+    const scroll = visitScroll();
+    if (!isAtEnd && readFollow().mode === "following") {
+      scroll.showScrollDebouncer.cancel();
+      setShowScrollToBottom(false);
+      return;
+    }
+    const { before, after } = followStore.dispatch(visit, {
+      type: isAtEnd ? "reachedEnd" : "leftEnd",
+    });
+    if (after === before) return;
+    if (after.mode === "following") {
+      setTimelineAnchor(releaseChatTimelineAnchor);
+      scroll.showScrollDebouncer.cancel();
+      setShowScrollToBottom(false);
+    } else {
+      scroll.showScrollDebouncer.maybeExecute();
+    }
+  };
+  const onIsAtEndChangeStable = useStableCallback(onIsAtEndChange);
+
   const handleNavigation = (navigation: TimelineNavigation) => {
     const awayFromEnd = () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
     const releases = navigationReleasesFollow(navigation, {
       contentScrollsUp: timelineRealContentOverflowsViewport,
       awayFromEnd,
     });
-    if (releases) releaseFollowForNavigation();
+    if (releases) {
+      releaseFollowForNavigation();
+      // The list can report this scroll before navigation releases follow.
+      if (navigation.source === "scroll") onIsAtEndChange(false);
+    }
   };
   const handleNavigationStable = useStableCallback(handleNavigation);
   /**
@@ -466,27 +496,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     if (readFollow().mode === "following") scrollToEndStable();
   };
   const onTimelineFooterGrowStable = useStableCallback(onTimelineFooterGrow);
-
-  const onIsAtEndChange = (isAtEnd: boolean) => {
-    const scroll = visitScroll();
-    if (!isAtEnd && readFollow().mode === "following") {
-      scroll.showScrollDebouncer.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    const { before, after } = followStore.dispatch(visit, {
-      type: isAtEnd ? "reachedEnd" : "leftEnd",
-    });
-    if (after === before) return;
-    if (after.mode === "following") {
-      setTimelineAnchor(releaseChatTimelineAnchor);
-      scroll.showScrollDebouncer.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      scroll.showScrollDebouncer.maybeExecute();
-    }
-  };
-  const onIsAtEndChangeStable = useStableCallback(onIsAtEndChange);
 
   // timelineEntries leave out reasoning rows (their text is not in the
   // structure), and reasoning counts as tool activity, like any work row.

@@ -99,10 +99,16 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
+      entry: [
+        "src/boot.ts",
+        "src/compileCache.ts",
+        "src/serverCompileCache.ts",
+        "src/initialWindow.ts",
+      ],
       clean: false,
       deps: {
-        neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
+        alwaysBundle: (id) => !id.startsWith("node:") && id !== "electron" && !id.endsWith(".cjs"),
+        neverBundle: (id) => id === "electron" || id.endsWith(".cjs"),
       },
     },
     {

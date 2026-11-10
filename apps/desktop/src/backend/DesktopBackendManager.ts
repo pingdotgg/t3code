@@ -8,11 +8,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -253,6 +253,7 @@ export interface BackendInstanceSpec {
   /** Receives the ready run's resolved URL; reading current config could race a subsequent restart. */
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
+  readonly onTopologyChanged?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
   /** Fires on each repeated crash or readiness timeout until the backend becomes ready. */
@@ -644,6 +645,19 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* SubscriptionRef.make(initialState);
+  const onTopologyChanged = spec.onTopologyChanged;
+  if (onTopologyChanged) {
+    yield* SubscriptionRef.changes(state).pipe(
+      Stream.changesWith(
+        (a, b) =>
+          a.config === b.config &&
+          a.desiredRunning === b.desiredRunning &&
+          Option.isSome(a.restartFiber) === Option.isSome(b.restartFiber),
+      ),
+      Stream.runForEach(onTopologyChanged),
+      Effect.forkScoped,
+    );
+  }
   const mutex = yield* Semaphore.make(1);
   const outputTail = yield* Ref.make("");
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.

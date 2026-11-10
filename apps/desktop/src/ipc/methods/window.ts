@@ -23,12 +23,15 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopState from "../../app/DesktopState.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -125,6 +128,31 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+export const installLocalEnvironmentBootstrapEvents = Effect.fn(
+  "desktop.ipc.window.installLocalEnvironmentBootstrapEvents",
+)(function* () {
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const windows = yield* ElectronWindow.ElectronWindow;
+  const notify = windows.sendAll(IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANGED_CHANNEL);
+  yield* Stream.runForEach(pool.changes, () => notify).pipe(Effect.forkScoped);
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const resume = () => {
+        for (const window of Electron.BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed())
+            window.webContents.send(IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANGED_CHANNEL);
+        }
+      };
+      Electron.powerMonitor.on("resume", resume);
+      return resume;
+    }),
+    (resume) =>
+      Effect.sync(() => {
+        Electron.powerMonitor.removeListener("resume", resume);
+      }),
+  );
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
@@ -190,6 +218,14 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   result: Schema.String,
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
     const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+    const state = yield* DesktopState.DesktopState;
+    yield* SubscriptionRef.changes(state.primaryBackendStartup).pipe(
+      Stream.filter((startup) => startup._tag === "Ready"),
+      Stream.take(1),
+      Stream.runDrain,
+      // A backend stuck failing falls through to the bounded exchange so callers can retry.
+      Effect.timeoutOption("15 seconds"),
+    );
     return yield* localAuth.getBearerToken;
   }),
 });
