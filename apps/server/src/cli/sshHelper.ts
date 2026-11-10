@@ -15,8 +15,11 @@ import {
   bootServiceBaseDirOf,
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
+  defaultSystemdUnitDir,
+  readSystemdUnitDirectory,
 } from "../cloud/bootService.ts";
 import { resolveBaseDir } from "../os-jank.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 /** Resolve once at launch; pairing must use that same home even in a non-login shell. */
 export const resolveSshServerHome = Effect.gen(function* () {
@@ -29,7 +32,11 @@ export const resolveSshServerHome = Effect.gen(function* () {
   const serviceFile =
     platform === "darwin"
       ? path.join(home, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
-      : path.join(home, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+      : path.join(
+          (yield* readSystemdUnitDirectory()) ??
+            defaultSystemdUnitDir(path, home, environment.XDG_CONFIG_HOME ?? ""),
+          BOOT_SERVICE_UNIT_FILE,
+        );
   const service = yield* fs.readFileString(serviceFile).pipe(
     Effect.catchIf(
       (error) => error.reason._tag === "NotFound",
@@ -42,6 +49,7 @@ export const resolveSshServerHome = Effect.gen(function* () {
 const homeDir = Command.make("home-dir").pipe(
   Command.withHandler(() =>
     resolveSshServerHome.pipe(
+      Effect.provide(ProcessRunner.layer),
       Effect.tap((home) =>
         Effect.sync(() => {
           process.stdout.write(home);

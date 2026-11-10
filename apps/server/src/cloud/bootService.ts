@@ -350,6 +350,13 @@ function launchdManager(input: {
   };
 }
 
+export const defaultSystemdUnitDir = (path: Path.Path, homeDir: string, xdgConfigHome: string) =>
+  path.join(
+    path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(homeDir, ".config"),
+    "systemd",
+    "user",
+  );
+
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
@@ -367,13 +374,7 @@ function selectBootServiceManager(input: {
       path: input.path,
       unitDir:
         input.systemdUnitDir ??
-        input.path.join(
-          input.path.isAbsolute(input.xdgConfigHome)
-            ? input.xdgConfigHome
-            : input.path.join(input.homeDir, ".config"),
-          "systemd",
-          "user",
-        ),
+        defaultSystemdUnitDir(input.path, input.homeDir, input.xdgConfigHome),
     });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
@@ -392,7 +393,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 );
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
-const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
+export const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
   function* () {
     const runner = yield* ProcessRunner.ProcessRunner;
     const path = yield* Path.Path;

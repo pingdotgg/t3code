@@ -998,8 +998,23 @@ it.effect.each(["linux", "darwin"] as const)(
         platform === "darwin"
           ? path.join(directory, "Library/LaunchAgents/com.t3tools.t3code.service.plist")
           : path.join(directory, ".config/systemd/user/t3code.service");
+      // No reachable systemd manager, so Linux falls back to the XDG config directory.
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: () =>
+          Effect.succeed({
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
       const resolve = (environment: NodeJS.ProcessEnv = {}) =>
         resolveSshServerHome.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
           Effect.provideService(HostProcess.HomeDirectory, directory),
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(HostProcess.Environment, environment),
@@ -1024,5 +1039,15 @@ it.effect.each(["linux", "darwin"] as const)(
         path.join(directory, "explicit home"),
       );
       assert.strictEqual(yield* resolve({ T3CODE_HOME: " " }), serviceHome);
+      if (platform === "linux") {
+        const xdgConfigHome = path.join(directory, "relocated config");
+        assert.strictEqual(
+          yield* resolve({ XDG_CONFIG_HOME: xdgConfigHome }),
+          path.join(directory, ".t3"),
+        );
+        yield* fs.makeDirectory(path.join(xdgConfigHome, "systemd/user"), { recursive: true });
+        yield* fs.rename(servicePath, path.join(xdgConfigHome, "systemd/user/t3code.service"));
+        assert.strictEqual(yield* resolve({ XDG_CONFIG_HOME: xdgConfigHome }), serviceHome);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
