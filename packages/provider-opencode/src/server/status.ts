@@ -12,7 +12,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -521,10 +520,11 @@ export const makeOpenCode2ModelLoader = <E>(
       return list.pipe(
         Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
         Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
-        Effect.filterOrElse(
-          (first) => Option.isNone(first) || settled(first.value),
-          () => agreeingReads,
-        ),
+        Effect.flatMap((first) => {
+          if (Option.isNone(first)) return Effect.succeedNone;
+          settled(first.value);
+          return agreeingReads;
+        }),
         Effect.map((loaded) => {
           // Fresh progress may still be partial, but a warm cache must not freeze slow catalogs.
           if (loaded._tag === "Some") lastLoaded = loaded.value;
