@@ -1032,6 +1032,70 @@ it.effect("finds a merged Forgejo pull request whose head branch was deleted", (
   ),
 );
 
+// Forgejo 15 ignores `head` on the pull request list and returns every pull request.
+it.effect("branch lookups on a Forgejo that ignores head do not each read every page", () => {
+  const listings: string[] = [];
+  const repo = { full_name: "maria/project", owner: { login: "maria" } };
+  const pulls = Array.from({ length: 120 }, (_, index) => ({
+    number: index + 1,
+    title: `PR ${index + 1}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${index + 1}`,
+    state: "open",
+    merged: false,
+    base: { ref: "main", label: "main", sha: "base", repo },
+    head: { ref: `other-${index + 1}`, label: `other-${index + 1}`, sha: "head", repo },
+  }));
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    for (const headSelector of ["feature-a", "feature-b"]) {
+      const found = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector,
+        state: "all",
+        limit: 20,
+      });
+      assert.deepStrictEqual(found, []);
+    }
+    assert.isAtMost(listings.length, 4, listings.join("\n"));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            const [path, query] = input.path.split("?");
+            if (path !== "repos/maria/project/pulls" || query === undefined)
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: input.cwd,
+                  reason: "not-found",
+                  httpStatus: 404,
+                  detail: "Forgejo API request failed (HTTP 404): Not Found",
+                }),
+              );
+            listings.push(input.path);
+            const params = new URLSearchParams(query);
+            const page = Number(params.get("page") ?? "1");
+            const size = Number(params.get("limit") ?? "50");
+            return encodeJsonEffect(pulls.slice((page - 1) * size, page * size)).pipe(
+              Effect.orDie,
+              Effect.map(processOutput),
+            );
+          },
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
   () => {
