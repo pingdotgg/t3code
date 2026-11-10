@@ -348,19 +348,38 @@ describe("MessagesTimeline work rows", () => {
     );
     await pinnedEnd("smooth");
 
+    // Read after Legend's resize delivery and its microtasks, before the frame paints.
+    const distanceAfterResize = (height: string, change: () => void) =>
+      new Promise<number>((resolve) => {
+        const observer = new ResizeObserver(() => {
+          observer.disconnect();
+          resolve(distanceFromEnd());
+        });
+        observer.observe(viewport);
+        change();
+        container.style.height = height;
+      });
+    // The newest row grows in the same resize delivery.
+    const newestParagraph = screen.getByText("Streamed reply").last().element() as HTMLElement;
+    expect(
+      await distanceAfterResize("300px", () => (newestParagraph.style.paddingBottom = "191px")),
+    ).toBeLessThan(2);
+    // The scroll-to-end settle's scrollToOffset clears Legend's follow while it runs.
+    expect(
+      await distanceAfterResize("250px", () => {
+        void props.listRef.current!.scrollToOffset({
+          offset: viewport.scrollHeight - viewport.clientHeight,
+          animated: false,
+        });
+        expect(props.listRef.current!.getState().isFollowingEnd).toBe(false);
+      }),
+    ).toBeLessThan(2);
+
     viewport.scrollTop = 0;
     await vi.waitFor(() => expect(props.listRef.current!.getState().isFollowingEnd).toBe(false));
     scrollTo.mockClear();
-    await new Promise<void>((resolve) => {
-      const observer = new ResizeObserver(() => {
-        observer.disconnect();
-        resolve();
-      });
-      observer.observe(viewport);
-      container.style.height = "500px";
-    });
+    expect(await distanceAfterResize("500px", () => {})).toBeGreaterThan(500);
     expect(scrollTo).not.toHaveBeenCalled();
-    expect(viewport.scrollTop).toBe(0);
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(
