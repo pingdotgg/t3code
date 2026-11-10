@@ -20,6 +20,7 @@ import {
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
@@ -108,12 +109,32 @@ export const makeDiscovery = Effect.gen(function* () {
     installHint: cliDiscovery.installHint,
     probe: (cwd: string) =>
       credentials.cliEnv(AUTH_HOST).pipe(
+        Effect.result,
         Effect.flatMap((env) =>
           probeSourceControlProvider({
             cwd,
             spec: cliDiscovery,
-            process: { run: (input) => process.run({ ...input, env: { ...input.env, ...env } }) },
-          }),
+            process: {
+              run: (input) =>
+                process.run({
+                  ...input,
+                  env: { ...input.env, ...(Result.isSuccess(env) ? env.success : {}) },
+                }),
+            },
+          }).pipe(
+            Effect.map((item) =>
+              Result.isSuccess(env)
+                ? item
+                : {
+                    ...item,
+                    auth: providerAuth({
+                      status: "unauthenticated",
+                      host: AUTH_HOST,
+                      detail: env.failure.message,
+                    }),
+                  },
+            ),
+          ),
         ),
       ),
     refineUnknownRemote: () => Effect.succeed(null),
@@ -165,7 +186,7 @@ const cloneUrls = (target: Target) => ({
 });
 
 const isSshRemote = (remoteUrl: string | undefined) =>
-  remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
+  remoteUrl !== undefined && isSshRemoteUrl(remoteUrl);
 
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
