@@ -8,11 +8,13 @@ internal import ExpoWidgets
 struct AgentWidgetTimelineProvider: TimelineProvider {
   struct Entry: TimelineEntry {
     let cached: WidgetsTimelineEntry
+    // Placeholders carry only the embedded layout's props, never account data.
+    var isPlaceholder = false
     var date: Date { cached.date }
   }
   private let cached = WidgetsTimelineProvider(name: "AgentActivity")
 
-  func placeholder(in context: Context) -> Entry { Entry(cached: cached.placeholder(in: context)) }
+  func placeholder(in context: Context) -> Entry { Entry(cached: cached.placeholder(in: context), isPlaceholder: true) }
   func getSnapshot(in context: Context, completion: @escaping @Sendable (Entry) -> Void) {
     cached.getTimeline(in: context) { timeline in
       let entry = timeline.entries.last(where: { entry in
@@ -42,7 +44,7 @@ struct AgentWidgetEntryView: View {
 
   var body: some View {
     // WidgetKit may retain an entry already handed out before account cleanup.
-    if AgentWidgetStorage.withLock({ AgentWidgetStorage.owns(entry.cached.props, in: $0) }) == true {
+    if entry.isPlaceholder || AgentWidgetStorage.withLock({ AgentWidgetStorage.owns(entry.cached.props, in: $0) }) == true {
       WidgetsEntryView(entry: entry.cached)
     } else {
       ZStack {
