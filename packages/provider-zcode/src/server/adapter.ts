@@ -1702,12 +1702,21 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       );
       yield* bootstrapProviderRegistry();
 
-      const subscribeSession = (sessionId: string) =>
-        request("session/subscribe", {
+      const subscribeSession = Effect.fnUntraced(function* (sessionId: string) {
+        const result = yield* request("session/subscribe", {
           sessionId,
           deliveryKind: "desktop-continuous",
           includeSnapshot: true,
         });
+        // The snapshot advertises the session's executable models; resume needs it as much as
+        // create, since a restart replays threads through resume without a fresh create result.
+        const snapshot = zcodeRecordField(Predicate.isObject(result) ? result : {}, "snapshot");
+        const settings = zcodeRecordField(Predicate.isObject(snapshot) ? snapshot : {}, "settings");
+        const model = zcodeRecordField(Predicate.isObject(settings) ? settings : {}, "model");
+        const models = parseZcodeAvailableModels(model);
+        if (models.length > 0) availableModels = models;
+        return result;
+      });
 
       const createNativeSession = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
