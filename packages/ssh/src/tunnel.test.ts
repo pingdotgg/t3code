@@ -404,6 +404,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
   const prepareLaunch = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPath = (yield* HostProcess.Environment).PATH ?? "";
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-script-" });
     const home = `${root}/home`;
     const fakeServer = `${root}/fake-t3.cjs`;
@@ -444,7 +445,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
                   ),
                 }
               : {}),
-            env: { PATH: `${home}/bin:${process.env.PATH ?? ""}`, HOME: home },
+            env: { PATH: `${home}/bin:${hostPath}`, HOME: home },
             extendEnv: false,
           }),
         );
