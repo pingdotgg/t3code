@@ -1320,6 +1320,51 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
     occurredAt: now,
     payload: { ...deleted, deletedAt: now },
   });
+  const archivedDeleted = yield* create("thread:archived-deleted", {
+    worktreePath: null,
+    archived: true,
+  });
+  const addMessage = (
+    threadId: ThreadId,
+    id: string,
+    role: "user" | "assistant" | "system",
+    streaming = false,
+  ) =>
+    store.apply({
+      id: EventId.make(`event:${id}`),
+      type: "message.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: MessageId.make(id),
+        threadId,
+        runId: null,
+        nodeId: null,
+        role,
+        text: id,
+        attachments: [],
+        streaming,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  const archivedId = ThreadId.make("thread:archived");
+  yield* addMessage(archivedId, "message:archived:user", "user");
+  yield* addMessage(archivedId, "message:archived:assistant", "assistant");
+  yield* addMessage(archivedId, "message:archived:system", "system");
+  yield* addMessage(archivedId, "message:archived:streaming", "assistant", true);
+  yield* addMessage(ThreadId.make("thread:active"), "message:active:user", "user");
+  yield* addMessage(archivedDeleted.id, "message:archived-deleted:user", "user");
+  yield* store.apply({
+    id: EventId.make("event:thread:archived-deleted:deleted"),
+    type: "thread.deleted",
+    threadId: archivedDeleted.id,
+    occurredAt: now,
+    payload: { ...archivedDeleted, deletedAt: now },
+  });
+  assert.deepEqual(yield* store.countArchivedThreadMessages(), new Map([[archivedId, 2]]));
 
   assert.deepEqual(yield* store.getThreadWorktreePaths(), [
     { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
@@ -2532,7 +2577,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     () => runlessNativeSubagentNeedsRecovery,
   );
   it.effect(
-    "worktree path and title lookups skip deleted threads, and can include archived ones",
+    "worktree path, title, and archived message count lookups skip deleted threads",
     () => threadWorktreePathsIncludeArchivedOnRequest,
   );
 
