@@ -68,6 +68,21 @@ describe("projectThreadAwarenessV2", () => {
     ["holds a wake run", true, [{ taskId: "watch", kind: "monitor" as const }], "running"],
     ["completes a wake run once its monitor ends", true, [], "completed"],
     [
+      "holds a wake run while a monitor remains beside other work",
+      true,
+      [
+        { taskId: "build", kind: "command" as const },
+        { taskId: "watch", kind: "monitor" as const },
+      ],
+      "running",
+    ],
+    [
+      "completes a wake run with only a command pending",
+      true,
+      [{ taskId: "build", kind: "command" as const }],
+      "completed",
+    ],
+    [
       "completes a run the user started",
       false,
       [{ taskId: "watch", kind: "monitor" as const }],
