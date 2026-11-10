@@ -1536,8 +1536,13 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
 it.effect("a git action that fails partway still refreshes the repository status", () =>
   Effect.gen(function* () {
     const failure = new GitManagerError({ operation: "test", cwd: "/repo", detail: "push failed" });
+    const refreshFailure = new GitManagerError({
+      operation: "refresh",
+      cwd: "/repo",
+      detail: "refresh failed",
+    });
     const refreshed = yield* Deferred.make<string>();
-    const exits = yield* Queue.unbounded<string>();
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -1545,7 +1550,7 @@ it.effect("a git action that fails partway still refreshes the repository status
       }),
       Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
         refreshStatus: (cwd) =>
-          Deferred.succeed(refreshed, cwd).pipe(Effect.andThen(Effect.fail(failure))),
+          Deferred.succeed(refreshed, cwd).pipe(Effect.andThen(Effect.fail(refreshFailure))),
       }),
       Layer.mock(ExternalLauncher.ExternalLauncher)({}),
       Layer.mock(ProviderRegistry.ProviderRegistry)({}),
@@ -1560,7 +1565,7 @@ it.effect("a git action that fails partway still refreshes the repository status
     const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
-        response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
     }).pipe(
       Effect.provide(
         layerWsRpc(
@@ -1587,7 +1592,8 @@ it.effect("a git action that fails partway still refreshes the repository status
       payload: { actionId: "action", cwd: "/repo", action: "commit_push" },
       headers: Headers.empty,
     });
-    assert.equal(yield* Queue.take(exits), "Failure");
+    const exit = yield* Queue.take(exits);
+    assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, failure);
     assert.equal(yield* Deferred.await(refreshed), "/repo");
   }).pipe(
     Effect.provide(
