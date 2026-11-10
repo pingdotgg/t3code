@@ -319,11 +319,14 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly project: Option.Option<Project>;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
   readonly nowMs: number;
+  /** When the completion that a snooze already hid ended, so a wake does not alert it late. */
+  readonly hiddenCompletionAt: number | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
   /** The child request behind the state's wait, when the parent isn't waiting itself. */
   readonly subagentWait: SubagentRequestAwareness | null;
+  readonly hiddenCompletionAt: number | null;
   readonly reason: "snapshot" | "thread-not-found" | "project-not-found";
 } {
   if (Option.isNone(input.thread)) {
@@ -331,6 +334,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
       projectId: null,
       state: null,
       subagentWait: null,
+      hiddenCompletionAt: null,
       reason: "thread-not-found",
     };
   }
@@ -339,6 +343,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
       projectId: input.thread.value.projectId,
       state: null,
       subagentWait: null,
+      hiddenCompletionAt: null,
       reason: "project-not-found",
     };
   }
@@ -355,11 +360,18 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     input.pendingSubagentRequest !== null &&
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   // A snoozed thread stays hidden until its wake time, so its completion clears the card silently.
+  const completedAt =
+    input.thread.value.latestRunCompletedAt == null
+      ? null
+      : DateTime.toEpochMillis(input.thread.value.latestRunCompletedAt);
   const hiddenCompletion =
-    state?.phase === "completed" && isSnoozed(input.thread.value, input.nowMs);
+    state?.phase === "completed" &&
+    (isSnoozed(input.thread.value, input.nowMs) ||
+      (completedAt !== null && completedAt === input.hiddenCompletionAt));
   return {
     projectId: input.thread.value.projectId,
     state: hiddenCompletion ? null : sanitizeRelayAgentActivityState(state),
+    hiddenCompletionAt: hiddenCompletion ? completedAt : null,
     subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
@@ -418,6 +430,7 @@ export const make = Effect.gen(function* () {
   // its first alert time through parent renames, relinks and the parent's own requests.
   const childAlertByThread = new Map<ThreadId, SubagentAlert>();
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
+  const hiddenCompletionAtByThread = new Map<ThreadId, number>();
 
   const readSecretString = (name: string) =>
     secrets
@@ -582,7 +595,11 @@ export const make = Effect.gen(function* () {
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
       nowMs: (yield* DateTime.now).epochMilliseconds,
+      hiddenCompletionAt: hiddenCompletionAtByThread.get(threadId) ?? null,
     });
+    if (snapshot.hiddenCompletionAt !== null) {
+      hiddenCompletionAtByThread.set(threadId, snapshot.hiddenCompletionAt);
+    }
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -650,6 +667,7 @@ export const make = Effect.gen(function* () {
               project,
               pendingSubagentRequest: null,
               nowMs,
+              hiddenCompletionAt: hiddenCompletionAtByThread.get(threadId) ?? null,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {

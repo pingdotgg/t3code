@@ -636,7 +636,11 @@ describe("AgentAwarenessRelay", () => {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* Ref.set(currentShell, shell(snoozed));
       yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, shell({ ...snoozed, status: "completed" }));
+      const completed = {
+        status: "completed" as const,
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:01:00.000Z"),
+      };
+      yield* Ref.set(currentShell, shell({ ...snoozed, ...completed }));
       yield* relay.publishThread(THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
@@ -645,11 +649,18 @@ describe("AgentAwarenessRelay", () => {
         ["running", null],
       );
 
+      // Waking must not alert the completion that the snooze hid.
+      yield* Ref.set(currentShell, shell(completed));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+
       yield* Ref.set(
         currentShell,
         shell({
           ...snoozed,
-          status: "completed",
+          ...completed,
           pendingRuntimeRequest: {
             id: RuntimeRequestId.make("request-after-snooze"),
             kind: "command",
