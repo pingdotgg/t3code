@@ -682,6 +682,9 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
           invalid.push(
             `${testCase.id} ${live ? "live" : "prior"} ${tool}: ${decoded.failure.message}`,
           );
+        } else if (!("executedModel" in value)) {
+          // Optional in the contract for older linked environments; current T3 always sends it.
+          invalid.push(`${testCase.id} ${live ? "live" : "prior"} ${tool}: no executedModel`);
         }
       }
     }
