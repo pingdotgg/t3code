@@ -98,6 +98,8 @@
           "unnecessaryTypeofType": "error",
           "effectTryWithoutCatch": "error",
           "processEnvInEffect": "error",
+          "preferSchemaTaggedError": "error",
+          "extendsNativeError": "error",
           "schemaNumber": "off"
         },
         "overrides": [
