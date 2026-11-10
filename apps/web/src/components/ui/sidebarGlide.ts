@@ -30,6 +30,11 @@ interface Plan {
   readonly lead: Animation | undefined;
 }
 
+interface Cover {
+  readonly right: number;
+  readonly end: number;
+}
+
 type Animate = (element: HTMLElement, keyframes: PropertyIndexedKeyframes) => Animation;
 
 let pending = false;
@@ -188,12 +193,14 @@ function play(snapshot: Snapshot, startTime: CSSNumberish | null): Plan | null {
     const inner = children(element).map(sharedShift);
     let shift: number | null = null;
     if (moved) {
+      const computed = style(element);
       const rigid = Math.abs(moved.left - moved.right) < 0.5;
-      const flows =
-        rigid || (!paintOf(element, style(element)) && !scrolls(element, style(element)));
-      if (flows && inner.every((child) => child !== null && Math.abs(child - moved.left) < 0.5)) {
-        shift = moved.left;
-      }
+      const paint = paintOf(element, computed);
+      const block =
+        computed.display === "table" || (paint !== null && paint !== computed && outlines(paint));
+      const flows = rigid || (!paint && !scrolls(element, computed));
+      const together = inner.every((child) => child !== null && Math.abs(child - moved.left) < 0.5);
+      if (block || (flows && together)) shift = moved.left;
     }
     uniform.set(element, shift);
     return shift;
@@ -201,57 +208,92 @@ function play(snapshot: Snapshot, startTime: CSSNumberish | null): Plan | null {
 
   const shifts = new Map<HTMLElement, Shift>();
   const widened = new Map<HTMLElement, Edges>();
-  const place = (element: HTMLElement, carried: number, outer: Edges | null, behind: string) => {
+  const translate = (element: HTMLElement, computed: CSSStyleDeclaration, offset: number) => {
+    if (Math.abs(offset) < 0.5) return;
+    const shift: Shift = { offset };
+    shifts.set(element, shift);
+    const notch = element.matches('[data-pane-notch=""]');
+    const property = computed.transform === "none" ? "transform" : "translate";
+    writes.push(() => {
+      shift.animation = animate(
+        element,
+        property === "transform"
+          ? { transform: [`translateX(${offset}px)`, "translateX(0)"] }
+          : { translate: [`${offset}px 0`, "0 0"] },
+      );
+      if (notch) animate(element, { anchorName: ["none", "none"] });
+    });
+  };
+  const hideScrollbar = (element: HTMLElement, computed: CSSStyleDeclaration) => {
+    if (!["auto", "scroll"].includes(computed.overflowX)) return;
+    if (element.scrollWidth > element.clientWidth) return;
+    writes.push(() => animate(element, { overflowX: ["hidden", "hidden"] }));
+  };
+  const place = (
+    element: HTMLElement,
+    carried: number,
+    outer: Cover | null,
+    behind: string,
+    inside: boolean,
+    scrolled: boolean,
+  ) => {
     const moved = moves(element);
     const end = ends.get(element);
     if (!moved || !end) return;
     const computed = style(element);
     const shared = sharedShift(element);
-    const rigid = Math.abs(moved.left - moved.right) < 0.5;
-    if (shared !== null || rigid) {
-      const offset = (shared ?? moved.left) - carried;
-      if (Math.abs(offset) >= 0.5) {
-        const shift: Shift = { offset };
-        shifts.set(element, shift);
-        const notch = element.matches('[data-pane-notch=""]');
-        const property = computed.transform === "none" ? "transform" : "translate";
-        writes.push(() => {
-          shift.animation = animate(
-            element,
-            property === "transform"
-              ? { transform: [`translateX(${offset}px)`, "translateX(0)"] }
-              : { translate: [`${offset}px 0`, "0 0"] },
-          );
-          if (notch) animate(element, { anchorName: ["none", "none"] });
-        });
-      }
+    if (shared !== null || Math.abs(moved.left - moved.right) < 0.5) {
+      translate(element, computed, (shared ?? moved.left) - carried);
       if (shared !== null) return;
-      for (const child of children(element)) place(child, moved.left, null, behind);
+      hideScrollbar(element, computed);
+      for (const child of children(element)) {
+        place(child, moved.left, null, behind, inside, scrolled || scrolls(element, computed));
+      }
       return;
     }
-    const local = { left: moved.left - carried, right: moved.right - carried };
-    const shrinks = { left: Math.max(0, -local.left), right: Math.max(0, local.right) };
+    const left = moved.left - carried;
+    const right = moved.right - carried;
+    const grows = left > right;
+    const scroller = scrolls(element, computed);
+    const contained = containsPaint(computed);
+    const paint = scroller ? null : paintOf(element, computed);
+    if (scrolled && paint) {
+      translate(element, computed, hugsRight(element, end) ? right : left);
+      return;
+    }
+    const anchored = paint !== null || scroller || contained;
+    const holdsText = children(element).some((child) => style(child).display === "inline");
+    const offset = !anchored ? 0 : (grows && !scroller) || holdsText ? left : right;
+    translate(element, computed, offset);
+    hideScrollbar(element, computed);
+    const local = { left: left - offset, right: right - offset };
+    const need = { left: Math.max(0, -local.left), right: Math.max(0, local.right) };
     let box: Edges = end;
-    if (clips(computed) && (shrinks.left >= 0.5 || shrinks.right >= 0.5)) {
-      if (scrolls(element, computed) || containsPaint(computed)) {
-        widened.set(element, shrinks);
-        box = { left: end.left - shrinks.left, right: end.right + shrinks.right };
-        writes.push(widen(element, computed, end.right - end.left, shrinks, animate));
-      } else {
-        writes.push(() => animate(element, { overflow: ["visible", "visible"] }));
+    const reach = Math.max(need.left, need.right, Math.abs(left - right));
+    if (clips(computed)) {
+      if (anchored && (need.left >= 0.5 || need.right >= 0.5)) {
+        if (scroller || contained) {
+          widened.set(element, need);
+          box = { left: end.left - need.left, right: end.right + need.right };
+          writes.push(widen(element, computed, end.right - end.left, need, animate));
+        } else {
+          writes.push(() => animate(element, unclip(computed, reach)));
+        }
+      } else if (!anchored && (inside || need.left >= 0.5 || need.right >= 0.5)) {
+        writes.push(() => animate(element, unclip(computed, reach)));
       }
     }
+    const reached = carried + offset;
     let covered = outer;
-    const paint = paintOf(element, computed);
     if (paint) {
       const sides = (["left", "right"] as const).filter(
         (side) =>
           Math.abs(local[side]) >= 0.5 &&
           !(
+            side === "right" &&
             outer &&
-            inward(side, local) &&
-            Math.abs(outer[side] - local[side]) < 0.5 &&
-            Math.abs(end[side] - box[side]) < 0.5
+            Math.abs(outer.right - moved.right) < 0.5 &&
+            Math.abs(outer.end - end.right) < 0.5
           ),
       );
       if (sides.length > 0) {
@@ -259,15 +301,17 @@ function play(snapshot: Snapshot, startTime: CSSNumberish | null): Plan | null {
           glideEdges(element, computed, paint, box, end, local, sides, behind, slide, animate),
         );
       }
-      covered = local;
+      covered = local.right < 0 ? { right: moved.right, end: end.right } : null;
       for (const cut of element.querySelectorAll<HTMLElement>(":scope > [data-pane-cut]")) {
         writes.push(() => animate(cut, { visibility: ["hidden", "hidden"] }));
       }
     }
     const surface = paint && opaque(paint.backgroundColor) ? paint.backgroundColor : behind;
-    for (const child of children(element)) place(child, carried, covered, surface);
+    for (const child of children(element)) {
+      place(child, reached, covered, surface, inside || paint !== null, scrolled || scroller);
+    }
   };
-  for (const root of snapshot.roots) place(root, 0, null, backdrop(root));
+  for (const root of snapshot.roots) place(root, 0, null, backdrop(root), false, false);
 
   for (const write of writes) write();
   return { ends, shifts, widened, lead };
@@ -279,6 +323,20 @@ function backdrop(element: HTMLElement) {
     if (opaque(color)) return color;
   }
   return "transparent";
+}
+
+function hugsRight(element: HTMLElement, end: Edges) {
+  const parent = element.parentElement;
+  if (!parent) return false;
+  const style = getComputedStyle(parent);
+  const box = parent.getBoundingClientRect();
+  const inner = {
+    left:
+      box.left + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft),
+    right:
+      box.right - Number.parseFloat(style.borderRightWidth) - Number.parseFloat(style.paddingRight),
+  };
+  return Math.abs(end.right - inner.right) < 1 && Math.abs(end.left - inner.left) >= 1;
 }
 
 function opaque(color: string) {
@@ -320,9 +378,11 @@ function paintOf(element: HTMLElement, style: CSSStyleDeclaration) {
 }
 
 function paints(style: CSSStyleDeclaration) {
+  return opaque(style.backgroundColor) || style.backgroundImage !== "none" || outlines(style);
+}
+
+function outlines(style: CSSStyleDeclaration) {
   return (
-    opaque(style.backgroundColor) ||
-    style.backgroundImage !== "none" ||
     style.boxShadow !== "none" ||
     ["top", "right", "bottom", "left"].some(
       (side) => Number.parseFloat(style.getPropertyValue(`border-${side}-width`)) > 0,
@@ -334,7 +394,7 @@ function widen(
   element: HTMLElement,
   style: CSSStyleDeclaration,
   width: number,
-  shrinks: Edges,
+  reach: Edges,
   animate: Animate,
 ) {
   const px = (value: number) => [`${value}px`, `${value}px`];
@@ -345,14 +405,24 @@ function widen(
     ...(inRow ? { flex: ["0 0 auto", "0 0 auto"] } : {}),
     minWidth: ["0", "0"],
     maxWidth: ["none", "none"],
-    width: px(width + shrinks.left + shrinks.right),
-    marginLeft: px(Number.parseFloat(style.marginLeft) - shrinks.left),
-    marginRight: px(Number.parseFloat(style.marginRight) - shrinks.right),
-    paddingLeft: px(Number.parseFloat(style.paddingLeft) + shrinks.left),
-    paddingRight: px(Number.parseFloat(style.paddingRight) + shrinks.right),
+    width: px(width + reach.left + reach.right),
+    marginLeft: px(Number.parseFloat(style.marginLeft) - reach.left),
+    marginRight: px(Number.parseFloat(style.marginRight) - reach.right),
+    paddingLeft: px(Number.parseFloat(style.paddingLeft) + reach.left),
+    paddingRight: px(Number.parseFloat(style.paddingRight) + reach.right),
   };
   return () => {
     animate(element, keyframes);
+  };
+}
+
+function unclip(style: CSSStyleDeclaration, reach: number): PropertyIndexedKeyframes {
+  if (style.overflowY === "visible") return { overflowX: ["visible", "visible"] };
+  const margin = `${Math.ceil(reach)}px`;
+  return {
+    overflowX: ["clip", "clip"],
+    overflowY: ["clip", "clip"],
+    overflowClipMargin: [margin, margin],
   };
 }
 
