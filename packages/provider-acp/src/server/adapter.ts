@@ -2316,7 +2316,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const closeAgentRequest = (agentRequests: Set<string>, requestId: string) =>
           Effect.suspend(() =>
             agentRequests.delete(requestId) && agentRequests === openAgentRequests
-              ? notePromptProgress().pipe(Effect.andThen(rearmActiveDeferredFinalize))
+              ? notePromptProgress()
               : Effect.void,
           );
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
