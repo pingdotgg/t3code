@@ -14,7 +14,7 @@ const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
 function setup({
   isBrowsePending = false,
   deniedScope,
-}: { isBrowsePending?: boolean; deniedScope?: string } = {}) {
+}: { isBrowsePending?: boolean; deniedScope?: string | undefined } = {}) {
   browse.isPending = isBrowsePending;
   scopes.denied = deniedScope;
 }
