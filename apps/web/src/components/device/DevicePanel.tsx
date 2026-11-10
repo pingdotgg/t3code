@@ -441,6 +441,7 @@ function DeviceHolderNotice(props: {
       </span>
       <Button
         size="xs"
+        aria-label={`Take over from ${shell?.title.trim() || "another thread"}`}
         disabled={takingOver}
         onClick={() => {
           setTakingOver(true);

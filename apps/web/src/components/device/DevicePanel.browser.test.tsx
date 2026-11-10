@@ -97,7 +97,7 @@ vi.mock("~/rightPanelStore", () => ({
   selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
 vi.mock("~/state/entities", () => ({
-  useThreadShell: () => ({ runtime: { status: "running" } }),
+  useThreadShell: () => ({ title: "Holder", runtime: { status: "running" } }),
 }));
 vi.mock("~/components/ThreadContextChip", () => ({
   ThreadContextChip: ({ record }: { record: { threadId: string } }) => (
@@ -236,7 +236,7 @@ describe("DevicePanel takeover", () => {
     await using screen = await render(devicePanel(threadA, openPhone), { container });
 
     await expect.element(screen.getByText("thread-elsewhere")).not.toBeInTheDocument();
-    await screen.getByRole("button", { name: "Take over" }).click();
+    await screen.getByRole("button", { name: "Take over from Holder" }).click();
 
     expect(mocks.close.mock.calls).toEqual([
       [

@@ -441,6 +441,7 @@ function DeviceHolderBanner(props: {
       </Pressable>
       <Button
         label="Take over"
+        accessibilityLabel={`Take over from ${title}`}
         tone="primary"
         size="compact"
         loading={takingOver}
