@@ -781,6 +781,10 @@ export function PreviewView({
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       );
       if (pickRequest.cancelled) return;
+      // Main's WebContents.focus() ignores guests; only the <webview> element moves native focus into it.
+      document
+        .querySelector<HTMLElement>(`webview[data-preview-tab="${CSS.escape(runtimeTabId)}"]`)
+        ?.focus();
       const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.

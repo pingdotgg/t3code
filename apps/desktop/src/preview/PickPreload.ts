@@ -561,8 +561,8 @@ function startAnnotation(
   root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none;outline:none";
-  // Window focus alone leaves the guest without a focused frame, so Escape and the
-  // tool keys never arrive; focusing a node in the page gives it one.
+  // The host moves native focus into the webview; focusing the root then directs
+  // Escape and the tool keys to this frame's overlay.
   root.tabIndex = -1;
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");

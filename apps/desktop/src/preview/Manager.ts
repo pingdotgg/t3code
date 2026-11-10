@@ -532,10 +532,6 @@ const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   );
 };
 
-// Every guest of a focused window reports focus; GuestInput handles guests without a focused frame.
-const holdsKeyboardFocus = (contents: Electron.WebContents) =>
-  contents.isFocused() && contents.focusedFrame !== null;
-
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
   pictureInPicturePreloadPath: string,
@@ -1448,6 +1444,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
+    // Every guest of a focused window reports focus; GuestInput handles guests without a focused frame.
+    const holdsKeyboardFocus = (contents: Electron.WebContents) =>
+      contents.isFocused() && contents.focusedFrame !== null;
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
       contents.setIgnoreMenuShortcuts(
@@ -2284,7 +2283,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (voice) wc.ipc.on(ANNOTATION_VOICE_EVENT_CHANNEL, onVoiceEvent);
             wc.once("destroyed", onDestroyed);
             wc.on("did-start-navigation", onNavigated);
-            if (!holdsKeyboardFocus(wc)) wc.focus();
+            if (!wc.isFocused()) wc.focus();
             wc.send(
               START_PICK_CHANNEL,
               annotationTheme,
