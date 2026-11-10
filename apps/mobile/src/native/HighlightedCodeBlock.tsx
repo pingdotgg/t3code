@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text } from "react-native";
 import type { MarkdownStyle } from "react-native-enriched-markdown";
 
 import { Menu } from "../components/ui/Menu";
@@ -121,7 +121,21 @@ export function HighlightedCodeBlock(props: {
       }) ?? code}
     </Text>
   );
-  const padding = { padding: codeStyle.padding };
+  // Inside the scroller: on iOS an ancestor JS responder disables a ScrollView's panning.
+  const content = (
+    <Menu
+      shouldOpenOnLongPress
+      actions={CODE_MENU_ACTIONS}
+      style={{ flexGrow: 1 }}
+      onPressAction={({ nativeEvent }) => {
+        copyTextWithHaptic(
+          nativeEvent.event === "copy-markdown" ? fencedCodeMarkdown(code, props.fence) : code,
+        );
+      }}
+    >
+      <Pressable style={{ padding: codeStyle.padding }}>{text}</Pressable>
+    </Menu>
+  );
   return (
     <CodeBlockFrame
       label={FENCE_DISPLAY_NAMES[fence] ?? fence.charAt(0).toUpperCase() + fence.slice(1)}
@@ -144,25 +158,13 @@ export function HighlightedCodeBlock(props: {
         </>
       }
     >
-      <Menu
-        shouldOpenOnLongPress
-        actions={CODE_MENU_ACTIONS}
-        onPressAction={({ nativeEvent }) => {
-          copyTextWithHaptic(
-            nativeEvent.event === "copy-markdown" ? fencedCodeMarkdown(code, props.fence) : code,
-          );
-        }}
-      >
-        <Pressable>
-          {wrapped ? (
-            <View style={padding}>{text}</View>
-          ) : (
-            <ScrollView horizontal contentContainerStyle={padding}>
-              {text}
-            </ScrollView>
-          )}
-        </Pressable>
-      </Menu>
+      {wrapped ? (
+        content
+      ) : (
+        <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+          {content}
+        </ScrollView>
+      )}
     </CodeBlockFrame>
   );
 }
