@@ -372,43 +372,46 @@ export function buildReviewThreads(
     return current;
   };
 
-  const threads = new Map<number, PullRequestReviewThread>();
-  const replies = new Map<number, Array<Schema.Schema.Type<typeof RawCommentSchema>>>();
+  const groups = new Map<number, { root: BitbucketRawComment; entries: BitbucketRawComment[] }>();
   for (const comment of comments) {
     const root = rootOf(comment);
-    const inline = root.inline;
+    const group = groups.get(root.id);
+    if (group === undefined) groups.set(root.id, { root, entries: [comment] });
+    else group.entries.push(comment);
+  }
+
+  return [...groups.values()].flatMap(({ root, entries }) => {
+    const visible = entries
+      .filter((comment) => comment.deleted !== true)
+      .toSorted((left, right) => left.created_on.localeCompare(right.created_on));
+    const anchor =
+      trimmed(root.inline?.path) !== null
+        ? root
+        : root.deleted === true
+          ? visible.find((comment) => trimmed(comment.inline?.path) !== null)
+          : undefined;
+    const inline = anchor?.inline;
     const path = trimmed(inline?.path);
-    if (path === null) continue;
-    if (root.id === comment.id) {
-      const side = inline?.to === null || inline?.to === undefined ? "left" : "right";
-      const line = side === "left" ? inline?.from : inline?.to;
-      threads.set(root.id, {
+    if (path === null || visible.length === 0) return [];
+    const side = inline?.to === null || inline?.to === undefined ? "left" : "right";
+    const line = side === "left" ? inline?.from : inline?.to;
+    return [
+      {
         id: String(root.id),
         path,
         line: typeof line === "number" && line > 0 ? line : null,
         side,
         isResolved: root.resolution !== null && root.resolution !== undefined,
         isOutdated: inline?.outdated === true,
-        comments: [],
-      });
-    }
-    const bucket = replies.get(root.id);
-    if (bucket === undefined) replies.set(root.id, [comment]);
-    else bucket.push(comment);
-  }
-
-  return [...threads.values()].flatMap((thread) => {
-    const entries = (replies.get(Number(thread.id)) ?? [])
-      .filter((comment) => comment.deleted !== true)
-      .toSorted((left, right) => left.created_on.localeCompare(right.created_on))
-      .map((comment) => ({
-        id: String(comment.id),
-        author: toActor(comment.user),
-        body: comment.content?.raw ?? "",
-        createdAt: toIsoUtc(comment.created_on),
-        url: trimmed(comment.links?.html?.href),
-      }));
-    return entries.length === 0 ? [] : [{ ...thread, comments: entries }];
+        comments: visible.map((comment) => ({
+          id: String(comment.id),
+          author: toActor(comment.user),
+          body: comment.content?.raw ?? "",
+          createdAt: toIsoUtc(comment.created_on),
+          url: trimmed(comment.links?.html?.href),
+        })),
+      },
+    ];
   });
 }
 

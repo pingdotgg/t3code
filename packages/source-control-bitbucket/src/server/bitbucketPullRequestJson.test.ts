@@ -256,9 +256,53 @@ describe("decodeCommentsJson", () => {
       expectedIds: ["11", "12"],
       threadCommentIds: [],
     },
+    {
+      ancestor: "a deleted root without an anchor",
+      deletedId: 10,
+      pendingId: null,
+      rootInline: null,
+      replyInline: { path: "src/app.ts", to: 10 },
+      expectedIds: ["11", "12"],
+      threadCommentIds: ["11", "12"],
+    },
+    {
+      ancestor: "a deleted root without any inline descendants",
+      deletedId: 10,
+      pendingId: null,
+      rootInline: null,
+      expectedIds: ["11", "12"],
+      threadCommentIds: [],
+    },
+    {
+      ancestor: "a posted general root with an inline reply",
+      deletedId: null,
+      pendingId: null,
+      rootInline: null,
+      replyInline: { path: "src/app.ts", to: 10 },
+      expectedIds: ["10", "11", "12"],
+      threadCommentIds: [],
+    },
+    {
+      ancestor: "a deleted root with a left-side inline reply",
+      deletedId: 10,
+      pendingId: null,
+      rootInline: null,
+      replyInline: { path: "src/app.ts", from: 10, to: null },
+      expectedIds: ["11", "12"],
+      threadCommentIds: ["11", "12"],
+      side: "left",
+    },
   ])(
     "assembles replies with $ancestor",
-    ({ deletedId, pendingId, expectedIds, threadCommentIds }) => {
+    ({
+      deletedId,
+      pendingId,
+      expectedIds,
+      threadCommentIds,
+      rootInline = { path: "src/app.ts", to: 10 },
+      replyInline,
+      side = "right",
+    }) => {
       const decoded = expectSuccess(
         decodeCommentsJson(
           page([
@@ -266,7 +310,7 @@ describe("decodeCommentsJson", () => {
               id: 10,
               content: deletedId === 10 ? null : { raw: "Rename this." },
               created_on: "2026-05-15T02:00:00+00:00",
-              inline: { path: "src/app.ts", to: 10 },
+              inline: rootInline,
               deleted: deletedId === 10,
               pending: pendingId === 10,
             },
@@ -275,6 +319,7 @@ describe("decodeCommentsJson", () => {
               content: deletedId === 11 ? null : { raw: "What name would you prefer?" },
               created_on: "2026-05-15T02:01:00+00:00",
               parent: { id: 10 },
+              inline: replyInline,
               deleted: deletedId === 11,
               pending: pendingId === 11,
             },
@@ -293,7 +338,7 @@ describe("decodeCommentsJson", () => {
       const threads = buildReviewThreads(decoded.entries);
       expect(threads).toHaveLength(threadCommentIds.length === 0 ? 0 : 1);
       if (threadCommentIds.length > 0) {
-        expect(threads[0]).toMatchObject({ id: "10", path: "src/app.ts", line: 10, side: "right" });
+        expect(threads[0]).toMatchObject({ id: "10", path: "src/app.ts", line: 10, side });
         expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(threadCommentIds);
       }
     },
