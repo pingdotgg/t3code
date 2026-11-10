@@ -33,6 +33,7 @@ import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-co
 
 import {
   AuthOrchestrationOperateScope,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -91,9 +92,15 @@ import {
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+
+// Below this (keyboard up on iPad, phone landscape) the hero cannot fit above the composer,
+// so the project and environment pickers move into the composer controls instead.
+const SHORT_DRAFT_VIEWPORT_HEIGHT = 380;
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -778,8 +785,8 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
   // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
-  const heroViewport = (headerInset: number, bottomInset: number, availableHeight: number) =>
-    availableHeight < 180 ? null : (
+  const heroViewport = (headerInset: number, bottomInset: number, viewportHeight: number) =>
+    viewportHeight < SHORT_DRAFT_VIEWPORT_HEIGHT ? null : (
       <NativeScrollEdgeEffectsContext
         value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
       >
@@ -814,6 +821,48 @@ export function NewTaskDraftScreen(props: {
       </NativeScrollEdgeEffectsContext>
     );
 
+  const contextProjectLabel = flow.isScratchDraft
+    ? "No project"
+    : (selectedProjectLabel ?? selectedProject.title);
+  const contextControls = (
+    <View className="flex-row items-center gap-1 px-2">
+      <View className="min-w-0 shrink">
+        <ComposerInlineControl
+          accessibilityHint="Opens the project picker"
+          accessibilityLabel={`Project: ${contextProjectLabel}`}
+          chevronDirection="right"
+          disabled={isComposerInteractionLocked}
+          icon="folder"
+          label={contextProjectLabel}
+          maxWidth="100%"
+          onPress={chooseProject}
+        />
+      </View>
+      <View className="min-w-0 shrink">
+        <ComposerInlineControl
+          accessibilityLabel={`Choose environment, ${selectedEnvironmentLabel}, ${connectionState === "connected" ? "Connected" : "Offline"}`}
+          chevronDirection="right"
+          disabled={isComposerInteractionLocked}
+          renderIcon={(size) => (
+            <EnvironmentMachineSymbol
+              kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+              size={size}
+              tintColorClassName="accent-icon-muted"
+            />
+          )}
+          label={selectedEnvironmentLabel}
+          maxWidth="100%"
+          onPress={() => openContextPicker("NewTaskEnvironment")}
+          suffix={
+            connectionState === "connected" ? null : (
+              <ConnectionStatusDot state="error" pulse={false} size={6} />
+            )
+          }
+        />
+      </View>
+    </View>
+  );
+
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
@@ -847,6 +896,37 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const draftControls = (viewportHeight: number) => (
+    <View className="pb-1">
+      {projectClone && projectClone.phase !== "done" && selectedProject ? (
+        <View className="px-1 pb-2">
+          <ProjectCloneBanner
+            clone={projectClone}
+            onCancel={() =>
+              void runCloneAction("Failed to cancel clone", () =>
+                cancelProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRetry={() =>
+              void runCloneAction("Failed to retry clone", () =>
+                retryProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRemove={() => void removeClonedProject()}
+          />
+        </View>
+      ) : null}
+      {viewportHeight < SHORT_DRAFT_VIEWPORT_HEIGHT ? contextControls : null}
+      {flow.canChooseWorkspace ? workspaceControls : null}
+    </View>
+  );
+
   if (!flow.selectedModel) {
     return (
       <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
@@ -876,7 +956,7 @@ export function NewTaskDraftScreen(props: {
     threadId: ThreadId.make(creationMetadata.threadId),
     modelSelection: flow.selectedModel,
     runtimeMode: flow.runtimeMode,
-    interactionMode: flow.interactionMode,
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: flow.selectedBranchName,
     worktreePath: flow.selectedWorktreePath,
     createdAt: creationMetadata.createdAt,
@@ -890,35 +970,7 @@ export function NewTaskDraftScreen(props: {
         }
         draftMode={{
           content: heroViewport,
-          controls: (
-            <View className="pb-1">
-              {projectClone && projectClone.phase !== "done" && selectedProject ? (
-                <View className="px-1 pb-2">
-                  <ProjectCloneBanner
-                    clone={projectClone}
-                    onCancel={() =>
-                      void runCloneAction("Failed to cancel clone", () =>
-                        cancelProjectClone({
-                          environmentId: selectedProject.environmentId,
-                          input: { projectId: selectedProject.id },
-                        }),
-                      )
-                    }
-                    onRetry={() =>
-                      void runCloneAction("Failed to retry clone", () =>
-                        retryProjectClone({
-                          environmentId: selectedProject.environmentId,
-                          input: { projectId: selectedProject.id },
-                        }),
-                      )
-                    }
-                    onRemove={() => void removeClonedProject()}
-                  />
-                </View>
-              ) : null}
-              {flow.canChooseWorkspace ? workspaceControls : null}
-            </View>
-          ),
+          controls: draftControls,
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
           interactionLocked: isComposerInteractionLocked,
@@ -974,7 +1026,6 @@ export function NewTaskDraftScreen(props: {
         offersSideChat={false}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
-        onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}
         onRespondToApproval={async () => {}}
         onSelectUserInputOption={() => {}}
         onChangeUserInputCustomAnswer={() => {}}
