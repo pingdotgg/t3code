@@ -2656,7 +2656,9 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
     (row.kind === "work" ||
       row.kind === "work-toggle" ||
       row.kind === "work-live" ||
-      row.kind === "thinking")
+      row.kind === "thinking" ||
+      // Subagent rows are tool rows in the same list.
+      (row.kind === "event" && row.projectedItem.item.type === "subagent"))
   );
 }
 
