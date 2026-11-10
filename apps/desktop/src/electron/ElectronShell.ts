@@ -21,6 +21,9 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
   }),
 );
 
+// "Use T3 Code in another app" opens these apps; only their bare launch link, never a prompt link.
+const APP_LAUNCH_URLS = new Set(["grokbot://app"]);
+
 // Zed embeds [user@]host in the path; reject passwords and ports there.
 const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
 
@@ -46,6 +49,7 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   try {
     const url = new URL(rawUrl);
     return SAFE_WEB_PROTOCOLS.has(url.protocol) ||
+      APP_LAUNCH_URLS.has(url.href) ||
       isRemoteEditorUrl(url) ||
       isLocalEditorFileUrl(url)
       ? Option.some(url.href)

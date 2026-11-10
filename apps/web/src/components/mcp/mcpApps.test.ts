@@ -18,11 +18,12 @@ describe("MCP app links", () => {
     expect(claude.searchParams.get("connectorUrl")).toBe(MCP_URL);
   });
 
-  // The desktop app opens only http and https links.
+  // The desktop app opens only https links and the bare app launch links it lists.
   it.each(MCP_APPS.map((app) => [app.name, app] as const))("%s opens only https", (_, app) => {
-    const link = mcpHandoffAction(app, MCP_URL)?.link;
-    for (const url of [link, app.docs].filter((value) => value != null)) {
+    const action = mcpHandoffAction(app, MCP_URL);
+    for (const url of [action?.link, app.docs].filter((value) => value != null)) {
       expect(new URL(url).protocol).toBe("https:");
     }
+    if (action?.appLink) expect(action.appLink).toBe("grokbot://app");
   });
 });
