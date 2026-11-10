@@ -71,7 +71,7 @@ function slide(
     if (earlier) rest = onRest ? () => (earlier(), onRest()) : earlier;
   }
   const motion = MotionAnimation.start("window-movement", 1, 0);
-  if (motion.durationMs <= 0 || (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)) {
+  if (motion.durationMs <= 0 || (toDevicePixel(dx) === 0 && toDevicePixel(dy) === 0)) {
     kept?.remove();
     rest?.();
     return;
