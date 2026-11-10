@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   header: {
-    height: 32,
+    minHeight: 32,
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
