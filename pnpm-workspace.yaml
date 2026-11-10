@@ -57,8 +57,8 @@ catalog:
   "@legendapp/list": 3.7.2
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.6.1
-  "@pierre/highlights": 0.2.0
+  "@pierre/diffs": 1.7.0-beta.3
+  "@pierre/highlights": 0.5.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -114,16 +114,17 @@ overrides:
   expo-widgets: 58.0.27
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.7.2
-  "@pierre/diffs": 1.6.1
+  "@pierre/diffs": 1.7.0-beta.3
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
-  react-native-gesture-handler: 3.3.0
+  react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.7.1
-  react-native-keyboard-controller: 1.22.8
-  react-native-pdf-jsi: 5.0.0
+  react-native-keyboard-controller: 1.23.0
+  # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
+  react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
@@ -233,20 +234,19 @@ patchedDependencies:
   expo-sharing@58.0.22: patches/expo-sharing@58.0.22.patch
   expo-widgets@58.0.27: patches/expo-widgets@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
-  # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
-  # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
-  "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
+  # Exports the dependency-light subpaths mobile and the web diff parser import, and makes find
+  # cover folded files and collapsed context (onRevealSearchMatch).
+  "@pierre/diffs@1.7.0-beta.3": patches/@pierre__diffs@1.7.0-beta.3.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
-  react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
+  react-native-gesture-handler@3.5.0: patches/react-native-gesture-handler@3.5.0.patch
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
-  react-native-keyboard-controller@1.22.8: patches/react-native-keyboard-controller@1.22.8.patch
-  react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
+  react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
@@ -259,6 +259,10 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
+  # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
+  "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
+  # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
+  react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
   "@replit/codemirror-vim-core@0.1.0": patches/@replit__codemirror-vim-core@0.1.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
@@ -302,3 +306,6 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-arm64@0.67.1"
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
+  - "@anthropic-ai/claude-agent-sdk@0.3.321"
+  - "@pierre/diffs@1.7.0-beta.3"
+  - "@pierre/highlights@0.5.0"
