@@ -1,5 +1,5 @@
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";

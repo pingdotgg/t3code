@@ -44,7 +44,7 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("../../state/use-remote-environment-registry", () => ({
   pairEnvironment: harness.pair,
 }));
-vi.mock("../workspace/workspace-selection-store", () => ({
+vi.mock("../layout/workspace/workspace-selection-store", () => ({
   workspaceHasColumns: () => harness.columns,
 }));
 vi.mock("../../lib/rootNavigation", () => ({

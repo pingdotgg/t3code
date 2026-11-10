@@ -5,8 +5,6 @@ export interface InspectorPane {
   readonly render: () => ReactNode;
   /** Opening one of these panes soon mounts the others too, so switching between them is instant. */
   readonly prewarm?: boolean;
-  /** The pane is a native stack of its own, which draws its bar and insets its content itself. */
-  readonly nativeStack?: boolean;
 }
 
 /** What a route shows in the workspace's inspector: its panes and the one on screen. */
