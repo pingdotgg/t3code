@@ -7979,6 +7979,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("opens a turn's query with its catalog after a refresh during startup", () =>
+    Effect.gen(function* () {
+      let catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG;
+      let beforeMcpRead: Effect.Effect<void> = Effect.void;
+      const harness = yield* makeWakeHarnessWithOptions({
+        modelCatalog: Effect.sync(() => catalog),
+      }).pipe(
+        Effect.updateService(McpProviderSessions.McpProviderSessions, (sessions) => ({
+          ...sessions,
+          read: (threadId) => Effect.andThen(beforeMcpRead, sessions.read(threadId)),
+        })),
+      );
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      beforeMcpRead = Deferred.succeed(reached, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-catalog-startup"),
+        text: "Hello",
+        attachments: [],
+      });
+      const starting = yield* harness.runtime.startTurn(input).pipe(Effect.forkChild);
+      yield* Deferred.await(reached);
+      catalog = { models: [] };
+      // Any steer reloads the adapter-wide catalog, even one that then finds no live query.
+      yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: ProviderTurnId.make("provider-turn-catalog-startup"),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("catalog-startup-steer"),
+            text: "Keep going",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.isUndefined(harness.runtime.getModelContextWindow?.(CLAUDE_TEST_MODEL_SELECTION));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(starting);
+      assert.equal(harness.getOpenedOptions()?.effort, "high");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["root", "mcp", "subagent", "remote"] as const)(
     "asks Claude for suggestions only on threads a person drives (%s)",
     (lineage) =>
