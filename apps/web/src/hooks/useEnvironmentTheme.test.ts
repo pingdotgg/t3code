@@ -154,13 +154,15 @@ describe("environment themes", () => {
     });
     invalidateCustomThemes();
     try {
-      publish(appAtomRegistry, [NIGHTFALL_THEME]);
+      publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, sidebarArtwork: true }]);
       expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+      expect(themeAllowsSidebarArtwork("nightfall")).toBe(true);
       const environment = getThemeDefinition("nightfall");
       if (!environment) throw new Error("expected the published theme");
       installCustomTheme({ ...environment, label: "My Nightfall" });
 
       expect(getThemeDefinition("nightfall")?.label).toBe("My Nightfall");
+      expect(themeAllowsSidebarArtwork("nightfall")).toBe(false);
     } finally {
       vi.unstubAllGlobals();
       invalidateCustomThemes();

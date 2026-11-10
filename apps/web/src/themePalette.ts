@@ -1349,11 +1349,8 @@ export function themeAllowsComposerArtwork(theme: ThemePreference): boolean {
 
 /** Built-in themes and published ones, such as a plugin's, can allow it; custom themes can't. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
-  const themeId = themeIdFromPreference(theme);
-  const definition =
-    BUILT_IN_THEME_DEFINITIONS.find((candidate) => candidate.id === themeId) ??
-    getEnvironmentThemes().find((candidate) => candidate.id === themeId);
-  return definition?.sidebarArtwork === true;
+  const definition = getThemeDefinition(theme);
+  return definition?.sidebarArtwork === true && !getCustomThemes().includes(definition);
 }
 
 /** Every selection path must check single-appearance themes to keep mix and appearance tiles in sync. */
