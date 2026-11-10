@@ -93,9 +93,10 @@ wins. Skills disabled in Claude's settings do not appear in the composer.
 
 Use `$` in the composer to select a skill. Enabled installed Claude plugins, and plugins
 synced from your claude.ai account, also contribute skills under names such as
-`plugin:review`. Skills marked `disable-model-invocation` can still be started by you. Invoke those one per message: Claude directly runs
-only the last named skill and may try to start earlier ones through its Skill
-tool, which refuses skills reserved for manual invocation.
+`plugin:review`. Skills marked `disable-model-invocation` can still be started by
+you. Invoke those one per message: Claude directly runs only the last named skill
+and may try to start earlier ones through its Skill tool, which refuses skills
+reserved for manual invocation.
 
 ## Task lists
 
