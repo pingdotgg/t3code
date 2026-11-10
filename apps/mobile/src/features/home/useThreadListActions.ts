@@ -535,13 +535,15 @@ export function useThreadListActions(): {
       }
       return true;
     })();
-    titleRegenerationInFlightThreadKeys.current.delete(key);
     if (succeeded) {
-      void watch.failure.then((failure) => {
-        if (failure !== null) Dialog.alert("Could not regenerate title", failure);
-      });
+      void watch.failure
+        .then((failure) => {
+          if (failure !== null) Dialog.alert("Could not regenerate title", failure);
+        })
+        .finally(() => titleRegenerationInFlightThreadKeys.current.delete(key));
     } else {
       watch.cancel();
+      titleRegenerationInFlightThreadKeys.current.delete(key);
     }
     return succeeded;
   };
