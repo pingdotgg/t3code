@@ -39,14 +39,14 @@ const isZedEditor = Effect.fn("editor.isZedEditor")(
       }),
     );
     const [stdout, exitCode] = yield* Effect.all(
-      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      [handle.stdout.pipe(Stream.decodeText(), Stream.runHead), handle.exitCode],
       { concurrency: "unbounded" },
     );
-    return exitCode === 0 && stdout.startsWith("Zed");
+    return exitCode === 0 && Option.getOrElse(stdout, () => "").startsWith("Zed");
   },
   Effect.scoped,
   Effect.timeout("2 seconds"),
-  Effect.orElseSucceed(() => false),
+  Effect.catchCause(() => Effect.succeed(false)),
 );
 
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
