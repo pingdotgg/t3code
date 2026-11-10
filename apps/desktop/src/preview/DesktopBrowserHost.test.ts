@@ -1066,28 +1066,26 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
 
-      yield* host.handleCommandLine(
-        encodeJson({
-          type: "cdp",
-          ...key,
-          message: encodeJson({ id: 1, method: "DOM.getDocument", params: {} }),
-        }),
-      );
+      yield* raw({ id: 1, method: "DOM.getDocument", sessionId: "t3-preview-page" });
       expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
-      yield* host.handleCommandLine(
-        encodeJson({
-          type: "cdp",
-          ...key,
-          message: encodeJson({
-            id: 2,
-            method: "Input.dispatchMouseEvent",
-            params: { type: "mousePressed", x: 1, y: 1 },
-          }),
-        }),
-      );
+      // A person clicking through a viewer that streams the guest.
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 4, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page-1" });
+      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
+      yield* raw({
+        id: 5,
+        method: "Input.dispatchMouseEvent",
+        params: { type: "mousePressed", x: 1, y: 1 },
+        sessionId: "t3-preview-page",
+      });
       expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(true);
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>

@@ -21,9 +21,6 @@ import { sendPageCommand } from "./GuestInput.ts";
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
 const lineEncoder = new TextEncoder();
-const AGENT_INPUT_COMMAND =
-  /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
-/** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
 const AGENT_INPUT_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
@@ -332,6 +329,7 @@ export const make = Effect.gen(function* () {
             (owner === undefined || !streamingOwners.has(owner))
           ) {
             tab.agentUsed = true;
+            tab.agentInputAt = performance.now();
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
@@ -543,7 +541,6 @@ export const make = Effect.gen(function* () {
         dropRelay(tab);
         return;
       }
-      if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
       relayFor(tab).receive(command.value.message);
     });
 
