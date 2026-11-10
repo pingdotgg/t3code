@@ -589,7 +589,7 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("labels Argon's weekly quota apart from the default Gemini weekly quota", () =>
+  it.effect("labels Argon and Carbon quotas apart from the default Gemini quota", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
         summary: {
@@ -601,6 +601,16 @@ describe("Antigravity subscription limits", () => {
                 { bucketId: "gemini-argon-wtu-weekly", window: "weekly", remainingFraction: 0.6 },
               ],
             },
+            {
+              displayName: "Gemini 4 Carbon",
+              buckets: [
+                { bucketId: "gemini-carbon-wtu-weekly", window: "weekly", remainingFraction: 0.4 },
+              ],
+            },
+            {
+              displayName: " ",
+              buckets: [{ bucketId: "gemini-carbon-5h", window: "5h", remainingFraction: 0.8 }],
+            },
           ],
         },
       });
@@ -608,6 +618,8 @@ describe("Antigravity subscription limits", () => {
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("gemini-argon-wtu-weekly")?.label).toBe("Gemini 4 Argon · Weekly");
+      expect(byId.get("gemini-carbon-wtu-weekly")?.label).toBe("Gemini 4 Carbon · Weekly");
+      expect(byId.get("gemini-carbon-5h")?.label).toBe("Gemini Carbon · 5-hour");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

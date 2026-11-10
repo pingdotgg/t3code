@@ -27,12 +27,14 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type MessageId,
   type ModelSelection,
+  type PlanId,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type RunId,
@@ -101,6 +103,16 @@ const NativeGoal = Schema.NullOr(
 );
 const decodeGoal = Schema.decodeUnknownEffect(NativeGoal);
 
+const NativeTodoList = Schema.Struct({
+  todos: Schema.Array(
+    Schema.Struct({
+      content: Schema.String,
+      status: Schema.Literals(["pending", "in_progress", "completed", "cancelled"]),
+    }),
+  ),
+});
+const isNativeTodoList = Schema.is(NativeTodoList);
+
 const OpenCode2ProviderCapabilities = {
   sessions: {
     supportsMultipleProviderThreadsPerSession: true,
@@ -153,8 +165,8 @@ const OpenCode2ProviderCapabilities = {
     approvalsCanOriginateFromSubagents: true,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
     emitsProposedPlan: false,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
@@ -231,6 +243,7 @@ interface ActiveTurn {
   before: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
+  todoPlanId: PlanId | undefined;
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -1061,6 +1074,65 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
+    // Todo updates share the provider event span.
+    const emitTodo = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      todos: typeof NativeTodoList.Type.todos,
+    ) {
+      turn.todoPlanId ??= yield* idAllocator.allocate.plan({
+        threadId: turn.input.threadId,
+        ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+        driver,
+      });
+      const nativeId = `${state.sessionId}:todo:${turn.providerTurn.id}`;
+      const now = yield* DateTime.now;
+      const startedAt = turn.startedAt.get(nativeId) ?? now;
+      turn.startedAt.set(nativeId, startedAt);
+      const steps: Array<OrchestrationV2PlanStep> = todos.flatMap((todo, index) =>
+        todo.status === "cancelled"
+          ? []
+          : [
+              {
+                id: `${nativeId}:${index + 1}`,
+                text: todo.content.trim() || `Todo ${index + 1}`,
+                status:
+                  todo.status === "completed"
+                    ? "completed"
+                    : todo.status === "in_progress"
+                      ? "running"
+                      : "pending",
+              },
+            ],
+      );
+      const base = itemBase(state, turn, nativeId, "completed", startedAt, now, now);
+      yield* emitNode(state, turn, nativeId, "todo_list", "completed", startedAt, now);
+      yield* emit({
+        type: "plan.updated",
+        driver,
+        plan: {
+          id: turn.todoPlanId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          kind: "todo_list",
+          status: steps.every((step) => step.status === "completed") ? "completed" : "active",
+          steps,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          type: "todo_list",
+          title: "Todo list",
+          planId: turn.todoPlanId,
+          steps,
+        },
+      });
+    });
+
     const emitTool = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -1074,6 +1146,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
+      if (tool.name === "todowrite") {
+        if (status === "running") return;
+        if (status === "completed" && isNativeTodoList(result?.metadata)) {
+          const projected = yield* emitTodo(state, turn, result.metadata.todos).pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              IdAllocatorV2AllocationError: (error) =>
+                Effect.logWarning("Could not allocate an OpenCode todo list.", error).pipe(
+                  Effect.as(false),
+                ),
+            }),
+          );
+          if (projected) return;
+        }
+      }
       const updatedAt = yield* DateTime.now;
       const startedAt = turn.startedAt.get(id) ?? updatedAt;
       const completedAt = status === "running" ? null : updatedAt;
@@ -1226,6 +1313,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       before: undefined,
       compaction: undefined,
       compactions: 0,
+      todoPlanId: undefined,
       retry: undefined,
       interrupted: false,
       unsent: false,

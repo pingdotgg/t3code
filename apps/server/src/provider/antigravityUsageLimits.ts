@@ -133,14 +133,16 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      // Argon is metered apart from the default Gemini buckets; keep its group name.
+      // Argon and Carbon are metered separately from the default Gemini buckets.
       const family = bucket.bucketId.startsWith("gemini-argon-")
         ? group.displayName?.trim() || "Gemini Argon"
-        : bucket.bucketId.startsWith("gemini-")
-          ? "Gemini"
-          : bucket.bucketId.startsWith("3p-")
-            ? "Claude & GPT (shared)"
-            : group.displayName?.trim() || bucket.bucketId;
+        : bucket.bucketId.startsWith("gemini-carbon-")
+          ? group.displayName?.trim() || "Gemini Carbon"
+          : bucket.bucketId.startsWith("gemini-")
+            ? "Gemini"
+            : bucket.bucketId.startsWith("3p-")
+              ? "Claude & GPT (shared)"
+              : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
       const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");

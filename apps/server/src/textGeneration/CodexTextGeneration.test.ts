@@ -2,6 +2,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ProjectId,
   ProviderDriverKind,
   type ModelSelection,
   type ServerProvider,
@@ -568,6 +569,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "exhausted",
   "fallback exhausted",
   "not installed",
+  "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
   "primary slow",
@@ -589,9 +591,12 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     let readStarted = yield* Deferred.make<void>();
     const fallbackFailed = primaryState === "signed out, fallback failed";
     const needsFallback =
-      exhausted || primaryState === "not installed" || primaryState.startsWith("signed out");
+      exhausted ||
+      primaryState.startsWith("not installed") ||
+      primaryState.startsWith("signed out");
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
+    const projectId = ProjectId.make("project-a");
     const unrelated = ProviderInstanceId.make(
       primaryState === "fallback non-Go" ? "opencode" : "antigravity",
     );
@@ -632,7 +637,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           ...(primaryState === "pending" && instanceId === primary
             ? { installed: false, status: "warning", auth: { status: "unknown" } }
             : {}),
-          ...(primaryState === "not installed" && instanceId === primary
+          ...(primaryState.startsWith("not installed") && instanceId === primary
             ? { installed: false, status: "error", auth: { status: "unknown" } }
             : {}),
           ...(primaryState.startsWith("signed out") && instanceId === primary
@@ -715,6 +720,18 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
                 config: { enabled: false },
               },
             },
+            ...(primaryState === "not installed, fallback disabled for project"
+              ? {
+                  projectSettingsOverrides: {
+                    [projectId]: {
+                      providerInstances: {
+                        [fallback]: { enabled: false },
+                        [unrelated]: { enabled: false },
+                      },
+                    },
+                  },
+                }
+              : {}),
           }),
           Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
           Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
@@ -732,12 +749,14 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         if (operation === "title")
           return yield* service.generateThreadTitle({
             cwd: "/tmp",
+            projectId,
             message: "hello",
             linkedContext: "",
             modelSelection: selection,
           });
         return yield* service.generateReviewGuide({
           cwd: "/tmp",
+          projectId,
           number: 1,
           title: "Change",
           description: "",
@@ -762,7 +781,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       } else result = yield* generate;
       expect(result).toEqual(operation === "title" ? { title: "Generated title" } : { stops: [] });
       expect(calls).toEqual([
-        needsFallback && !fallbackFailed
+        needsFallback &&
+        !fallbackFailed &&
+        primaryState !== "not installed, fallback disabled for project"
           ? {
               instanceId: operation === "title" && !fallbackExhausted ? unrelated : fallback,
               model:
@@ -781,7 +802,10 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       actualReads.push([...reads].sort());
     }
     expect(actualReads).toEqual(
-      (needsFallback && !fallbackFailed && !primaryBlocked
+      (needsFallback &&
+      !fallbackFailed &&
+      primaryState !== "not installed, fallback disabled for project" &&
+      !primaryBlocked
         ? [
             [primary, fallback],
             fallbackExhausted
