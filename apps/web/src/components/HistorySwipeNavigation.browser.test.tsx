@@ -76,6 +76,16 @@ describe("HistorySwipeNavigation", () => {
       [[-1 / 1.2 ** 6, 1], ...Array.from({ length: 6 }, () => [-60 / 1.2 ** 6, 60] as const)],
       true,
     ],
+    [
+      "a macOS trackpad swipe opening on a wheel-notch multiple navigates",
+      1,
+      [
+        [-40, 120],
+        [-60, 180],
+        [-60, 180],
+      ],
+      true,
+    ],
     ["an accelerated macOS mouse wheel notch keeps the thread", 1, [[-200, 240]], false],
     [
       "slow macOS mouse wheel notches keep the thread",
