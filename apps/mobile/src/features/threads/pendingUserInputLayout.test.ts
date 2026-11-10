@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveRevealScrollOffset } from "./pendingUserInputLayout";
+import {
+  derivePendingUserInputMaxHeight,
+  deriveRevealScrollOffset,
+} from "./pendingUserInputLayout";
+
+describe("derivePendingUserInputMaxHeight", () => {
+  it("gives a closed-keyboard card all the room between the header and the composer", () => {
+    expect(
+      derivePendingUserInputMaxHeight({
+        windowHeight: 874,
+        keyboardHeight: 0,
+        navigationHeaderHeight: 116,
+        composerOverlapHeight: 90,
+      }),
+    ).toBe(656);
+  });
+});
 
 describe("deriveRevealScrollOffset", () => {
   it("keeps the offset when the child is fully visible", () => {
