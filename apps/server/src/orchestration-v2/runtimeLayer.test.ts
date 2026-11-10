@@ -6549,106 +6549,136 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("starts the queue before a send that arrives as the active run ends", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const threadId = ThreadId.make("runtime-layer-send-after-run-end");
-      const messageId = (key: string) => MessageId.make(`${threadId}:${key}`);
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make(`${threadId}:create`),
-        threadId,
-        projectId: ProjectId.make(`${threadId}:project`),
-        title: "Send after run end",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      const dispatch = (key: string, start: boolean) =>
-        orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "agent",
-          creationSource: "server",
-          commandId: CommandId.make(`${threadId}:message:${key}`),
+  it.effect.each([false, true])(
+    "starts the queue before a send that arrives as the active run ends (worktree failed: %s)",
+    (worktreeFailed) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const threadId = ThreadId.make(`runtime-layer-send-after-run-end-${worktreeFailed}`);
+        const messageId = (key: string) => MessageId.make(`${threadId}:${key}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
           threadId,
-          messageId: messageId(key),
-          text: key,
-          attachments: [],
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Send after run end",
           modelSelection,
-          dispatchMode: { type: start ? "start_immediately" : "queue_after_active" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
         });
-      const runFor = (key: string) =>
-        Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) => {
-          const run = runs.find((candidate) => candidate.userMessageId === messageId(key));
-          assert.isDefined(run);
-          return run;
-        });
-      yield* dispatch("active", true);
-      yield* dispatch("queued", false);
-      const active = yield* runFor("active");
-      assert.equal((yield* runFor("queued")).status, "queued");
+        const dispatch = (key: string, start: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "server",
+            commandId: CommandId.make(`${threadId}:message:${key}`),
+            threadId,
+            messageId: messageId(key),
+            text: key,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: start ? "start_immediately" : "queue_after_active" },
+          });
+        const runFor = (key: string) =>
+          Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) => {
+            const run = runs.find((candidate) => candidate.userMessageId === messageId(key));
+            assert.isDefined(run);
+            return run;
+          });
+        yield* dispatch("active", true);
+        yield* dispatch("queued", false);
+        const active = yield* runFor("active");
+        assert.equal((yield* runFor("queued")).status, "queued");
 
-      // Hold the run-end handler before it takes the thread lock, as a busy handler stream
-      // does, then let it run once and signal when its queue release has finished.
-      const handlerHeld = yield* Deferred.make<void>();
-      const releaseHandler = yield* Deferred.make<void>();
-      const releaseAttempted = yield* Deferred.make<void>();
-      let lockCalls = 0;
-      let armed = false;
-      const withLock = executor.withLock;
-      const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
-        key,
-        effect,
-      ) => {
-        if (key !== threadId || !armed) return withLock(key, effect);
-        lockCalls += 1;
-        if (lockCalls === 1) {
-          return Deferred.succeed(handlerHeld, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseHandler)),
-            Effect.andThen(withLock(key, effect)),
-          );
-        }
-        if (lockCalls === 3) {
-          return withLock(key, effect).pipe(
-            Effect.ensuring(Deferred.succeed(releaseAttempted, undefined)),
-          );
-        }
-        return withLock(key, effect);
-      };
-      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
-      yield* Effect.gen(function* () {
-        armed = true;
-        const now = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}:active:completed`),
-              type: "run.updated",
-              threadId,
-              runId: active.id,
-              ...(active.rootNodeId === null ? {} : { nodeId: active.rootNodeId }),
-              providerInstanceId: active.providerInstanceId,
-              occurredAt: now,
-              payload: { ...active, status: "completed", startedAt: now, completedAt: now },
-            },
-          ],
-        });
-        yield* Deferred.await(handlerHeld);
-        yield* dispatch("newer", true);
-        // The thread is idle but has a queue, so the newer send waits behind it.
-        assert.equal((yield* runFor("newer")).status, "queued");
+        // Hold the run-end handler before it takes the thread lock, as a busy handler stream
+        // does, then let it run once and signal when its queue release has finished.
+        const handlerHeld = yield* Deferred.make<void>();
+        const releaseHandler = yield* Deferred.make<void>();
+        const releaseAttempted = yield* Deferred.make<void>();
+        let lockCalls = 0;
+        let armed = false;
+        const withLock = executor.withLock;
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) => {
+          if (key !== threadId || !armed) return withLock(key, effect);
+          lockCalls += 1;
+          if (lockCalls === 1) {
+            return Deferred.succeed(handlerHeld, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseHandler)),
+              Effect.andThen(withLock(key, effect)),
+            );
+          }
+          if (lockCalls === 3) {
+            return withLock(key, effect).pipe(
+              Effect.ensuring(Deferred.succeed(releaseAttempted, undefined)),
+            );
+          }
+          return withLock(key, effect);
+        };
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          armed = true;
+          const now = yield* DateTime.now;
+          const { thread } = yield* orchestrator.getThreadProjection(threadId);
+          yield* eventSink.write({
+            events: [
+              // A failed worktree setup leaves the thread without its worktree.
+              ...(worktreeFailed
+                ? [
+                    {
+                      id: EventId.make(`${threadId}:worktree-missing`),
+                      type: "thread.metadata-updated" as const,
+                      threadId,
+                      occurredAt: now,
+                      payload: { ...thread, worktreePath: null },
+                    },
+                  ]
+                : []),
+              {
+                id: EventId.make(`${threadId}:active:completed`),
+                type: "run.updated",
+                threadId,
+                runId: active.id,
+                ...(active.rootNodeId === null ? {} : { nodeId: active.rootNodeId }),
+                providerInstanceId: active.providerInstanceId,
+                occurredAt: now,
+                payload: worktreeFailed
+                  ? {
+                      ...active,
+                      status: "failed",
+                      workspacePreparation: { type: "worktree", baseRef: "main" },
+                      startedAt: now,
+                      completedAt: now,
+                    }
+                  : { ...active, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          yield* Deferred.await(handlerHeld);
+          yield* dispatch("newer", !worktreeFailed);
+          // The thread is idle but has a queue, so the newer send waits behind it.
+          assert.equal((yield* runFor("newer")).status, "queued");
 
-        yield* Deferred.succeed(releaseHandler, undefined);
-        yield* Deferred.await(releaseAttempted);
-        assert.notEqual((yield* runFor("queued")).status, "queued");
-      }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
-    }),
+          yield* Deferred.succeed(releaseHandler, undefined);
+          yield* Deferred.await(releaseAttempted);
+          const queued = yield* runFor("queued");
+          if (worktreeFailed) {
+            // Without a worktree the queue stays held instead of running in the project checkout.
+            assert.equal(queued.status, "queued");
+            assert.isTrue(queued.queueHeld);
+          } else {
+            assert.notEqual(queued.status, "queued");
+          }
+        }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+      }),
   );
 
   it.effect.each([false, true])(
