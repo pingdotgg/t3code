@@ -113,6 +113,25 @@ export function bindAudioGrant(id: string) {
 export function useCleanupGrant() {
   return useLocalStorage(CLEANUP_KEY, null, CleanupGrant)[0];
 }
+/** Notifies on any change that can move the active audio grant, as useAudioChoice observes it. */
+export function subscribeAudioChoice(onChange: () => void) {
+  let unsubscribeMarker = () => {};
+  const watchMarker = () => {
+    unsubscribeMarker();
+    const id = pendingGrant(readChoice())?.id;
+    unsubscribeMarker = id ? subscribeLocalStorageKey(savedKey(id), onChange) : () => {};
+  };
+  watchMarker();
+  const unsubscribeChoice = subscribeLocalStorageKey(AUDIO_KEY, () => {
+    watchMarker();
+    onChange();
+  });
+  return () => {
+    unsubscribeChoice();
+    unsubscribeMarker();
+  };
+}
+
 export function readCleanupGrant() {
   return readLocalStorageValue(CLEANUP_KEY, null, CleanupGrant);
 }

@@ -55,7 +55,8 @@ const mocks = vi.hoisted(() => ({
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
-  transcripts: [] as Array<string | Error>,
+  transcripts: [] as Array<string | Error | Promise<string>>,
+  transcriptionSignals: [] as AbortSignal[],
   committed: vi.fn(),
   draft: "",
 }));
@@ -182,15 +183,20 @@ vi.mock("./browserVoiceInput", () => ({
           mocks.recordingOptions.push(input.getTranscriptionOptions());
           return {
             locale: "en",
-            transcribe: async () => {
+            transcribe: async (_uri: string, options: { readonly signal: AbortSignal }) => {
               mocks.transcribeCalls.push(
                 input.cloudProvider
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
                   : environmentId,
               );
+              mocks.transcriptionSignals.push(options.signal);
               const next = mocks.transcripts.shift() ?? "dictated";
               if (next instanceof Error) throw next;
-              return next;
+              if (typeof next === "string") return next;
+              return new Promise<string>((resolve, reject) => {
+                options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+                next.then(resolve, reject);
+              });
             },
           };
         },
@@ -233,6 +239,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.recordingOptions = [];
   mocks.projectWords = {};
   mocks.transcripts = [];
+  mocks.transcriptionSignals = [];
   mocks.committed.mockClear();
   mocks.draft = "";
 }
@@ -440,6 +447,51 @@ it("keeps a recording that failed after its editor unmounted for a retry when it
   await act(() => mocks.voice.start());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("lets an editor remounted for the draft wait for its pending transcript before sending", async () => {
+  setup({ destination: "env-a" });
+  mocks.draft = "existing text";
+  let resolveTranscript!: (text: string) => void;
+  mocks.transcripts = [new Promise<string>((resolve) => (resolveTranscript = resolve))];
+  await using first = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await first.unmount();
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  const commitRemounted = vi.fn();
+  await using _screen = await render(<Probe ownerKey="thread-a" commitDraft={commitRemounted} />);
+  expect(mocks.voice.state.phase).toBe("transcribing");
+  expect(mocks.voice.blocksSubmission).toBe(true);
+  const submit = vi.fn();
+  await act(() => mocks.voice.submitAfterDictation(submit));
+  expect(submit).not.toHaveBeenCalled();
+  await act(async () => resolveTranscript("the login bug"));
+  await vi.waitFor(() =>
+    expect(submit).toHaveBeenCalledExactlyOnceWith("existing text the login bug"),
+  );
+  expect(commitRemounted).toHaveBeenCalledExactlyOnceWith(
+    "existing text the login bug",
+    expect.anything(),
+  );
+  expect(mocks.committed).not.toHaveBeenCalled();
+  expect(mocks.voice.state.phase).toBe("idle");
+});
+
+it("abandons a recording that outlived its editor when the destination changes", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Promise<string>(() => {})];
+  await using first = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await first.unmount();
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  await act(() => setDestination("env-b"));
+  expect(mocks.transcriptionSignals[0]?.aborted).toBe(true);
+  await using _screen = await render(<Probe ownerKey="thread-b" />);
+  await vi.waitFor(() => expect(mocks.voice.available).toBe(true));
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  expect(mocks.microphoneRequests).toEqual(["env-a", "env-b"]);
+  expect(mocks.committed).not.toHaveBeenCalled();
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {

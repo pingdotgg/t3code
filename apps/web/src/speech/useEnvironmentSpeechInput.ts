@@ -27,7 +27,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel, resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
@@ -41,7 +41,12 @@ import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
-import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+import {
+  bindAudioGrant,
+  readCleanupGrant,
+  subscribeAudioChoice,
+  useAudioChoice,
+} from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -90,6 +95,40 @@ function takeParkedRetry(ownerKey: string, prepared: PreparedConnection, grantId
   if (parked.prepared === prepared && parked.grantId === grantId) return parked.recording;
   parked.discard();
   return null;
+}
+
+type PendingSubmission = {
+  readonly ownerKey: string;
+  readonly submit: (text: string) => void;
+  text?: string;
+};
+
+// Recordings whose editor unmounted mid-dictation, per draft. An editor that mounts for the same
+// draft shows the session's state and routes Send, stop, cancel, and the transcript through it.
+type DetachedSession = {
+  readonly ownerKey: string;
+  readonly controller: VoiceInputController;
+  state: VoiceInputState;
+  pending: PendingSubmission | null;
+  attached: (() => HookInput | null) | null;
+  unsubscribe: () => void;
+};
+const detachedSessions = new Map<string, DetachedSession>();
+const detachedSessionListeners = new Set<() => void>();
+function notifyDetachedSessions() {
+  for (const listener of detachedSessionListeners) listener();
+}
+function subscribeDetachedSessions(listener: () => void) {
+  detachedSessionListeners.add(listener);
+  return () => {
+    detachedSessionListeners.delete(listener);
+  };
+}
+function endDetachedSession(session: DetachedSession) {
+  session.unsubscribe();
+  if (detachedSessions.get(session.ownerKey) !== session) return;
+  detachedSessions.delete(session.ownerKey);
+  notifyDetachedSessions();
 }
 
 type DraftInput = {
@@ -223,8 +262,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setQueuedStart(null);
     setSetup(INITIAL_SETUP);
   }
-  const state: VoiceInputState =
-    queuedStart === prepared && prepared
+  const detachedState = useSyncExternalStore(
+    subscribeDetachedSessions,
+    () => detachedSessions.get(input.ownerKey)?.state ?? null,
+  );
+  const state: VoiceInputState = detachedState
+    ? detachedState
+    : queuedStart === prepared && prepared
       ? WAITING_STATE
       : controllerState.prepared === prepared && controllerState.ownerKey === input.ownerKey
         ? controllerState.value
@@ -233,11 +277,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const controllerRef = useRef<VoiceInputController | null>(null);
   const parkFailedRecordingRef = useRef<(() => void) | null>(null);
   const startRequestRef = useRef(0);
-  const pendingSubmissionRef = useRef<{
-    ownerKey: string;
-    submit: (text: string) => void;
-    text?: string;
-  } | null>(null);
+  const pendingSubmissionRef = useRef<PendingSubmission | null>(null);
   const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
   const previousInputRef = useRef(input);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
@@ -275,6 +315,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const hasAudioConsent = bindAudioGrant(grantId);
     let disposed = false;
     let controller: VoiceInputController;
+    let session: DetachedSession | null = null;
     let recordingPreferences:
       | {
           readonly cleanup: SpeechPostProcessingOptions | null;
@@ -422,14 +463,32 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }),
       readDraft,
       commitDraft: (text, selection) => {
-        const target = detachedRef.current?.input ?? latestRef.current.input;
+        const target =
+          session?.attached?.() ?? detachedRef.current?.input ?? latestRef.current.input;
         if (target.disabled) return;
         target.commitDraft(text, selection);
-        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+        const pending = session ? session.pending : pendingSubmissionRef.current;
+        if (pending) pending.text = text;
       },
       onStateChange: (value) => {
         const detached = detachedRef.current;
-        if (value.phase === "idle" || value.phase === "error") detachedRef.current = null;
+        const settled = value.phase === "idle" || value.phase === "error";
+        if (settled) detachedRef.current = null;
+        if (session) {
+          const current = session;
+          if (!settled) {
+            current.state = value;
+            notifyDetachedSessions();
+            return;
+          }
+          session = null;
+          // Parks a failed recording before the draft's editor sees the session end and adopts it.
+          queueMicrotask(() => {
+            if (value.phase === "error") parkFailedRecording();
+            endDetachedSession(current);
+          });
+          return;
+        }
         // Settles the controller first; takeRetryRecording reports idle back through here.
         if (value.phase === "error" && detached) queueMicrotask(parkFailedRecording);
         if (disposed) return;
@@ -463,7 +522,24 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           detachedRef.current = { input: current, revision: snapshot.revision };
         }
         // The editor is gone, but the recording still finishes into its draft or waits for Retry.
-        if (detachedRef.current) {
+        const detached = detachedRef.current;
+        if (detached) {
+          const ownerKey = detached.input.ownerKey;
+          const current: DetachedSession = {
+            ownerKey,
+            controller,
+            state: controller.currentState,
+            pending: null,
+            attached: null,
+            unsubscribe: () => {},
+          };
+          session = current;
+          detachedSessions.set(ownerKey, current);
+          notifyDetachedSessions();
+          // Leaves the consented destination exactly as a mounted editor would.
+          current.unsubscribe = subscribeAudioChoice(() => {
+            if (!hasAudioConsent()) controller.dispose();
+          });
           if (phase === "recording") void controller.stop();
           return;
         }
@@ -543,15 +619,30 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controller.ownerChanged();
   }, [input.ownerKey, input.disabled]);
 
+  const attachesToDetached = detachedState !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lends this editor to a recording that outlived the draft's previous editor, so its transcript lands in what is shown
+  useEffect(() => {
+    const session = attachesToDetached ? detachedSessions.get(input.ownerKey) : undefined;
+    if (!session) return;
+    const attached = () => {
+      const current = latestRef.current.input;
+      return current.ownerKey === session.ownerKey ? current : null;
+    };
+    session.attached = attached;
+    return () => {
+      if (session.attached === attached) session.attached = null;
+    };
+  }, [attachesToDetached, input.ownerKey]);
+
   const controllerPhase = controllerState.value.phase;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands a failed recording parked for this draft back to its controller for Retry
   useEffect(() => {
     const controller = controllerRef.current;
-    if (!controller || !prepared || !grantId || input.disabled) return;
+    if (!controller || !prepared || !grantId || input.disabled || detachedState) return;
     if (controllerPhase !== "idle" || controller.currentState.phase !== "idle") return;
     const recording = takeParkedRetry(input.ownerKey, prepared, grantId);
     if (recording) controller.adoptRetryRecording(recording);
-  }, [controllerPhase, input.ownerKey, input.disabled, prepared, grantId]);
+  }, [controllerPhase, detachedState, input.ownerKey, input.disabled, prepared, grantId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
   useEffect(() => {
@@ -564,13 +655,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
     if (latestRef.current.input.disabled || state.phase === "preparing") return;
-    const controller = controllerRef.current;
+    const detachedSession = detachedSessions.get(latestRef.current.input.ownerKey);
+    const controller = detachedSession?.controller ?? controllerRef.current;
     if (!controller || !voiceInputBlocksSubmission(state)) {
       submit(latestRef.current.input.readDraft().text);
       return;
     }
     if (pendingSubmissionRef.current) return;
-    pendingSubmissionRef.current = { ownerKey: latestRef.current.input.ownerKey, submit };
+    const pending: PendingSubmission = { ownerKey: latestRef.current.input.ownerKey, submit };
+    pendingSubmissionRef.current = pending;
+    if (detachedSession) detachedSession.pending = pending;
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
@@ -610,7 +704,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     const controller = controllerRef.current;
     const owner = latestRef.current.input.ownerKey;
-    if (!controller || !prepared) return;
+    if (!controller || !prepared || detachedSessions.has(owner)) return;
     if (cloudProvider) {
       setLevel(0);
       await controller.start();
@@ -715,6 +809,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
+  const activeController = () =>
+    detachedSessions.get(latestRef.current.input.ownerKey)?.controller ?? controllerRef.current;
+
   const destinationReady =
     grantId === null
       ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
@@ -752,14 +849,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputBlocksSubmission(state),
     start,
     submitAfterDictation,
-    stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
+    stop: useStableCallback(() => activeController()?.stop() ?? Promise.resolve()),
     cancel: useStableCallback(() => {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       setSetup(INITIAL_SETUP);
-      controllerRef.current?.cancel();
+      activeController()?.cancel();
     }),
-    skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
+    skipPostProcessing: useStableCallback(() => activeController()?.skipPostProcessing()),
   };
 }
