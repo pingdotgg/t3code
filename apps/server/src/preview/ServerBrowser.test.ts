@@ -2525,3 +2525,39 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.effect(
+  "a viewer whose screencast Chromium never starts still attaches and lets snapshots run",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        const context = contexts[0]!;
+        const stalledStarts = yield* Queue.unbounded<void>();
+        const openSession = context.newCDPSession;
+        context.newCDPSession = async (target: unknown) => {
+          const session = await openSession(target);
+          const answer = session.send.getMockImplementation()!;
+          session.send.mockImplementation(async (method: string, input?: unknown) => {
+            if (method !== "Page.startScreencast") return answer(method, input);
+            Queue.offerUnsafe(stalledStarts, undefined);
+            return new Promise<never>(() => {});
+          });
+          return session;
+        };
+        const attaching = yield* browser
+          .attachViewer(viewerInput(tabId, true))
+          .pipe(Effect.forkScoped);
+        yield* Queue.take(stalledStarts);
+        yield* TestClock.adjust("5 seconds");
+        const viewer = yield* Fiber.join(attaching);
+        expect((yield* Queue.takeAll(viewer.output)).map((item) => item._tag)).toContain("frame");
+        const snapshotting = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.forkScoped);
+        yield* Queue.take(stalledStarts);
+        yield* TestClock.adjust("5 seconds");
+        expect((yield* Fiber.join(snapshotting)).url).toBeDefined();
+      }),
+    ).pipe(Effect.provide(layer)),
+);
