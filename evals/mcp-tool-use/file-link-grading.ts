@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import {
@@ -20,6 +18,16 @@ export const FileLinksExpect = Schema.Struct({
   /** The final answer has at least this many file pills that open a world file. */
   minWorking: Schema.Number,
 });
+
+/** Resolves `.` and `..` segments, which the file system resolves when the client opens the path. */
+const normalizeAbsolutePath = (path: string) => {
+  const segments: Array<string> = [];
+  for (const segment of path.split("/")) {
+    if (segment === "..") segments.pop();
+    else if (segment !== "" && segment !== ".") segments.push(segment);
+  }
+  return `/${segments.join("/")}`;
+};
 
 /** The client opens an exact basename match, or a case-insensitive one when only one exists. */
 const uniqueBasename = (name: string, entries: ReadonlyArray<{ readonly path: string }>) => {
@@ -62,7 +70,7 @@ export const fileLinkPills = (
   return [...new Set(sources)].flatMap((source) => {
     const target = resolveMarkdownFileLinkTarget(source, cwd);
     if (target === null) return [];
-    const path = NodePath.posix.normalize(splitFilePathPosition(target).path).replace(/\/+$/, "");
+    const path = normalizeAbsolutePath(splitFilePathPosition(target).path);
     // System paths such as /usr/bin/node are not what these cases test.
     if (!/^\/(?:home|Users)\//.test(path)) return [];
     const relative = parseMarkdownFileLink(source)?.path ?? path;
