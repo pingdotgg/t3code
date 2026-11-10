@@ -4,6 +4,8 @@ import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+// localStorage is shared by every tab; sessionStorage keeps each tab's own filter across reloads.
+const TAB_SIDEBAR_PROJECT_SCOPE_KEY = "t3code:sidebar-project-scope:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v8",
@@ -160,10 +162,25 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   };
 }
 
+function readTabSidebarProjectScopeKeys(): string[] | null {
+  try {
+    const raw = window.sessionStorage.getItem(TAB_SIDEBAR_PROJECT_SCOPE_KEY);
+    return raw === null ? null : sanitizeStringArray(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 function readPersistedState(): UiState {
   if (typeof window === "undefined") {
     return initialState;
   }
+  const state = readSharedPersistedState();
+  const sidebarProjectScopeKeys = readTabSidebarProjectScopeKeys();
+  return sidebarProjectScopeKeys === null ? state : { ...state, sidebarProjectScopeKeys };
+}
+
+function readSharedPersistedState(): UiState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) {
@@ -244,6 +261,12 @@ export function persistState(state: UiState): void {
         window.localStorage.removeItem(legacyKey);
       }
     }
+  } catch {}
+  try {
+    window.sessionStorage.setItem(
+      TAB_SIDEBAR_PROJECT_SCOPE_KEY,
+      JSON.stringify(state.sidebarProjectScopeKeys),
+    );
   } catch {}
 }
 
