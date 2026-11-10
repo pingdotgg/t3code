@@ -39,7 +39,8 @@ export const defaultProjectFallbackReadyAtom = Atom.family((projectKey: string |
       )
     )
       return false;
-    if (!catalog.entries.get(remembered.environmentId)?.enabled) return true;
+    const entry = catalog.entries.get(remembered.environmentId);
+    if (!entry?.enabled || entry.unsupportedReason !== undefined) return true;
     if (get(environmentShell.statusAtom(remembered.environmentId)) === "live") return true;
     const connection = AsyncResult.getOrElse(
       get(environmentCatalog.stateAtom(remembered.environmentId)),
