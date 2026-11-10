@@ -8,14 +8,14 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   baseRef: Schema.optional(TrimmedNonEmptyString),
   commitSha: Schema.optional(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
-  sourceKind: Schema.optionalKey(Schema.Literals(["working-tree", "branch-range"])),
+  sourceKind: Schema.optionalKey(Schema.Literals(["working-tree", "unstaged", "branch-range"])),
   trackedOnly: Schema.optionalKey(Schema.Boolean),
   metadataOnly: Schema.optionalKey(Schema.Boolean),
   file: Schema.optionalKey(
     Schema.Struct({
       path: Schema.NonEmptyString,
       previousPath: Schema.NullOr(Schema.NonEmptyString),
-      sourceKind: Schema.Literals(["working-tree", "branch-range", "commit"]),
+      sourceKind: Schema.Literals(["working-tree", "unstaged", "branch-range", "commit"]),
     }),
   ),
 });
@@ -41,6 +41,7 @@ export type ReviewBranchCommitsResult = typeof ReviewBranchCommitsResult.Type;
 
 export const ReviewDiffPreviewSourceKind = Schema.Literals([
   "working-tree",
+  "unstaged",
   "branch-range",
   "commit",
 ]);

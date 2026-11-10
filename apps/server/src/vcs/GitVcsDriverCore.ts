@@ -3032,6 +3032,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareReviewIndex = Effect.fn("prepareReviewIndex")(function* (
     cwd: string,
     untrackedPaths: ReadonlyArray<string>,
+    includeStagedDeletions = false,
   ) {
     const [stagedDeletionsStdout, indexValue] = yield* Effect.all(
       [
@@ -3059,8 +3060,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
-    const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
-    if (pathsToAdd.length === 0) return undefined;
+    const pathsToAdd = includeStagedDeletions
+      ? untrackedPaths
+      : untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    const excludesStagedDeletions = pathsToAdd.length !== untrackedPaths.length;
+    if (pathsToAdd.length === 0) return { env: undefined, excludesStagedDeletions };
 
     const indexPath = path.isAbsolute(indexValue.trim())
       ? indexValue.trim()
@@ -3113,7 +3117,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { env, stdin: `${pathsToAdd.join("\0")}\0` },
     );
-    return env;
+    return { env, excludesStagedDeletions };
   });
 
   const readEmptyTreeHash = Effect.fn("readEmptyTreeHash")(function* (cwd: string) {
@@ -3130,6 +3134,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
+    includeStagedDeletions = false,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -3143,9 +3148,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (candidate) =>
         onlyPath === undefined || candidate === onlyPath || candidate === `${onlyPath}/`,
     );
-    if (paths.length === 0) return { env: undefined };
+    if (paths.length === 0) return { env: undefined, excludesStagedDeletions: false };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
-    const env = yield* prepareReviewIndex(cwd, paths).pipe(
+    return yield* prepareReviewIndex(cwd, paths, includeStagedDeletions).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(
@@ -3159,7 +3164,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
       }),
     );
-    return { env };
   });
 
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
@@ -3427,7 +3431,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const needsCurrentBranch =
       input.commitSha === undefined &&
       input.file?.sourceKind !== "commit" &&
-      sourceKind !== "working-tree";
+      sourceKind !== "working-tree" &&
+      sourceKind !== "unstaged";
     const repository = yield* (
       needsCurrentBranch
         ? resolveRepositoryPathsUncached(input.cwd)
@@ -3509,9 +3514,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    const dirtyRef = sourceKind === "branch-range" ? null : "HEAD";
+    const dirtyRef = sourceKind === "branch-range" || sourceKind === "unstaged" ? null : "HEAD";
     const review =
-      sourceKind === "working-tree"
+      sourceKind === "working-tree" || sourceKind === "unstaged"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
@@ -3528,7 +3533,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
         cwd,
-        [...args, ref, "--", ...pathArgs],
+        [...args, ...(ref ? [ref] : []), "--", ...pathArgs],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, env },
       );
       if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
@@ -3563,15 +3568,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
         cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
+        [...diffArgs, "--patch", ...(stat.ref ? [stat.ref] : []), "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
       );
       return { ...patch, files: stat.files };
     });
-    const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
+    const [dirtyTrackedResult, baseResult, unstagedResult] = yield* Effect.gen(function* () {
       const untracked = input.trackedOnly
-        ? { env: undefined }
-        : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+        ? { env: undefined, excludesStagedDeletions: false }
+        : yield* prepareUntrackedReviewIndex(
+            cwd,
+            pathArgs,
+            input.file?.path,
+            sourceKind === "unstaged",
+          );
       const metadataOnly = input.metadataOnly === true && !input.file && untracked !== null;
       const [dirty, base] =
         review.mergeBase === dirtyRef
@@ -3585,18 +3595,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ],
               { concurrency: 2 },
             );
-      if (untracked !== null) return [dirty, base] as const;
+      // Omitting the revision compares the working tree against the index.
+      const unstagedRef = sourceKind === undefined || sourceKind === "unstaged" ? "" : null;
+      const unstagedIndex =
+        unstagedRef !== null && untracked?.excludesStagedDeletions
+          ? yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path, true)
+          : untracked;
+      const unstaged = yield* readTrackedDiff(
+        unstagedRef,
+        unstagedIndex?.env,
+        input.metadataOnly === true && !input.file && unstagedIndex !== null,
+      );
       const incomplete = (ref: string | null, result: typeof dirty) =>
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
-      return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
+      return [
+        untracked === null ? incomplete(dirtyRef, dirty) : dirty,
+        untracked === null ? incomplete(review.mergeBase, base) : base,
+        unstagedIndex === null ? incomplete(unstagedRef, unstaged) : unstaged,
+      ] as const;
     }).pipe(Effect.scoped);
     const dirtyFiles = dirtyTrackedResult.files;
     const baseFiles = baseResult.files;
     const dirtyDiff = dirtyTrackedResult.stdout;
     const baseDiff = baseResult.stdout;
-    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+    const [dirtyDiffHash, baseDiffHash, unstagedDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff, dirtyFiles ?? []),
       hashDiff(baseDiff, baseFiles ?? []),
+      hashDiff(unstagedResult.stdout, unstagedResult.files ?? []),
     ]);
 
     const sources: ReviewDiffPreviewSource[] = [
@@ -3611,6 +3636,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         diffHash: dirtyDiffHash,
         truncated: dirtyTrackedResult.stdoutTruncated,
         ...(input.metadataOnly && !input.file && dirtyFiles !== undefined
+          ? { patchesDeferred: true }
+          : {}),
+      },
+      {
+        id: "unstaged",
+        kind: "unstaged",
+        title: "Unstaged",
+        baseRef: null,
+        headRef: null,
+        diff: unstagedResult.stdout,
+        ...(unstagedResult.files === undefined ? {} : { files: unstagedResult.files }),
+        diffHash: unstagedDiffHash,
+        truncated: unstagedResult.stdoutTruncated,
+        ...(input.metadataOnly && !input.file && unstagedResult.files !== undefined
           ? { patchesDeferred: true }
           : {}),
       },
@@ -3782,9 +3821,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { oldContents, newContents };
     }
     const oldRevision =
-      input.sourceKind === "working-tree"
-        ? (input.baseRef ?? "HEAD")
-        : (yield* resolveReviewMergeBase(input.cwd, null, input.baseRef ?? undefined)).mergeBase;
+      input.sourceKind === "unstaged"
+        ? ""
+        : input.sourceKind === "working-tree"
+          ? (input.baseRef ?? "HEAD")
+          : (yield* resolveReviewMergeBase(input.cwd, null, input.baseRef ?? undefined)).mergeBase;
     const [oldContents, newContents] = yield* Effect.all(
       [
         input.changeType === "new"

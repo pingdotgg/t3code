@@ -112,6 +112,7 @@ function ReviewHeader(
                     items: [
                       sectionAction(props.sectionMenu.branchChanges, "Changes"),
                       sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
+                      sectionAction(props.sectionMenu.unstaged, "Unstaged"),
                       sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
                     ],
                   },
