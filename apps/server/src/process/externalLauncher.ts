@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
@@ -508,15 +509,16 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
-  const parsedTarget = parseTargetPathAndPosition(input.cwd);
+  const parsedTarget = parseTargetPathAndPosition(target);
   const fileManagerTarget =
     Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
       ? parsedTarget.value.path
-      : input.cwd;
+      : target;
 
   return {
     editor: editorDef.id,
