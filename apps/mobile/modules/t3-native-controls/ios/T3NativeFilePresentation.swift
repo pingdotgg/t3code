@@ -4,8 +4,13 @@ import UIKit
 import UniformTypeIdentifiers
 
 private final class FilePreviewItem: NSObject, QLPreviewItem {
+  let index: Int
   var previewItemURL: URL?
   var previewItemTitle: String?
+
+  init(index: Int) {
+    self.index = index
+  }
 }
 
 private enum FilePreviewState { case loading, ready, failed }
@@ -67,8 +72,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   private var states: [FilePreviewState] = []
   private var selectedIndex = 0
   private weak var presenter: UIViewController?
-  /// Files that arrived while their page was off screen; Quick Look may still hold the blank page.
-  private var staleIndices = Set<Int>()
+  /// Pages Quick Look took before their file arrived. Refreshing a page it already drew blanks it.
+  private var blankPages = Set<Int>()
   private var currentIndexObservation: NSKeyValueObservation?
   private var download: (index: Int, task: Task<Void, Never>)?
   private var placeholder: Task<Void, Never>?
@@ -109,8 +114,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
 
   private func load(urls: [URL?], titles: [String], selectedIndex: Int, from presenter: UIViewController,
                     opensWhileLoading: Bool) {
-    items = titles.map { title in
-      let item = FilePreviewItem()
+    items = titles.enumerated().map { index, title in
+      let item = FilePreviewItem(index: index)
       item.previewItemTitle = title
       return item
     }
@@ -214,21 +219,22 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   }
 
   private func refresh(_ index: Int) {
-    guard let controller else { return }
-    guard controller.currentPreviewItemIndex == index else {
-      if states[index] == .ready { staleIndices.insert(index) }
-      return
-    }
-    if states[index] == .ready { controller.refreshCurrentPreviewItem() }
+    guard let controller, controller.currentPreviewItemIndex == index else { return }
+    refreshIfBlank(index)
     controller.state = states[index]
   }
 
   private func currentItemChanged() {
     guard !finished, let controller, states.indices.contains(controller.currentPreviewItemIndex) else { return }
     let index = controller.currentPreviewItemIndex
-    if staleIndices.remove(index) != nil { controller.refreshCurrentPreviewItem() }
+    refreshIfBlank(index)
     controller.state = states[index]
     loadNext()
+  }
+
+  private func refreshIfBlank(_ index: Int) {
+    guard states[index] == .ready, blankPages.remove(index) != nil else { return }
+    controller?.refreshCurrentPreviewItem()
   }
 
   func dismiss() {
@@ -251,13 +257,18 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
 
   func numberOfPreviewItems(in controller: QLPreviewController) -> Int { items.count }
 
+  /// Hands out a snapshot so Quick Look never sees a file arrive on an item it already took.
   func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-    items[index]
+    let page = FilePreviewItem(index: index)
+    page.previewItemURL = items[index].previewItemURL
+    page.previewItemTitle = items[index].previewItemTitle
+    if page.previewItemURL == nil { blankPages.insert(index) } else { blankPages.remove(index) }
+    return page
   }
 
   private func sourceView(for item: QLPreviewItem) -> UIView? {
     guard !UIAccessibility.isReduceMotionEnabled,
-      let index = items.firstIndex(where: { $0 === item }),
+      let index = (item as? FilePreviewItem)?.index,
       sourceIdentifiers.indices.contains(index)
     else { return nil }
     return sources?.view(for: sourceIdentifiers[index])
