@@ -16,13 +16,10 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Context from "effect/Context";
-import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -126,42 +123,6 @@ export function remoteModelSelection(
   return { instanceId, model, ...(options === undefined ? {} : { options }) };
 }
 
-/**
- * A caller's key bound to the task's destination and exact selection, so the
- * same key with another environment or target is another request: it asks and
- * launches on its own instead of riding an earlier one's receipt.
- */
-export const remoteRequestKey = Effect.fn("RemoteDelegation.remoteRequestKey")(function* (
-  key: string,
-  environmentId: EnvironmentId,
-  selection: ModelSelection,
-) {
-  const digest = yield* Digest.Digest;
-  // Options compare as a set; a cleared list differs from none.
-  const options =
-    selection.options === undefined
-      ? "-"
-      : selection.options
-          .map((option) => `${option.id}=${typeof option.value}:${String(option.value)}`)
-          .toSorted()
-          .join("\u0001");
-  // The launch there carries this key, and keys there are capped at 256 characters.
-  return yield* digest
-    .digest(
-      Digest.sha256,
-      new TextEncoder().encode(
-        [key, environmentId, selection.instanceId, selection.model, options].join("\u0000"),
-      ),
-    )
-    .pipe(Effect.map(Hex.encode), Effect.orDie);
-});
-
-/** The command recording a remote task here; its receipt marks a delegation already made. */
-export const recordCommandId = (scope: Pick<ThreadScope, "requestNamespace">, requestKey: string) =>
-  CommandId.make(
-    `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(requestKey)}`,
-  );
-
 /** The other side refused because the thread there runs above this caller's modes. */
 const isModeRefusal = (error: OrchestratorMcpFailure) =>
   error.code === "runtime_mode_escalation_denied" ||
@@ -186,7 +147,6 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
-  const digest = yield* Digest.Digest;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -297,60 +257,18 @@ const make = Effect.gen(function* () {
         input.interactionMode === undefined || input.interactionMode === "inherit"
           ? undefined
           : yield* resolveInteractionMode(parent.thread.interactionMode, input.interactionMode);
-      // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
-      const key = yield* remoteRequestKey(
-        input.clientRequestId ?? (yield* random.uuidV4()),
-        target.environmentId,
-        modelSelection,
-      ).pipe(Effect.provideService(Digest.Digest, digest));
-      const commandId = recordCommandId(scope, key);
-      // A recorded request returns its task without reaching the other side again.
-      if (yield* threads.hasReceipt(commandId)) {
-        const taskId = IdAllocator.derive.delegatedTaskNode({ commandId });
-        const recorded = yield* readTask(scope.thread.threadId, taskId).pipe(
-          Effect.map(({ task }) => task),
-          Effect.orElseSucceed(() => undefined),
-        );
-        if (recorded === undefined) {
-          return yield* new OrchestratorMcpFailure({
-            code: "orchestration_error",
-            message: "The delegated task was not recorded.",
-          });
-        }
-        yield* followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers));
-        return { taskId };
-      }
       const projectId = yield* resolveRemoteProject(
         scope,
         target.environmentId,
         parent.thread.projectId,
         target.projectId,
       );
+      // One key for the launch there and the record here, so a retry finds both.
+      // Both are scoped to the provider session, as every key a caller passes is:
+      // the forwarder scopes the launch's, and the record's names it.
+      const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
-      const stopped = yield* threads
-        .getThreadRecords(scope.thread.threadId, ["turnItems"], {
-          turnItemTypes: ["run_interrupt_request"],
-          turnItemRunIds: [parentRun.id],
-        })
-        .pipe(
-          Effect.map(({ turnItems }) => turnItems.length > 0),
-          Effect.mapError(
-            () =>
-              new OrchestratorMcpFailure({
-                code: "thread_not_found",
-                message: "The calling thread was not found.",
-              }),
-          ),
-        );
-      if (stopped) {
-        return yield* new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "Delegated tasks require an active run owned by this MCP provider session.",
-        });
-      }
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,
@@ -374,6 +292,9 @@ const make = Effect.gen(function* () {
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
+      );
+      const commandId = CommandId.make(
+        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,

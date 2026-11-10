@@ -2599,25 +2599,17 @@ const make = Effect.gen(function* () {
             "Pass target.model from orchestrator_capabilities with this environmentId.",
           );
         }
-        const recorded = RemoteDelegation.recordCommandId(
+        yield* awaitDelegationApproval({
           scope,
-          yield* RemoteDelegation.remoteRequestKey(key, environmentId, proposed).pipe(
-            Effect.provideService(Digest.Digest, digest),
-          ),
-        );
-        if (!(yield* threadManagement.hasReceipt(recorded))) {
-          yield* awaitDelegationApproval({
-            scope,
-            parentRun,
-            requestKey: key,
-            current: parentRun.modelSelection,
-            inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
-            proposed,
-            environmentId,
-            title: input.title,
-            task: taskPrompt(input),
-          });
-        }
+          parentRun,
+          requestKey: key,
+          current: parentRun.modelSelection,
+          inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
+          proposed,
+          environmentId,
+          title: input.title,
+          task: taskPrompt(input),
+        });
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,

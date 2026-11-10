@@ -3174,10 +3174,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly decide: (command: { readonly proposed: unknown }) => Decision;
       /** The parent's run ends while its card waits. */
       readonly parentRunEndsOnAsk?: boolean;
-      readonly parentRunInitiallyEnded?: boolean;
       /** The user narrows the parent's modes while its card waits. */
       readonly parentModesNarrowOnAsk?: boolean;
-      readonly hasReceipt?: (commandId: CommandId) => boolean;
       /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
       readonly threadSelection?: Parameters<typeof parentProjection>[1];
     }) =>
@@ -3186,7 +3184,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const remoteDelegations: Array<unknown> = [];
         const cards = new Map<string, Card>();
         const waiting = yield* Deferred.make<void>();
-        let parentRunEnded = input.parentRunInitiallyEnded === true;
+        let parentRunEnded = false;
         let parentModes = {};
         const task = {
           id: taskId,
@@ -3219,7 +3217,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            hasReceipt: (commandId) => Effect.succeed(input.hasReceipt?.(commandId) ?? false),
+            hasReceipt: () => Effect.succeed(false),
             assertProviderInstanceEnabled: () => Effect.void,
             getThreadEventSequence: () => Effect.succeed(0),
             streamStoredEventsFrom: () =>
@@ -3517,47 +3515,16 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("retries of one approved delegation reuse its command, so start one child", () =>
-      Effect.gen(function* () {
-        const { service, delegations, approvals } = yield* harness({ decide: () => "approved" });
-        yield* Effect.all(
-          [
-            delegate(service, { model: "other-model" }, "retried"),
-            delegate(service, { model: "other-model" }, "retried"),
-          ],
-          { concurrency: "unbounded" },
-        );
-        const ids = new Set(
-          approvals().map(
-            (command) => command.type === "delegation_approval.record" && command.turnItemId,
-          ),
-        );
-        assert.equal(ids.size, 1);
-        assert.equal(new Set(delegations().map((command) => command.commandId)).size, 1);
-      }),
-    );
-
-    it.effect("an accepted delegation's retry replays its receipt without asking again", () =>
-      Effect.gen(function* () {
-        const { service, delegations, approvals } = yield* harness({
-          decide: () => "pending",
-          hasReceipt: () => true,
-        });
-        yield* delegate(service, { model: "other-model" }, "accepted");
-        assert.deepEqual(approvals(), []);
-        assert.equal(delegations().length, 1);
-      }),
-    );
-
     it.effect("asks before forwarding a changed target to a linked environment", () =>
       Effect.gen(function* () {
+        const proposed = { instanceId: codexInstanceId, model: "other-model", options: [] };
         for (const decision of ["declined", "approved"] as const) {
           const { service, approvals, remoteDelegations } = yield* harness({
             decide: () => decision,
           });
           const result = yield* delegate(
             service,
-            { environmentId: remoteEnvironmentId, model: "other-model" },
+            { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
             `remote-${decision}`,
           ).pipe(Effect.result);
           assert.deepEqual(
@@ -3568,61 +3535,17 @@ describe("OrchestratorMcpService provider resolution", () => {
                   command.proposed,
                 ],
             ),
-            [[remoteEnvironmentId, { instanceId: codexInstanceId, model: "other-model" }]],
+            [[remoteEnvironmentId, proposed]],
           );
-          assert.equal(remoteDelegations.length, decision === "approved" ? 1 : 0, decision);
-          if (decision === "declined") {
-            assert.isTrue(Result.isFailure(result));
-          }
+          // An approved task goes there with the exact selection the card showed.
+          assert.deepEqual(
+            remoteDelegations.map(
+              (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+            ),
+            decision === "approved" ? [proposed] : [],
+          );
+          if (decision === "declined") assert.isTrue(Result.isFailure(result));
         }
-        // The same key accepted for another environment asks again.
-        const proposed = { instanceId: codexInstanceId, model: "other-model" };
-        const elsewhere = RemoteDelegation.recordCommandId(
-          scope,
-          yield* RemoteDelegation.remoteRequestKey(
-            "remote-reused",
-            EnvironmentId.make("environment:mcp-providers-other"),
-            proposed,
-          ).pipe(Effect.provide(NodeCrypto.layer)),
-        );
-        const reused = yield* harness({
-          decide: () => "declined",
-          hasReceipt: (commandId) => commandId === elsewhere,
-        });
-        yield* delegate(
-          reused.service,
-          { environmentId: remoteEnvironmentId, model: "other-model" },
-          "remote-reused",
-        ).pipe(Effect.flip);
-        assert.equal(reused.approvals().length, 1);
-        assert.deepEqual(reused.remoteDelegations, []);
-        // An approved task goes there with the exact selection the card showed.
-        const exact = yield* harness({ decide: () => "approved" });
-        yield* delegate(
-          exact.service,
-          { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
-          "remote-exact",
-        ).pipe(Effect.result);
-        assert.deepEqual(
-          exact.remoteDelegations.map(
-            (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
-          ),
-          [{ ...proposed, options: [] }],
-        );
-        const ended = yield* harness({
-          decide: () => "pending",
-          parentRunInitiallyEnded: true,
-        });
-        const inactive = yield* delegate(
-          ended.service,
-          { environmentId: remoteEnvironmentId, model: "other-model" },
-          "remote-inactive",
-        ).pipe(Effect.result);
-        assert.isTrue(Result.isFailure(inactive));
-        if (Result.isFailure(inactive)) {
-          assert.propertyVal(inactive.failure, "code", "parent_not_active");
-        }
-        assert.deepEqual(ended.remoteDelegations, []);
         // The inherited target goes there without a card.
         const { service, approvals, remoteDelegations } = yield* harness({
           decide: () => "pending",

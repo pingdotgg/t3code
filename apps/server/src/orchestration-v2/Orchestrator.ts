@@ -9353,13 +9353,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Delegation approval ${command.turnItemId} belongs to another run.`,
       });
     }
-    // A new card goes on the run's current root. A steer that restarts the run
-    // replaces that root, so an update may name the card's own node or the new root.
-    if (
-      existing === undefined
-        ? run.rootNodeId !== command.nodeId
-        : existing.nodeId !== command.nodeId && run.rootNodeId !== command.nodeId
-    ) {
+    // An answer keeps the card on the node it was asked from, even after a steer replaced the root.
+    if (existing === undefined && run.rootNodeId !== command.nodeId) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -12520,9 +12515,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
       !projection.subagents.some(
-        (task) =>
-          task.origin === "app_owned" &&
-          (task.childThreadId !== null || task.remoteChild !== undefined),
+        (task) => task.origin === "app_owned" && task.childThreadId !== null,
       )
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
