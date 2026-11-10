@@ -584,15 +584,11 @@ elif ! ensure_remote_node_path; then
   exit 1
 fi
 # Recovery runs under its own lock and re-reads the owner there, so a waiter
-# that judged an earlier lock stale cannot remove its successor's lock.
+# that judged an earlier lock stale cannot remove its successor's lock. No
+# launch removes another's recovery lock: only SIGKILL inside these lines
+# leaves one behind, and the wait below then fails naming it.
 discard_stale_launch_lock() {
-  if ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_BREAK_LOCK") 2>/dev/null; then
-    LAUNCH_BREAK_OWNER="$(cat "$LAUNCH_BREAK_LOCK" 2>/dev/null || true)"
-    if [ -z "$LAUNCH_BREAK_OWNER" ] || ! kill -0 "$LAUNCH_BREAK_OWNER" 2>/dev/null; then
-      rm -f "$LAUNCH_BREAK_LOCK"
-    fi
-    return 1
-  fi
+  (set -C; printf '%s\\n' "$$" >"$LAUNCH_BREAK_LOCK") 2>/dev/null || return 1
   if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$1" ]; then
     rm -f "$LAUNCH_LOCK"
   fi
@@ -619,7 +615,11 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
     fi
   fi
   if [ "$LAUNCH_LOCK_WAITED" -ge @@T3_LAUNCH_LOCK_WAIT_SECONDS@@ ]; then
-    printf 'Another T3 server launch has held %s for too long.\\n' "$LAUNCH_LOCK" >&2
+    if [ -e "$LAUNCH_BREAK_LOCK" ]; then
+      printf 'A T3 server launch stopped while recovering %s. If no launch is running, delete %s.\\n' "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK" >&2
+    else
+      printf 'Another T3 server launch has held %s for too long.\\n' "$LAUNCH_LOCK" >&2
+    fi
     exit 1
   fi
   sleep 1
@@ -761,6 +761,25 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
+fi
+# The server may answer long before it publishes its runtime record, or never
+# publish one; another alias's launch record still names it. Only one server
+# owns the home, so the first live one decides.
+if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
+  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
+    REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
+    if [ -n "$REMOTE_PORT" ] && wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+    else
+      REMOTE_PORT=""
+    fi
+    break
+  done
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
