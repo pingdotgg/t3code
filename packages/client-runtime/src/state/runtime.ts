@@ -404,12 +404,12 @@ export async function executeAtomQuery<A, E>(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
       if (options.refresh) {
-        yield* Effect.sync(() => {
-          const current = registry.get(atom);
-          if (current._tag !== "Initial" && !current.waiting) {
-            registry.refresh(atom);
-          }
-        });
+        const current = registry.get(atom);
+        const answered = current._tag !== "Initial" && !current.waiting;
+        // Inside a registry batch, such as an Atom.fn starting, a refresh lands only after the
+        // batch commits, so reading at once would answer with the value it replaces.
+        yield* Effect.yieldNow;
+        if (answered && !registry.get(atom).waiting) registry.refresh(atom);
       }
       return yield* AtomRegistry.getResult(registry, atom, {
         suspendOnWaiting: true,

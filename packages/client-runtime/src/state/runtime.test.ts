@@ -863,6 +863,29 @@ describe("environment query lifecycle", () => {
     ),
   );
 
+  it.effect("a refresh asked for while an atom write commits answers with the new read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let reads = 0;
+        const harness = yield* makeEnvironmentQueryHarness(Effect.sync(() => ++reads));
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe(1);
+
+        // An Atom.fn starts its effect inside the registry batch that commits the write.
+        const reread = Atom.fn(() =>
+          Effect.promise(() => executeAtomQuery(registry, harness.atom, { refresh: true })),
+        );
+        const unmount = registry.mount(reread);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        registry.set(reread, undefined);
+        expect(yield* AtomRegistry.getResult(registry, reread)).toMatchObject({
+          _tag: "Success",
+          value: 2,
+        });
+      }),
+    ),
+  );
+
   it.effect("keeps a genuine query failure settled while reconnecting", () =>
     Effect.scoped(
       Effect.gen(function* () {
