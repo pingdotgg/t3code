@@ -83,8 +83,9 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+then confirm to transcribe. Text is inserted at your cursor, ready for you to
+review and edit before sending. Dictation never replaces existing text: if text
+is selected when you start recording, the transcript is added after it.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

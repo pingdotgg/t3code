@@ -58,6 +58,8 @@ export type VoiceInputControllerDependencies = {
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
+  /** Moves the caret without touching the draft text. */
+  readonly commitSelection: (selection: { readonly start: number; readonly end: number }) => void;
   readonly onStateChange: (state: VoiceInputState) => void;
 };
 
@@ -69,6 +71,17 @@ type TranscriptCommitResult =
     }
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
+
+/**
+ * Dictation inserts at a caret and never replaces selected text. A selection
+ * collapses to its end, so the transcript lands after what was highlighted.
+ */
+export function collapseDraftSelection(draft: VoiceDraftSnapshot): VoiceDraftSnapshot {
+  const { start, end } = draft.selection;
+  if (start === end) return draft;
+  const caret = Math.max(start, end);
+  return { ...draft, selection: { start: caret, end: caret } };
+}
 
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
@@ -90,13 +103,13 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  const isEmptySelection = captured.selection.start === captured.selection.end;
+  const caret = collapseDraftSelection(captured).selection.end;
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
   const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
   let insertion = replacement;
-  if (isEmptySelection && usesEnglishSpacing) {
-    const left = captured.text[captured.selection.start - 1];
-    const right = captured.text[captured.selection.start];
+  if (usesEnglishSpacing) {
+    const left = captured.text[caret - 1];
+    const right = captured.text[caret];
     const leftNeedsBoundary =
       left !== undefined &&
       /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
@@ -108,12 +121,7 @@ export function resolveTranscriptCommit(
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
 
-  const result = replaceTextRange(
-    captured.text,
-    captured.selection.start,
-    captured.selection.end,
-    insertion,
-  );
+  const result = replaceTextRange(captured.text, caret, caret, insertion);
   return {
     kind: "commit",
     text: result.text,
@@ -201,6 +209,12 @@ export class VoiceInputController {
       this.setError("This draft is no longer available.", "retry");
       return;
     }
+    // Clear any highlight up front so the draft never looks like it is about
+    // to be replaced. Cancel leaves the text untouched.
+    const collapsedInitiatingDraft = collapseDraftSelection(initiatingDraft);
+    if (collapsedInitiatingDraft !== initiatingDraft) {
+      this.dependencies.commitSelection(collapsedInitiatingDraft.selection);
+    }
     const sessionToken = acquireSession();
     if (!sessionToken) {
       this.setError("Another voice recording is already active.", "retry");
@@ -253,7 +267,7 @@ export class VoiceInputController {
         this.setError("This draft is no longer available.", "retry");
         return;
       }
-      this.capturedDraft = capturedDraft;
+      this.capturedDraft = collapseDraftSelection(capturedDraft);
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {

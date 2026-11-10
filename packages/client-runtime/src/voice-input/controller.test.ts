@@ -52,6 +52,7 @@ function createHarness(
   const recorder = new TestRecorder();
   let currentDraft: VoiceDraftSnapshot | null = initialDraft;
   const commits: Array<{ text: string; selection: { start: number; end: number } }> = [];
+  const selectionCommits: Array<{ start: number; end: number }> = [];
   const deleted: string[] = [];
   const dependencies: VoiceInputControllerDependencies = {
     recorder,
@@ -62,6 +63,7 @@ function createHarness(
     deleteRecording: (uri) => deleted.push(uri),
     readDraft: () => currentDraft,
     commitDraft: (text, selection) => commits.push({ text, selection }),
+    commitSelection: (selection) => selectionCommits.push(selection),
     onStateChange: vi.fn(),
     ...overrides,
   };
@@ -69,6 +71,7 @@ function createHarness(
     controller: new VoiceInputController(dependencies),
     recorder,
     commits,
+    selectionCommits,
     deleted,
     setDraft: (next: VoiceDraftSnapshot | null) => {
       currentDraft = next;
@@ -77,18 +80,46 @@ function createHarness(
 }
 
 describe("resolveTranscriptCommit", () => {
-  it("replaces the recorded UTF-16 selection around emoji and composer tokens", () => {
+  it("inserts after a selection instead of replacing it, around emoji and composer tokens", () => {
     const text = "Fix 🧪 then $review please";
-    const tokenStart = text.indexOf("$review");
+    const tokenEnd = text.indexOf("$review") + "$review".length;
     const captured = draft({
       text,
-      selection: { start: tokenStart, end: tokenStart + "$review".length },
+      selection: { start: tokenEnd - "$review".length, end: tokenEnd },
     });
 
+    const caret = tokenEnd + " use the mobile skill".length;
     expect(resolveTranscriptCommit(captured, captured, "use the mobile skill", "en-US")).toEqual({
       kind: "commit",
-      text: "Fix 🧪 then use the mobile skill please",
-      selection: { start: tokenStart + "use the mobile skill".length, end: tokenStart + 20 },
+      text: "Fix 🧪 then $review use the mobile skill please",
+      selection: { start: caret, end: caret },
+    });
+  });
+
+  it("keeps fully selected text and appends the transcript", () => {
+    const text = "This is a text. Notice how when I select it and dictate, it gets replaced.";
+    const captured = draft({ text, selection: { start: 0, end: text.length } });
+    expect(resolveTranscriptCommit(captured, captured, "This is a new text", "en-US")).toEqual({
+      kind: "commit",
+      text: `${text} This is a new text`,
+      selection: { start: text.length + 19, end: text.length + 19 },
+    });
+  });
+
+  it("keeps partially selected text, including backwards selections", () => {
+    const captured = draft({ text: "hello world again", selection: { start: 11, end: 6 } });
+    expect(resolveTranscriptCommit(captured, captured, "big", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "hello world big again",
+    });
+  });
+
+  it("fills an empty composer with the bare transcript", () => {
+    const empty = draft({ text: "", selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(empty, empty, "  New text  ", "en-US")).toEqual({
+      kind: "commit",
+      text: "New text",
+      selection: { start: 8, end: 8 },
     });
   });
 
@@ -134,17 +165,17 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
-  it("does not add English boundary spaces to CJK or selected inline text", () => {
+  it("does not add English boundary spaces to CJK or mid-word carets", () => {
     const cjk = draft({ text: "修正キャッシュ", selection: { start: 8, end: 8 } });
     expect(resolveTranscriptCommit(cjk, cjk, "テストも", "ja-JP")).toMatchObject({
       kind: "commit",
       text: "修正キャッシュテストも",
     });
 
-    const selected = draft({ text: "one $skill two", selection: { start: 4, end: 10 } });
-    expect(resolveTranscriptCommit(selected, selected, "new", "en-US")).toMatchObject({
+    const midWord = draft({ text: "onetwo", selection: { start: 3, end: 3 } });
+    expect(resolveTranscriptCommit(midWord, midWord, "new", "en-US")).toMatchObject({
       kind: "commit",
-      text: "one new two",
+      text: "onenewtwo",
     });
   });
 });
@@ -243,14 +274,14 @@ describe("VoiceInputController", () => {
       if (changeDuring === "recording") selected = second;
       await harness.controller.stop();
 
-      expect(harness.commits.map((commit) => commit.text)).toEqual(["hello first choice"]);
+      expect(harness.commits.map((commit) => commit.text)).toEqual(["hello world first choice"]);
 
       await harness.controller.start();
       await harness.controller.stop();
 
       expect(harness.commits.map((commit) => commit.text)).toEqual([
-        "hello first choice",
-        "hello second choice",
+        "hello world first choice",
+        "hello world second choice",
       ]);
       expect(preparationSignals).toHaveLength(2);
       expect(transcriptionSignals).toHaveLength(2);
@@ -292,9 +323,27 @@ describe("VoiceInputController", () => {
     await stopping;
 
     expect(harness.commits).toEqual([
-      { text: "hello new text", selection: { start: 14, end: 14 } },
+      { text: "hello world new text", selection: { start: 20, end: 20 } },
     ]);
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("collapses a selection when dictation starts and cancel keeps the text", async () => {
+    const harness = createHarness();
+    await harness.controller.start();
+    expect(harness.selectionCommits).toEqual([{ start: 11, end: 11 }]);
+    expect(harness.controller.currentState.phase).toBe("recording");
+
+    harness.controller.cancel();
+    expect(harness.controller.currentState.phase).toBe("idle");
+    expect(harness.commits).toEqual([]);
+  });
+
+  it("does not move a collapsed caret when dictation starts", async () => {
+    const harness = createHarness({}, draft({ selection: { start: 5, end: 5 } }));
+    await harness.controller.start();
+    expect(harness.selectionCommits).toEqual([]);
+    await harness.controller.interruptRecording();
   });
 
   it.each(["cancel", "dispose", "ownerChanged"] as const)(

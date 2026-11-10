@@ -123,6 +123,7 @@ export function useVoiceInputController(input: {
         current.onChangeSelection(selection);
         current.onChangeDraftMessage(text);
       },
+      commitSelection: (selection) => latestInputRef.current.onChangeSelection(selection),
       onStateChange: setState,
     });
   }
