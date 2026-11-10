@@ -3,6 +3,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
+  HistoryIcon,
   MoonIcon,
   PenLineIcon,
   PlusIcon,
@@ -15,6 +16,7 @@ import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme"
 import {
   APPEARANCE_CHOICES,
   readThemeHalvesRaw,
+  setThemeVariant,
   type AppearanceChoice,
 } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -45,6 +47,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -64,7 +67,6 @@ import { ThemeWireframe } from "./ThemeWireframe";
 import { useCloseAppModal } from "../sidebar/mainAppLocation";
 
 const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
-  T3_CODE_CLASSIC_THEME,
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
@@ -215,22 +217,31 @@ function ThemeLibraryCard({
   onDuplicate?: () => void;
   onDownload?: () => void;
   onRemove?: () => void;
-  variantNavigation?: {
-    collectionLabel: string;
-    options: ReadonlyArray<{
-      themeIndex: number;
-      label: string;
-      activeModes: ReadonlyArray<ThemeMode>;
-      preview: ThemeCardDefinition["previews"][number];
-    }>;
-    onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
-  };
+  variantNavigation?:
+    | {
+        kind?: "collection";
+        collectionLabel: string;
+        options: ReadonlyArray<{
+          themeIndex: number;
+          label: string;
+          activeModes: ReadonlyArray<ThemeMode>;
+          preview: ThemeCardDefinition["previews"][number];
+        }>;
+        onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
+      }
+    | {
+        kind: "rewind";
+        classic: boolean;
+        onToggle: () => void;
+      };
 }) {
+  const collectionNavigation = variantNavigation?.kind === "rewind" ? undefined : variantNavigation;
+  const rewindNavigation = variantNavigation?.kind === "rewind" ? variantNavigation : undefined;
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
-      variantNavigation?.options.flatMap((option) => {
+      collectionNavigation?.options.flatMap((option) => {
         const preview = option.preview;
         return preview.mode === mode ? [{ option, preview }] : [];
       }) ?? [];
@@ -258,7 +269,29 @@ function ThemeLibraryCard({
             }
           >
             <div className="relative bg-settings-preview-fill">
-              {variantNavigation ? (
+              {rewindNavigation ? (
+                <div className="absolute top-1.5 right-1.5 z-10">
+                  <ThemeVariantTooltip
+                    label={rewindNavigation.classic ? "Use new colors" : "Use classic colors"}
+                  >
+                    <Button
+                      size="icon-xs"
+                      variant={rewindNavigation.classic ? "secondary" : "ghost-muted"}
+                      aria-label={
+                        rewindNavigation.classic ? "Use new colors" : "Use classic colors"
+                      }
+                      aria-pressed={rewindNavigation.classic}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        rewindNavigation.onToggle();
+                      }}
+                    >
+                      <HistoryIcon />
+                    </Button>
+                  </ThemeVariantTooltip>
+                </div>
+              ) : null}
+              {collectionNavigation ? (
                 <div
                   aria-label="Light and dark theme variants"
                   className="relative h-24"
@@ -300,7 +333,7 @@ function ThemeLibraryCard({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              variantNavigation.onSelectAndUse(selected.option.themeIndex, mode);
+                              collectionNavigation.onSelectAndUse(selected.option.themeIndex, mode);
                             }}
                             onFocus={() => setRadialModeOpen(mode)}
                             onMouseEnter={() => setRadialModeOpen(mode)}
@@ -366,7 +399,7 @@ function ThemeLibraryCard({
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      variantNavigation.onSelectAndUse(option.themeIndex, mode);
+                                      collectionNavigation.onSelectAndUse(option.themeIndex, mode);
                                     }}
                                     onFocus={() => setRadialModeOpen(mode)}
                                     onMouseEnter={() => setRadialModeOpen(mode)}
@@ -399,7 +432,7 @@ function ThemeLibraryCard({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <button
-                    aria-label={`Use ${variantNavigation ? `${variantNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
+                    aria-label={`Use ${collectionNavigation ? `${collectionNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
                     className="min-w-0 cursor-pointer truncate rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"
@@ -408,8 +441,13 @@ function ThemeLibraryCard({
                       onUse();
                     }}
                   >
-                    {variantNavigation?.collectionLabel ?? theme.label}
+                    {collectionNavigation?.collectionLabel ?? theme.label}
                   </button>
+                  {rewindNavigation?.classic ? (
+                    <Badge size="sm" variant="secondary">
+                      Classic
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
               {onEdit || onDuplicate || onDownload || onRemove ? (
@@ -459,8 +497,8 @@ function ThemeLibraryCard({
                       keeps room in the three-per-row grid. */}
                   {onEdit ? (
                     <ThemeCardMoreMenu
-                      label={variantNavigation?.collectionLabel ?? theme.label}
-                      removeLabel={variantNavigation ? "Remove themes" : "Remove theme"}
+                      label={collectionNavigation?.collectionLabel ?? theme.label}
+                      removeLabel={collectionNavigation ? "Remove themes" : "Remove theme"}
                       onDuplicate={onDuplicate}
                       onDownload={onDownload}
                       onRemove={onRemove}
@@ -492,8 +530,8 @@ function ThemeLibraryCard({
                         render={
                           <Button
                             aria-label={
-                              variantNavigation
-                                ? `Remove themes from ${variantNavigation.collectionLabel}`
+                              collectionNavigation
+                                ? `Remove themes from ${collectionNavigation.collectionLabel}`
                                 : `Remove ${theme.label}`
                             }
                             size="icon-xs"
@@ -508,7 +546,7 @@ function ThemeLibraryCard({
                         }
                       />
                       <TooltipPopup>
-                        {variantNavigation ? "Remove themes" : "Remove theme"}
+                        {collectionNavigation ? "Remove themes" : "Remove theme"}
                       </TooltipPopup>
                     </Tooltip>
                   ) : null}
@@ -519,7 +557,7 @@ function ThemeLibraryCard({
         }
       />
       <TooltipPopup>
-        {variantNavigation
+        {collectionNavigation
           ? "Use the first variants for light and dark"
           : cardModes.length > 1
             ? "Use for both light and dark"
@@ -645,6 +683,7 @@ export function ThemeLibrary({
     void closeAppModal();
   };
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const [previewClassic, setPreviewClassic] = useState(false);
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -856,25 +895,54 @@ export function ThemeLibrary({
     <TooltipProvider>
       {/* Three cards per row in the settings column (pen eWIa5). */}
       <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3">
-        {STANDARD_THEME_CARDS.map((standardTheme) => (
-          <ThemeLibraryCard
-            activeModes={pickedModesFor(null)}
-            isActive={false}
-            key={standardTheme.id}
-            onDuplicate={() =>
-              openThemeEditor({
-                editingThemeId: null,
-                seedThemeId: null,
-                seedName: `${standardTheme.label} copy`,
-                initialAppearance,
-              })
-            }
-            onDownload={() => downloadLibraryTheme(standardThemeDefinition(standardTheme.label))}
-            onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
-            onUseMode={handlePairPick(null)}
-            theme={standardTheme}
-          />
-        ))}
+        {STANDARD_THEME_CARDS.map((standardTheme) => {
+          const classicModes = pickedModesFor(T3_CODE_CLASSIC_THEME.id);
+          const newModes = pickedModesFor(null);
+          const classic = classicModes.length > 0 || (newModes.length === 0 && previewClassic);
+          const themeId = classic ? T3_CODE_CLASSIC_THEME.id : null;
+          const shownTheme = classic ? T3_CODE_CLASSIC_THEME : null;
+          return (
+            <ThemeLibraryCard
+              activeModes={classic ? classicModes : newModes}
+              isActive={classicModes.length > 0 || newModes.length > 0}
+              key={standardTheme.id}
+              onDuplicate={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: themeId,
+                  seedName: `${shownTheme?.label ?? standardTheme.label} copy`,
+                  initialAppearance,
+                })
+              }
+              onDownload={() =>
+                downloadLibraryTheme(shownTheme ?? standardThemeDefinition(standardTheme.label))
+              }
+              onUse={() => persistTheme(themeId ?? appearanceMode)}
+              onUseMode={handlePairPick(themeId)}
+              theme={
+                shownTheme
+                  ? { ...standardTheme, previews: getThemeCardDefinition(shownTheme).previews }
+                  : standardTheme
+              }
+              variantNavigation={{
+                kind: "rewind",
+                classic,
+                onToggle: () => {
+                  if (
+                    setThemeVariant(
+                      [null, T3_CODE_CLASSIC_THEME.id],
+                      classic ? null : T3_CODE_CLASSIC_THEME.id,
+                    )
+                  ) {
+                    setPreviewClassic(!classic);
+                  } else {
+                    notifyThemeSaveFailure();
+                  }
+                },
+              }}
+            />
+          );
+        })}
         {MAINTAINER_THEMES.map((maintainerTheme) => {
           const card = getThemeCardDefinition(maintainerTheme);
           return (
