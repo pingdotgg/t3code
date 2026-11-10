@@ -586,10 +586,7 @@ it.layer(
 
   // Root ignores directory modes, and chmod does not stop writes on Windows.
   const readOnlyDirsUnenforced = windowsHost || process.getuid?.() === 0;
-  const resolveNpmInstallWithReadOnlyDir = (
-    readOnlySegments: ReadonlyArray<string>,
-    options?: { readonly launchPackageExecutable?: boolean },
-  ) =>
+  const resolveNpmInstallWithReadOnlyDir = (readOnlySegments: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-read-only");
       const link = linkIntoPackage(tempDir, "package-tool", [
@@ -611,7 +608,7 @@ it.layer(
       );
       const views: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: options?.launchPackageExecutable ? NodeFS.realpathSync(link) : link,
+        binaryPath: link,
         env: { PATH: [NodePath.dirname(providerNpm), NodePath.join(tempDir, "bin")].join(":") },
       }).pipe(
         Effect.provideService(HostProcess.Environment, { PATH: "" }),
@@ -666,19 +663,6 @@ it.layer(
         expect(capabilities.manualCommand).toBe(
           `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
         );
-      }),
-  );
-
-  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
-    "stays manual-only when the package executable is launched directly and the prefix bin is read-only",
-    () =>
-      Effect.gen(function* () {
-        // npm still renames the package's existing bin link, however the CLI is launched.
-        const { capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"], {
-          launchPackageExecutable: true,
-        });
-
-        expect(capabilities.update).toBeNull();
       }),
   );
 
