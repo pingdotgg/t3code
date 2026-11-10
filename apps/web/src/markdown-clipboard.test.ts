@@ -507,6 +507,13 @@ describe("copying a table as HTML", () => {
       td("run:<br>if&nbsp;x:<br>&nbsp;&nbsp;&nbsp;&nbsp;y&nbsp;&nbsp;=&nbsp;&nbsp;1<br><br>end"),
     );
     expect(content(new FakeText("1\u00a0000   EUR"))).toBe(td("1&nbsp;000 EUR"));
+    expect(
+      content(
+        new FakeElement("BUTTON", [], {
+          "data-markdown-copy": "[source](https://example.com)",
+        }).append(new FakeText("source")),
+      ),
+    ).toBe(td("source"));
   });
 
   it("keeps a right-to-left table's direction and puts headers on its start side", () => {
