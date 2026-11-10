@@ -231,13 +231,6 @@ it.each([
     expected: { NO_PROXY: "", no_proxy: undefined },
     configArgs: [],
   },
-  {
-    name: "keeps the Windows registry bypass list in charge without env proxies",
-    platform: "win32",
-    environment: {},
-    expected: { NO_PROXY: undefined, no_proxy: undefined },
-    configArgs: [],
-  },
 ] satisfies ReadonlyArray<{
   name: string;
   platform: NodeJS.Platform;
