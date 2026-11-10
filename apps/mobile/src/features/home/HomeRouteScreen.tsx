@@ -15,7 +15,6 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 
 import { useProjects } from "../../state/entities";
-import { useSourceControlAccounts } from "../../state/sourceControl";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -135,7 +134,6 @@ export function HomeRouteScreen() {
       sidebarProjectGroupingOverrides: {},
     },
   );
-  const repositoryAccounts = useSourceControlAccounts(projects);
   const projectFilterOptions = useMemo(
     () =>
       pickableProjectGroups(
@@ -143,13 +141,12 @@ export function HomeRouteScreen() {
           projects,
           environmentId: selectedEnvironmentId,
           projectGroupingMode: listOptions.projectGroupingMode,
-          repositoryAccounts,
         }),
       ).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),
-    [listOptions.projectGroupingMode, projects, repositoryAccounts, selectedEnvironmentId],
+    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
   const selectedProjectKey = projectFilterOptions.some(
     (project) => project.key === resolvedProjectKey,

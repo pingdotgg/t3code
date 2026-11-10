@@ -51,7 +51,6 @@ import {
 import { useWorkspaceListEmptyTopInset } from "../layout/workspace/workspace-list-insets";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
-import { useSourceControlAccounts } from "../../state/sourceControl";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
@@ -371,16 +370,14 @@ export function HomeScreen(props: HomeScreenProps) {
   });
 
   const { projects, selectedEnvironmentId, projectGroupingMode } = props;
-  const repositoryAccounts = useSourceControlAccounts(projects);
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: selectedEnvironmentId,
         projectGroupingMode,
-        repositoryAccounts,
       }),
-    [projects, selectedEnvironmentId, projectGroupingMode, repositoryAccounts],
+    [projects, selectedEnvironmentId, projectGroupingMode],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = (() => {

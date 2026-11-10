@@ -8,7 +8,6 @@ import {
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
-  type SourceControlAccountsByEnvironment,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
 
@@ -143,7 +142,6 @@ export function buildSidebarProjectSnapshots(input: {
   settings: ProjectGroupingSettings;
   groupScratchProjects?: boolean;
   primaryEnvironmentId: EnvironmentId | null;
-  repositoryAccounts?: SourceControlAccountsByEnvironment;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
   isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
@@ -153,7 +151,6 @@ export function buildSidebarProjectSnapshots(input: {
     groupScratchProjects: input.groupScratchProjects ?? false,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
-    ...(input.repositoryAccounts ? { repositoryAccounts: input.repositoryAccounts } : {}),
   }).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({

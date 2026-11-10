@@ -23,7 +23,6 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
-import { useSourceControlAccounts } from "../../state/sourceControl";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
@@ -222,14 +221,12 @@ export function NewTaskFlowProvider(
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
-  const repositoryAccounts = useSourceControlAccounts(projects);
 
   const projectScopes = sortHomeProjectScopes({
     scopes: buildHomeProjectScopes({
       projects,
       environmentId: null,
       projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
-      repositoryAccounts,
     }),
     threads,
     pendingTasks: [],

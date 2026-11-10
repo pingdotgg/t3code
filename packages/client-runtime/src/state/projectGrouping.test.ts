@@ -8,7 +8,6 @@ import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
   derivePhysicalProjectKey,
-  deriveScopedProjectGroupLabel,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -288,130 +287,17 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
-    const labelsSignedInAs = (account: string) =>
-      buildProjectGroups({
-        projects,
-        settings: settings("repository"),
-        repositoryAccounts: { [environmentId]: [{ host: "github.com", account }] },
-      }).map((group) => group.label);
-    expect(labelsSignedInAs("julius")).toEqual(["t3code", "t3code-fork"]);
   });
 
-  describe("drops the owner from a linked repository's label only for the verified account", () => {
-    const macB = EnvironmentId.make("mac-b");
-    const ownIdentity = {
-      ...repositoryIdentity,
-      canonicalKey: "github.com/etanhey/orchestrator",
-      owner: "EtanHey",
-      name: "orchestrator",
-      displayName: "EtanHey/orchestrator",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "https://github.com/EtanHey/orchestrator.git",
-      },
-    };
-    const linked = (title = "orchestrator") => [
-      makeProject("orchestrator-a", "/a/orchestrator", { title, repositoryIdentity: ownIdentity }),
-      makeProject("orchestrator-b", "/b/orchestrator", {
-        title,
-        environmentId: macB,
-        repositoryIdentity: ownIdentity,
-      }),
-    ];
-    const account = (login: string, host = "github.com") => [{ host, account: login }];
-
-    it.each([
-      [
-        "both machines verify the owner, in any case",
-        account("etanhey", "GitHub.com"),
-        account("ETANHEY"),
-        "orchestrator",
-      ],
-      ["one machine's account is unknown", account("EtanHey"), undefined, "EtanHey/orchestrator"],
-      ["machines disagree", account("EtanHey"), account("someone"), "EtanHey/orchestrator"],
-      [
-        "the login is on another host",
-        account("EtanHey", "gitlab.com"),
-        account("EtanHey", "gitlab.com"),
-        "EtanHey/orchestrator",
-      ],
-    ])("when %s", (_case, macAAccounts, macBAccounts, label) => {
-      const projects = linked();
-      const repositoryAccounts = { [environmentId]: macAAccounts, [macB]: macBAccounts };
-      const unlabeled = buildProjectGroups({ projects, settings: settings("repository") });
-      const groups = buildProjectGroups({
-        projects,
-        settings: settings("repository"),
-        repositoryAccounts,
-      });
-      expect(unlabeled.map((group) => group.label)).toEqual(["EtanHey/orchestrator"]);
-      expect(groups.map((group) => group.label)).toEqual([label]);
-      expect(deriveScopedProjectGroupLabel(groups[0]!, [projects[0]!])).toBe(label);
-      expect(groups.map(({ key, memberProjectRefs }) => ({ key, memberProjectRefs }))).toEqual(
-        unlabeled.map(({ key, memberProjectRefs }) => ({ key, memberProjectRefs })),
-      );
+  it("keeps a repository's shared title when a second machine links it", () => {
+    const local = makeProject("t3code", "/work/t3code");
+    const remote = { ...local, environmentId: EnvironmentId.make("remote") };
+    const groups = buildProjectGroups({
+      projects: [local, remote],
+      settings: settings("repository"),
     });
-
-    it("keeps custom titles and the owner where the plain name would collide", () => {
-      const repositoryAccounts = {
-        [environmentId]: account("EtanHey"),
-        [macB]: account("EtanHey"),
-      };
-      const groups = (projects: EnvironmentProject[]) =>
-        buildProjectGroups({ projects, settings: settings("repository"), repositoryAccounts });
-      expect(groups(linked("Orchestrator app")).map((group) => group.label)).toEqual([
-        "Orchestrator app",
-      ]);
-      const differentlyNamed = linked().map((project, index) => ({
-        ...project,
-        title: index === 0 ? "Local project" : "Remote project",
-      }));
-      const namedGroup = groups(differentlyNamed)[0]!;
-      expect(deriveScopedProjectGroupLabel(namedGroup, differentlyNamed)).toBe(namedGroup.label);
-      for (const project of differentlyNamed) {
-        expect(deriveScopedProjectGroupLabel(namedGroup, [project])).toBe(project.title);
-      }
-      const collisionProjects = linked();
-      const colliding = groups([
-        ...collisionProjects,
-        makeProject("other", "/a/other", { title: "Orchestrator", repositoryIdentity: null }),
-      ]);
-      expect(colliding.map((group) => group.label)).toEqual([
-        "EtanHey/orchestrator",
-        "Orchestrator",
-      ]);
-      expect(deriveScopedProjectGroupLabel(colliding[0]!, [collisionProjects[0]!])).toBe(
-        "EtanHey/orchestrator",
-      );
-    });
-
-    it.each([
-      ["forgejo.local:4000", "orchestrator"],
-      ["forgejo.local", "EtanHey/orchestrator"],
-    ])("matches the grouping remote's authority against %s", (host, label) => {
-      const projects = linked().map((project) => ({
-        ...project,
-        repositoryIdentity: {
-          ...ownIdentity,
-          origin: {
-            canonicalKey: "forgejo.local/etanhey/orchestrator",
-            displayName: "EtanHey/orchestrator",
-            remoteUrl: "http://forgejo.local:4000/EtanHey/orchestrator.git",
-          },
-        },
-      }));
-      expect(
-        buildProjectGroups({
-          projects,
-          settings: settings("repository"),
-          repositoryAccounts: {
-            [environmentId]: account("EtanHey", host),
-            [macB]: account("EtanHey", host),
-          },
-        }).map((group) => group.label),
-      ).toEqual([label]);
-    });
+    expect(groups[0]?.members).toHaveLength(2);
+    expect(groups[0]?.label).toBe("t3code");
   });
 
   it("applies a physical-project override without dropping its siblings", () => {

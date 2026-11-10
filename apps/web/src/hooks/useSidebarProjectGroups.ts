@@ -5,7 +5,6 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
-import { useSourceControlAccounts } from "../state/sourceControl";
 import { useDelegatedUnderParent, useProjects, useQuietThreadShells } from "../state/entities";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -21,7 +20,6 @@ export function useSidebarProjectGroups() {
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const environments = useEnvironmentIdentities();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const repositoryAccounts = useSourceControlAccounts(projects);
   const orderedProjects = orderItemsByPreferredIds({
     items: projects,
     preferredIds: projectOrder,
@@ -39,7 +37,6 @@ export function useSidebarProjectGroups() {
     groupScratchProjects: true,
     settings: groupingSettings,
     primaryEnvironmentId,
-    repositoryAccounts,
     resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
   });
   return sortSidebarV2ProjectGroups(unsortedGroups, threads, sortOrder, delegatedUnderParent);

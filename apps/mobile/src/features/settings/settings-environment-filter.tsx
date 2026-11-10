@@ -1,8 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  buildProjectGroups,
-  type SourceControlAccountsByEnvironment,
-} from "@t3tools/client-runtime/state/project-grouping";
+import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   createContext,
   useContext,
@@ -17,7 +14,6 @@ import {
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-import { useSourceControlAccounts } from "../../state/sourceControl";
 import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
 
 export type SettingsTarget = EnvironmentPresentation & {
@@ -27,16 +23,7 @@ export type SettingsTarget = EnvironmentPresentation & {
 // Several mounted Settings components read the scope at once (the list, its header, a page and
 // its editor), so share the derived lists across them for the same inputs.
 const targetsCache = new WeakMap<readonly EnvironmentPresentation[], readonly SettingsTarget[]>();
-const groupsCache = new WeakMap<
-  object,
-  Map<
-    string,
-    {
-      readonly repositoryAccounts: SourceControlAccountsByEnvironment;
-      readonly groups: ReturnType<typeof buildProjectGroups>;
-    }
-  >
->();
+const groupsCache = new WeakMap<object, Map<string, ReturnType<typeof buildProjectGroups>>>();
 
 function connectedSettingsTargets(environments: readonly EnvironmentPresentation[]) {
   let targets = targetsCache.get(environments);
@@ -53,23 +40,18 @@ function connectedSettingsTargets(environments: readonly EnvironmentPresentation
 function settingsProjectGroups(
   projects: Parameters<typeof buildProjectGroups>[0]["projects"],
   groupingMode: Parameters<typeof buildProjectGroups>[0]["settings"]["sidebarProjectGroupingMode"],
-  repositoryAccounts: SourceControlAccountsByEnvironment,
 ) {
   let byMode = groupsCache.get(projects);
   if (!byMode) groupsCache.set(projects, (byMode = new Map()));
-  let cached = byMode.get(groupingMode);
-  if (cached?.repositoryAccounts !== repositoryAccounts) {
-    cached = {
-      repositoryAccounts,
-      groups: buildProjectGroups({
-        projects,
-        settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
-        repositoryAccounts,
-      }),
-    };
-    byMode.set(groupingMode, cached);
+  let groups = byMode.get(groupingMode);
+  if (!groups) {
+    groups = buildProjectGroups({
+      projects,
+      settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
+    });
+    byMode.set(groupingMode, groups);
   }
-  return cached.groups;
+  return groups;
 }
 
 interface SettingsEnvironmentSelection {
@@ -133,8 +115,7 @@ export function useSettingsEnvironmentFilter() {
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const repositoryAccounts = useSourceControlAccounts(projects);
-  const projectGroups = settingsProjectGroups(projects, groupingMode, repositoryAccounts);
+  const projectGroups = settingsProjectGroups(projects, groupingMode);
   const availableTargets = connectedSettingsTargets(environments);
   const selectedTargets = useMemo(
     () =>

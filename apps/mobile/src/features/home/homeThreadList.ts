@@ -1,7 +1,4 @@
-import {
-  buildProjectGroups,
-  type SourceControlAccountsByEnvironment,
-} from "@t3tools/client-runtime/state/project-grouping";
+import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -49,7 +46,6 @@ export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly repositoryAccounts?: SourceControlAccountsByEnvironment;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
@@ -61,7 +57,6 @@ export function buildHomeProjectScopes(input: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
       sidebarProjectGroupingOverrides: {},
     },
-    ...(input.repositoryAccounts ? { repositoryAccounts: input.repositoryAccounts } : {}),
   }).map((group) => {
     return {
       key: group.key,
