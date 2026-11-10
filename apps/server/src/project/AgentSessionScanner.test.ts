@@ -1363,6 +1363,91 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports a rewound Codex thread with the history its new rollout inherits", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const threadId = "019a0000-0000-7000-8000-000000000001";
+        const rolloutId = "019a0000-0000-7000-8000-000000000002";
+        const sessionsDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+        const prompt = (message: string) =>
+          encodeTranscriptRecord({ type: "event_msg", payload: { type: "user_message", message } });
+        const reply = (text: string) =>
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text }],
+            },
+          });
+        const keptHistory = [
+          encodeTranscriptRecord({
+            type: "session_meta",
+            payload: { id: threadId, cwd: workspace, history_mode: "paginated" },
+          }),
+          prompt("Keep the first request"),
+          reply("First reply"),
+        ]
+          .map((record) => `${record}\n`)
+          .join("");
+
+        yield* writeTranscript({
+          filePath: path.join(sessionsDir, `rollout-2026-08-24T10-00-00-${threadId}.jsonl`),
+          contents: `${keptHistory}${prompt("Rewound request")}\n${reply("Rewound reply")}\n`,
+          mtimeMs: nowMs - 60_000,
+        });
+        yield* writeTranscript({
+          filePath: path.join(
+            sessionsDir,
+            `rollout-2026-08-24T11-00-00-${threadId}_${rolloutId}.jsonl`,
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: {
+                id: threadId,
+                cwd: workspace,
+                history_mode: "paginated",
+                history_base: {
+                  thread_id: threadId,
+                  end_ordinal_exclusive: 3,
+                  end_byte_offset: Buffer.byteLength(keptHistory),
+                },
+              },
+            }),
+            prompt("Ask again"),
+            reply("Final reply"),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          threads.map((thread) => ({
+            id: thread.providerSessionId,
+            title: thread.title,
+            messages: thread.messages.map((message) => message.text),
+          })),
+        ).toEqual([
+          {
+            id: threadId,
+            title: "Keep the first request",
+            messages: ["Keep the first request", "First reply", "Ask again", "Final reply"],
+          },
+        ]);
+      }),
+    );
+
     it.effect("excludes Codex subagents from discovery and the recent-thread budget", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
