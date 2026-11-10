@@ -911,16 +911,27 @@ function PullRequestCodeTab({
       const withheld = omittedFileStats.get(path);
       if (withheld) ({ additions, deletions } = withheld);
     }
+    // Hosts send binaries (and empty files) without hunks, so the expanded body is empty.
+    const noTextDiff =
+      item.fileDiff.hunks.length === 0 &&
+      item.fileDiff.type !== "rename-pure" &&
+      item.fileDiff.prevMode === undefined &&
+      additions === 0 &&
+      deletions === 0;
     return (
       <FileViewedToggle
         fileKey={item.id}
         path={path}
         stat={
-          <PullRequestDiffStat
-            additions={additions}
-            deletions={deletions}
-            className="font-mono text-2xs"
-          />
+          noTextDiff ? (
+            <span className="text-2xs text-muted-foreground">Binary or empty file</span>
+          ) : (
+            <PullRequestDiffStat
+              additions={additions}
+              deletions={deletions}
+              className="font-mono text-2xs"
+            />
+          )
         }
       />
     );
