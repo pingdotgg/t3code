@@ -71,16 +71,18 @@ it("moves Tab through every settings section", async () => {
   expect(tabbed).toEqual(sections);
 });
 
-it("exposes group headings as headings that name their groups", async () => {
-  await page.viewport(1280, 800);
+it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
+  await page.viewport(width, 800);
   await using _screen = await renderNav();
 
   for (const name of ["Agents", "Code", "Connections"]) {
-    const group = page.getByRole("group", { name });
-    await expect.element(group).toBeVisible();
-    const heading = group.getByRole("heading", { name }).query();
-    expect(heading, `the ${name} heading is not exposed as a heading`).not.toBeNull();
-    expect(group.element().getAttribute("aria-labelledby")).toBe(heading?.id);
+    const heading = page.getByRole("heading", { name, level: 3 });
+    await expect.element(heading).toBeInTheDocument();
+    const group = page.getByRole("group", { name }).element();
+    expect(group.getAttribute("aria-labelledby")).toBe(heading.element().id);
+    expect(group.contains(heading.element()), `the ${name} heading is inside its group`).toBe(
+      false,
+    );
   }
   expect(page.getByRole("tree").query()).toBeNull();
 });
