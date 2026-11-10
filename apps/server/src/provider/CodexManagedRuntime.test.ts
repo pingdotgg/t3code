@@ -95,6 +95,7 @@ it.live.each(
           email: null,
         });
         yield* store.set(new TextEncoder().encode(json));
+        const hostEnv = yield* HostProcess.Environment;
         const ambient = {
           CODEX_HOME: "/user/.codex",
           ACCESS_TOKEN: "ambient-bearer",
@@ -102,8 +103,8 @@ it.live.each(
           OPENAI_API_KEY: "dummy-global-key",
           OPENAI_BASE_URL: "https://user-proxy.test",
           T3CODE_CODEX_LAUNCH_ARGS: "--config model_provider=global-proxy",
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
+          PATH: hostEnv.PATH,
+          SystemRoot: hostEnv.SystemRoot,
         };
         const runtime = yield* makeCodexManagedRuntime({
           instanceId,
