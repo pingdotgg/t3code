@@ -87,6 +87,29 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
+const providerSnapshot = (input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+  readonly model?: string;
+  readonly enabled?: boolean;
+}): ServerProvider => ({
+  instanceId: input.instanceId,
+  driver: input.driver,
+  enabled: input.enabled ?? true,
+  installed: input.enabled !== false,
+  version: input.enabled === false ? null : "test",
+  status: input.enabled === false ? "disabled" : "ready",
+  auth: { status: input.enabled === false ? "unknown" : "authenticated" },
+  ...(input.enabled === false ? { message: "Provider is disabled in T3 Code settings." } : {}),
+  checkedAt: "2026-09-13T00:00:00.000Z",
+  models:
+    input.model === undefined
+      ? []
+      : [{ slug: input.model, name: input.model, isCustom: false, capabilities: null }],
+  slashCommands: [],
+  skills: [],
+});
+
 describe("OrchestratorMcpService", () => {
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
     Effect.gen(function* () {
@@ -1174,29 +1197,6 @@ describe("OrchestratorMcpService provider resolution", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   };
-
-  const providerSnapshot = (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly driver: ProviderDriverKind;
-    readonly model?: string;
-    readonly enabled?: boolean;
-  }): ServerProvider => ({
-    instanceId: input.instanceId,
-    driver: input.driver,
-    enabled: input.enabled ?? true,
-    installed: input.enabled !== false,
-    version: input.enabled === false ? null : "test",
-    status: input.enabled === false ? "disabled" : "ready",
-    auth: { status: input.enabled === false ? "unknown" : "authenticated" },
-    ...(input.enabled === false ? { message: "Provider is disabled in T3 Code settings." } : {}),
-    checkedAt: "2026-09-13T00:00:00.000Z",
-    models:
-      input.model === undefined
-        ? []
-        : [{ slug: input.model, name: input.model, isCustom: false, capabilities: null }],
-    slashCommands: [],
-    skills: [],
-  });
 
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
     Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -3897,6 +3897,34 @@ describe("OrchestratorMcpService pipelines", () => {
     ...overrides,
   });
 
+  const codexProvider: ServerProvider = {
+    ...providerSnapshot({
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+    }),
+    models: [
+      { slug: "gpt-5", name: "gpt-5", isCustom: false, capabilities: null },
+      {
+        slug: "gpt-6",
+        name: "gpt-6",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+
   const harness = (
     modes: {
       readonly runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
@@ -3916,6 +3944,8 @@ describe("OrchestratorMcpService pipelines", () => {
       readonly callerParentThreadId?: ThreadId;
       /** Other threads the service reads; any other id reads as the caller. */
       readonly shells?: ReadonlyArray<OrchestrationV2ThreadShell>;
+      readonly pipelines?: ReadonlyArray<PipelineDefinition>;
+      readonly providers?: ReadonlyArray<ServerProvider>;
     } = {},
   ) => {
     const started: Array<{ input: unknown; options: unknown }> = [];
@@ -3935,7 +3965,7 @@ describe("OrchestratorMcpService pipelines", () => {
         : { lineage: { ...caller.lineage, parentThreadId: extra.callerParentThreadId } }),
     };
     const pipelines = Layer.mock(PipelineService.PipelineService)({
-      list: () => Effect.succeed({ pipelines: [definition] }),
+      list: () => Effect.succeed({ pipelines: extra.pipelines ?? [definition] }),
       upsert: (input) =>
         extra.upsertError !== undefined
           ? Effect.fail(extra.upsertError)
@@ -3996,7 +4026,7 @@ describe("OrchestratorMcpService pipelines", () => {
       }),
       ServerSettings.layerTest(),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([{ instanceId: "codex", enabled: true } as never]),
+        getProviders: Effect.succeed(extra.providers ?? [codexProvider]),
       }),
       Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
         list: () => Effect.succeed([ProviderInstanceId.make("codex")]),
@@ -4170,6 +4200,11 @@ describe("OrchestratorMcpService pipelines", () => {
     }),
   );
 
+  const externalScope = (h: ReturnType<typeof harness>): McpInvocationScope => ({
+    ...h.scope,
+    thread: undefined,
+    client: { sessionId: "external", label: "Claude Code", access: "approval-required" },
+  });
   const upsertedOf = (h: ReturnType<typeof harness>) => {
     const input = h.upserted[0];
     assert.isDefined(input);
@@ -4217,8 +4252,9 @@ describe("OrchestratorMcpService pipelines", () => {
             name: " Colleague review ",
             clientRequestId: "save-1",
             steps: [
-              { name: "Read the diff", promptTemplate: "{{input}}", skills: ["$review"] },
+              { name: "Read the diff", promptTemplate: "{{input}}", skills: ["$review", "/qa"] },
               { name: "Read the diff!", promptTemplate: " {{previous.output}} ", model: "gpt-6" },
+              { stepId: "guide", name: "Write a guide", promptTemplate: "{{previous.output}}" },
             ],
           }),
         );
@@ -4237,10 +4273,15 @@ describe("OrchestratorMcpService pipelines", () => {
             entry.runtimeMode,
           ]) as ReadonlyArray<unknown>,
           [
-            ["read-the-diff", ["review"], false, "auto-accept-edits"],
+            ["read-the-diff", ["review", "qa"], false, "auto-accept-edits"],
             ["read-the-diff-2", [], false, "auto-accept-edits"],
+            ["guide", [], false, "auto-accept-edits"],
           ],
         );
+        assert.deepEqual<unknown>(input.steps[0]!.modelSelection, {
+          instanceId: "codex",
+          model: "gpt-5",
+        });
         assert.equal(input.steps[1]!.promptTemplate, "{{previous.output}}");
         assert.equal(input.steps[1]!.modelSelection.model, "gpt-6");
         assert.equal(input.steps[0]!.compactAfterHandoff, undefined);
@@ -4263,12 +4304,39 @@ describe("OrchestratorMcpService pipelines", () => {
       assert.equal(input.id, definition.id);
       assert.equal(input.requireExisting, true);
       assert.equal(input.name, "Feature delivery");
-      assert.deepEqual(input.steps[0], definition.steps[0]);
-      assert.deepEqual(input.steps[1], {
-        ...definition.steps[1],
-        promptTemplate: "Build {{previous.output}}",
-        pauseBefore: true,
-      });
+      assert.deepEqual(input.steps, [
+        definition.steps[0]!,
+        { ...definition.steps[1]!, promptTemplate: "Build {{previous.output}}", pauseBefore: true },
+      ]);
+    }),
+  );
+
+  it.effect("keeps a step's options only while its model stays the same", () =>
+    Effect.gen(function* () {
+      const tuned = {
+        ...step("plan", "Plan", "full-access"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6",
+          options: [{ id: "effort", value: "high" }],
+        },
+      };
+      const h = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { pipelines: [{ ...definition, steps: [tuned] }] },
+      );
+      const save = (fields: { readonly promptTemplate?: string; readonly model?: string }) =>
+        withService(h, (service) =>
+          service.savePipeline(h.scope, {
+            pipeline: definition.id,
+            stepEdits: [{ step: "plan", ...fields }],
+          }),
+        );
+      const kept = yield* save({ promptTemplate: "Plan {{input}}" });
+      assert.deepEqual(kept.steps[0]!.options, { effort: "high" });
+      const switched = yield* save({ model: "gpt-5" });
+      assert.deepEqual(switched.steps[0]!.options, {});
+      assert.isUndefined(h.upserted[1]!.steps[0]!.modelSelection.options);
     }),
   );
 
@@ -4298,8 +4366,8 @@ describe("OrchestratorMcpService pipelines", () => {
           ["plan", "Plan"],
         ],
       );
-      assert.equal(steps[0]!.runtimeMode, "full-access");
-      assert.equal(steps[0]!.promptTemplate, "{{input}}");
+      assert.deepEqual(steps[0], { ...definition.steps[1]!, name: "Implement" });
+      assert.deepEqual(steps[2], definition.steps[0]);
     }),
   );
 
@@ -4350,7 +4418,32 @@ describe("OrchestratorMcpService pipelines", () => {
         ],
         [
           { name: "New", steps: [{ ...step, providerInstanceId: claude }] },
-          "pass providerInstanceId and model",
+          "pass a model with providerInstanceId",
+        ],
+        [
+          {
+            name: "New",
+            steps: Array.from({ length: 13 }, (_, index) => ({ ...step, name: `S${index}` })),
+          },
+          "at most 12 steps",
+        ],
+        [{ name: "New", steps: [{ ...step, promptTemplate: "  " }] }, "write a prompt template"],
+        [{ name: "New", steps: [{ ...step, model: "gpt-9" }] }, "has no model gpt-9"],
+        [
+          {
+            name: "New",
+            steps: [{ ...step, model: "gpt-6", options: [{ id: "effort", value: "max" }] }],
+          },
+          "must be one of",
+        ],
+        [{ name: "New", steps: [{ ...step, stepId: "Bad Id" }] }, "a stepId has at most"],
+        [{ pipeline: "Feature delivery", steps: [{ stepId: "plna" }] }, 'no step has id "plna"'],
+        [
+          {
+            pipeline: "Feature delivery",
+            steps: [{ stepId: "build", promptTemplate: "{{steps.plan.output}}" }],
+          },
+          "which is not a step",
         ],
         [
           {
@@ -4369,18 +4462,35 @@ describe("OrchestratorMcpService pipelines", () => {
         assert.equal(error.code, "invalid_request", message);
         assert.include(error.message, message);
       }
+      const external = yield* withService(h, (service) =>
+        service.savePipeline(externalScope(h), { name: "New", steps: [step] }).pipe(Effect.flip),
+      );
+      assert.include(external.message, "no thread to inherit them from");
       assert.equal(h.upserted.length, 0);
     }),
   );
 
   it.effect("does not recheck the provider of a step whose model did not change", () =>
     Effect.gen(function* () {
-      const h = harness({ runtimeMode: "full-access", interactionMode: "default" });
-      // A saved step on a provider this server no longer has stays editable.
+      const h = harness(
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { providers: [{ ...codexProvider, auth: { status: "unauthenticated" } }] },
+      );
+      // A saved step on a provider that is signed out here stays editable.
       yield* withService(h, (service) =>
         service.savePipeline(h.scope, { pipeline: "Feature delivery", name: "Renamed" }),
       );
       assert.equal(upsertedOf(h).name, "Renamed");
+      const changed = yield* withService(h, (service) =>
+        service
+          .savePipeline(h.scope, {
+            pipeline: "Feature delivery",
+            stepEdits: [{ step: "plan", model: "gpt-6" }],
+          })
+          .pipe(Effect.flip),
+      );
+      assert.include(changed.message, "provider codex isn't available here");
+      assert.equal(h.upserted.length, 1);
     }),
   );
 
@@ -4397,6 +4507,25 @@ describe("OrchestratorMcpService pipelines", () => {
           .pipe(Effect.flip),
       );
       assert.equal(escalation.code, "runtime_mode_escalation_denied");
+      assert.include(escalation.message, 'Step "Build" (full-access)');
+      // A client without a thread is capped at the access it was approved with.
+      const external = yield* withService(low, (service) =>
+        service
+          .savePipeline(externalScope(low), {
+            name: "New",
+            steps: [
+              {
+                name: "One",
+                promptTemplate: "{{input}}",
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5",
+                runtimeMode: "auto-accept-edits",
+              },
+            ],
+          })
+          .pipe(Effect.flip),
+      );
+      assert.equal(external.code, "runtime_mode_escalation_denied");
       const plan = harness({ runtimeMode: "full-access", interactionMode: "plan" });
       const planSave = yield* withService(plan, (service) =>
         service

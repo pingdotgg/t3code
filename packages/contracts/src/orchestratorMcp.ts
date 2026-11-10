@@ -825,7 +825,7 @@ const OrchestratorMcpPipelineStepFields = {
   name: Schema.optional(Schema.String),
   promptTemplate: Schema.optional(Schema.String),
   providerInstanceId: Schema.optional(ProviderInstanceId),
-  model: Schema.optional(Schema.String),
+  model: Schema.optional(TrimmedNonEmptyString),
   options: Schema.optional(OrchestratorMcpTargetOptionsFromRecord),
   runtimeMode: Schema.optional(RuntimeMode),
   skills: Schema.optional(Schema.Array(Schema.String)),
@@ -843,7 +843,7 @@ export const OrchestratorMcpSavePipelineInput = Schema.Struct({
   steps: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        stepId: Schema.optional(Schema.String),
+        stepId: Schema.optional(TrimmedNonEmptyString),
         ...OrchestratorMcpPipelineStepFields,
       }),
     ),

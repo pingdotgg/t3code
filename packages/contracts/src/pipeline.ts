@@ -35,8 +35,12 @@ export const PIPELINE_STEP_SKILLS_MAX = 8;
 const PIPELINE_REVISION_QUOTE_MAX_CHARS = 4_000;
 
 /** The name part of a `$skill` mention, as the composer parses it. */
-export const PIPELINE_SKILL_NAME_PATTERN =
-  /^(?=[a-zA-Z0-9:_-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
+const PIPELINE_SKILL_NAME_PATTERN = /^(?=[a-zA-Z0-9:_-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
+/** Accepts what a user types or pastes: `$review`, ` review `. Null when it is not a valid skill name. */
+export function normalizeSkillName(raw: string): string | null {
+  const name = raw.trim().replace(/^[$/]/, "");
+  return PIPELINE_SKILL_NAME_PATTERN.test(name) ? name : null;
+}
 const PipelineSkillName = TrimmedNonEmptyString.check(
   Schema.isPattern(PIPELINE_SKILL_NAME_PATTERN),
 );

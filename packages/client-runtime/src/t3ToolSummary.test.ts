@@ -69,6 +69,10 @@ describe("summarizeT3ToolCalls", () => {
     expect(
       summarizeT3ToolCalls("pipeline-save", [completed({}, { pipelineId: "pipeline:one" })]).label,
     ).toBe("Saved 1 pipeline");
+    expect(
+      summarizeT3ToolCalls("pipeline-delete", [completed({}, { pipelineId: "pipeline:one" })])
+        .label,
+    ).toBe("Deleted 1 pipeline");
     expect(summarizeT3ToolCalls("pipeline-list", [completed({}, { pipelines: [] })]).label).toBe(
       "Listed pipelines 1 time",
     );

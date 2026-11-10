@@ -16,7 +16,7 @@ import {
   type OrchestrationV2TurnItem,
   PIPELINE_MAX_STEPS,
   PIPELINE_NAME_MAX_LENGTH,
-  PIPELINE_SKILL_NAME_PATTERN,
+  PIPELINE_STEP_ID_MAX_LENGTH,
   PIPELINE_STEP_SKILLS_MAX,
   type PipelineDefinition,
   type PipelineError,
@@ -24,6 +24,7 @@ import {
   type PipelineStep,
   PipelineStepId,
   type PipelineUpsertInput,
+  normalizeSkillName,
   pipelineDefinitionIssues,
   resolvePipelineStepCompaction,
   resolvePipelineStepKey,
@@ -678,6 +679,7 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 }
 
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
+const isPipelineStepId = Schema.is(PipelineStepId);
 
 function pendingTaskApproval(
   child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
@@ -2428,11 +2430,11 @@ const make = Effect.gen(function* () {
         [],
         "Pipelines cannot be changed in plan mode, and this thread is in plan mode. Leave plan mode first, or ask the user to change the pipeline in Settings.",
       );
-      const existing =
-        input.pipeline === undefined ? undefined : yield* resolvePipeline(input.pipeline);
       if (input.steps !== undefined && input.stepEdits !== undefined) {
         return yield* failure("invalid_request", "Pass `steps` or `stepEdits`, not both.");
       }
+      const existing =
+        input.pipeline === undefined ? undefined : yield* resolvePipeline(input.pipeline);
       if (existing === undefined) {
         if (input.stepEdits !== undefined) {
           return yield* failure(
@@ -2461,20 +2463,27 @@ const make = Effect.gen(function* () {
         runtimeModeRank(settings.defaultRuntimeMode) <= runtimeModeRank(limits.runtimeMode)
           ? settings.defaultRuntimeMode
           : limits.runtimeMode;
+      const stepList = (existing?.steps ?? [])
+        .map((step) => `${step.id} (${step.name})`)
+        .join(", ");
 
       const withFields = (base: PipelineStep, fields: PipelineStepFields): PipelineStep => {
         const instanceId = fields.providerInstanceId ?? base.modelSelection.instanceId;
+        const model = fields.model ?? base.modelSelection.model;
         if (instanceId !== base.modelSelection.instanceId && fields.model === undefined) {
           problem(`Step "${base.name}": a new providerInstanceId needs a model.`);
         }
-        const options = fields.options ?? base.modelSelection.options;
+        // Options belong to a model; a different model starts without the old one's.
+        const sameModel =
+          instanceId === base.modelSelection.instanceId && model === base.modelSelection.model;
+        const options = fields.options ?? (sameModel ? base.modelSelection.options : undefined);
         return {
           ...base,
           name: fields.name ?? base.name,
           promptTemplate: fields.promptTemplate ?? base.promptTemplate,
           modelSelection: {
             instanceId,
-            model: fields.model ?? base.modelSelection.model,
+            model,
             ...(options === undefined || options.length === 0 ? {} : { options }),
           },
           runtimeMode: fields.runtimeMode ?? base.runtimeMode,
@@ -2486,8 +2495,11 @@ const make = Effect.gen(function* () {
         };
       };
 
-      // A new step has no id yet; `lockedId` follows `resolveStepIds`.
-      type Draft = { readonly lockedId: string | null; readonly step: Omit<PipelineStep, "id"> };
+      type Draft = {
+        readonly lockedId: string | null;
+        readonly position: number;
+        readonly step: Omit<PipelineStep, "id">;
+      };
       const newStep = (fields: PipelineStepFields, label: string): Draft["step"] | undefined => {
         if (fields.name === undefined || fields.promptTemplate === undefined) {
           problem(`${label}: a new step needs a name and a promptTemplate.`);
@@ -2498,10 +2510,14 @@ const make = Effect.gen(function* () {
           (fields.providerInstanceId ?? callerSelection.instanceId) === callerSelection.instanceId;
         const instanceId = fields.providerInstanceId ?? callerSelection?.instanceId;
         const model = fields.model ?? (sameAsCaller ? callerSelection?.model : undefined);
-        if (instanceId === undefined || model === undefined) {
+        if (instanceId === undefined) {
           problem(
             `${label}: pass providerInstanceId and model; this caller has no thread to inherit them from. See orchestrator_capabilities.`,
           );
+          return undefined;
+        }
+        if (model === undefined) {
+          problem(`${label}: pass a model with providerInstanceId. See orchestrator_capabilities.`);
           return undefined;
         }
         const options =
@@ -2526,15 +2542,33 @@ const make = Effect.gen(function* () {
 
       const drafts: Draft[] = [];
       if (input.steps !== undefined) {
-        input.steps.forEach((entry, index) => {
+        input.steps.forEach((entry, position) => {
+          const label = `Step ${position + 1}`;
           const kept = existing?.steps.find((step) => step.id === entry.stepId);
           if (kept !== undefined) {
             const { id, ...step } = withFields(kept, entry);
-            drafts.push({ lockedId: id, step });
+            drafts.push({ lockedId: id, position, step });
             return;
           }
-          const step = newStep(entry, `Step ${index + 1}`);
-          if (step !== undefined) drafts.push({ lockedId: null, step });
+          if (entry.stepId !== undefined && !isPipelineStepId(entry.stepId)) {
+            problem(
+              `${label}: a stepId has at most ${PIPELINE_STEP_ID_MAX_LENGTH} lowercase letters, digits, - or _.`,
+            );
+            return;
+          }
+          if (
+            entry.stepId !== undefined &&
+            existing !== undefined &&
+            (entry.name === undefined || entry.promptTemplate === undefined)
+          ) {
+            problem(
+              `${label}: no step has id "${entry.stepId}". Its steps: ${stepList}. A new step needs a name and a promptTemplate.`,
+            );
+            return;
+          }
+          // A new step keeps a stepId it was given, so templates copied with their ids still resolve.
+          const step = newStep(entry, label);
+          if (step !== undefined) drafts.push({ lockedId: entry.stepId ?? null, position, step });
         });
       } else if (existing !== undefined) {
         const edits = new Map<number, PipelineStepFields[]>();
@@ -2543,14 +2577,14 @@ const make = Effect.gen(function* () {
           if (at === -1) {
             return yield* failure(
               "invalid_request",
-              `Step "${key}" is not in pipeline "${existing.name}". Its steps: ${existing.steps.map((step) => `${step.id} (${step.name})`).join(", ")}.`,
+              `Step "${key}" is not in pipeline "${existing.name}". Its steps: ${stepList}.`,
             );
           }
           edits.set(at, [...(edits.get(at) ?? []), fields]);
         }
-        existing.steps.forEach((current, index) => {
-          const { id, ...step } = (edits.get(index) ?? []).reduce(withFields, current);
-          drafts.push({ lockedId: id, step });
+        existing.steps.forEach((current, position) => {
+          const { id, ...step } = (edits.get(position) ?? []).reduce(withFields, current);
+          drafts.push({ lockedId: id, position, step });
         });
       }
 
@@ -2567,12 +2601,14 @@ const make = Effect.gen(function* () {
       const ids = resolveStepIds(
         drafts.map(({ lockedId, step }) => ({ lockedId, name: step.name })),
       );
-      const steps: PipelineStep[] = drafts.map(({ step }, index) => {
+      const labels: string[] = [];
+      const steps: PipelineStep[] = drafts.map(({ step, position }, index) => {
         const trimmedName = step.name.trim();
         const label =
           trimmedName === "" || trimmedName.length > PIPELINE_NAME_MAX_LENGTH
-            ? `Step ${index + 1}`
-            : trimmedName;
+            ? `Step ${position + 1}`
+            : `Step "${trimmedName}"`;
+        labels.push(label);
         if (trimmedName === "") problem(`${label}: give the step a name.`);
         else if (trimmedName.length > PIPELINE_NAME_MAX_LENGTH) {
           problem(`${label}: the name has at most ${PIPELINE_NAME_MAX_LENGTH} characters.`);
@@ -2581,46 +2617,70 @@ const make = Effect.gen(function* () {
         if (step.skills.length > PIPELINE_STEP_SKILLS_MAX) {
           problem(`${label}: a step has at most ${PIPELINE_STEP_SKILLS_MAX} skills.`);
         }
-        const skills = step.skills.map((skill) => skill.trim().replace(/^\$/, ""));
-        if (skills.some((skill) => !PIPELINE_SKILL_NAME_PATTERN.test(skill))) {
+        const skills = step.skills.map((skill) => normalizeSkillName(skill) ?? skill);
+        if (step.skills.some((skill) => normalizeSkillName(skill) === null)) {
           problem(`${label}: a skill name has an invalid character.`);
         }
         return {
           ...step,
           id: PipelineStepId.make(ids[index]!),
-          name: step.name.trim() || label,
+          // Blank names already failed above; a stand-in keeps them out of "used twice" issues.
+          name: trimmedName || `Step ${position + 1}`,
           promptTemplate: step.promptTemplate.trim(),
           skills,
         };
       });
       for (const issue of pipelineDefinitionIssues(steps)) problem(issue.message);
 
-      const unchanged = new Set(
-        (existing?.steps ?? []).map(
-          (step) => `${step.id}\n${step.modelSelection.instanceId}\n${step.modelSelection.model}`,
-        ),
-      );
       const providers = yield* loadProviders;
       const capableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-      const availableInstanceIds = new Set(
-        providers
-          .filter((provider) => provider.enabled && capableInstanceIds.has(provider.instanceId))
-          .map((provider) => provider.instanceId),
-      );
-      for (const step of steps) {
-        const { instanceId, model } = step.modelSelection;
+      steps.forEach((step, index) => {
+        const { instanceId, model, options = [] } = step.modelSelection;
+        const before = existing?.steps.find((candidate) => candidate.id === step.id);
+        const modelChanged =
+          before?.modelSelection.instanceId !== instanceId || before.modelSelection.model !== model;
+        const optionsChanged =
+          JSON.stringify(before?.modelSelection.options ?? []) !== JSON.stringify(options);
+        if (!modelChanged && !optionsChanged) return;
+        const provider = providers.find((candidate) => candidate.instanceId === instanceId);
         if (
-          !unchanged.has(`${step.id}\n${instanceId}\n${model}`) &&
-          !availableInstanceIds.has(instanceId)
+          provider === undefined ||
+          providerConstraints(provider, capableInstanceIds.has(instanceId)).length > 0
         ) {
           problem(
-            `Step "${step.name}": provider ${instanceId} isn't available here. See orchestrator_capabilities for the provider instances.`,
+            `${labels[index]}: provider ${instanceId} isn't available here. See orchestrator_capabilities for the provider instances.`,
           );
+          return;
         }
-      }
+        if (
+          modelChanged &&
+          provider.models.length > 0 &&
+          !provider.models.some((candidate) => candidate.slug === model)
+        ) {
+          problem(
+            `${labels[index]}: provider ${instanceId} has no model ${model}. See orchestrator_capabilities.`,
+          );
+          return;
+        }
+        const descriptors = provider.models.find((candidate) => candidate.slug === model)
+          ?.capabilities?.optionDescriptors;
+        const invalid = invalidOptionSelections(options, descriptors);
+        if (invalid.length > 0) problem(`${labels[index]}: ${invalid.join(" ")}`);
+      });
       if (problems.length > 0) return yield* failure("invalid_request", problems.join(" "));
 
-      yield* assertPipelineWithinLimits(limits, steps);
+      // Every step counts, not only changed ones: a step's prompt can steer the steps after it.
+      const tooBroad = steps.flatMap((step, index) =>
+        runtimeModeRank(step.runtimeMode) > runtimeModeRank(limits.runtimeMode)
+          ? [`${labels[index]} (${step.runtimeMode})`]
+          : [],
+      );
+      if (tooBroad.length > 0) {
+        return yield* failure(
+          "runtime_mode_escalation_denied",
+          `${tooBroad.join(", ")} would run broader than your runtime mode, ${limits.runtimeMode}. Set ${tooBroad.length === 1 ? "it" : "them"} to ${limits.runtimeMode} or narrower, or ask the user to change the pipeline in Settings.`,
+        );
+      }
       const upsert: PipelineUpsertInput = {
         ...(existing !== undefined
           ? { id: existing.id, requireExisting: true }

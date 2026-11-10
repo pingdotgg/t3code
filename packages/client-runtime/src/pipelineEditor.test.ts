@@ -9,7 +9,6 @@ import {
   FEATURE_DELIVERY_PIPELINE,
   withStarterRuntimeMode,
 } from "@t3tools/shared/pipelineStarters";
-import { resolveStepIds, slugifyStepName, uniqueStepId } from "@t3tools/shared/pipelineStepIds";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -20,7 +19,6 @@ import {
   hasPipelineDraftChanges,
   moveStep,
   newStepDraft,
-  normalizeSkillName,
   pipelineDraftIssues,
   pipelineStepSummary,
   pipelineToDraft,
@@ -58,37 +56,6 @@ function step(overrides: Partial<PipelineStepDraft> & { name: string }): Pipelin
 function draftOf(steps: ReadonlyArray<PipelineStepDraft>, name = "Ship it"): PipelineDraft {
   return { editingId: null, commandId: "command-1", name, steps };
 }
-
-describe("step ids", () => {
-  it("slugifies names and numbers duplicates", () => {
-    for (const [name, slug] of [
-      ["  Plan the Work! ", "plan-the-work"],
-      ["  Review & Fix! ", "review-fix"],
-      ["日本語", "step"],
-      ["!!!", "step"],
-      ["a".repeat(60), "a".repeat(48)],
-    ] as const) {
-      expect(slugifyStepName(name)).toBe(slug);
-    }
-    expect(uniqueStepId("review", new Set(["review", "review-2"]))).toBe("review-3");
-    expect(uniqueStepId("a".repeat(48), new Set(["a".repeat(48)]))).toBe(`${"a".repeat(46)}-2`);
-
-    const ids = resolveStepIds([
-      step({ name: "Plan" }),
-      step({ name: "Review" }),
-      step({ name: "review!" }),
-    ]);
-    expect(ids).toEqual(["plan", "review", "review-2"]);
-  });
-
-  it("keeps saved ids when a step is renamed and never reuses them for new steps", () => {
-    const ids = resolveStepIds([
-      step({ name: "Renamed", lockedId: "review" }),
-      step({ name: "Review" }),
-    ]);
-    expect(ids).toEqual(["review", "review-2"]);
-  });
-});
 
 describe("default steps", () => {
   it("reads the input first and the previous output after, inheriting model and mode", () => {
@@ -275,15 +242,6 @@ describe("draft issues", () => {
       }),
     );
     expect(pipelineDraftIssues(draftOf(many)).stepCount).toContain(String(PIPELINE_MAX_STEPS));
-    for (const [raw, normalized] of [
-      [" $code-review ", "code-review"],
-      ["/review", "review"],
-      ["plugin:skill-1", "plugin:skill-1"],
-      ["two words", null],
-      ["123", null],
-    ] as const) {
-      expect(normalizeSkillName(raw)).toBe(normalized);
-    }
     expect(
       pipelineDraftIssues(draftOf([step({ name: "Plan", skills: ["bad skill"] })])).valid,
     ).toBe(false);

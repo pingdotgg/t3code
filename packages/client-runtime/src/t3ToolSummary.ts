@@ -240,7 +240,7 @@ export function summarizeT3ToolCalls(
       break;
     case "pipeline-delete":
       label = phrase(
-        "Requested deletion of",
+        "Deleted",
         "delete",
         quantity(countEntities(entityIds("pipelineId")), "pipeline"),
       );

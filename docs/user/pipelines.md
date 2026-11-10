@@ -21,8 +21,9 @@ Each step has a name, a provider and model, a prompt template, optional skills, 
 [permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
 default runtime mode from your settings. You can also make a step wait for you before it starts.
 
-You can also ask an agent to create or edit a pipeline for you. It can't give a step a broader
-permission mode than its own, and it can't change pipelines in plan mode.
+You can also ask an agent to create or edit a pipeline for you. New steps use the agent's model
+unless you name another. An agent can't save a pipeline that has any step in a broader permission
+mode than its own, and it can't change pipelines while its thread is in plan mode.
 
 Each step can compact its thread once the next step has started (**Compact after handoff**). It is
 on by default, except for the last step, which compacts when the run completes if you switch it

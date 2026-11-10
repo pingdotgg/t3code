@@ -6,6 +6,7 @@ import {
   PIPELINE_STEP_SKILLS_MAX,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
+  normalizeSkillName,
   type PipelineDefinition,
 } from "@t3tools/contracts";
 import {
@@ -48,7 +49,6 @@ import {
   draftToUpsertInput,
   moveStep,
   newStepDraft,
-  normalizeSkillName,
   pipelineDraftIssues,
   pipelineToDraft,
   type PipelineDraft,

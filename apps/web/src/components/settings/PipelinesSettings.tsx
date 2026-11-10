@@ -12,7 +12,6 @@ import {
   draftStepCompaction,
   moveStep,
   newStepDraft,
-  normalizeSkillName,
   type PipelineDraft,
   pipelineDraftIssues,
   type PipelineStepDefaults,
@@ -33,6 +32,7 @@ import {
   type RuntimeMode,
   type ServerProvider,
   type ServerProviderSkill,
+  normalizeSkillName,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";

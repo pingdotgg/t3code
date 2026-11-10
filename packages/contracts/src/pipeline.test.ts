@@ -5,6 +5,7 @@ import {
   PIPELINE_MAX_STEPS,
   PipelineDefinition,
   PipelineUpsertInput,
+  normalizeSkillName,
   pipelineDefinitionIssues,
   pipelineTemplateReferences,
   resolvePipelineStepCompaction,
@@ -125,6 +126,18 @@ describe("pipeline template helpers", () => {
       { id: "build", name: "plan" },
     ];
     expect(resolvePipelineStepKey(steps, key)).toBe(expected);
+  });
+
+  it("normalizes a typed or pasted skill name", () => {
+    for (const [raw, normalized] of [
+      [" $code-review ", "code-review"],
+      ["/review", "review"],
+      ["plugin:skill-1", "plugin:skill-1"],
+      ["two words", null],
+      ["123", null],
+    ] as const) {
+      expect(normalizeSkillName(raw)).toBe(normalized);
+    }
   });
 
   it("reports issues in step order", () => {

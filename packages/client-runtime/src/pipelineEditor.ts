@@ -3,13 +3,13 @@ import {
   type ModelSelection,
   PIPELINE_MAX_STEPS,
   PIPELINE_NAME_MAX_LENGTH,
-  PIPELINE_SKILL_NAME_PATTERN,
   PIPELINE_STEP_SKILLS_MAX,
   type PipelineDefinition,
   PipelineStepId,
   type PipelineStep,
   type PipelineUpsertInput,
   type RuntimeMode,
+  normalizeSkillName,
   pipelineDefinitionIssues,
   resolvePipelineStepCompaction,
 } from "@t3tools/contracts";
@@ -176,12 +176,6 @@ export function moveStep<T>(
   next[index] = next[target]!;
   next[target] = moved;
   return next;
-}
-
-/** Accepts what a user types or pastes: `$review`, ` review `. Null when it is not a valid skill name. */
-export function normalizeSkillName(raw: string): string | null {
-  const name = raw.trim().replace(/^[$/]/, "");
-  return PIPELINE_SKILL_NAME_PATTERN.test(name) ? name : null;
 }
 
 export interface PipelineDraftIssues {
