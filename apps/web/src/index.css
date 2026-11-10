@@ -665,6 +665,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   initial-value: 0;
 }
 
+@property --pinned-selection-highlight-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 @layer base {
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
@@ -675,6 +681,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
   ::highlight(t3-assistant-citation-comment) {
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  }
+  ::highlight(t3-pinned-selection) {
+    background-color: color-mix(
+      in oklab,
+      oklch(0.62 0.15 230) calc(var(--pinned-selection-highlight-opacity) * 100%),
+      transparent
+    );
+  }
+  .pinned-selection-badge {
+    color: oklch(0.45 0.14 230);
+
+    @variant dark {
+      color: oklch(0.8 0.11 230);
+    }
+  }
+  .pinned-selection-mark {
+    background-color: oklch(0.62 0.15 230);
   }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in

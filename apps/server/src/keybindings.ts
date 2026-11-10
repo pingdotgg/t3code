@@ -94,6 +94,56 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   return keybindingRuleIdentity(left) === keybindingRuleIdentity(right);
 }
 
+const PIN_SELECTION_SHORTCUT: KeybindingRule = {
+  key: "mod+p",
+  command: "thread.pinSelection",
+  when: "!terminalFocus && !editableFocus && textSelected",
+};
+
+const RETIRED_PIN_SELECTION_SHORTCUT: KeybindingRule = {
+  key: "mod+alt+p",
+  command: "thread.pinSelection",
+  when: "!terminalFocus && !editableFocus",
+};
+
+function isModP(rule: KeybindingRule): boolean {
+  const parsed = parseKeybindingShortcut(rule.key);
+  return parsed !== null && encodeShortcut(parsed) === "mod+p";
+}
+
+function sameKeybindingList(
+  left: readonly KeybindingRule[],
+  right: readonly KeybindingRule[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((rule, index) => {
+      const other = right[index];
+      return other !== undefined && isSameKeybindingRule(rule, other);
+    })
+  );
+}
+
+// A later rule wins a shared chord, so this narrower Cmd+P has to follow the file picker.
+function orderPinSelectionShortcut(rules: readonly KeybindingRule[]): KeybindingRule[] {
+  const normalized = rules.map((rule) =>
+    isSameKeybindingRule(rule, RETIRED_PIN_SELECTION_SHORTCUT) ? PIN_SELECTION_SHORTCUT : rule,
+  );
+  const pinIndex = normalized.findIndex((rule) =>
+    isSameKeybindingRule(rule, PIN_SELECTION_SHORTCUT),
+  );
+  if (pinIndex < 0) return normalized;
+  const filePickerIndex = normalized.findIndex(
+    (rule) => rule.command === "filePicker.toggle" && isModP(rule),
+  );
+  if (filePickerIndex < 0 || pinIndex > filePickerIndex) return normalized;
+  const pin = normalized[pinIndex];
+  if (!pin) return normalized;
+  const without = normalized.filter((_, index) => index !== pinIndex);
+  without.splice(filePickerIndex, 0, pin);
+  return without;
+}
+
 const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
   readonly id: string;
   readonly alongside: KeybindingRule;
@@ -542,8 +592,11 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length > 0) {
-        yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
+      const merged =
+        defaultsToAppend.length > 0 ? [...defaultsToAppend, ...customConfig] : customConfig;
+      const ordered = orderPinSelectionShortcut(merged);
+      if (!sameKeybindingList(ordered, customConfig)) {
+        yield* writeConfigAtomically(ordered);
       }
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),
