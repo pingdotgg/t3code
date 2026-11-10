@@ -30,6 +30,7 @@ import type {
 } from "../OrchestratorScenario.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { RuntimePolicyV2Override } from "../../RuntimePolicy.ts";
+import { rootCheckpointScopeName } from "../../CheckpointService.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 export const MULTI_TURN_FIRST_PROMPT = "Respond with exactly: first fixture turn complete";
@@ -262,7 +263,6 @@ export type OrchestratorFixtureInputStep =
     }
   | {
       readonly type: "rollback";
-      readonly checkpointScopeSuffix: string;
       readonly checkpointSuffix: string;
     }
   | {
@@ -486,6 +486,8 @@ export function materializeFixtureInput(input: {
   readonly fixtureInput: OrchestratorFixtureInput;
   readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
+  /** The folder runs start in; rollback steps target its root checkpoint scope. */
+  readonly workspace?: string;
 }): Effect.Effect<
   MaterializedOrchestratorFixtureInput,
   IdAllocator.IdAllocatorV2Error,
@@ -937,9 +939,12 @@ export function materializeFixtureInput(input: {
           break;
         case "rollback":
           {
+            if (input.workspace === undefined) {
+              return yield* Effect.die("A rollback fixture step needs the replay workspace.");
+            }
             const scopeId = yield* idAllocator.allocate.checkpointScope({
               threadId: ids.threadId,
-              name: step.checkpointScopeSuffix,
+              name: rootCheckpointScopeName(input.workspace),
             });
             pushDispatch({
               type: "checkpoint.rollback",
