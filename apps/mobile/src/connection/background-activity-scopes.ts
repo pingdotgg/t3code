@@ -1,12 +1,29 @@
 import type { EnvironmentRpcSubscriptionObservation } from "@t3tools/client-runtime/rpc";
 import { type BackgroundScope, type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 
 interface RetainedScope {
   readonly environmentId: EnvironmentId;
   readonly scope: BackgroundScope;
   refCount: number;
 }
+
+let lastInteractionNanos: bigint | undefined;
+export const mobileInteraction = {
+  record: Clock.monotonicTimeNanos.pipe(
+    Effect.tap((now) =>
+      Effect.sync(() => {
+        lastInteractionNanos = now;
+      }),
+    ),
+  ),
+  isRecent: Clock.monotonicTimeNanos.pipe(
+    Effect.map(
+      (now) => lastInteractionNanos !== undefined && now - lastInteractionNanos < 60_000_000_000n,
+    ),
+  ),
+};
 
 const retainedScopes = new Map<string, RetainedScope>();
 const listeners = new Set<() => void>();

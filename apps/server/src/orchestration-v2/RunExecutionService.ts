@@ -738,6 +738,10 @@ export const layer: Layer.Layer<
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
           ...input.providerThread,
           status: finalProviderThreadStatus(input.terminal.threadDisposition),
+          ...(input.terminal.status === "failed" &&
+          input.terminal.failure.code === "provider_updating_new_thread"
+            ? { nativeThreadRef: null, nativeMetadata: null }
+            : {}),
           updatedAt: completedAt,
         };
         const runEventId = yield* allocateEventId();

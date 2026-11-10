@@ -638,9 +638,9 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const native = executable(".opencode", "bin", "opencode");
       for (const generation of ["v1", "v2"] as const) {
         assert.isNull((yield* resolveUpdate(generation, launcher)).update);
-        assert.deepStrictEqual((yield* resolveUpdate(generation, native)).update?.args, [
-          "upgrade",
-        ]);
+        const update = (yield* resolveUpdate(generation, native)).update;
+        assert.deepStrictEqual(update?.args, ["upgrade", "--method", "curl"]);
+        assert.strictEqual(update?.env?.PATH, `${NodePath.dirname(native)}${NodePath.delimiter}`);
       }
     }),
 );

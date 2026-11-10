@@ -16,6 +16,19 @@ import * as Cause from "effect/Cause";
 import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
 import * as Schema from "effect/Schema";
+import {
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind as ProviderDriverKindSchema,
+} from "@t3tools/contracts";
+
+export class ProviderUpdatingError extends Schema.TaggedError<ProviderUpdatingError>()(
+  "ProviderUpdatingError",
+  { driver: ProviderDriverKindSchema, newNativeThread: Schema.Boolean, cause: Schema.Defect() },
+) {
+  override get message() {
+    return `${PROVIDER_DISPLAY_NAMES[this.driver] ?? this.driver} was updating on this machine. Try again.`;
+  }
+}
 
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
   "ContextHandoffBudgetError",
@@ -78,6 +91,7 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
 function curatedCauseMessages(cause: unknown): {
   readonly known: string | undefined;
   readonly category: string | undefined;
+  readonly code?: string;
 } {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
@@ -130,6 +144,15 @@ function curatedCauseMessages(cause: unknown): {
           }
           break;
         }
+        case "ProviderUpdatingError":
+          return {
+            known: stringField(cause, "message"),
+            category: categoryMessage(),
+            code:
+              (cause as Record<string, unknown>).newNativeThread === true
+                ? "provider_updating_new_thread"
+                : "provider_updating",
+          };
         case "AcpProcessExitedError": {
           const exit = `provider process exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
@@ -266,7 +289,7 @@ export function makeProviderFailure(input: {
   const rawMessage =
     input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode = input.code ?? curated.code ?? stringField(input.cause, "code") ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
