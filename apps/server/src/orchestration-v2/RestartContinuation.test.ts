@@ -17,6 +17,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
@@ -915,7 +917,9 @@ it.effect("continues a cut run past queued follow-ups, which stay held", () =>
       ...cut,
       runs: [...cut.runs, queuedFollowUp],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [
+      "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.",
+    ]);
   }),
 );
 
@@ -945,7 +949,9 @@ it.effect("continues a resumed queued run that ran after an earlier continuation
       ...cut,
       runs: [...cut.runs, finishedContinuation],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [
+      "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.",
+    ]);
   }),
 );
 
@@ -1257,4 +1263,66 @@ it.effect.each(["completed", "failed", "interrupted"] as const)(
         [],
       );
     }),
+);
+
+it.effect("prepares independent continuations together and waits for durable writes", () =>
+  Effect.gen(function* () {
+    const bothReading = yield* Deferred.make<void>();
+    const bothWriting = yield* Deferred.make<void>();
+    const committed = yield* Deferred.make<void>();
+    let reads = 0;
+    let writes = 0;
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId, ThreadId.make("thread:second")]),
+            getRuntimeRecoveryProjection: () =>
+              Effect.gen(function* () {
+                if (++reads === 2) yield* Deferred.succeed(bothReading, undefined);
+                yield* Deferred.await(bothReading);
+                return makeProjection();
+              }),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: () =>
+              Effect.gen(function* () {
+                if (++writes === 2) yield* Deferred.succeed(bothWriting, undefined);
+                yield* Deferred.await(committed);
+                return [];
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    const fiber = yield* recovery.prepareForShutdown.pipe(Effect.forkChild);
+    yield* Deferred.await(bothWriting);
+    assert.equal(writes, 2);
+    assert.isUndefined(fiber.pollUnsafe());
+    yield* Deferred.succeed(committed, undefined);
+    yield* Fiber.join(fiber);
+  }),
+);
+
+it.effect("skips restart discovery when no project enables continuation", () =>
+  Effect.gen(function* () {
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    yield* recovery.prepareForShutdown;
+    yield* recovery.prepareForShutdown;
+  }),
 );
