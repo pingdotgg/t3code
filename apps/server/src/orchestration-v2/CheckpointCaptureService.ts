@@ -103,27 +103,27 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      // The baselines this capture materializes are attributed to the run materializing them. The
+      // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
+      const materializeBaseline = (ordinalWithinScope: number) =>
+        checkpoints.materializeBaselineCheckpoint({
+          scope,
+          ordinalWithinScope,
+          nodeId: rootNode.id,
+          capturedAt: run.requestedAt,
+          forceMissing: sideChat,
+        });
       // A root scope opened mid-thread in another worktree has no thread start to record, and a
       // missing record there would shadow the first scope's ready one in revert lookups.
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
-          : yield* checkpoints
-              .materializeBaselineCheckpoint({
-                scope,
-                ordinalWithinScope: 0,
-                forceMissing: sideChat,
-              })
-              .pipe(
-                Effect.map((checkpoint) => (checkpoint.status === "ready" ? checkpoint : null)),
-              );
+          : yield* materializeBaseline(0).pipe(
+              Effect.map((checkpoint) => (checkpoint.status === "ready" ? checkpoint : null)),
+            );
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-            forceMissing: sideChat,
-          });
+        : yield* materializeBaseline(baselineOrdinalWithinScope);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,

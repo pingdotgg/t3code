@@ -137,6 +137,8 @@ it.effect(
             const materialized = yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: 0,
+              nodeId: scope.nodeId,
+              capturedAt: scope.createdAt,
             });
             assert.strictEqual(materialized.status, "missing");
           }
