@@ -12,7 +12,7 @@ export function NumberField({
   size = "default",
   ...props
 }: NumberFieldPrimitive.Root.Props & {
-  size?: "sm" | "default";
+  size?: "sm" | "compact" | "default";
 }): React.ReactElement {
   const generatedId = React.useId();
   const fieldId = id ?? generatedId;
@@ -54,7 +54,7 @@ export function NumberFieldDecrement({
   return (
     <NumberFieldPrimitive.Decrement
       className={cn(
-        "relative flex shrink-0 cursor-pointer items-center justify-center rounded-s-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:surface-ghost-hover hover:[&_svg]:text-foreground",
+        "relative flex shrink-0 cursor-pointer items-center justify-center rounded-s-[calc(var(--control-radius)-1px)] in-data-[size=compact]:px-1 in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:surface-ghost-hover hover:[&_svg]:text-foreground",
         className,
       )}
       data-slot="number-field-decrement"
@@ -72,7 +72,7 @@ export function NumberFieldIncrement({
   return (
     <NumberFieldPrimitive.Increment
       className={cn(
-        "relative flex shrink-0 cursor-pointer items-center justify-center rounded-e-[calc(var(--control-radius)-1px)] in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:surface-ghost-hover hover:[&_svg]:text-foreground",
+        "relative flex shrink-0 cursor-pointer items-center justify-center rounded-e-[calc(var(--control-radius)-1px)] in-data-[size=compact]:px-1 in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:surface-ghost-hover hover:[&_svg]:text-foreground",
         className,
       )}
       data-slot="number-field-increment"
@@ -93,6 +93,7 @@ export function NumberFieldInput({
         // With a unit the value hugs it and the pair centers between the steppers.
         "group-data-has-unit/number-field:ms-auto group-data-has-unit/number-field:w-auto group-data-has-unit/number-field:min-w-[2ch] group-data-has-unit/number-field:max-w-[7ch] group-data-has-unit/number-field:grow-0 group-data-has-unit/number-field:pe-1 group-data-has-unit/number-field:text-end group-data-has-unit/number-field:field-sizing-content",
         "h-8.5 in-data-[size=sm]:h-7.5 w-full min-w-0 grow bg-transparent in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] text-center tabular-nums in-data-[size=sm]:leading-7.5 leading-8.5 outline-none [transition:background-color_5000000s_ease-in-out_0s] sm:h-7.5 sm:in-data-[size=sm]:h-6.5 sm:in-data-[size=sm]:leading-8.5 sm:leading-7.5",
+        "in-data-[size=compact]:h-6.5 in-data-[size=compact]:leading-6.5 in-data-[size=compact]:px-1 sm:in-data-[size=compact]:h-6.5 sm:in-data-[size=compact]:leading-6.5",
         className,
       )}
       data-slot="number-field-input"
