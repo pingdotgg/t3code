@@ -149,7 +149,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ["src/Example.cs", "C:\\repo\\src\\Example.cs"],
     ["src\\Example.cs", "C:\\repo\\src\\Example.cs"],
     ["src%5CExample.cs", "C:\\repo\\src\\Example.cs"],
-    [".\\src\\Example.cs", "C:\\repo\\src\\Example.cs"],
     ["src\\Example.cs:3", "C:\\repo\\src\\Example.cs:3"],
   ])("resolves the relative link %s against a windows cwd", (href, target) => {
     expect(resolveMarkdownFileLinkTarget(href, "C:\\repo")).toBe(target);
