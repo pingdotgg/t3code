@@ -172,6 +172,7 @@ describe("sidebar render isolation", () => {
         environmentId: activeProject.environmentId,
         projectId: activeProject.id,
       },
+      defaultProjectFallbackReady: true,
       handleNewThread: vi.fn().mockResolvedValue(null),
       routeDraftId: null,
       routeThreadRef,
