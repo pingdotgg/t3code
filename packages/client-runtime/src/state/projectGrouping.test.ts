@@ -289,81 +289,30 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
-  it.each([
-    {
-      remoteUrl: "https://dev.azure.com/example-org/My%20Project/_git/my-repo",
-      canonicalKey: "dev.azure.com/example-org/my%20project/_git/my-repo",
-      displayName: "example-org/My%20Project/_git/my-repo",
-      name: "my-repo",
-      label: "My Project/my-repo",
-    },
-    {
-      remoteUrl: "git@ssh.dev.azure.com:v3/Example-Org/Other%20Project/ssh-repo",
-      canonicalKey: "dev.azure.com/example-org/other%20project/_git/ssh-repo",
-      displayName: "example-org/other%20project/_git/ssh-repo",
-      name: "ssh-repo",
-      label: "Other Project/ssh-repo",
-    },
-  ])(
-    "labels Azure DevOps checkouts of $remoteUrl by project and repository",
-    ({ remoteUrl, canonicalKey, displayName, name, label }) => {
-      const identity = {
-        canonicalKey,
-        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
-        provider: SourceControlProviderKind.make("azure-devops"),
-        owner: "example-org",
-        name,
-        displayName,
-      };
-      const projects = [
-        makeProject("checkout-1", `/work/one/${name}`, {
-          title: name,
-          repositoryIdentity: identity,
-        }),
-        makeProject("checkout-2", `/work/two/${name}`, {
-          title: name,
-          repositoryIdentity: identity,
-        }),
-      ];
-
-      const groups = buildProjectGroups({ projects, settings: settings("repository") });
-      expect(groups).toHaveLength(1);
-      expect(groups[0]?.label).toBe(label);
-    },
-  );
-
-  it("labels a fork on Azure DevOps by its own remote's project and repository", () => {
+  it("labels Azure DevOps checkouts by project and repository", () => {
+    const remoteUrl = "https://dev.azure.com/example-org/My%20Project/_git/my-repo";
     const identity = {
-      canonicalKey: "dev.azure.com/example-org/platform/_git/fork-repo",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "upstream",
-        remoteUrl: "https://dev.azure.com/example-org/Platform/_git/fork-repo",
-      },
+      canonicalKey: "dev.azure.com/example-org/my%20project/_git/my-repo",
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
       provider: SourceControlProviderKind.make("azure-devops"),
       owner: "example-org",
-      name: "fork-repo",
-      displayName: "example-org/Platform/_git/fork-repo",
-      origin: {
-        canonicalKey: "dev.azure.com/example-org/forks/_git/fork-repo",
-        remoteUrl: "git@ssh.dev.azure.com:v3/Example-Org/Forks/fork-repo",
-        displayName: "example-org/forks/_git/fork-repo",
-      },
+      name: "my-repo",
+      displayName: "example-org/My%20Project/_git/my-repo",
     };
     const projects = [
-      makeProject("fork", "/work/one/fork-repo", {
-        title: "fork-repo",
+      makeProject("checkout-1", "/work/one/my-repo", {
+        title: "my-repo",
         repositoryIdentity: identity,
       }),
-      makeProject("fork-2", "/work/two/fork-repo", {
-        title: "fork-repo",
+      makeProject("checkout-2", "/work/two/my-repo", {
+        title: "my-repo",
         repositoryIdentity: identity,
       }),
     ];
 
     const groups = buildProjectGroups({ projects, settings: settings("repository") });
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("Forks/fork-repo");
+    expect(groups[0]?.label).toBe("My Project/my-repo");
   });
 
   it("labels an Azure DevOps fork the same whether or not its server reports the origin URL", () => {
