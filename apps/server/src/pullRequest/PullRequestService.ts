@@ -119,17 +119,18 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 }
 
 // Retry a shared flight canceled by its previous reader after that flight leaves the cache.
-const getShared = Effect.fn("PullRequestService.getShared")(function* <Key, A, E, R>(
-  cache: Cache.Cache<Key, A, E, R>,
-  key: Key,
-) {
-  return yield* Cache.get(cache, key).pipe(
-    Effect.catchCauseIf(
-      (cause) => Cause.hasInterruptsOnly(cause),
-      (_cause) => Cache.get(cache, key),
+const getShared = Effect.fn("PullRequestService.getShared")(
+  function* <Key, A, E, R>(cache: Cache.Cache<Key, A, E, R>, key: Key) {
+    return yield* Cache.get(cache, key);
+  },
+  (effect, cache, key) =>
+    effect.pipe(
+      Effect.catchCauseIf(
+        (cause) => Cause.hasInterruptsOnly(cause),
+        (_cause) => Cache.get(cache, key),
+      ),
     ),
-  );
-});
+);
 
 // Providers request one extra row; 99 stays within GitHub/GitLab's 100-row API limit.
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
