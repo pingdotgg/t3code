@@ -701,26 +701,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const grouped = groupModelPickerVendors(
       models,
       (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-      undefined,
+      (model) => favoritesAtOpen.has(providerModelKey(model.instanceId, model.slug)),
+      flatModels.find(
+        (model) =>
+          model.instanceId === selectedInstanceId &&
+          modelPickerModelKey(model.instanceId, model.slug) === openedWithModelKey,
+      )?.subProvider,
     );
     if (!grouped) {
       return null;
     }
-    const defaultVendor =
-      groupModelPickerVendors(
-        models,
-        (model) => favoritesAtOpen.has(providerModelKey(model.instanceId, model.slug)),
-        flatModels.find(
-          (model) =>
-            model.instanceId === selectedInstanceId &&
-            modelPickerModelKey(model.instanceId, model.slug) === openedWithModelKey,
-        )?.subProvider,
-      )?.defaultVendor ?? grouped.defaultVendor;
     return {
       pinned: grouped.pinned,
       sections: grouped.sections.map((section) => {
         const key = modelPickerVendorSectionKey(selectedInstanceId, section.vendor);
-        const expandedByDefault = section.vendor === defaultVendor;
+        const expandedByDefault = section.vendor === grouped.defaultVendor;
         return {
           ...section,
           key,
