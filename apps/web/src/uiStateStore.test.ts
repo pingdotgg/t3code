@@ -257,8 +257,9 @@ describe("uiStateStore persistence", () => {
     const keysA = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
     const keysB = ["github.com/pingdotgg/flame"];
 
-    await loadIn(tabA);
     persistState(makeUiState({ sidebarProjectScopeKeys: keysA }));
+    // Tab A shows the shared filter on first load and never persists its own.
+    await loadIn(tabA);
     vi.stubGlobal("window", tabB);
     persistState(makeUiState({ sidebarProjectScopeKeys: keysB }));
 

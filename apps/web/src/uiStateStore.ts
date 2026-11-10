@@ -177,7 +177,17 @@ function readPersistedState(): UiState {
   }
   const state = readSharedPersistedState();
   const sidebarProjectScopeKeys = readTabSidebarProjectScopeKeys();
-  return sidebarProjectScopeKeys === null ? state : { ...state, sidebarProjectScopeKeys };
+  if (sidebarProjectScopeKeys === null) {
+    writeTabSidebarProjectScopeKeys(state.sidebarProjectScopeKeys);
+    return state;
+  }
+  return { ...state, sidebarProjectScopeKeys };
+}
+
+function writeTabSidebarProjectScopeKeys(keys: string[]): void {
+  try {
+    window.sessionStorage.setItem(TAB_SIDEBAR_PROJECT_SCOPE_KEY, JSON.stringify(keys));
+  } catch {}
 }
 
 function readSharedPersistedState(): UiState {
@@ -262,12 +272,7 @@ export function persistState(state: UiState): void {
       }
     }
   } catch {}
-  try {
-    window.sessionStorage.setItem(
-      TAB_SIDEBAR_PROJECT_SCOPE_KEY,
-      JSON.stringify(state.sidebarProjectScopeKeys),
-    );
-  } catch {}
+  writeTabSidebarProjectScopeKeys(state.sidebarProjectScopeKeys);
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
