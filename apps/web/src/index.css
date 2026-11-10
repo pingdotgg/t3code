@@ -3924,13 +3924,14 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 /* Aqua blue caps the gloss lightness so white labels keep AA contrast. */
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"] {
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.44) c h) !important;
+  --ss-background: var(--background);
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.56) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--ss-aqua-ring) calc(l + 0.115) calc(c * 0.562) calc(h - 20.792)) 0%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.017) calc(c * 1.005) calc(h - 17.959)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.157) calc(c * 1.257) calc(h - 13.96)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.073) calc(c * 1.124) calc(h - 16.183)) 100%
+    oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.04) calc(c * 1.005) calc(h - 17.959)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.13) calc(c * 1.257) calc(h - 13.96)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.07) calc(c * 1.124) calc(h - 16.183)) 100%
   ) !important;
   --lit-hover-fill: var(--ss-hover-layer), var(--lit-fill) !important;
   --lit-rim: var(--ss-none) !important;
@@ -3940,10 +3941,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --control-radius: 8px !important;
   --raised-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--background) calc(l + 0.03) c h) 0%,
-    oklch(from var(--background) l c h) 50%,
-    oklch(from var(--background) calc(l - 0.042) c h) 50%,
-    oklch(from var(--background) calc(l - 0.018) c h) 100%
+    oklch(from var(--ss-background) calc(l + 0.03) c h) 0%,
+    oklch(from var(--ss-background) l c h) min(50%, 24px),
+    oklch(from var(--ss-background) calc(l - 0.042) c h) min(50%, 24px),
+    oklch(from var(--ss-background) calc(l - 0.018) c h) 100%
   ) !important;
   --raised-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --raised-rim: var(--ss-none) !important;
@@ -3954,9 +3955,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --destructive-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.51) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.44) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.49) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
@@ -3966,18 +3967,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--ss-aqua-ring) calc(l + 0.043) calc(c * 0.852) calc(h - 19.055)) 0%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.089) calc(c * 1.218) calc(h - 15.644)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.219) calc(c * 1.354) calc(h - 11.766)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.137) calc(c * 1.295) calc(h - 13.81)) 100%
+    oklch(from var(--ss-aqua-ring) calc(l - 0.01) calc(c * 0.852) calc(h - 19.055)) 0%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.07) calc(c * 1.218) calc(h - 15.644)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.18) calc(c * 1.354) calc(h - 11.766)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.11) calc(c * 1.295) calc(h - 13.81)) 100%
   ) !important;
   --pill-rim: var(--ss-none) !important;
   --pill-shadow: 0px 1px 3px 0px rgb(0 0 0 / 0.102) !important;
   --pill-foreground: rgb(255 255 255) !important;
   --pill-icon: rgb(255 255 255) !important;
   --tray-fill: linear-gradient(
-    oklch(from var(--background) calc(l + 0.015) c h),
-    oklch(from var(--background) calc(l + 0.015) c h)
+    oklch(from var(--ss-background) calc(l + 0.015) c h),
+    oklch(from var(--ss-background) calc(l + 0.015) c h)
   ) !important;
   --tray-stroke: rgb(0 0 0 / 0.031) !important;
   --tray-shadow: none !important;
@@ -3987,13 +3988,14 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark[data-surface-style="aqua-blue"] > body,
 :root.dark [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.44) c h) !important;
+  --ss-background: oklch(from var(--background) max(l, 0.195734) c h);
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.56) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--ss-aqua-ring) calc(l + 0.115) calc(c * 0.562) calc(h - 20.792)) 0%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.017) calc(c * 1.005) calc(h - 17.959)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.157) calc(c * 1.257) calc(h - 13.96)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.073) calc(c * 1.124) calc(h - 16.183)) 100%
+    oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.04) calc(c * 1.005) calc(h - 17.959)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.13) calc(c * 1.257) calc(h - 13.96)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.07) calc(c * 1.124) calc(h - 16.183)) 100%
   ) !important;
   --lit-hover-fill: var(--ss-hover-layer), var(--lit-fill) !important;
   --lit-rim: var(--ss-none) !important;
@@ -4003,10 +4005,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --control-radius: 8px !important;
   --raised-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--background) calc(l + 0.153) calc(c * 0.35) h) 0%,
-    oklch(from var(--background) calc(l + 0.105) c h) 50%,
-    oklch(from var(--background) calc(l + 0.031) c h) 50%,
-    oklch(from var(--background) calc(l + 0.073) c h) 100%
+    oklch(from var(--ss-background) calc(l + 0.153) calc(c * 0.35) h) 0%,
+    oklch(from var(--ss-background) calc(l + 0.105) c h) min(50%, 24px),
+    oklch(from var(--ss-background) calc(l + 0.031) c h) min(50%, 24px),
+    oklch(from var(--ss-background) calc(l + 0.073) c h) 100%
   ) !important;
   --raised-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --raised-rim: var(--ss-none) !important;
@@ -4017,9 +4019,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --destructive-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.51) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.44) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.49) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
@@ -4029,18 +4031,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--ss-aqua-ring) calc(l + 0.043) calc(c * 0.852) calc(h - 19.055)) 0%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.089) calc(c * 1.218) calc(h - 15.644)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.219) calc(c * 1.354) calc(h - 11.766)) 50%,
-    oklch(from var(--ss-aqua-ring) calc(l - 0.137) calc(c * 1.295) calc(h - 13.81)) 100%
+    oklch(from var(--ss-aqua-ring) calc(l - 0.01) calc(c * 0.852) calc(h - 19.055)) 0%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.07) calc(c * 1.218) calc(h - 15.644)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.18) calc(c * 1.354) calc(h - 11.766)) 50%,
+    oklch(from var(--ss-aqua-ring) calc(l - 0.11) calc(c * 1.295) calc(h - 13.81)) 100%
   ) !important;
   --pill-rim: var(--ss-none) !important;
   --pill-shadow: 0px 1px 3px 0px rgb(0 0 0 / 0.502) !important;
   --pill-foreground: rgb(255 255 255) !important;
   --pill-icon: rgb(255 255 255) !important;
   --tray-fill: linear-gradient(
-    oklch(from var(--background) calc(l + 0.026) c h),
-    oklch(from var(--background) calc(l + 0.026) c h)
+    oklch(from var(--ss-background) calc(l + 0.026) c h),
+    oklch(from var(--ss-background) calc(l + 0.026) c h)
   ) !important;
   --tray-stroke: rgb(255 255 255 / 0.051) !important;
   --tray-shadow: none !important;
@@ -4535,55 +4537,42 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
-/* Aqua blue: Aqua gloss with the blue gloss on selection and scrollbars. */
+/* Aqua blue keeps aqua surfaces; primary, checked controls and send use blue jelly. */
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
   --tint-overlay: linear-gradient(
     180deg,
     #ffffff18 0%,
-    #ffffff08 clamp(0%, 120px - 250%, 50%),
-    #00000000 clamp(50%, 350% - 120px, 100%),
+    #ffffff08 min(50%, 24px),
+    #00000000 min(50%, 24px),
     #00000008 100%
   );
-  --gloss-thumb-fill:
-    var(--tint-overlay), linear-gradient(var(--primary-foreground), var(--primary-foreground)) !important;
-  --gloss-off-thumb-fill: var(--tint-overlay), var(--ss-default-gloss-off-thumb-fill) !important;
-  --slider-thumb-fill: var(--gloss-off-thumb-fill);
+  --gloss-thumb-fill: linear-gradient(
+    var(--primary-foreground),
+    var(--primary-foreground)
+  ) !important;
+  --gloss-off-thumb-fill: linear-gradient(
+    oklch(from var(--muted-foreground) 0.58 c h),
+    oklch(from var(--muted-foreground) 0.58 c h)
+  ) !important;
+  --thumb-shadow: 0 0 #0000;
+  --well-switch-fill: var(--raised-fill) !important;
+  --well-fill: var(--raised-fill) !important;
+  --bubble-fill: var(--well-fill) !important;
+  --composer-fill: var(--well-fill) !important;
   --kbd-on-destructive-foreground: #fff !important;
   --kbd-lit-foreground: #fff !important;
   --kbd-lit-fill: #00000026 !important;
-  --popover-top: oklch(from var(--popover-bottom) calc(l + 0.035) c h) !important;
-  --popover-rim: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--foreground) 26%, transparent),
-    color-mix(in srgb, var(--foreground) 4%, transparent)
-  ) !important;
-  --card-fill: linear-gradient(
-    180deg,
-    oklch(from var(--card-bottom) calc(l + 0.035) c h),
-    var(--card-bottom)
-  ) !important;
-  --card-settings-fill: linear-gradient(
-    180deg,
-    oklch(from var(--card-bottom) calc(l + 0.035) c h),
-    var(--card-bottom)
-  ) !important;
-  --kbd-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--foreground) 20%, transparent) 0%,
-    color-mix(in srgb, var(--foreground) 13%, transparent) 50%,
-    color-mix(in srgb, var(--foreground) 6%, transparent) 50%,
-    color-mix(in srgb, var(--foreground) 10%, transparent) 100%
-  ) !important;
-  --kbd-popover-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--foreground) 20%, transparent) 0%,
-    color-mix(in srgb, var(--foreground) 13%, transparent) 50%,
-    color-mix(in srgb, var(--foreground) 6%, transparent) 50%,
-    color-mix(in srgb, var(--foreground) 10%, transparent) 100%
-  ) !important;
-  --kbd-shadow: 0 1px 2px #00000059 !important;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--ring) 45%, transparent) !important;
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--ring) 62%, transparent) !important;
+  --popover-rim: var(--ss-none) !important;
+  --card-rim: var(--ss-none) !important;
+  --card-fill: var(--raised-fill) !important;
+  --card-settings-fill: var(--raised-fill) !important;
+  --kbd-fill: var(--raised-fill) !important;
+  --kbd-popover-fill: var(--kbd-fill) !important;
+  --kbd-shadow: var(--raised-shadow) !important;
   --ghost-hover-fill: linear-gradient(
     180deg,
     color-mix(in srgb, var(--foreground) 13%, transparent) 0%,
@@ -4591,62 +4580,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     color-mix(in srgb, var(--foreground) 4%, transparent) 50%,
     color-mix(in srgb, var(--foreground) 7%, transparent) 100%
   ) !important;
-  --selected-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ring) 46%, transparent) 0%,
-    color-mix(in srgb, var(--ring) 34%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 22%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 30%, transparent) 100%
-  ) !important;
-  --selected-soft-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ring) 32%, transparent) 0%,
-    color-mix(in srgb, var(--ring) 24%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 14%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 20%, transparent) 100%
-  ) !important;
-  --sidebar-row-selected-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ring) 44%, transparent) 0%,
-    color-mix(in srgb, var(--ring) 32%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 20%, transparent) 50%,
-    color-mix(in srgb, var(--ring) 28%, transparent) 100%
-  ) !important;
-  --sidebar-row-selected-rim: color-mix(in srgb, var(--ring) 40%, transparent) !important;
-  --app-scrollbar-thumb: color-mix(in srgb, var(--ring) 45%, transparent) !important;
-  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--ring) 62%, transparent) !important;
-}
-
-/* Aqua wells, bubbles and the composer keep the hard split up to 40px tall,
-   one text line, and fade it into one smooth gradient by 48px, so it never
-   lands between the lines of a textarea, code block, preview or message. The
-   split stops sit at clamp(..., 120px - 250%, ...) and clamp(..., 350% - 120px,
-   ...) of the box. */
-:root[data-surface-style="aqua-blue"] > body,
-[data-surface-preview="aqua-blue"] {
-  --well-fill: linear-gradient(
-    180deg in srgb,
-    oklch(from var(--background) calc(l + 0.03) c h) 0%,
-    oklch(from var(--background) l c h) clamp(0%, 120px - 250%, 50%),
-    oklch(from var(--background) calc(l - 0.042) c h) clamp(50%, 350% - 120px, 100%),
-    oklch(from var(--background) calc(l - 0.018) c h) 100%
-  ) !important;
-  --bubble-fill: var(--well-fill) !important;
-  --composer-fill: var(--well-fill) !important;
-}
-
-:root.dark[data-surface-style="aqua-blue"] > body,
-:root.dark [data-surface-preview="aqua-blue"],
-:root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
-  --well-fill: linear-gradient(
-    180deg in srgb,
-    oklch(from var(--background) calc(l + 0.153) calc(c * 0.35) h) 0%,
-    oklch(from var(--background) calc(l + 0.105) c h) clamp(0%, 120px - 250%, 50%),
-    oklch(from var(--background) calc(l + 0.031) c h) clamp(50%, 350% - 120px, 100%),
-    oklch(from var(--background) calc(l + 0.073) c h) 100%
-  ) !important;
-  --bubble-fill: var(--well-fill) !important;
-  --composer-fill: var(--well-fill) !important;
+  --selected-fill: var(--raised-fill) !important;
+  --selected-shadow: var(--raised-shadow);
+  --selected-soft-fill: var(--ghost-hover-fill) !important;
+  --sidebar-row-selected-fill: var(--selected-fill) !important;
+  --sidebar-selected-shadow: var(--selected-shadow);
+  --sidebar-row-selected-rim: transparent !important;
 }
 
 /* Gradient rim everywhere: the lit edge that fades out on every surface. Cards
