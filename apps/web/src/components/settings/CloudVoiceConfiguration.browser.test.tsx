@@ -128,6 +128,7 @@ it("enables the chosen provider only after a successful setup and keeps its gran
             .element(dialog.getByText("Update Laptop to use Groq dictation."))
             .toBeVisible();
           await dialog.getByRole("button", { name: "Cancel" }).click();
+          await expect.element(dialog).not.toBeInTheDocument();
           await expect.element(destination).toHaveTextContent("Grok Voice Transcribe via Laptop");
           await destination.click();
           await page.getByRole("option", { name: "Off", exact: true }).click();

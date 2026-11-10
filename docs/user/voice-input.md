@@ -29,10 +29,10 @@ via the environment you want to use. If it needs a key, enter one and choose **S
 You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
 reference. Unlock the vault on that environment before dictating. Anyone with
 dictation access to the environment can use the key, but only this device opts in.
-If a key is already saved, just confirm the provider. After
-you stop, the environment forwards your recording and any vocabulary hints to
-the selected provider, which bills its API account. No local model download or chat
-subscription is needed. Switch back to **This device** on mobile or **Off** on
+If a key is already saved, just confirm the provider. After you stop, the environment
+forwards your recording to the selected provider, which bills its API account.
+OpenAI and Grok Voice Transcribe also receive vocabulary hints. No local model download
+or chat subscription is needed. Switch back to **This device** on mobile or **Off** on
 web and desktop to stop sharing. Removing the key stops that provider for everyone
 on the environment.
 
