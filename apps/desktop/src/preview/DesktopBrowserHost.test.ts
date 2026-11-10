@@ -43,6 +43,8 @@ const command = (
 const makeDebuggee = (
   options: {
     readonly deferFocus?: boolean;
+    /** The guest is still loading its first page. */
+    readonly loading?: boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -80,10 +82,13 @@ const makeDebuggee = (
         sendWaiters.shift()?.();
       }),
   });
+  let destroyed = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isLoadingMainFrame: () => options.loading === true,
+    isDestroyed: () => destroyed,
   });
   return {
     tab: {
@@ -92,6 +97,12 @@ const makeDebuggee = (
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
+    domReady: () => webContents.emit("dom-ready"),
+    destroy: () => {
+      destroyed = true;
+    },
+    failLoad: (code: number) =>
+      webContents.emit("did-fail-load", {}, code, "Failed", "http://localhost/", true),
     /** Ids of the commands the debugger received, in order. */
     sent,
     /** Methods of the same commands, in order. */
@@ -162,6 +173,109 @@ describe("DesktopBrowserHost", () => {
 
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
+    }),
+  );
+
+  it.effect("announces a guest still loading its first page only once that page is up", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const loading = makeDebuggee({ loading: true });
+      const other = { ...key, tabId: "tab-2" };
+      const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.attach(key, loading.tab);
+      host.setShown(key, true);
+      host.attach(other, makeDebuggee().tab);
+      loading.domReady();
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...other },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "keeps a loading guest unannounced across a replaced navigation and a new backend",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const loading = makeDebuggee({ loading: true });
+        const other = { ...key, tabId: "tab-2" };
+        host.attach(key, loading.tab);
+        loading.failLoad(-3);
+        const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        host.attach(other, makeDebuggee().tab);
+        loading.domReady();
+
+        expect(yield* Fiber.join(reader)).toEqual([
+          { type: "attached", ...other },
+          { type: "attached", ...key },
+        ]);
+      }),
+  );
+
+  it.effect(
+    "announces a first page that never comes up, but never a tab closed or destroyed first",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const closed = { ...key, tabId: "tab-2" };
+        const destroyed = { ...key, tabId: "tab-3" };
+        const destroyedGuest = makeDebuggee({ loading: true });
+        const reader = yield* takeEvents(host, 1).pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        host.attach(closed, makeDebuggee({ loading: true }).tab);
+        host.detach(closed);
+        host.attach(destroyed, destroyedGuest.tab);
+        destroyedGuest.destroy();
+        host.attach(key, makeDebuggee({ loading: true }).tab);
+        yield* TestClock.adjust("5 seconds");
+
+        expect(yield* Fiber.join(reader)).toEqual([{ type: "attached", ...key }]);
+      }),
+  );
+
+  it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(key, true);
+      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.detach(key);
+      host.attach(key, makeDebuggee().tab);
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+        { type: "detached", ...key },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
+  it.effect("replays an explicit hidden report before announcing another tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const other = { ...key, tabId: "tab-2" };
+      host.setShown(key, false);
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(other, true);
+      host.attach(other, makeDebuggee().tab);
+
+      expect(yield* takeEvents(host, 3)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: false },
+        { type: "attached", ...other },
+      ]);
     }),
   );
 
