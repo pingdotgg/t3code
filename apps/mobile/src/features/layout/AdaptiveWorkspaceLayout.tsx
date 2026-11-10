@@ -643,8 +643,9 @@ function AdaptiveWorkspaceLayoutContent(
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
-  // Android's split content is a rounded card: keep it off the screen edge like the list card.
-  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
+  // ScreenContent supplies both margins at an inspector boundary.
+  const contentEndGap =
+    Platform.OS === "android" && layout.usesSplitView && !panes.auxiliaryPaneVisible ? 4 : 0;
   // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
   // sidebar never resizes; both slide by one offset, so together they always fill the width.
   const stripSidebar =
