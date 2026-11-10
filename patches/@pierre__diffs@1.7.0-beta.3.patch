@@ -1,0 +1,298 @@
+diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
+index 774c1abbf4c00586b4fd3af0bf525a5d7c45d015..8e27d2982f5c593e7204bc8fdae9a7ad5e8a85e4 100644
+--- a/dist/components/CodeView.d.ts
++++ b/dist/components/CodeView.d.ts
+@@ -166,6 +166,13 @@ interface CodeViewOptions<LAnnotation, Caret> extends CodeViewPassThroughOptions
+    * change, and with undefined when it closes.
+    */
+   onSearchStateChange?(state: SearchPanelState | undefined): void;
++  /**
++   * T3 patch. Makes find cover collapsed items and collapsed diff context.
++   * Called when find navigates to a match in a collapsed item: folding is host
++   * state, so the host unfolds it (a controlled update with `collapsed: false`
++   * and a new `version`) and the viewer then scrolls to the match.
++   */
++  onRevealSearchMatch?(item: CodeViewItem<LAnnotation>): void;
+   /**
+    * Return an in-memory retention key for an item's editable draft and
+    * undo/redo history. Called only when CodeView creates the item's editor.
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index 6ee5032aee523b4c3e10f70202874f141f28ff10..94cd3f4b2e16490994707c28fa45c4f43f0c6065 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -213,7 +213,8 @@ var CodeView = class CodeView {
+ 		matchesByItem: /* @__PURE__ */ new Map(),
+ 		current: void 0,
+ 		centerNavigation: false,
+-		pendingHorizontalReveal: false
++		pendingHorizontalReveal: false,
++		pendingReveal: void 0
+ 	};
+ 	searchMatchesDirty = false;
+ 	searchHighlighter;
+@@ -593,10 +594,29 @@ var CodeView = class CodeView {
+ 		this.searchState.centerNavigation = false;
+ 		this.searchMatchesDirty = false;
+ 		this.searchState.pendingHorizontalReveal = false;
++		this.searchState.pendingReveal = void 0;
++	}
++	/** T3 patch: whether a diff match sits in collapsed context. Deletion cells carry their row's addition line. */
++	isSearchMatchHidden(item, match) {
++		const lineNumber = match.side === "additions" ? match.lineNumber : match.revealLineNumber;
++		return item.type === "diff" && lineNumber != null && !item.instance.isLineRenderable(lineNumber);
++	}
++	/** T3 patch: finish a reveal that waited for the host to unfold the item, or for its first render. */
++	resumeSearchReveal(updatedItems) {
++		const { current: match, pendingReveal } = this.searchState;
++		if (pendingReveal == null || match == null) return;
++		for (const item of updatedItems) {
++			if (item.item.id !== match.itemId || item.item.collapsed === true || item.type === "diff" && item.instance.getRenderedDiff() == null) continue;
++			this.searchState.pendingReveal = void 0;
++			if (pendingReveal === "unfold" || this.isSearchMatchHidden(item, match)) queueMicrotask(() => {
++				if (areOptionalCodeViewSearchMatchesEqual(this.searchState.current, match)) this.scrollToSearchMatch(match);
++			});
++			return;
++		}
+ 	}
+ 	isSearchMatchInView(match) {
+ 		const item = this.idToItem.get(match.itemId);
+-		if (item == null || item.type === "diff" && match.side === "additions" && !item.instance.isLineRenderable(match.lineNumber)) return false;
++		if (item == null || this.isSearchMatchHidden(item, match)) return false;
+ 		const rect = this.getScrollTargetRect({
+ 			type: "line",
+ 			id: match.itemId,
+@@ -616,13 +636,21 @@ var CodeView = class CodeView {
+ 		this.searchState.pendingHorizontalReveal = true;
+ 		this.searchState.current = match;
+ 		this.render();
+-		if (!this.searchState.centerNavigation && this.isSearchMatchInView(match)) {
++		const item = this.idToItem.get(match.itemId);
++		const folded = item?.item.collapsed === true;
++		this.searchState.pendingReveal = void 0;
++		if (!folded && !this.searchState.centerNavigation && this.isSearchMatchInView(match)) {
+ 			this.clearPendingScroll();
+ 			return;
+ 		}
+ 		this.searchState.centerNavigation = true;
+-		const item = this.idToItem.get(match.itemId);
+-		if (item?.type === "diff" && match.side === "additions" && !item.instance.isLineRenderable(match.lineNumber)) item.instance.revealLine(match.lineNumber);
++		// T3 patch: folding is host state, and a diff that has not rendered reports every line
++		// renderable. Scroll to the item now; resumeSearchReveal finishes once it has rendered.
++		if (folded) {
++			this.searchState.pendingReveal = "unfold";
++			this.options.onRevealSearchMatch?.(item.item);
++		} else if (item?.type === "diff" && item.instance.getRenderedDiff() == null) this.searchState.pendingReveal = "render";
++		else if (item != null && this.isSearchMatchHidden(item, match)) item.instance.revealLine(match.revealLineNumber ?? match.lineNumber);
+ 		this.scrollTo({
+ 			type: "line",
+ 			id: match.itemId,
+@@ -732,9 +760,12 @@ var CodeView = class CodeView {
+ 		for (const item of items) {
+ 			const remaining = MAX_SEARCH_MATCHES - matches.length;
+ 			if (remaining <= 0) break;
+-			if (item.item.collapsed === true) continue;
++			// T3 patch: a host that can unfold items (onRevealSearchMatch) gets them searched.
++			if (item.item.collapsed === true && this.options.onRevealSearchMatch == null) continue;
+ 			const nextMatches = (scope != null || item.type === "file" ? this.searchEditedItem(item, searchParams, remaining) : void 0) ?? (item.type === "file" ? this.searchFileItem(item, searchParams, remaining) : this.searchDiffItem(item, searchParams, remaining));
+ 			const bounds = item.element == null ? void 0 : item.instance.getRenderedBounds();
++			// T3 patch: a mounted folded item has no rendered lines, so its header stands in for them.
++			if (item.item.collapsed === true && item.element != null && nextMatches.length > 0) firstRendered ??= matches.length;
+ 			for (const match of nextMatches) {
+ 				const canBeRendered = firstVisible == null && bounds != null;
+ 				const canBeAfter = firstAfterRendered == null && lastRenderedItem != null && item.index >= lastRenderedItem.index;
+@@ -744,7 +775,7 @@ var CodeView = class CodeView {
+ 					lineNumber: match.lineNumber,
+ 					side: match.side
+ 				}) : void 0;
+-				if (canBeRendered && position != null && position.height > 0 && position.top >= bounds.top && position.top < bounds.bottom && (item.type !== "diff" || match.side !== "additions" || item.instance.isLineRenderable(match.lineNumber))) {
++				if (canBeRendered && position != null && position.height > 0 && position.top >= bounds.top && position.top < bounds.bottom) {
+ 					firstRendered ??= matches.length;
+ 					if (this.isSearchMatchInView(match)) firstVisible = matches.length;
+ 				}
+@@ -791,9 +822,10 @@ var CodeView = class CodeView {
+ 		const fileDiff = doc == null ? item.item.fileDiff : item.instance.getDiffForSearch() ?? item.item.fileDiff;
+ 		const scoped = this.searchState.scope?.itemId === item.item.id;
+ 		const diffStyle = this.options.diffStyle ?? "split";
+-		const expandedHunks = scoped || this.options.expandUnchanged === true ? true : item.instance.getExpandedHunksForSearch();
++		// T3 patch: the same opt-in searches collapsed context; navigating to a match expands it.
++		const expandedHunks = scoped || this.options.expandUnchanged === true || this.options.onRevealSearchMatch != null ? true : item.instance.getExpandedHunksForSearch();
+ 		const lines = [];
+-		const addLine = (side, line) => {
++		const addLine = (side, line, revealLineNumber) => {
+ 			if (line === void 0) return;
+ 			const sourceLines = side === "additions" ? fileDiff.additionLines : fileDiff.deletionLines;
+ 			const text = side === "additions" && doc != null ? doc.getLineText(line.lineIndex, true) : sourceLines[line.lineIndex];
+@@ -805,7 +837,8 @@ var CodeView = class CodeView {
+ 					itemType: "diff",
+ 					side,
+ 					lineNumber: line.lineNumber,
+-					lineIndex: line.lineIndex
++					lineIndex: line.lineIndex,
++					revealLineNumber
+ 				}
+ 			});
+ 		};
+@@ -824,7 +857,7 @@ var CodeView = class CodeView {
+ 					else addLine("deletions", deletionLine);
+ 					return;
+ 				}
+-				addLine("deletions", deletionLine);
++				addLine("deletions", deletionLine, additionLine?.lineNumber);
+ 				addLine("additions", additionLine);
+ 			}
+ 		});
+@@ -1081,6 +1114,9 @@ var CodeView = class CodeView {
+ 		this.resetSearchState();
+ 		if (searchPanel == null) return;
+ 		searchPanel.cleanup();
++		// T3 patch: a panel that closes while focused drops focus to the body; keep it in the viewer.
++		const doc = this.root?.ownerDocument;
++		if (doc != null && doc.activeElement === doc.body) this.root.focus({ preventScroll: true });
+ 		const { onSearchStateChange } = this.options;
+ 		onSearchStateChange?.(void 0);
+ 	}
+@@ -2239,6 +2275,7 @@ var CodeView = class CodeView {
+ 		if (measured) this.validateStickyContainerHeight();
+ 		this.fixContainerFocus();
+ 		this.paintSearchHighlights();
++		this.resumeSearchReveal(updatedItems);
+ 		if (this.pendingScrollTarget == null) this.finishPendingScroll("settled");
+ 		if (fitPerfectly || this.scrollAnimation != null || this.renderState.measurementsPending) this.render();
+ 	};
+@@ -2340,6 +2377,7 @@ var CodeView = class CodeView {
+ 	clearPendingScroll = (event) => {
+ 		if (event != null && !isUserScrollInput(event)) return;
+ 		if (event != null) this.searchState.pendingHorizontalReveal = false;
++		if (event != null) this.searchState.pendingReveal = void 0;
+ 		this.pendingLayoutAnchor = void 0;
+ 		this.cancelScroll();
+ 	};
+diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
+index 734ff9862cdfe65b8082599c6c221c4886436e01..f18798a3d56dd0749550b5aff62a06fb0513b28e 100644
+--- a/dist/components/FileDiff.js
++++ b/dist/components/FileDiff.js
+@@ -1,7 +1,8 @@
+-import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_LINE_ANNOTATIONS, EMPTY_RENDER_RANGE, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
++import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_LINE_ANNOTATIONS, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
+ import { isSafari } from "../utils/platform.js";
+ import { HighlighterDisposedError } from "../highlighter/highlighterType.js";
+ import { getThemes } from "../utils/getThemes.js";
++import { getHighlighterThemeStyles } from "../utils/getHighlighterThemeStyles.js";
+ import { getHighlighterIfLoaded, getSharedHighlighter } from "../highlighter/shared_highlighter.js";
+ import { dequeueRender, queueRender } from "../managers/UniversalRenderingManager.js";
+ import { areObjectsEqual } from "../utils/areObjectsEqual.js";
+@@ -733,7 +734,7 @@ var FileDiff = class {
+ 		if (expandUnchanged) this.loadFilesIfNecessary();
+ 		this.hunksRenderer.setOptions(this.getHunksRendererOptions(this.options));
+ 		this.syncInteractionOptions();
+-		this.prepareRenderData(this.hunksRenderer.getDiffForNextRender(workingDiff));
++		this.prepareRenderData(collapsed ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff));
+ 		const { disableErrorHandling = false, disableFileHeader = false } = this.options;
+ 		if (disableFileHeader) {
+ 			if (this.headerElement != null) {
+@@ -750,11 +751,22 @@ var FileDiff = class {
+ 			this.removeRenderedCode();
+ 			this.clearAuxiliaryNodes();
+ 			try {
+-				const hunksResult = this.hunksRenderer.renderDiff(workingDiff, EMPTY_RENDER_RANGE);
+-				if (hunksResult != null) this.applyThemeState(fileContainer, hunksResult.themeStyles, themeType, hunksResult.baseThemeType);
+-				if (hunksResult?.headerElement != null) this.applyHeaderToDOM(hunksResult.headerElement, fileContainer, hunksResult.fileDiff);
++				// An empty render range still highlights the full diff. Headers only need the theme.
++				const theme = this.getTheme();
++				const highlighter = getHighlighterIfLoaded({ theme, lang: "text" });
++				if (highlighter != null) this.applyThemeState(fileContainer, getHighlighterThemeStyles({ theme, highlighter }), themeType, typeof theme === "string" ? highlighter.getTheme(theme).type : void 0);
++				else getSharedHighlighter({
++					themes: getThemes(theme),
++					langs: ["text"],
++					preferredHighlighter: resolvePreferredHighlighter(this.workerManager, this.options)
++				}).then(() => {
++					if (this.enabled && this.fileContainer === fileContainer && this.options.collapsed && areThemesEqual(theme, this.getTheme())) this.rerender();
++				}).catch((error) => {
++					if (!(error instanceof HighlighterDisposedError)) console.error(error);
++				});
++				if (!disableFileHeader) this.applyHeaderToDOM(this.hunksRenderer.renderHeader(workingDiff), fileContainer, workingDiff);
+ 				this.renderSeparators([]);
+-				this.adoptRenderData(hunksResult?.fileDiff ?? workingDiff);
++				this.adoptRenderData(workingDiff);
+ 				this.injectUnsafeCSS();
+ 			} catch (error) {
+ 				if (disableErrorHandling) throw error;
+diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
+index 984f049ff3694dd353fa6637b0f09fc7dce74992..8f659c06b70ba603f725cccdcaebe89c21b00f6b 100644
+--- a/dist/components/VirtualizedFileDiff.js
++++ b/dist/components/VirtualizedFileDiff.js
+@@ -626,7 +626,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 	rerender() {
+ 		if (!this.enabled || this.getInputDiff() == null && this.additionFile == null && this.deletionFile == null) return;
+ 		const workingDiff = this.getWorkingDiff();
+-		const nextRenderDiff = workingDiff == null ? void 0 : this.hunksRenderer.getDiffForNextRender(workingDiff);
++		const nextRenderDiff = workingDiff == null || this.options.collapsed === true ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff);
+ 		if (this.isSimpleMode()) this.pendingRender = void 0;
+ 		this.forceRenderOverride = true;
+ 		if (this.isSimpleMode() && this.requestRender()) return;
+@@ -790,7 +790,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		const previousRenderedDiff = this.getRenderedDiff();
+ 		const { pendingRender } = this;
+ 		const previousLayoutDiff = pendingRender?.diff ?? previousRenderedDiff;
+-		const pendingRenderDiff = this.hunksRenderer.getDiffForNextRender(workingDiff);
++		const pendingRenderDiff = this.options.collapsed === true ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff);
+ 		this.pendingRender = {
+ 			workingDiff,
+ 			diff: pendingRenderDiff
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index a9905d43382de2ca03d6111ba9ab3725d8cb6981..466252fbc025fec5e29fc2958ad54b58f89ed124 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -490,7 +490,9 @@ var Editor = class {
+ 			selections: this.#selections
+ 		});
+ 		const primarySelection = resolvedSelections.at(-1);
+-		if (primarySelection !== void 0) this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
++		// Clearing keeps the selection while search matches or markers exist; scrolling to it steals focus.
++		if (primarySelection === void 0) return;
++		this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
+ 		this.#scrollToPrimaryCaret();
+ 	}
+ 	setMarkers(markers) {
+diff --git a/dist/utils/createFileHeaderElement.js b/dist/utils/createFileHeaderElement.js
+index 19934176d0787ae1304e771c707230d5c8837e83..298b3386eac5126a7c1ec985674e799aac0ffd42 100644
+--- a/dist/utils/createFileHeaderElement.js
++++ b/dist/utils/createFileHeaderElement.js
+@@ -73,12 +73,12 @@ function createMetadataElement(fileDiff) {
+ 		}
+ 		if (deletions > 0 || additions === 0) children.push(createHastElement({
+ 			tagName: "span",
+-			children: [createTextNodeElement(`-${deletions}`)],
++			children: [createTextNodeElement(`-${deletions.toLocaleString()}`)],
+ 			properties: { "data-deletions-count": "" }
+ 		}));
+ 		if (additions > 0 || deletions === 0) children.push(createHastElement({
+ 			tagName: "span",
+-			children: [createTextNodeElement(`+${additions}`)],
++			children: [createTextNodeElement(`+${additions.toLocaleString()}`)],
+ 			properties: { "data-additions-count": "" }
+ 		}));
+ 	}
+diff --git a/package.json b/package.json
+index 0a0acc4c8734a61cf2d684162914002adf74960d..935937d68f52ed96b7af6b1dbb890dbf512eb0fe 100644
+--- a/package.json
++++ b/package.json
+@@ -60,6 +60,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {
