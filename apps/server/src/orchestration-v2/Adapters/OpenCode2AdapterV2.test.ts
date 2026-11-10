@@ -5223,10 +5223,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["complete", "paused"] as const)(
-    "keeps an OpenCode goal turn open across executions until its goal is %s",
-    (status) =>
+  it.effect.each([
+    { status: "complete", reconnect: false },
+    { status: "paused", reconnect: false },
+    { status: "complete", reconnect: true },
+  ] as const)(
+    "keeps an OpenCode goal turn open until $status, with reconnect $reconnect",
+    ({ status, reconnect }) =>
       Effect.gen(function* () {
+        const recovered = reconnected({ [SESSION]: { type: "running" } });
         const { runtime, thread } = yield* resumed(
           [
             out("command.list", "<any>"),
@@ -5238,11 +5243,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
             event("session.execution.succeeded", { sessionID: SESSION }),
             ...(status === "complete"
-              ? [event("session.execution.started", { sessionID: SESSION })]
+              ? reconnect
+                ? [
+                    ...recovered.slice(0, 2),
+                    out("rpc.call", "<any>"),
+                    reply("rpc.call", { output: nativeGoal("active") }),
+                    ...recovered.slice(2),
+                    ...noOpenRequests,
+                  ]
+                : [event("session.execution.started", { sessionID: SESSION })]
               : []),
             event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
             ...(status === "complete"
-              ? [event("session.execution.succeeded", { sessionID: SESSION })]
+              ? [
+                  event("session.text.ended", {
+                    sessionID: SESSION,
+                    assistantMessageID: "msg_goal_final",
+                    ordinal: 0,
+                    text: "Final goal output",
+                  }),
+                  event("session.execution.succeeded", { sessionID: SESSION }),
+                ]
               : []),
           ],
           { version: "2.2.5" },
@@ -5277,6 +5298,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             lastCheck: "Checked proof.txt",
           },
         ]);
+        if (status === "complete")
+          assert.isTrue(
+            collected.some(
+              (e) =>
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "assistant_message" &&
+                e.turnItem.text === "Final goal output",
+            ),
+          );
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
       }).pipe(Effect.scoped),
   );

@@ -2689,7 +2689,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn === undefined) continue;
         turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
-        if (sessionId in active || state.active !== turn) continue;
+        if (state.active !== turn) continue;
+        if (sessionId in active) {
+          turn.heldEnd = undefined;
+          continue;
+        }
         const terminal: TurnTerminal =
           ended?.outcome === "succeeded"
             ? { status: turn.interrupted ? "interrupted" : "completed" }
