@@ -893,16 +893,15 @@ export function focusLayoutWorkspaceStep(state: LayoutState, delta: 1 | -1): Lay
 
 /**
  * Move the focused tab to the end of the workspace below or above; focus
- * follows. Below the last
- * workspace is the empty one, so this is also how a thread gets a new
- * workspace of its own.
+ * follows. Below the last workspace is the empty one, and above the first a
+ * new one opens, so this is also how a thread gets a workspace of its own.
  */
 export function moveLayoutTabToWorkspace(state: LayoutState, delta: 1 | -1): LayoutState {
   const chat = selectFocusedChatTab(state);
   if (!chat) return state;
   const index = state.workspaces.indexOf(chat.workspace);
   const target = state.workspaces[index + delta];
-  if (!target) return state;
+  if (!target) return delta === -1 ? moveLayoutTabToNewWorkspace(state, chat.tab.id, 0) : state;
   // A workspace's only chat moving into the empty one would just trade places.
   const tabsInWorkspace = chat.workspace.columns
     .flatMap((column) => column.panes)
