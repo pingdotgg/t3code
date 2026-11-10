@@ -2498,52 +2498,36 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
-// A run fork stores no message rows; it shows its source's prompt, image included, by reading through.
-const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function* (key: string) {
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
+const imageAttachment = (threadId: ThreadId, name: string) => ({
+  type: "image" as const,
+  id: createAttachmentId(threadId, "png")!,
+  name,
+  mimeType: "image/png",
+  sizeBytes: 8,
+});
+
+const writeCompletedUserRun = Effect.fn("test.writeCompletedUserRun")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly key: string;
+  readonly ordinal: number;
+  readonly attachments: ReadonlyArray<ReturnType<typeof imageAttachment>>;
+}) {
   const eventSink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
-  const sourceThreadId = ThreadId.make(`image-fork-source:${key}`);
-  const forkThreadId = ThreadId.make(`image-fork-target:${key}`);
-  const runId = RunId.make(`image-fork-run:${key}`);
-  const messageId = MessageId.make(`image-fork-message:${key}`);
-  const attachmentId = createAttachmentId(sourceThreadId, "png")!;
-  const text = "What is in this screenshot?";
-  const attachments = [
-    {
-      type: "image" as const,
-      id: attachmentId,
-      name: "screenshot.png",
-      mimeType: "image/png",
-      sizeBytes: 8,
-    },
-  ];
-  yield* orchestrator.dispatch({
-    type: "thread.create",
-    commandId: CommandId.make(`image-fork-create:${key}`),
-    threadId: sourceThreadId,
-    projectId: ProjectId.make(`image-fork-project:${key}`),
-    title: "Image source",
-    modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    createdBy: "user",
-    creationSource: "web",
-  });
+  const runId = RunId.make(`image-fork-run:${input.key}`);
+  const messageId = MessageId.make(`image-fork-message:${input.key}`);
   yield* eventSink.write({
     events: [
       {
-        id: EventId.make(`image-fork-run:${key}`),
+        id: EventId.make(`image-fork-run:${input.key}`),
         type: "run.created",
-        threadId: sourceThreadId,
+        threadId: input.threadId,
         runId,
         occurredAt: now,
         payload: {
           id: runId,
-          threadId: sourceThreadId,
-          ordinal: 1,
+          threadId: input.threadId,
+          ordinal: input.ordinal,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
           providerThreadId: null,
@@ -2559,19 +2543,19 @@ const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function
         },
       },
       {
-        id: EventId.make(`image-fork-message:${key}`),
+        id: EventId.make(`image-fork-message:${input.key}`),
         type: "message.updated",
-        threadId: sourceThreadId,
+        threadId: input.threadId,
         runId,
         occurredAt: now,
         payload: {
           id: messageId,
-          threadId: sourceThreadId,
+          threadId: input.threadId,
           runId,
           nodeId: null,
           role: "user",
-          text,
-          attachments,
+          text: "What is in this screenshot?",
+          attachments: [...input.attachments],
           streaming: false,
           createdBy: "user",
           creationSource: "web",
@@ -2579,37 +2563,36 @@ const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function
           updatedAt: now,
         },
       },
-      {
-        id: EventId.make(`image-fork-prompt:${key}`),
-        type: "turn-item.updated",
-        threadId: sourceThreadId,
-        runId,
-        occurredAt: now,
-        payload: {
-          id: TurnItemId.make(`image-fork-prompt:${key}`),
-          threadId: sourceThreadId,
-          runId,
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 1,
-          status: "completed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "user_message",
-          createdBy: "user",
-          creationSource: "web",
-          messageId,
-          inputIntent: "turn_start",
-          text,
-          attachments,
-        },
-      },
     ],
+  });
+  return runId;
+});
+
+// A run fork stores no message rows; it shows its source's prompt, image included, by reading through.
+const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function* (key: string) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const sourceThreadId = ThreadId.make(`image-fork-source:${key}`);
+  const forkThreadId = ThreadId.make(`image-fork-target:${key}`);
+  const attachment = imageAttachment(sourceThreadId, "screenshot.png");
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`image-fork-create:${key}`),
+    threadId: sourceThreadId,
+    projectId: ProjectId.make(`image-fork-project:${key}`),
+    title: "Image source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const runId = yield* writeCompletedUserRun({
+    threadId: sourceThreadId,
+    key,
+    ordinal: 1,
+    attachments: [attachment],
   });
   yield* orchestrator.dispatch({
     type: "thread.fork",
@@ -2620,7 +2603,14 @@ const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function
     createdBy: "user",
     creationSource: "web",
   });
-  return { sourceThreadId, forkThreadId, attachmentId };
+  return { sourceThreadId, forkThreadId, attachmentId: attachment.id };
+});
+
+const deleteThreadCleanup = Effect.fn("test.deleteThreadCleanup")(function* (threadId: ThreadId) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const commandId = CommandId.make(`image-fork-delete:${threadId}`);
+  yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
+  return yield* queuedAttachmentCleanup(commandId);
 });
 
 const queuedAttachmentCleanup = Effect.fn("test.queuedAttachmentCleanup")(function* (
@@ -2963,132 +2953,46 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("deleting a thread keeps the attachments a live run fork still shows", () =>
+  it.effect("deleting a source keeps what its live fork shows and releases later files", () =>
     Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const { sourceThreadId, forkThreadId, attachmentId } =
-        yield* seedImagePromptRunFork("delete-source");
-      const deleteCommandId = CommandId.make("image-fork-delete-source");
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: deleteCommandId,
-        threadId: sourceThreadId,
-      });
-      const fork = yield* orchestrator.getThreadProjection(forkThreadId);
-      assert.isNull(fork.thread.deletedAt);
-      assert.include(
-        fork.visibleTurnItems.flatMap(({ item }) =>
-          item.type === "user_message" ? item.attachments.map((file) => file.id) : [],
-        ),
-        attachmentId,
-      );
-      assert.notInclude(
-        yield* queuedAttachmentCleanup(deleteCommandId),
-        attachmentId,
-        "deleting the source queued cleanup of an image its live fork still shows",
-      );
-    }),
-  );
-
-  it.effect("deleting the last thread that shows an inherited attachment cleans it up", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const { sourceThreadId, forkThreadId, attachmentId } =
-        yield* seedImagePromptRunFork("delete-both");
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("image-fork-delete-both-source"),
-        threadId: sourceThreadId,
-      });
-      const deleteForkCommandId = CommandId.make("image-fork-delete-both-fork");
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: deleteForkCommandId,
-        threadId: forkThreadId,
-      });
-      assert.include(
-        yield* queuedAttachmentCleanup(deleteForkCommandId),
-        attachmentId,
-        "deleting the last fork that shows the inherited image left it uncleaned",
-      );
-    }),
-  );
-
-  it.effect("deleting a source releases the files it added after its fork's run", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
       const { sourceThreadId, attachmentId } = yield* seedImagePromptRunFork("after-fork-run");
-      const laterRunId = RunId.make("image-fork-later-run");
-      const laterMessageId = MessageId.make("image-fork-later-message");
-      const laterAttachmentId = createAttachmentId(sourceThreadId, "png")!;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("image-fork-later-run"),
-            type: "run.created",
-            threadId: sourceThreadId,
-            runId: laterRunId,
-            occurredAt: now,
-            payload: {
-              id: laterRunId,
-              threadId: sourceThreadId,
-              ordinal: 2,
-              providerInstanceId: modelSelection.instanceId,
-              modelSelection,
-              providerThreadId: null,
-              userMessageId: laterMessageId,
-              rootNodeId: null,
-              activeAttemptId: null,
-              status: "completed",
-              requestedAt: now,
-              startedAt: now,
-              completedAt: now,
-              checkpointId: null,
-              contextHandoffId: null,
-            },
-          },
-          {
-            id: EventId.make("image-fork-later-message"),
-            type: "message.updated",
-            threadId: sourceThreadId,
-            runId: laterRunId,
-            occurredAt: now,
-            payload: {
-              id: laterMessageId,
-              threadId: sourceThreadId,
-              runId: laterRunId,
-              nodeId: null,
-              role: "user",
-              text: "And this one?",
-              attachments: [
-                {
-                  type: "image",
-                  id: laterAttachmentId,
-                  name: "later.png",
-                  mimeType: "image/png",
-                  sizeBytes: 8,
-                },
-              ],
-              streaming: false,
-              createdBy: "user",
-              creationSource: "web",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
-      const deleteCommandId = CommandId.make("image-fork-after-fork-run-delete");
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: deleteCommandId,
+      const later = imageAttachment(sourceThreadId, "later.png");
+      yield* writeCompletedUserRun({
         threadId: sourceThreadId,
+        key: "after-fork-run-later",
+        ordinal: 2,
+        attachments: [later],
       });
-      const cleaned = yield* queuedAttachmentCleanup(deleteCommandId);
-      assert.include(cleaned, laterAttachmentId);
-      assert.notInclude(cleaned, attachmentId);
+      const cleaned = yield* deleteThreadCleanup(sourceThreadId);
+      assert.include(cleaned, later.id);
+      assert.notInclude(cleaned, attachmentId, "deleted an image its live fork still shows");
+    }),
+  );
+
+  it.effect("a fork of a fork keeps the file its grandparent shows until it is deleted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { sourceThreadId, forkThreadId, attachmentId } =
+        yield* seedImagePromptRunFork("fork-chain");
+      const grandchildThreadId = ThreadId.make("image-fork-chain-grandchild");
+      const forkRunId = yield* writeCompletedUserRun({
+        threadId: forkThreadId,
+        key: "fork-chain-fork",
+        ordinal: 2,
+        attachments: [],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("image-fork-chain-fork-of-fork"),
+        sourceThreadId: forkThreadId,
+        targetThreadId: grandchildThreadId,
+        sourcePoint: { type: "run", runId: forkRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.notInclude(yield* deleteThreadCleanup(sourceThreadId), attachmentId);
+      assert.notInclude(yield* deleteThreadCleanup(forkThreadId), attachmentId);
+      assert.include(yield* deleteThreadCleanup(grandchildThreadId), attachmentId);
     }),
   );
 
@@ -3162,85 +3066,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         attachmentId,
         "concurrent deletes of a source and its last fork leaked the shared image",
       );
-    }),
-  );
-
-  it.effect("a fork of a fork keeps the file its grandparent shows until it is deleted", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      const { sourceThreadId, forkThreadId, attachmentId } =
-        yield* seedImagePromptRunFork("fork-chain");
-      const forkRunId = RunId.make("image-fork-chain-fork-run");
-      const forkMessageId = MessageId.make("image-fork-chain-fork-message");
-      const grandchildThreadId = ThreadId.make("image-fork-chain-grandchild");
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("image-fork-chain-fork-run"),
-            type: "run.created",
-            threadId: forkThreadId,
-            runId: forkRunId,
-            occurredAt: now,
-            payload: {
-              id: forkRunId,
-              threadId: forkThreadId,
-              ordinal: 2,
-              providerInstanceId: modelSelection.instanceId,
-              modelSelection,
-              providerThreadId: null,
-              userMessageId: forkMessageId,
-              rootNodeId: null,
-              activeAttemptId: null,
-              status: "completed",
-              requestedAt: now,
-              startedAt: now,
-              completedAt: now,
-              checkpointId: null,
-              contextHandoffId: null,
-            },
-          },
-          {
-            id: EventId.make("image-fork-chain-fork-message"),
-            type: "message.updated",
-            threadId: forkThreadId,
-            runId: forkRunId,
-            occurredAt: now,
-            payload: {
-              id: forkMessageId,
-              threadId: forkThreadId,
-              runId: forkRunId,
-              nodeId: null,
-              role: "user",
-              text: "Now crop it.",
-              attachments: [],
-              streaming: false,
-              createdBy: "user",
-              creationSource: "web",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.fork",
-        commandId: CommandId.make("image-fork-chain-fork-of-fork"),
-        sourceThreadId: forkThreadId,
-        targetThreadId: grandchildThreadId,
-        sourcePoint: { type: "run", runId: forkRunId },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const deleteThread = Effect.fn("test.deleteThread")(function* (threadId: ThreadId) {
-        const commandId = CommandId.make(`image-fork-chain-delete:${threadId}`);
-        yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
-        return yield* queuedAttachmentCleanup(commandId);
-      });
-      assert.notInclude(yield* deleteThread(sourceThreadId), attachmentId);
-      assert.notInclude(yield* deleteThread(forkThreadId), attachmentId);
-      assert.include(yield* deleteThread(grandchildThreadId), attachmentId);
     }),
   );
 
