@@ -726,7 +726,9 @@ const make = Effect.gen(function* () {
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
-      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
+      const stripped = Object.assign({}, stripDefaultServerSettings(settings, managed.defaults), {
+        enableModelUpdateChecks: settings.enableModelUpdateChecks,
+      });
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
@@ -794,7 +796,17 @@ const make = Effect.gen(function* () {
       const parsed = decodeSettingsFileJsonExit(raw);
       const decoded = Exit.isFailure(parsed)
         ? parsed
-        : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
+        : decodePersistedServerSettingsExit(
+            managed.withDefaults(
+              typeof parsed.value === "object" &&
+                parsed.value !== null &&
+                "enableProviderUpdateChecks" in parsed.value &&
+                parsed.value.enableProviderUpdateChecks === false &&
+                !("enableModelUpdateChecks" in parsed.value)
+                ? { ...parsed.value, enableModelUpdateChecks: false }
+                : parsed.value,
+            ),
+          );
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
         legacyProviders = legacySettings.value.providers;

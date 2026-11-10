@@ -741,6 +741,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "model-update-checks",
+    title: "Model catalog update checks",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: ["model catalog manifest updates refresh new models"],
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/maintenance",

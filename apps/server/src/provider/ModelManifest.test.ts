@@ -400,7 +400,23 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("does not fetch when provider update checks are disabled", () =>
+  it.live("refreshes the model catalog while provider update checks are disabled", () =>
+    Effect.gen(function* () {
+      const service = yield* ModelManifest.make;
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-independent-test",
+          response: () => Response.json(REMOTE_MANIFEST),
+          settings: { enableProviderUpdateChecks: false, enableModelUpdateChecks: true },
+        }),
+      ),
+    ),
+  );
+
+  it.live("does not fetch when model update checks are disabled", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
       const service = yield* ModelManifest.make.pipe(
@@ -420,7 +436,7 @@ describe("ModelManifest service", () => {
         layerService({
           prefix: "model-manifest-optout-test",
           response: () => Response.json(REMOTE_MANIFEST),
-          settings: { enableProviderUpdateChecks: false },
+          settings: { enableProviderUpdateChecks: true, enableModelUpdateChecks: false },
         }),
       ),
     ),

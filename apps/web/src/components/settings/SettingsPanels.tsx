@@ -542,6 +542,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
       ? ["Response streaming"]
       : []),
+    ...(settings.enableModelUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableModelUpdateChecks
+      ? ["Model catalog update checks"]
+      : []),
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
@@ -667,6 +670,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
+      enableModelUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableModelUpdateChecks,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1960,7 +1964,7 @@ export function MaintenanceSettingsPanel() {
           serverScoped
           settingKeys={["enableProviderUpdateChecks"]}
           {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear."
+          description="Check installed provider CLIs for newer available versions."
           resetAction={
             settings.enableProviderUpdateChecks !==
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
@@ -1982,6 +1986,35 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["enableModelUpdateChecks"]}
+          {...searchableSetting("model-update-checks")}
+          description="Fetch model catalog updates independently of provider CLI version checks. When off, new models may not appear."
+          resetAction={
+            settings.enableModelUpdateChecks !==
+            DEFAULT_UNIFIED_SETTINGS.enableModelUpdateChecks ? (
+              <SettingResetButton
+                label="model catalog update checks"
+                onClick={() =>
+                  updateSettings({
+                    enableModelUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableModelUpdateChecks,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["enableModelUpdateChecks"]}
+              checked={settings.enableModelUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableModelUpdateChecks: Boolean(checked) })
+              }
+              aria-label="Check model catalog updates"
             />
           }
         />

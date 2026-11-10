@@ -218,6 +218,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("preserves a saved update opt-out until model checks are explicitly enabled", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(config.settingsPath, '{ "enableProviderUpdateChecks": false }');
+      const loaded = yield* service.getSettings;
+      assert.isFalse(loaded.enableProviderUpdateChecks);
+      assert.isFalse(loaded.enableModelUpdateChecks);
+      yield* service.updateSettings({ enableModelUpdateChecks: true });
+      const saved = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.isFalse(saved.enableProviderUpdateChecks);
+      assert.isTrue(saved.enableModelUpdateChecks);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

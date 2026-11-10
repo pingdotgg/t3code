@@ -178,8 +178,9 @@ provider at the same CLI.
 
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected
-clients receive the refreshed catalogs automatically. Provider update checks
-must be enabled to download the latest T3 Code model catalog.
+clients receive the refreshed catalogs automatically. Model catalog update checks
+must be enabled to download the latest T3 Code model catalog; provider CLI
+version checks have a separate setting.
 
 Provider updates do not restart running chats. An existing session can keep
 using the previous CLI until it ends. If discovery fails, check the provider
@@ -195,11 +196,12 @@ the machine instead.
 
 The same page lets you refresh provider status and update supported providers.
 These controls require a connected environment and permission to operate it.
-Provider update checks and restart continuation preferences are in
-**Settings → Maintenance**. If provider update checks are disabled, enable them
-there before refreshing to find newer versions. The same setting controls whether
-T3 Code downloads model catalog updates, so with it off new models may not appear
-until you enable it and refresh provider status.
+Provider update checks, model catalog update checks, and restart continuation
+preferences are in **Settings → Maintenance**. If provider update checks are
+disabled, enable them there before refreshing to find newer CLI versions.
+Model catalog update checks can remain enabled independently. With catalog
+checks off, new models may not appear until you enable them and refresh provider
+status.
 
 Install App Store or Google Play releases as usual. The mobile app can also
 download updates in the background and apply them when you next leave the app.

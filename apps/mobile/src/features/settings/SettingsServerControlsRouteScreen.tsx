@@ -536,11 +536,24 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       "enableProviderUpdateChecks",
                       projectSelected
                         ? "Environment-wide setting. Select All projects to change it."
-                        : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                        : "Check installed provider CLIs for newer versions.",
                     )}
                     value={uniform("enableProviderUpdateChecks")}
                     disabled={disabledFor("enableProviderUpdateChecks")}
                     onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="arrow.clockwise"
+                    label="Check model catalog updates"
+                    subtitle={managedSubtitle(
+                      "enableModelUpdateChecks",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Fetch model catalog updates independently of provider CLI version checks. When off, new models may not appear.",
+                    )}
+                    value={uniform("enableModelUpdateChecks")}
+                    disabled={disabledFor("enableModelUpdateChecks")}
+                    onValueChange={(value) => write({ enableModelUpdateChecks: value })}
                   />
                   <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
