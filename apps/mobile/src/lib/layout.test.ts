@@ -149,7 +149,7 @@ describe("deriveWorkspacePaneLayout", () => {
         const input = {
           layout,
           viewportWidth,
-          balancedAuxiliarySplit: true,
+          inspectorSizing: "foldable" as const,
           primarySidebarFloats,
           primarySidebarPreferredVisible: true,
           auxiliaryPanePreferredVisible: true,
@@ -165,13 +165,16 @@ describe("deriveWorkspacePaneLayout", () => {
           const width = constrainAuxiliaryPaneWidth({
             preferredWidth,
             availableWidth: viewportWidth,
-            balancedAuxiliarySplit: true,
+            inspectorSizing: "foldable" as const,
           });
           expect(width).toBe(Math.min(preferredWidth, viewportWidth - 4 - 320));
           expect(
             deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
           ).toMatchObject({ auxiliaryPaneWidth: width, primarySidebarVisible: false });
         }
+        expect(deriveWorkspacePaneLayout({ ...input, inspectorSizing: "tablet" })).toMatchObject({
+          auxiliaryPaneWidth: viewportWidth >= 820 ? viewportWidth * 0.4 : null,
+        });
         expect(
           deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),
         ).toMatchObject({ primarySidebarVisible: true });
@@ -195,26 +198,29 @@ describe("deriveWorkspacePaneLayout", () => {
     "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
     ({ width, height, horizontalSafeArea, fraction, suppressed }) => {
       const layout = deriveLayout({ width, height });
-      for (const primarySidebarPreferredVisible of [true, false]) {
-        expect(
-          deriveWorkspacePaneLayout({
-            layout,
-            viewportWidth: width,
-            horizontalSafeArea,
-            nativeWorkspace: true,
-            primarySidebarPreferredVisible,
-            auxiliaryPanePreferredVisible: true,
-            nativeInspectorWidth: nativeInspectorColumnWidth({
+      for (const nativeWorkspace of [true, false]) {
+        for (const primarySidebarPreferredVisible of [true, false]) {
+          expect(
+            deriveWorkspacePaneLayout({
+              layout,
               viewportWidth: width,
               horizontalSafeArea,
-              fraction,
+              nativeWorkspace,
+              inspectorSizing: nativeWorkspace ? undefined : "tablet",
+              primarySidebarPreferredVisible,
+              auxiliaryPanePreferredVisible: true,
+              nativeInspectorWidth: nativeInspectorColumnWidth({
+                viewportWidth: width,
+                horizontalSafeArea,
+                fraction,
+              }),
             }),
-          }),
-        ).toMatchObject({
-          primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
-          primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
-          auxiliaryPaneVisible: true,
-        });
+          ).toMatchObject({
+            primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
+            primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
+            auxiliaryPaneVisible: true,
+          });
+        }
       }
     },
   );

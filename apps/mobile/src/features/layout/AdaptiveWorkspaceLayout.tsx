@@ -331,9 +331,15 @@ function AdaptiveWorkspaceLayoutContent(
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
   // The rail stays whether or not the sidebar shows; only the list pane comes and goes.
   const navigationRailWidth = shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0;
+  const [isFoldable, setIsFoldable] = useState(false);
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
-  const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
+  const handleHingeChange = (
+    next: VerticalHinge | null,
+    nextWindow: VerticalHinge | null,
+    foldable: boolean,
+  ) => {
+    setIsFoldable(foldable);
     setHinge(next);
     setWindowHinge(nextWindow);
   };
@@ -366,20 +372,26 @@ function AdaptiveWorkspaceLayoutContent(
   const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
+  const inspectorSizing =
+    Platform.OS === "android" ? (isFoldable ? "foldable" : "tablet") : undefined;
+  const auxiliaryPanePreferredWidth =
+    fileInspectorPreferredWidth ??
+    (isFoldable ? viewportWidth - (windowHinge?.x ?? viewportWidth / 2) : undefined);
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
         layout,
         viewportWidth: width,
-        balancedAuxiliarySplit: Platform.OS === "android",
-        preferredWidth: fileInspectorPreferredWidth ?? undefined,
+        inspectorSizing,
+        preferredWidth: auxiliaryPanePreferredWidth,
         reservedLeadingWidth:
           shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
             ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
             : 0,
       }),
     [
-      fileInspectorPreferredWidth,
+      auxiliaryPanePreferredWidth,
+      inspectorSizing,
       layout,
       showPrimarySidebar,
       shouldRenderPrimarySidebar,
@@ -407,7 +419,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
-        balancedAuxiliarySplit: Platform.OS === "android",
+        inspectorSizing,
         horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,
@@ -415,14 +427,15 @@ function AdaptiveWorkspaceLayoutContent(
         // Only a column a screen fills makes room, so a stale preference can't hide the sidebar.
         auxiliaryPanePreferredVisible:
           !workspacePage && inspectorActive && fileInspectorPreferredVisible,
-        auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
+        auxiliaryPanePreferredWidth,
         nativeInspectorWidth,
       }),
     [
       nativeInspectorWidth,
       horizontalSafeArea,
       fileInspectorPreferredVisible,
-      fileInspectorPreferredWidth,
+      auxiliaryPanePreferredWidth,
+      inspectorSizing,
       inspectorActive,
       layout,
       nativeWorkspace,

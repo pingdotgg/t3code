@@ -44,6 +44,7 @@ class T3FoldPostureView(
     } else {
       null
     }
+  private var isFoldable = hingeSensor != null
   private var scope: CoroutineScope? = null
   private var fold: FoldingFeature? = null
   private var listening = false
@@ -62,7 +63,9 @@ class T3FoldPostureView(
     scope = MainScope().also { scope ->
       scope.launch {
         WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity).collect { info ->
-          fold = info.displayFeatures.filterIsInstance<FoldingFeature>().firstOrNull {
+          val features = info.displayFeatures.filterIsInstance<FoldingFeature>()
+          isFoldable = isFoldable || features.isNotEmpty()
+          fold = features.firstOrNull {
             it.orientation == FoldingFeature.Orientation.VERTICAL
           }
           listen(fold != null)
@@ -122,8 +125,9 @@ class T3FoldPostureView(
     } else {
       emptyMap()
     }
-    if (hinge == reported) return
-    reported = hinge
-    onHingeChange(hinge)
+    val state = hinge + ("isFoldable" to isFoldable)
+    if (state == reported) return
+    reported = state
+    onHingeChange(state)
   }
 }
