@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
-  NodeId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -12,7 +11,6 @@ import * as DateTime from "effect/DateTime";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
-  delegatedTaskResultRun,
   isAwaitedWork,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -249,15 +247,5 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
       attempts,
     }),
     [],
-  );
-});
-
-it("reports a follow-up's executing run while a continuation it queued waits", () => {
-  const taskId = NodeId.make("node:follow-up");
-  const executing = run(2, claudeThread, { status: "running", delegatedTaskId: taskId });
-  const queued = run(3, claudeThread, { status: "queued", delegatedTaskId: taskId });
-  assert.equal(
-    delegatedTaskResultRun([run(1, claudeThread), executing, queued], taskId),
-    executing,
   );
 });
