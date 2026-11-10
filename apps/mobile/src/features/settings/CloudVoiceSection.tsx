@@ -40,7 +40,6 @@ import {
   cloudVoiceModelsAtom,
   runSpeech,
 } from "../voice-input/voiceDestination";
-import { SettingsSection } from "./components/SettingsSection";
 
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 type Props = { environment: EnvironmentPresentation; active: CloudDestination | null };
@@ -48,23 +47,38 @@ const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const MODEL_ROWS = 6;
 
-export function CloudVoiceSection({ environment, active }: Props) {
-  const [open, setOpen] = useState(false);
+/** The cloud method row for one environment; opens the provider sheet. */
+export function CloudVoiceChoice({
+  environment,
+  active,
+  open,
+  onOpenChange,
+}: Props & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const usable = useAtomValue(cloudVoiceConnectionAtom(environment.environmentId)) !== null;
   return (
-    <SettingsSection title={`Cloud via ${environment.label}`}>
-      <ListActionRow
-        label="Cloud providers"
+    <>
+      <ListChoiceRow
+        label="Cloud provider"
         description={
           active
-            ? `Using ${CLOUD_SPEECH_LABELS[active.provider]}`
-            : "Optional · use your own API key"
+            ? `${CLOUD_SPEECH_LABELS[active.provider]}${active.provider === "openrouter" ? ` · ${active.model}` : ""}`
+            : usable
+              ? "Use your own API key"
+              : "Not connected"
         }
-        onPress={() => setOpen(true)}
+        selected={active !== null}
+        disabled={!usable}
+        separated
+        onPress={() => onOpenChange(true)}
       />
       {open && (
-        <CloudChoices environment={environment} active={active} onClose={() => setOpen(false)} />
+        <CloudChoices
+          environment={environment}
+          active={active}
+          onClose={() => onOpenChange(false)}
+        />
       )}
-    </SettingsSection>
+    </>
   );
 }
 

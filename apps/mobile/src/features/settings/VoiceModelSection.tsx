@@ -280,7 +280,7 @@ export function VoiceModelSection(props: {
   const voice = useVoiceModels(props.environmentId, props.label);
   const { status } = voice;
   if (!voice.connection || !status) return null;
-  const title = `Transcription model on ${props.label}`;
+  const title = "Model";
   if (!status.supported) {
     return (
       <SettingsSection title={title} footer={status.reason}>
