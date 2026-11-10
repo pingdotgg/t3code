@@ -112,7 +112,7 @@ export function WorkingBarChip({
  * The label starts on the assistant text's edge, 4px into the lane.
  */
 export const WORKING_BAR_CLASS_NAME =
-  "timeline-work-row group/timeline-row relative flex h-8 min-w-0 items-center gap-2.5 border-b border-(--timeline-working-rule,var(--border)) ps-1.25 pe-1";
+  "group/timeline-row relative flex h-8 min-w-0 items-center gap-2.5 border-b border-(--timeline-working-rule,var(--border)) ps-1.25 pe-1 sm:[--type-body:0.8125rem] sm:[--type-label:0.8125rem]";
 
 /** A provider command in the timeline: in a work row's trailing slot, or opening a prompt. */
 export function SlashCommandChip({ name }: { name: string }) {
