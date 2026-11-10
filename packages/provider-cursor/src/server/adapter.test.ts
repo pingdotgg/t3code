@@ -74,18 +74,35 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          environment: { HOME: workspace },
+          environment: {
+            HOME: workspace,
+            T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
+              process.execPath,
+              "-e",
+              `process.stdout.write(JSON.stringify({mcpServers:{ditto:{type:'http',url:'https://example.test/ditto'},'ditto-backroom':{type:'http',url:'https://example.test/backroom'}}}))`,
+            ]),
+          },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
-            open: () =>
-              Effect.succeed({
+            open: (input) => {
+              assert.deepEqual(Object.keys(input.options.mcpServers ?? {}).sort(), [
+                "ditto",
+                "ditto-backroom",
+                "t3-code",
+              ]);
+              return Effect.succeed({
                 agentId: "native-cursor-lifecycle",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    assert.deepEqual(Object.keys(input.options?.mcpServers ?? {}).sort(), [
+                      "ditto",
+                      "ditto-backroom",
+                      "t3-code",
+                    ]);
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -159,7 +176,8 @@ describe("CursorAdapterV2", () => {
                       cancel: Effect.void,
                     };
                   }).pipe(Effect.orDie),
-              }),
+              });
+            },
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
         );
@@ -1784,6 +1802,15 @@ describe("CursorAdapterV2", () => {
       platform: "linux",
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
+    const additional = {
+      ditto: { type: "http" as const, url: "https://example.test/ditto" },
+      "ditto-backroom": { type: "http" as const, url: "https://example.test/backroom" },
+      "t3-code": { type: "http" as const, url: "https://wrong.test" },
+    };
+    assert.deepEqual(cursorMcpServers(mcpSession, additional), {
+      ...additional,
+      "t3-code": options.mcpServers!["t3-code"]!,
+    });
 
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
