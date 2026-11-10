@@ -380,7 +380,7 @@ describe("buildProjectGroups", () => {
       displayName: "org/Platform/_git/upstream-repo",
       origin: {
         canonicalKey: "dev.azure.com/org/forks/_git/fork-repo",
-        displayName: "org/Forks/_git/fork-repo",
+        displayName: "org/forks/_git/fork-repo",
         ...origin,
       },
     });
@@ -392,7 +392,7 @@ describe("buildProjectGroups", () => {
       makeProject("two", "/work/two", {
         title: "checkout-two",
         repositoryIdentity: identity({
-          remoteUrl: "https://dev.azure.com/org/Forks/_git/fork-repo",
+          remoteUrl: "git@ssh.dev.azure.com:v3/Org/Forks/fork-repo",
         }),
       }),
     ];

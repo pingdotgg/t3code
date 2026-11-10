@@ -43,6 +43,17 @@ function uniqueNonEmptyValues(values: ReadonlyArray<string | null | undefined>):
   return unique;
 }
 
+/** Labels of one group share a lower-case grouping key, so a case-only difference is one label. */
+function uniqueLabels(values: ReadonlyArray<string>): string[] {
+  const byKey = new Map<string, string>();
+  for (const value of values) {
+    const key = value.toLowerCase();
+    const kept = byKey.get(key);
+    if (kept === undefined || (kept === key && value !== key)) byKey.set(key, value);
+  }
+  return [...byKey.values()];
+}
+
 function deriveRepositoryRelativeProjectPath(
   project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
 ): string | null {
@@ -221,11 +232,12 @@ export function deriveProjectGroupLabel(input: {
   readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
-  const sharedDisplayNames = uniqueNonEmptyValues(
+  const displayNames = uniqueNonEmptyValues(
     input.members.map((member) =>
       member.repositoryIdentity ? repositoryGroupingLabelOf(member.repositoryIdentity) : null,
     ),
   );
+  const sharedDisplayNames = uniqueLabels(displayNames);
   const sharedRepositoryNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.name),
   );
@@ -233,7 +245,7 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
+    !displayNames.includes(sharedTitle) &&
     !sharedRepositoryNames.includes(sharedTitle)
   ) {
     return sharedTitle;
