@@ -592,8 +592,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     ~ [data-slot="sidebar-inset"]
     [data-floating-pane-header] {
     background-color: var(--background);
-    background-image: var(--surface-grain);
-    background-size: var(--surface-grain-size);
   }
 
   /* A split layout's panes square the corner under their notch too. */
