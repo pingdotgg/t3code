@@ -8102,7 +8102,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(revertCodexThread(client, threadId, numTurns)),
+                Effect.andThen(
+                  revertCodexThread(
+                    client,
+                    threadId,
+                    numTurns,
+                    nativeConversationHeadRef?.nativeId ?? undefined,
+                  ),
+                ),
               );
               turnTokenUsageByThread.delete(threadId);
               return {

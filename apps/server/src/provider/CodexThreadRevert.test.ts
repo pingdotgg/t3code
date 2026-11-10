@@ -90,3 +90,36 @@ it.effect("rejects repeated cursors instead of looping or reverting incomplete h
     Effect.scoped,
   ),
 );
+
+it.effect("leaves a thread whose head is already the kept turn untouched on a retried revert", () =>
+  Effect.gen(function* () {
+    const client = yield* CodexClient.CodexAppServerClient;
+    const result = yield* revertCodexThread(client, "thread", 2, "kept").pipe(Effect.flip);
+    assert.equal(result.message, "read instead of revert");
+  }).pipe(
+    Effect.provide(
+      CodexReplay.layerReplay({
+        provider: "codex",
+        protocol: "codex.app-server",
+        version: "test",
+        scenario: "revert-retry",
+        entries: [
+          ...page(1, null, 2, ["kept", "older"], null),
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 2,
+              method: "thread/read",
+              params: { threadId: "thread", includeTurns: false },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: { id: 2, error: { code: -32603, message: "read instead of revert" } },
+          },
+        ],
+      }),
+    ),
+    Effect.scoped,
+  ),
+);

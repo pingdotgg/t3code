@@ -7,6 +7,8 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
   client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
   threadId: string,
   numTurns: number,
+  // An earlier attempt may already have reverted; never walk past the turn that must survive.
+  keepTurnId?: string,
 ) {
   let remaining = numTurns;
   let beforeTurnId: string | undefined;
@@ -29,6 +31,10 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
       itemsView: "summary",
     });
     for (const turn of page.data) {
+      if (turn.id === keepTurnId) {
+        remaining = 0;
+        break;
+      }
       beforeTurnId = turn.id;
       if (--remaining === 0) break;
     }
