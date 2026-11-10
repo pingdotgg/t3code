@@ -18,6 +18,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectLayoutStripSize,
   showLayoutContent,
   type LayoutState,
   type LayoutTab,
@@ -524,6 +525,38 @@ describe("resizeLayoutColumnEdge", () => {
       unitWidth,
     );
     expect(drawnRightEdges(released, viewportWidth, "always-shrink")).toEqual([333, 600, 1000]);
+  });
+});
+
+describe("selectLayoutStripSize", () => {
+  it("gives the strip width the slots are drawn at, for any viewport width", () => {
+    const workspaces = [
+      { cameraWidth: null, widths: [1] },
+      { cameraWidth: null, widths: [0.66, 0.34] },
+      { cameraWidth: null, widths: [0.5, 0.5, 0.5] },
+      { cameraWidth: 1650, widths: [0.66, 0.34] },
+      { cameraWidth: 1490, widths: [0.4, 0.3, 0.3] },
+      { cameraWidth: 1200, widths: [0.5, 0.55] },
+      { cameraWidth: 1400, widths: [0.4, 0.4] },
+      { cameraWidth: 900, widths: [1] },
+    ];
+    const modes: LayoutWhenNoRoom[] = ["shrink-then-scroll", "always-scroll", "always-shrink"];
+    for (const { cameraWidth, widths } of workspaces) {
+      const workspace = {
+        id: "workspace",
+        name: null,
+        focusedPaneId: null,
+        cameraWidth,
+        columns: widths.map((width, index) => column(`c${index}`, width)),
+      };
+      for (const whenNoRoom of modes) {
+        const { share, minPx } = selectLayoutStripSize(workspace, whenNoRoom);
+        for (let width = 700; width <= 2200; width += 25) {
+          const { stripWidth } = selectLayoutPaneSlots(workspace, { width, whenNoRoom });
+          expect(Math.max(share * width, minPx)).toBeCloseTo(stripWidth * width, 6);
+        }
+      }
+    }
   });
 });
 

@@ -871,7 +871,6 @@ export function useOverviewStage(
     const scroller = scrollerRef.current;
     const element = stageRef.current;
     if (!scroller || !element) return;
-    const box = scroller.getBoundingClientRect();
     // Navigation motion: the zoom always plays its spring; reduced motion makes it 0.
     const { durationMs } = zoomTiming();
     const nextSelection = `${stage.focusedRow.workspace.id}/${stage.focusedRow.workspace.focusedPaneId}`;
@@ -903,6 +902,7 @@ export function useOverviewStage(
       }
       return;
     }
+    const box = scroller.getBoundingClientRect();
     if (phaseNow === "open") {
       const footerHeight = closeHintHeight();
       if (manual.current && !selectionChanged) {

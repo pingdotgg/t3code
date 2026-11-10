@@ -71,6 +71,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectLayoutStripSize,
   selectWindowStartPaneId,
   type LayoutColumn,
   type LayoutSurfaceContent,
@@ -254,7 +255,7 @@ function selectShownSlots(
 ): {
   slots: LayoutPaneSlot[];
   stripWidth: number;
-  fits: boolean;
+  stripSize: { share: number; minPx: number };
   unitWidth: number;
   paneCount: number;
 } {
@@ -265,7 +266,9 @@ function selectShownSlots(
     maximizedTabId === null
       ? null
       : (all.slots.find((slot) => slot.activeTabId === maximizedTabId) ?? null);
-  if (paneCount < 2 || (!narrow && !maximizedSlot)) return { ...all, paneCount };
+  if (paneCount < 2 || (!narrow && !maximizedSlot)) {
+    return { ...all, paneCount, stripSize: selectLayoutStripSize(workspace, viewport.whenNoRoom) };
+  }
   const onlySlot =
     (narrow ? null : maximizedSlot) ??
     all.slots.find((slot) => slot.paneId === workspace.focusedPaneId) ??
@@ -283,7 +286,7 @@ function selectShownSlots(
       },
     ],
     stripWidth: 1,
-    fits: true,
+    stripSize: { share: 1, minPx: 0 },
     unitWidth: viewport.width,
   };
 }
@@ -320,15 +323,33 @@ function selectStackRows(
  */
 const LAYOUT_INLINE_RIGHT_PANEL_MIN_PX = 981;
 
-/** The strip's visible width in px, kept current as the window or sidebar resizes. */
-function useElementWidth(ref: React.RefObject<HTMLElement | null>): number {
+/** The strip's visible width in px, taken once a window or sidebar resize has settled. */
+function useSettledWidth(ref: React.RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(() => (typeof window === "undefined" ? 0 : window.innerWidth));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the strip DOM width so pane geometry follows window and sidebar resizes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observes the strip DOM width; pane geometry follows a resize in CSS and React learns the width a frame after it stops.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     setWidth(element.clientWidth);
-    return observeResize(element, () => setWidth(element.clientWidth));
+    let resized = false;
+    let frame: number | null = null;
+    const settle = () => {
+      if (resized) {
+        resized = false;
+        frame = window.requestAnimationFrame(settle);
+        return;
+      }
+      frame = null;
+      setWidth(element.clientWidth);
+    };
+    const stopObserving = observeResize(element, () => {
+      resized = true;
+      if (frame === null) frame = window.requestAnimationFrame(settle);
+    });
+    return () => {
+      stopObserving();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, [ref]);
   return width;
 }
@@ -403,7 +424,7 @@ function useSurfacePlacement(
   const overviewPhase = useOverviewPhase();
   const workspaceStack = useWorkspaceStack();
   const viewport = { width: viewportWidth, whenNoRoom };
-  const { slots, stripWidth, fits, unitWidth, paneCount } = selectShownSlots(
+  const { slots, stripWidth, stripSize, unitWidth, paneCount } = selectShownSlots(
     workspace,
     viewport,
     narrow,
@@ -498,7 +519,7 @@ function useSurfacePlacement(
   return {
     slots,
     stripWidth,
-    fits,
+    stripSize,
     unitWidth,
     paneCount,
     chatTabsById,
@@ -545,7 +566,7 @@ export function LayoutSurfaceHost({
       element.focus({ preventScroll: true });
     }
   }, [active]);
-  const viewportWidth = useElementWidth(scrollerRef);
+  const viewportWidth = useSettledWidth(scrollerRef);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish the measured desktop strip width for imperative pane placement.
   useEffect(() => {
     // Below md one pane fills the window; columns stay arranged for the last
@@ -559,7 +580,7 @@ export function LayoutSurfaceHost({
   const {
     slots,
     stripWidth,
-    fits,
+    stripSize,
     unitWidth,
     paneCount,
     chatTabsById,
@@ -1256,11 +1277,9 @@ export function LayoutSurfaceHost({
           style={
             staged
               ? undefined
-              : stacked || fits
+              : stacked
                 ? { width: "100%" }
-                : // At least the window: a window that grew past the strip's end
-                  // stretches it before React learns the new width.
-                  { width: `${stripPx}px`, minWidth: "100%" }
+                : { width: `max(${stripSize.share * 100}%, ${stripSize.minPx}px)` }
           }
         >
           {renderedTabIds.map((tabId) => {

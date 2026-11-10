@@ -347,6 +347,25 @@ export function selectLayoutPaneSlots(
   return { slots, stripWidth, fits, unitWidth };
 }
 
+export function selectLayoutStripSize(
+  workspace: LayoutWorkspace,
+  whenNoRoom: LayoutWhenNoRoom,
+): { share: number; minPx: number } {
+  const lone = workspace.columns.length === 1;
+  const weights = lone ? [1] : workspace.columns.map((column) => column.width);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const arranged = workspace.cameraWidth;
+  if (whenNoRoom === "always-shrink") return { share: 1, minPx: 0 };
+  if (arranged === null) return { share: Math.max(1, total), minPx: 0 };
+  if (total * arranged > arranged + 0.5) return { share: 1, minPx: total * arranged };
+  const narrowest = Math.min(...weights);
+  const readableUnit =
+    lone || narrowest <= 0
+      ? 0
+      : Math.min(LAYOUT_READABLE_COLUMN_PX, narrowest * arranged) / narrowest;
+  return { share: Math.max(1, total), minPx: total * readableUnit };
+}
+
 /**
  * A top pane starting this close to the strip's left edge shares its row with
  * the collapsed sidebar's toggle and arrows, so its header makes room for them.
