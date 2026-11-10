@@ -1015,7 +1015,11 @@ export const make = Effect.gen(function* () {
                 : from(NodePath.dirname(directory)),
           ),
         );
-    return from(NodePath.resolve(cwd)).pipe(Effect.orElseSucceed(() => true));
+    // glab finds the repository through git, which resolves symlinks.
+    return fileSystem.realPath(cwd).pipe(
+      Effect.flatMap(from),
+      Effect.orElseSucceed(() => true),
+    );
   };
 
   const api = (input: {

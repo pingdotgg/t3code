@@ -10,6 +10,7 @@ import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
 const mockedExists = vi.fn((_path: string) => false);
+const mockedRealPath = vi.fn((path: string) => path);
 
 const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
@@ -19,7 +20,10 @@ const layer = it.layer(
       }),
     ),
     Layer.provide(
-      FileSystem.layerNoop({ exists: (path) => Effect.sync(() => mockedExists(path)) }),
+      FileSystem.layerNoop({
+        exists: (path) => Effect.sync(() => mockedExists(path)),
+        realPath: (path) => Effect.sync(() => mockedRealPath(path)),
+      }),
     ),
   ),
 );
@@ -155,6 +159,7 @@ function graphqlRequestOf(index: number) {
 afterEach(() => {
   mockedExecute.mockReset();
   mockedExists.mockReset();
+  mockedRealPath.mockReset();
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
@@ -418,11 +423,15 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("leaves out a project whose batched page is null, loses rows, or signs in apart", () =>
     Effect.gen(function* () {
-      // glab reads /w/own as the account in its own config, so it is read on its own.
+      // glab reads /w/own as the account in its own config, so it is read on its own, and so is
+      // /w/link, a symlink into it.
       mockedExists.mockImplementation((path) => {
         const parts = path.split(/[\\/]/u);
-        return parts.at(-1) === ".git" || (parts.includes("own") && parts.at(-1) === "config.yml");
+        return parts.at(-1) === ".git"
+          ? ["own", "shared"].includes(parts.at(-2) ?? "")
+          : parts.includes("own") && parts.at(-1) === "config.yml";
       });
+      mockedRealPath.mockImplementation((path) => (path === "/w/link" ? "/w/own/sub" : path));
       const page = (nodes: ReadonlyArray<unknown>, hasNextPage: boolean) => ({
         pageInfo: { hasNextPage, endCursor: hasNextPage ? "c1" : null },
         nodes,
@@ -451,6 +460,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const pages = yield* cli.listMergeRequestsInProjects({
         repositories: [
           { repository: "acme/own", cwd: "/w/own" },
+          { repository: "acme/linked", cwd: "/w/link" },
           ...["acme/web", "acme/docs", "acme/api", "acme/ops"].map((repository) => ({
             repository,
             cwd: "/w/shared",

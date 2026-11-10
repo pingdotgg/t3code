@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -2410,6 +2411,8 @@ const gitLabWithGlab = (
           NodeServices.layer,
           NodeCrypto.layer,
           FetchHttpClient.layer,
+          // The fixture checkouts are not on disk; glab reads each with the global account.
+          FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) }),
         ),
       ),
     );
