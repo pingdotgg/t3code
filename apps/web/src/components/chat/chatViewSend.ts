@@ -2,7 +2,6 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
-  type ProviderInteractionMode,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -17,7 +16,10 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { getUploadedAttachments } from "../../lib/attachmentUploadQueue";
+import {
+  getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
+} from "../../lib/attachmentUploadQueue";
 import { findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { randomUUID } from "~/lib/utils";
@@ -26,6 +28,7 @@ import { newThreadId } from "~/lib/utils";
 import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  type ComposerThreadTarget,
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
@@ -36,7 +39,6 @@ import { getComposerPromptInjectionState, getComposerProviderState } from "./com
 import {
   formatOutgoingPrompt,
   getAntigravitySendBlockReason,
-  resolveComposerInteractionMode,
   cloneComposerImageForRetry,
   type ComposerSendSnapshot,
   readFileAsDataUrl,
@@ -276,7 +278,6 @@ export function restoreComposerDraft(
 export interface MultipleModelTarget {
   readonly selection: ModelSelection;
   readonly text: string;
-  readonly interactionMode: ProviderInteractionMode;
 }
 
 /**
@@ -287,10 +288,8 @@ export function resolveMultipleModelTargets(input: {
   readonly selections: ReadonlyArray<ModelSelection>;
   readonly providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly messageText: string;
-  readonly planModeEnabled: boolean;
-  readonly interactionMode: ProviderInteractionMode;
 }): Array<MultipleModelTarget | { readonly error: string }> {
-  const { messageText, planModeEnabled } = input;
+  const { messageText } = input;
   return input.selections.map((selection) => {
     const provider = input.providerInstanceEntries.find(
       (entry) => entry.instanceId === selection.instanceId,
@@ -306,7 +305,6 @@ export function resolveMultipleModelTargets(input: {
       models: provider.models,
       modelOptions: selection.options,
       promptInjectionState: getComposerPromptInjectionState(messageText),
-      planModeEnabled,
     });
     return {
       selection: createModelSelection(
@@ -321,31 +319,32 @@ export function resolveMultipleModelTargets(input: {
         effort: providerState.promptEffort,
         text: messageText || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       }),
-      interactionMode: resolveComposerInteractionMode({
-        planModeEnabled,
-        provider: provider.snapshot,
-        interactionMode: input.interactionMode,
-      }).interactionMode,
     };
   });
 }
 
 /**
  * The attachments a turn sends: the server's upload records when it takes uploads, otherwise
- * images inlined as data URLs. Rejects when an attachment cannot go out.
+ * images inlined as data URLs. Waits for in-flight uploads; rejects when one cannot go out.
  */
 export function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
   readonly usesAttachmentUploads: boolean;
+  readonly draftTarget: ComposerThreadTarget;
 }) {
-  const { environmentId, usesAttachmentUploads } = input;
+  const { environmentId, usesAttachmentUploads, draftTarget } = input;
   return Promise.all(
     input.attachments.map(async (attachment) => {
       if (usesAttachmentUploads) {
+        await refreshExpiredAttachmentUploads({
+          environmentId,
+          images: [attachment],
+          draftTarget,
+        });
         const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
         if (!uploaded) {
-          throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
+          throw new Error(`Attachment '${attachment.name}' failed to upload.`);
         }
         return uploaded;
       }

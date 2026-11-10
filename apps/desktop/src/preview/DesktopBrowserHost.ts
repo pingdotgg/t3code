@@ -87,6 +87,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -119,6 +120,9 @@ export const make = Effect.gen(function* () {
   const tabs = new Map<string, AttachedTab>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
+  // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
+  // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
+  const shownTabs = new Map<string, boolean>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
@@ -302,9 +306,7 @@ export const make = Effect.gen(function* () {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee } = tab.debuggee;
     const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sessionId === undefined
-        ? sendPageCommand(webContents, debuggee, method, params)
-        : debuggee.sendCommand(method, params, sessionId);
+      sendPageCommand(webContents, debuggee, method, params, sessionId);
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -440,7 +442,7 @@ export const make = Effect.gen(function* () {
       focusReleasing: false,
       screencasts: new Set(),
       onMessage: (_event, method, params, sessionId) => {
-        if (method === "Browser.downloadWillBegin") {
+        if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
         }
@@ -458,6 +460,19 @@ export const make = Effect.gen(function* () {
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     emit({ type: "attached", ...key });
+    const shown = shownTabs.get(id);
+    if (shown !== undefined) emit({ type: "shown", ...key, shown });
+  };
+
+  const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
+    const id = keyOf(key);
+    if (shown === undefined) {
+      shownTabs.delete(id);
+      return;
+    }
+    if (shownTabs.get(id) === shown) return;
+    shownTabs.set(id, shown);
+    if (tabs.has(id)) emit({ type: "shown", ...key, shown });
   };
 
   const handleCommandLine = (line: string) =>
@@ -496,7 +511,14 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
-        return PubSub.publish(outbox, { type: "attached", ...tab.key });
+        const shown = shownTabs.get(keyOf(tab.key));
+        return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
+          Effect.andThen(
+            shown !== undefined
+              ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })
+              : Effect.void,
+          ),
+        );
       },
       { discard: true },
     );
@@ -516,6 +538,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    setShown,
     placeDownload,
     humanStartedDownload,
   });

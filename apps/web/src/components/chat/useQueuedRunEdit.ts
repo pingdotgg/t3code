@@ -66,6 +66,8 @@ interface EditingQueuedRun {
   readonly originalText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
+  /** Removing a server attachment changes the message even when the draft looks untouched. */
+  readonly removedExistingAttachment?: true;
 }
 
 // Keyed by the route thread, so an edit survives navigating away and back.
@@ -271,6 +273,7 @@ export function useQueuedRunEdit(input: {
             editTarget: queuedEditDraftTarget(routeThreadRef, edit.runId),
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
+            removedExistingAttachment: edit.removedExistingAttachment === true,
           });
           if (recovery === "clean") return;
           const title = appAtomRegistry.get(
@@ -301,6 +304,7 @@ export function useQueuedRunEdit(input: {
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
     queuedRunEdits.update(editKey, (current) => ({
       ...current,
+      removedExistingAttachment: true,
       existingAttachments: current.existingAttachments.filter(
         (attachment) => attachment.id !== attachmentId,
       ),
