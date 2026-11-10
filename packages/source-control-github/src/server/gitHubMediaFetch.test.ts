@@ -76,6 +76,36 @@ const makeSsoFixture = (uploadUrl: string) => {
 };
 
 describe("GitHubMediaFetch", () => {
+  it.effect("fetches nothing for an Enterprise host the user has not signed in to", () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      const response = yield* fetchMedia({
+        url: "https://raw.unknown.example/owner/repo/main/a.png",
+        headers: {},
+        host: "unknown.example",
+      });
+      expect(response).toBeNull();
+      expect(requests).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(GitHubRest.GitHubRest)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(request.url);
+          return Effect.die("unexpected request");
+        }),
+      ),
+    );
+  });
+
   it.effect("sends an Enterprise Server token only to that host's raw subdomain", () => {
     const requests: Array<{ url: string; authorization?: string }> = [];
     const hosts: Array<string> = [];
