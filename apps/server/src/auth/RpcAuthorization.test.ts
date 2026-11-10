@@ -68,6 +68,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets thread readers observe and refresh checkout branches", () => {
+    for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -133,6 +139,61 @@ describe("RPC scope middleware", () => {
   );
 });
 
+it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
+  "enforces read permission on stream %s",
+  (method) =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.subscribeVcsBranch | typeof WS_METHODS.subscribeVcsStatus
+          > => tag !== WS_METHODS.subscribeVcsBranch && tag !== WS_METHODS.subscribeVcsStatus,
+        ),
+      );
+      let handled = 0;
+      const handlers = Layer.mergeAll(
+        group.toLayerHandler(WS_METHODS.subscribeVcsBranch, () =>
+          Stream.fromEffect(
+            Effect.sync(() => {
+              handled++;
+              return { refName: "main" };
+            }),
+          ),
+        ),
+        group.toLayerHandler(WS_METHODS.subscribeVcsStatus, () =>
+          Stream.fromEffect(
+            Effect.sync(() => {
+              handled++;
+            }),
+          ).pipe(Stream.drain),
+        ),
+      );
+      const denied = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([]))),
+      );
+      expect(
+        yield* Stream.runDrain(
+          method === WS_METHODS.subscribeVcsBranch
+            ? denied[method]({ cwd: "/repo" }).pipe(Stream.drain)
+            : denied[method]({ cwd: "/repo" }).pipe(Stream.drain),
+        ).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+      expect(handled).toBe(0);
+      const granted = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+      );
+      yield* Stream.runDrain(
+        method === WS_METHODS.subscribeVcsBranch
+          ? granted[method]({ cwd: "/repo" }).pipe(Stream.drain)
+          : granted[method]({ cwd: "/repo" }).pipe(Stream.drain),
+      );
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+);
+
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
@@ -190,6 +251,12 @@ describe("settings mutation authorization", () => {
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: { defaultRuntimeMode: "full-access" },
           providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      // Removing a secret provider clears settings fields that read from it.
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       expect(handled).toBe(2);

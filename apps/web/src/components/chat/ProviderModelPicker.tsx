@@ -5,7 +5,17 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { createContext, memo, type ReactNode, useRef, useState } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  createContext,
+  memo,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -18,6 +28,8 @@ import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../provi
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(popup: HTMLElement | null) {
@@ -37,7 +49,9 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
   const shouldAllowOverlayScroll = (target: EventTarget | null) => {
     return (
       target instanceof Element &&
-      target.closest("[data-model-picker-content], [data-model-picker-effort]")
+      target.closest(
+        "[data-model-picker-content], [data-model-picker-effort], [data-model-picker-option-menu]",
+      )
     );
   };
   const preventBackgroundWheel = (event: WheelEvent) => {
@@ -90,6 +104,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   disabled?: boolean;
   terminalOpen?: boolean;
   open?: boolean;
+  popupAlign?: "start" | "end";
   triggerClassName?: string;
   triggerLabel?: string;
   triggerAriaLabel?: string;
@@ -113,6 +128,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  const registry = useContext(RegistryContext);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const refreshModelCatalog = useEffectEvent(() => {
+    const environmentId = props.environmentId;
+    if (environmentId === null) return;
+    // An older server drops the field and probes every provider.
+    const config = registry.get(serverEnvironment.configValueAtom(environmentId));
+    if (config?.environment.capabilities.modelCatalogRefresh !== true) return;
+    void refreshProviders({ environmentId, input: { modelCatalogOnly: true } });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server for newly released models on every open; a parent, a keybinding or the palette can open the picker, so no one handler sees them all
+  useEffect(() => {
+    if (isMenuOpen) refreshModelCatalog();
+  }, [isMenuOpen]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -153,16 +184,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   /**
    * Focuses the selected reasoning level, else the first level. With `rows: "any"` it falls back
-   * to the column's other options. False when nothing took focus.
+   * to the column's first enabled option. False when nothing took focus.
    */
   const focusEffort = (rows: "levels" | "any") => {
     const column = popupRef.current?.querySelector("[data-model-picker-effort]");
-    const first = (selector: string) =>
-      column?.querySelector<HTMLElement>(`${selector}[aria-checked="true"]:not(:disabled)`) ??
-      column?.querySelector<HTMLElement>(`${selector}:not(:disabled)`);
+    const level =
+      column?.querySelector<HTMLElement>(
+        '[data-effort-level][aria-checked="true"]:not(:disabled)',
+      ) ?? column?.querySelector<HTMLElement>("[data-effort-level]:not(:disabled)");
+    // No aria-checked here: an On switch is checked but is not where focus belongs.
     const row =
-      first("[data-effort-level]") ?? (rows === "any" ? first("[data-effort-row]") : null);
+      level ??
+      (rows === "any"
+        ? column?.querySelector<HTMLElement>("[data-effort-row]:not(:disabled)")
+        : null);
     row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
     return row != null;
   };
   const openTarget = (target: "effort" | "permissions") => {
@@ -229,7 +266,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const triggerTextProps = {
-    className: "min-w-0 flex-1 overflow-hidden truncate",
+    className: cn(
+      "min-w-0 flex-1 overflow-hidden truncate",
+      // Long names such as "Fusion (Claude Opus 5.5 Medium + SWE-2 High)" would push the composer.
+      props.isComposerOwned && "max-w-56",
+    ),
     "data-chat-provider-model-picker-label": "true",
   } as const;
 
@@ -261,7 +302,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       onInstanceModelChange={handleInstanceModelChange}
-      {...(docked ? { docked, onFocusEffort: () => void focusEffort("any") } : {})}
+      {...(docked
+        ? {
+            docked,
+            onFocusEffort: () => void focusEffort("any"),
+            // Inside the fixed height, so switching to or from a ChatGPT plan never resizes it.
+            ...(props.selectedModels === undefined
+              ? { listFooter: <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} /> }
+              : {}),
+          }
+        : {})}
     />
   );
 
@@ -392,19 +442,26 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           };
         }}
         initialFocus={searchInputRef}
-        align="start"
+        align={props.popupAlign ?? "start"}
+        // Docked, the popup opens above the composer and slides over it when that space is short,
+        // so a short window gets its full height (Floating UI sizes to the viewport) instead of a sliver.
+        {...(docked
+          ? { side: "top" as const, collisionAvoidance: { side: "shift", align: "shift" } as const }
+          : {})}
         className="before:hidden"
         padding="none"
         touchBackdrop
       >
         {props.effortColumn ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-            <div className="flex flex-col">
-              <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
+            <div className="flex max-h-(--available-height) flex-col">
+              {/* One fixed height, so a model with more options never resizes the popup. Short
+                  windows shrink it and keep the footer. */}
+              <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
                 {picker}
                 <div
                   data-model-picker-effort
-                  className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
                   onKeyDown={(event) => {
                     if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
                       return;
@@ -422,7 +479,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         ) : (
           picker
         )}
-        {props.selectedModels === undefined ? (
+        {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
       </PopoverPopup>

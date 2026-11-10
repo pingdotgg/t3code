@@ -1,3 +1,4 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -30,7 +31,7 @@ import {
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
-import { rankModelPickerSearch } from "./modelPickerSearch";
+import { rankModelPickerSearch } from "@t3tools/client-runtime/model-search";
 import {
   Combobox,
   ComboboxEmpty,
@@ -264,37 +265,12 @@ function ModelPickerList({
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const updateScrollFades = () => {
-    const scrollElement = listRef.current?.getScrollableNode();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    setShowTopScrollFade(!metrics.isAtStart);
+    setShowBottomScrollFade(!metrics.isAtEnd);
   };
-
-  // Disabled-reason closures rebuild identical key arrays; compare contents.
-  const itemListKey = JSON.stringify(itemKeys);
-  const [fadesResetFor, setFadesResetFor] = useState(itemListKey);
-  if (fadesResetFor !== itemListKey) {
-    setFadesResetFor(itemListKey);
-    setShowTopScrollFade(false);
-    setShowBottomScrollFade(itemKeys.length > 5);
-  }
-  const measureScrollFades = useEffectEvent(updateScrollFades);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the list scroller in animation frames after a new list lays out to set scroll fades
-  useLayoutEffect(() => {
-    let nestedFrame = 0;
-    const frame = window.requestAnimationFrame(() => {
-      measureScrollFades();
-      nestedFrame = window.requestAnimationFrame(() => measureScrollFades());
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.cancelAnimationFrame(nestedFrame);
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new list re-measures its scroll fades once it has laid out.
-  }, [itemListKey]);
+  const scrollRef = useLegendListRef(listRef, updateScrollFades);
 
   return (
     <div
@@ -305,7 +281,7 @@ function ModelPickerList({
     >
       <ComboboxListVirtualized>
         <LegendList<string>
-          ref={listRef}
+          ref={scrollRef}
           data={itemKeys}
           extraData={extraData}
           keyExtractor={(modelKey) => modelKey}
@@ -317,6 +293,7 @@ function ModelPickerList({
           ItemSeparatorComponent={ModelListSeparator}
           onLayout={updateScrollFades}
           onScroll={updateScrollFades}
+          onReady={updateScrollFades}
           className={cn(
             "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
             getVirtualizedScrollFadeClassName({
@@ -366,6 +343,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   docked?: boolean;
   /** Right at the end of the search text moves into the popup's effort column. */
   onFocusEffort?: () => void;
+  /** Closes the list column, inside the popup's fixed height. */
+  listFooter?: ReactNode;
 }) {
   const {
     searchInputRef,
@@ -838,16 +817,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          props.docked
-            ? "max-sm:h-56 max-sm:min-h-0! max-sm:w-full max-sm:max-w-none"
-            : "max-h-86.5",
+          props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
+        // Docked, the popup sets the height; a minimum here would overflow short windows.
         style={
-          isSearching
-            ? { height: searchHeight }
-            : {
-                minHeight: `min(calc(var(--spacing) * ${tallestTabUnits + LIST_CHROME_UNITS} + 1px), calc(var(--spacing) * 86.5))`,
-              }
+          props.docked
+            ? undefined
+            : isSearching
+              ? { height: searchHeight }
+              : {
+                  minHeight: `min(calc(var(--spacing) * ${tallestTabUnits + LIST_CHROME_UNITS} + 1px), calc(var(--spacing) * 86.5))`,
+                }
         }
         data-model-picker-content="true"
       >
@@ -1072,6 +1052,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}
             />
+            {props.listFooter}
           </div>
         </Combobox>
       </div>
