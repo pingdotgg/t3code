@@ -129,6 +129,17 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
   };
+  const activeIndex = props.activeItemId
+    ? props.items.findIndex((item) => item.id === props.activeItemId)
+    : -1;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the externally highlighted row into the list's view
+  useLayoutEffect(() => {
+    if (activeIndex < 0) return;
+    // Element.scrollIntoView would also scroll the clipped menu surface and the page around it.
+    void listRef.current?.scrollIndexIntoView({ index: activeIndex, animated: false });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a filter can keep the index while the list stays scrolled.
+  }, [activeIndex, props.items]);
 
   return (
     <Command
@@ -154,7 +165,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               ref={listRef}
               data={props.items}
               keyExtractor={(item) => item.id}
-              // The highlighted row stays mounted, for aria-activedescendant and so it can scroll itself into view.
+              // The highlighted row stays mounted for aria-activedescendant.
               alwaysRender={{ keys: props.activeItemId ? [props.activeItemId] : [] }}
               // Legend needs a data refresh to mount a new pin without a scroll event.
               dataVersion={props.activeItemId ?? ""}
@@ -178,9 +189,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               onLayout={updateScrollFade}
               onItemSizeChanged={updateScrollFade}
               onScroll={updateScrollFade}
-              // LegendList sizes its first window from this element before its rows give it height;
-              // reserving the rows' minimum height (1.75rem each, plus p-2) fills the first frame.
-              style={{ minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
+              // LegendList sizes its first window from this element before its rows give it height, so
+              // reserve the rows' height (1.75rem each, plus p-2). A basis, so a short window can shrink it.
+              style={{ flexBasis: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
               className={cn(
                 "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain p-2 [&::-webkit-scrollbar-track]:my-4",
                 getVirtualizedScrollFadeClassName(scrollFade),
@@ -227,17 +238,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
-  const rowRef = useRef<HTMLDivElement>(null);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the externally highlighted row into the list's view
-  useLayoutEffect(() => {
-    if (props.isActive) rowRef.current?.scrollIntoView({ block: "nearest" });
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A recycled row can become the active one while it stays active.
-  }, [props.isActive, props.item.id]);
-
   return (
     <CommandItem
-      render={<div id={props.optionId} ref={rowRef} />}
+      render={<div id={props.optionId} />}
       index={props.index}
       // Only a window of options is mounted, so the browser cannot count the set itself.
       aria-posinset={props.index + 1}
