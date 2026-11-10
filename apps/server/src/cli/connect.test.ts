@@ -162,3 +162,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     );
   },
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect status",
+  (it) => {
+    it.effect("does not report a publish-only link as exposed", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-status-test-" });
+        const secretsDir = `${baseDir}/userdata/secrets`;
+        yield* fs.makeDirectory(secretsDir, { recursive: true });
+        yield* fs.writeFileString(`${secretsDir}/cloud-cli-desired-link.bin`, "publish_only");
+        yield* fs.writeFileString(`${secretsDir}/cloud-linked-user-id.bin`, "user_test");
+        yield* fs.writeFileString(`${secretsDir}/cloud-relay-url.bin`, "https://relay.example");
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          "status",
+          "--base-dir",
+          baseDir,
+        ]);
+
+        const printed = (yield* TestConsole.logLines).join("\n");
+        assert.notInclude(printed, "Exposure: enabled");
+        assert.match(printed, /publish.only/i);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      ),
+    );
+  },
+);
