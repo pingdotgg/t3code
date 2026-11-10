@@ -9,7 +9,11 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const ctx = use(TimelineRowCtx);
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent") {
-    return <V2SubagentGroup key={row.id} row={row} />;
+    return (
+      <WorkLogBlock continues={row.continuesWorkLog}>
+        <V2SubagentGroup key={row.id} row={row} />
+      </WorkLogBlock>
+    );
   }
   if (item.type === "secret_request") {
     return (
@@ -48,7 +52,7 @@ export const V2SubagentGroup = memo(function V2SubagentGroup({
 }) {
   const ctx = use(TimelineRowCtx);
   return (
-    <WorkLogBlock continues={row.continuesWorkLog}>
+    <>
       {(row.subagents ?? [row.projectedItem]).map(({ item }) =>
         item.type === "subagent" ? (
           <V2LifecycleRow
@@ -60,6 +64,6 @@ export const V2SubagentGroup = memo(function V2SubagentGroup({
           />
         ) : null,
       )}
-    </WorkLogBlock>
+    </>
   );
 });

@@ -101,8 +101,8 @@ import {
   CircleAlertIcon,
   Clock3Icon,
   MessageSquareIcon,
-  MessagesSquareIcon,
 } from "lucide-react";
+import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
@@ -146,6 +146,7 @@ import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { SideChatContextLine } from "./SideChatContextLine";
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import {
   attachTimelineViewport,
@@ -303,6 +304,7 @@ interface MessagesTimelineProps {
     readonly title: string;
     /** A side chat's inherited rows collapse into this link. */
     readonly sideChat?: boolean;
+    readonly handoff?: HandoffEndpoints;
     /** Where it runs, when that is another environment. */
     readonly environmentLabel?: string;
     readonly open?: () => void;
@@ -1228,18 +1230,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ) : (
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
-          <TimelineSystemDivider
-            label={parentThreadLink.sideChat ? "Context from" : "Subagent of"}
-            detail={
-              parentThreadLink.environmentLabel === undefined
-                ? parentThreadLink.title
-                : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
-            }
-            icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
-            {...(parentThreadLink.open === undefined
-              ? {}
-              : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
-          />
+          {parentThreadLink.sideChat ? (
+            <SideChatContextLine
+              environmentId={activeThreadEnvironmentId}
+              title={parentThreadLink.title}
+              open={parentThreadLink.open}
+              handoff={parentThreadLink.handoff ?? null}
+            />
+          ) : (
+            <TimelineSystemDivider
+              label="Subagent of"
+              detail={
+                parentThreadLink.environmentLabel === undefined
+                  ? parentThreadLink.title
+                  : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
+              }
+              icon={BotIcon}
+              {...(parentThreadLink.open === undefined
+                ? {}
+                : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
+            />
+          )}
         </div>
       </div>
     );

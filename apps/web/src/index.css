@@ -396,6 +396,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     & [data-pane-notch-corner] {
       background: var(--chrome-art-paint);
       background-attachment: fixed;
+      background-blend-mode: var(--chrome-art-blend, normal);
     }
   }
 }
@@ -544,6 +545,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 [data-chrome-art] [data-pane-cut] > span > span {
   background: var(--chrome-art-paint);
   background-attachment: fixed;
+  background-blend-mode: var(--chrome-art-blend, normal);
 }
 
 /* PaneNotch lays out the tab with this tail as its end padding. */
@@ -577,6 +579,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     height: var(--pane-notch-height);
     min-height: var(--pane-notch-height);
     padding-block-end: calc(var(--pane-notch-height) - var(--workspace-topbar-height));
+  }
+
+  /* The conversation scrolls through the header, hiding only behind its
+     chrome-colored notches. The header still owns pointer and drag handling. */
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] [data-chat-header] {
+    background: none;
   }
 
   /* Other pane headers keep their surface above their scrolling bodies. */
@@ -1260,7 +1268,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   box-shadow: var(--tray-shadow);
 }
 @utility surface-composer-banner {
-  background: var(--composer-banner-fill, transparent);
+  position: relative;
+  isolation: isolate;
+  border-start-start-radius: var(--radius-2xl);
+  border-start-end-radius: var(--radius-2xl);
+  /* Continue the fill behind the next surface's rounded top corners. */
+  &::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    inset: 0 0 calc(-1 * var(--radius-composer));
+    border-radius: inherit;
+    background: var(--composer-banner-fill, transparent);
+  }
 }
 @utility surface-app-panel {
   border: 1px solid
@@ -1501,18 +1522,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Nightly and Dev channel art behind the whole window chrome (pen Duxhn),
    painted by ChromeChannelArt. The paint is set on the art root
    (AppSidebarLayout's data-chrome-art) so other chrome surfaces can repaint
-   the same art. Light, black chrome takes the dark art like the rest of the
-   chrome.
-   The art is a drafting sheet: a faint 16px paper grid from the pane inset
-   over the chrome color. The construction lines over it are
-   DraftingSheetMarks, drawn along the real UI edges and centers. Dev draws the
-   sheet in neutral grays; Nightly draws the same sheet in night indigo, a
-   little stronger. */
-[data-chrome-art] {
+   the same art. Background images load only for the element that renders them,
+   so each channel fetches one image per theme. Light, black chrome takes the
+   dark art like the rest of the chrome. */
+[data-chrome-art="nightly"] {
+  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
+}
+
+:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
+  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
+}
+
+[data-chrome-art="nightly"] {
+  --chrome-art-paint: var(--chrome-art-image) var(--chrome-art-tint, transparent);
+}
+
+/* The drafting sheet: a faint 16px paper grid from the pane inset, in neutral
+   grays over the chrome color. The construction lines over it are
+   DevDraftingSheetMarks, drawn along the real UI edges and centers. */
+[data-chrome-art="dev"] {
   --chrome-art-grid-major: #00000013;
   --chrome-art-grid-minor: #00000005;
   --chrome-art-mark: #00000026;
   --chrome-art-tint: var(--app-chrome-background);
+}
+
+[data-chrome-art="dev"] {
   --chrome-art-paint:
     repeating-linear-gradient(to right, var(--chrome-art-grid-minor) 0 1px, transparent 1px 16px)
       12px 12px,
@@ -1520,56 +1555,42 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       12px 12px var(--chrome-art-tint);
 }
 
-:root:is(.dark, .black-chrome) [data-chrome-art] {
+:root:is(.dark, .black-chrome) [data-chrome-art="dev"] {
   --chrome-art-grid-major: #ffffff13;
   --chrome-art-grid-minor: #ffffff05;
   --chrome-art-mark: #ffffff1f;
 }
 
-[data-chrome-art="nightly"] {
-  --chrome-art-ink: oklch(0.47 0.2 277);
-}
-
-:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-ink: oklch(0.7 0.17 277);
-}
-
-[data-chrome-art="nightly"],
-:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-grid-major: color-mix(in srgb, var(--chrome-art-ink) 26%, transparent);
-  --chrome-art-grid-minor: color-mix(in srgb, var(--chrome-art-ink) 9%, transparent);
-  --chrome-art-mark: color-mix(in srgb, var(--chrome-art-ink) 46%, transparent);
-}
-
-/* Named and custom themes draw the sheet in their own sidebar ink, so the
-   chrome still reads as the chosen theme; Nightly takes the theme's accent.
-   Black chrome keeps the default dark sheet for every theme. */
+/* Named and custom themes tint the window art with their sidebar color, so the
+   chrome still reads as the chosen theme. Black chrome keeps the default dark
+   art for every theme. */
 html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   & [data-chrome-art] {
     --chrome-art-tint: var(--sidebar);
-    --chrome-art-grid-major: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
-    --chrome-art-grid-minor: color-mix(in srgb, var(--sidebar-foreground) 2%, transparent);
-    --chrome-art-mark: color-mix(in srgb, var(--sidebar-foreground) 13%, transparent);
   }
 
   & [data-chrome-art="nightly"] {
-    --chrome-art-ink: var(--ring);
-    --chrome-art-grid-major: color-mix(in srgb, var(--chrome-art-ink) 26%, transparent);
-    --chrome-art-grid-minor: color-mix(in srgb, var(--chrome-art-ink) 9%, transparent);
-    --chrome-art-mark: color-mix(in srgb, var(--chrome-art-ink) 46%, transparent);
+    --chrome-art-blend: luminosity;
+  }
+
+  & [data-chrome-art="dev"] {
+    --chrome-art-grid-major: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
+    --chrome-art-grid-minor: color-mix(in srgb, var(--sidebar-foreground) 2%, transparent);
+    --chrome-art-mark: color-mix(in srgb, var(--sidebar-foreground) 13%, transparent);
   }
 }
 
 [data-chrome-art-layer] {
   color: var(--chrome-art-mark);
   background: var(--chrome-art-paint);
+  background-blend-mode: var(--chrome-art-blend, normal);
 }
 
-/* The drafting marks (DraftingSheetMarks). Each mark is placed with
+/* The dev drafting marks (DevDraftingSheetMarks). Each mark is placed with
    the layout's own tokens: the titlebar controls (AppSidebarLayout), the inset
    pane (SidebarInset), and the sidebar rows and footer (ui/sidebar). The
    sidebar's marks slide with it on collapse, on the panel animation timing. */
-[data-chrome-art-layer] {
+[data-chrome-art-layer="dev"] {
   --bp-line: var(--chrome-art-grid-major);
   --bp-mark: var(--chrome-art-mark);
   --bp-control: var(--workspace-titlebar-control-size);
@@ -1707,13 +1728,13 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   }
 }
 
-[data-chrome-art][data-sidebar-state="collapsed"] > [data-chrome-art-layer] {
+[data-chrome-art][data-sidebar-state="collapsed"] > [data-chrome-art-layer="dev"] {
   --bp-pane-left: var(--workspace-pane-inset);
   --bp-sidebar-shift: calc(var(--sidebar-width) * -1);
 }
 
 [data-panel-animations="true"]
-  > [data-chrome-art-layer]
+  > [data-chrome-art-layer="dev"]
   :is([data-bp-sidebar], [data-bp-at="pane-left"]) {
   transition: translate var(--panel-animation-duration) ease-out;
 }
@@ -4514,6 +4535,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --command-footer-shadow: none;
 }
 
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > :is([data-slot="toggle"][data-variant="segmented"][data-pressed], .surface-raised) {
+  background: color-mix(in srgb, var(--flat-high) 88%, var(--foreground));
+}
+
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > [data-slot="toggle"]:not([data-pressed]):hover {
+  background: color-mix(in srgb, var(--flat-high) 94%, var(--foreground));
+}
+
 /* Soft gradient carries the secondary control's smooth face and small shadow. */
 :root[data-surface-style="soft-gradient"] > body,
 [data-surface-preview="soft-gradient"],
@@ -4649,6 +4682,48 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
+/* The hard split belongs to controls; containers carry a quieter two-stop face. */
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
+[data-surface-preview="aqua-gloss-full"],
+[data-surface-preview="aqua-blue"],
+:root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  [data-chrome-scope] {
+  --style-container-fill: linear-gradient(
+    180deg in srgb,
+    light-dark(
+      oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
+      oklch(from var(--ss-background) calc(l + 0.065) c h)
+    ),
+    light-dark(
+      oklch(from var(--ss-background) l c h),
+      oklch(from var(--ss-background) calc(l + 0.04) c h)
+    )
+  );
+  --card-fill: var(--style-container-fill) !important;
+  --card-settings-fill: var(--style-container-fill) !important;
+  --popover-fill: var(--style-container-fill);
+  --style-code-fill: var(--style-container-fill);
+  --command-input-fill: var(--style-container-fill);
+  --command-footer-fill: var(--style-container-fill);
+  --table-header-fill: var(--style-container-fill);
+  --bubble-fill: var(--style-container-fill) !important;
+}
+
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  :is(.chat-markdown-codeblock, .chat-markdown-table-container) {
+  --well-fill: var(--style-container-fill);
+}
+
+:root[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  [data-sidebar-header-control] {
+  @apply surface-raised;
+}
+
+:root[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  [data-sidebar-header-control]:hover {
+  @apply surface-raised-hover;
+}
+
 /* Aqua's gloss stays on controls. Pane tabs and the composer body keep the default style's
    calm faces, so the split does not run across the app's structure. */
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
@@ -4666,6 +4741,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     [data-surface-style="aqua-blue"]
   )
   [data-app-sidebar] {
+  --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
   --well-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
