@@ -74,10 +74,9 @@ export function readEnvironmentScope(
 function sessionAllowsThreadTriage(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
 ): boolean {
-  return (
-    !AsyncResult.isSuccess(result) ||
-    sessionGrantsScope(result.value, AuthOrchestrationOperateScope)
-  );
+  // A failed refresh still carries the last loaded session, whose answer stands.
+  const session = AsyncResult.getOrElse(result, () => null);
+  return session === null || sessionGrantsScope(session, AuthOrchestrationOperateScope);
 }
 
 export function useThreadTriageScope(environmentId: EnvironmentId | null): boolean {

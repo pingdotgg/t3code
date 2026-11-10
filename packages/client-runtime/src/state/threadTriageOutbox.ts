@@ -40,7 +40,11 @@ function isTransient(cause: Cause.Cause<unknown>) {
   );
 }
 
-/** What the user acted on. A thread that shows otherwise on reconnect keeps its server state. */
+/**
+ * What the user acted on: the thread's work, and every triage decision with its time, so a
+ * settle or snooze made and undone elsewhere still counts. A thread that shows otherwise on
+ * reconnect keeps its server state.
+ */
 function seenState(thread: OrchestrationV2ThreadShell) {
   return JSON.stringify([
     thread.latestRunId,
@@ -48,8 +52,13 @@ function seenState(thread: OrchestrationV2ThreadShell) {
     thread.itemCount,
     thread.pendingRuntimeRequest?.id ?? null,
     thread.settledOverride,
-    thread.snoozedUntil == null ? null : DateTime.toEpochMillis(thread.snoozedUntil),
-    thread.pinnedAt != null,
+    ...[
+      thread.settledAt,
+      thread.unsettledAt,
+      thread.snoozedUntil,
+      thread.snoozedAt,
+      thread.pinnedAt,
+    ].map((time) => (time == null ? null : DateTime.toEpochMillis(time))),
   ]);
 }
 
@@ -75,8 +84,8 @@ export function createThreadTriageOutbox<R, E>(input: {
   readonly sourceSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
-  /** Queued changes are sent once this reports a synchronized shell; without it, never. */
-  readonly shellStatusAtom?: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
+  /** Queued changes are sent once this reports a synchronized shell. */
+  readonly shellStatusAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
   /** Returns the thread itself when the action cannot apply to it. */
   readonly apply: (
     thread: OrchestrationV2ThreadShell,
@@ -164,7 +173,6 @@ export function createThreadTriageOutbox<R, E>(input: {
   const replaying = new Set<EnvironmentId>();
   const replayAgain = new Set<EnvironmentId>();
   const isLive = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
-    input.shellStatusAtom !== undefined &&
     registry.get(input.shellStatusAtom(environmentId)) === "live";
   const replay = async (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
     if (replaying.has(environmentId)) {
@@ -190,17 +198,6 @@ export function createThreadTriageOutbox<R, E>(input: {
     for (const entry of registry.get(entriesAtom) ?? []) {
       if (lifetime.ended) return;
       if (entry.environmentId !== environmentId) continue;
-      const thread = sourceThread(registry, environmentId, entry.threadId);
-      // The live shell is the server's state. It wins over a change made against an older one,
-      // which also covers a change that was sent before but whose reply was lost.
-      if (
-        thread === undefined ||
-        seenState(thread) !== entry.seen ||
-        input.apply(thread, entry.action, DateTime.nowUnsafe()) === thread
-      ) {
-        await forget(registry, entry);
-        continue;
-      }
       // Marked before sending, so an Undo after a lost reply or a restart asks the server.
       const marked = await write(registry, (current) =>
         current.some((item) => item.commandId === entry.commandId && item.attempted !== true)
@@ -213,6 +210,19 @@ export function createThreadTriageOutbox<R, E>(input: {
       // Storage no longer has it: cancelled, replaced, sent by another tab, or its environment
       // was removed.
       if (!marked.value.some((item) => item.commandId === entry.commandId)) continue;
+      // Checked after the last wait, so the shell judged is the one the send goes through.
+      if (!isLive(registry, environmentId)) return;
+      const thread = sourceThread(registry, environmentId, entry.threadId);
+      // The live shell is the server's state. It wins over a change made against an older one,
+      // which also covers a change that was sent before but whose reply was lost.
+      if (
+        thread === undefined ||
+        seenState(thread) !== entry.seen ||
+        input.apply(thread, entry.action, DateTime.nowUnsafe()) === thread
+      ) {
+        await forget(registry, entry);
+        continue;
+      }
       const result = await input.send(registry, entry);
       if (lifetime.ended || (!AsyncResult.isSuccess(result) && isTransient(result.cause))) return;
       await forget(registry, entry);
@@ -221,12 +231,9 @@ export function createThreadTriageOutbox<R, E>(input: {
   const replayAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const entries = get(environmentEntriesAtom(environmentId));
-      if (
-        entries.length > 0 &&
-        input.shellStatusAtom !== undefined &&
-        get(input.shellStatusAtom(environmentId)) === "live"
-      )
+      if (entries.length > 0 && get(input.shellStatusAtom(environmentId)) === "live") {
         void replay(get.registry, environmentId);
+      }
     }),
   );
 
@@ -278,23 +285,23 @@ export function createThreadTriageOutbox<R, E>(input: {
           (reason) => Cause.isFailReason(reason) && isUnavailable(reason.error),
         );
         if (!offline || snapshot == null || thread === undefined) return result;
-        await load(registry);
         const action = toAction(target.input);
         const queuedAt = DateTime.nowUnsafe();
-        if (
-          input.apply(thread, action, queuedAt) === thread ||
+        if (input.apply(thread, action, queuedAt) === thread) return result;
+        let refused = false;
+        const queued = await write(registry, (stored, commandId) => {
+          const same = (entry: PendingThreadTriage) =>
+            entry.environmentId === environmentId && entry.threadId === threadId;
           // One change per thread. A snooze cannot replace a settle, which online it keeps.
-          (action.type === "snooze" &&
-            pendingFor(registry, environmentId, threadId)?.action.type === "settle")
-        )
-          return result;
-        const queued = await write(registry, (stored, commandId) => [
-          ...stored.filter(
-            (entry) => entry.environmentId !== environmentId || entry.threadId !== threadId,
-          ),
-          { environmentId, threadId, commandId, action, queuedAt, seen: seenState(thread) },
-        ]);
-        return AsyncResult.isSuccess(queued)
+          refused = action.type === "snooze" && stored.find(same)?.action.type === "settle";
+          return refused
+            ? stored
+            : [
+                ...stored.filter((entry) => !same(entry)),
+                { environmentId, threadId, commandId, action, queuedAt, seen: seenState(thread) },
+              ];
+        });
+        return AsyncResult.isSuccess(queued) && !refused
           ? AsyncResult.success({ sequence: snapshot.snapshotSequence })
           : result;
       },
