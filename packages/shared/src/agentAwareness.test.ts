@@ -69,6 +69,25 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...base.thread, snoozedUntil },
       }),
     ).toMatchObject({ phase: "completed", retained: true });
+    const snoozedAt = DateTime.makeUnsafe("2026-05-22T11:30:00.000Z");
+    const waiting = (kind: "user_input" | "command", createdAt: string) =>
+      projectThreadAwarenessV2({
+        ...base,
+        thread: {
+          ...v2Thread({
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request-1"),
+              kind,
+              createdAt: DateTime.makeUnsafe(createdAt),
+            },
+          }),
+          snoozedUntil,
+          snoozedAt,
+        },
+      })?.phase ?? null;
+    expect(waiting("user_input", "2026-05-22T11:00:00.000Z")).toBeNull();
+    expect(waiting("user_input", "2026-05-22T11:45:00.000Z")).toBe("waiting_for_input");
+    expect(waiting("command", "2026-05-22T11:00:00.000Z")).toBe("waiting_for_approval");
   });
 
   it("does not announce completion after a manual stop", () => {

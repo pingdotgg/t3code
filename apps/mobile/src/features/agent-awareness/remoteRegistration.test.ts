@@ -1577,6 +1577,38 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not prime a Live Activity from a read a newer one replaced", () =>
+    Effect.gen(function* () {
+      const firstReadStarted = yield* Deferred.make<void>();
+      const finishFirstRead = yield* Deferred.make<void>();
+      let readCount = 0;
+      const layer = snapshotRelayLayer(() => {
+        readCount++;
+        if (readCount === 1) {
+          return Deferred.succeed(firstReadStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishFirstRead)),
+            Effect.as(activeAgentActivitySnapshot),
+          );
+        }
+        return Effect.succeed({ aggregate: null });
+      });
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true } as Preferences);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+      backgroundRuntime.pending.length = 0;
+
+      const olderRefresh = yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstReadStarted);
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+      yield* Deferred.succeed(finishFirstRead, undefined);
+      yield* Fiber.join(olderRefresh);
+
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps the native local-work seed separate from an in-flight widget snapshot", () =>
     Effect.gen(function* () {
       const readStarted = yield* Deferred.make<void>();

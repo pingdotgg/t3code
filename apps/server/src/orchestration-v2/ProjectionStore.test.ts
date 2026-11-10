@@ -113,11 +113,16 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     activity.threads.map(awareness),
     shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(awareness),
   );
+  const fields = (thread: (typeof activity.threads)[number]) => [
+    thread.id,
+    thread.projectId,
+    thread.latestRunCompletedAt,
+    thread.snoozedUntil,
+    thread.snoozedAt,
+  ];
   assert.deepEqual(
-    activity.threads.map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
-    shells
-      .filter((thread) => isListedThreadLineage(thread.lineage))
-      .map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+    activity.threads.map(fields),
+    shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(fields),
   );
   assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
   assert.isTrue(queryTransactions.every((transaction) => transaction !== null));

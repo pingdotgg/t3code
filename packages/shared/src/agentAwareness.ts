@@ -111,8 +111,14 @@ export function projectThreadAwarenessV2(
         (thread.latestRunCompletedAt != null &&
           DateTime.toEpochMillis(thread.latestRunCompletedAt) >
             DateTime.toEpochMillis(thread.snoozedAt)));
-    if (thread.pendingRuntimeRequest == null && subagentRequest === null && !failedAfterSnooze)
-      return null;
+    // Matches the app's snooze: approvals wake it, a question only if asked after snoozing.
+    const request = thread.pendingRuntimeRequest;
+    const requestWakes =
+      request != null &&
+      (request.kind !== "user_input" ||
+        thread.snoozedAt == null ||
+        DateTime.toEpochMillis(request.createdAt) > DateTime.toEpochMillis(thread.snoozedAt));
+    if (!requestWakes && subagentRequest === null && !failedAfterSnooze) return null;
   }
   const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
   if (phase === null) {

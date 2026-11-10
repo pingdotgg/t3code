@@ -148,6 +148,11 @@ let liveWidgetSubscription: (() => void) | null = null;
 let liveWidgetActivities: LiveWidgetActivities = new Map();
 let observedWidgetActivities: LiveWidgetActivities = new Map();
 let relayWidgetSnapshot: RelayAgentActivitySnapshotResponse | null = null;
+// The newest accepted global read; a superseded refresh primes from it instead of its own.
+let acceptedPrimingSnapshot: {
+  readonly snapshot: RelayAgentActivitySnapshotResponse;
+  readonly startedAt: number;
+} | null = null;
 let relayWidgetConfirmedAt: number | null = null;
 const widgetShellObservations = new Map<EnvironmentId, EnvironmentShellState>();
 const widgetShellConfirmedAt = new Map<EnvironmentId, number>();
@@ -216,6 +221,7 @@ export function setAgentAwarenessRelayTokenProvider(
     androidDeviceReplayedAt = null;
     stopLiveWidgetObserver();
     relayWidgetSnapshot = null;
+    acceptedPrimingSnapshot = null;
     relayWidgetConfirmedAt = null;
     deviceRegistrationGeneration++;
     activeDeviceRegistration = null;
@@ -273,6 +279,7 @@ export function setAgentAwarenessRelayTokenProvider(
 export function releaseAgentAwarenessRelayTokenProvider(): void {
   stopLiveWidgetObserver();
   relayWidgetSnapshot = null;
+  acceptedPrimingSnapshot = null;
   relayWidgetConfirmedAt = null;
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
@@ -773,8 +780,12 @@ const refreshAgentActivityWidget = Effect.fn("remoteRegistration.refreshAgentAct
     if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) {
       return null;
     }
-    // Superseding widget publication does not invalidate this account's priming snapshot.
-    if (expectedRefreshGeneration !== widgetRefreshGeneration) return snapshot;
+    // A superseded read still primes, unless a newer accepted read replaced it.
+    const primingSnapshot = () =>
+      acceptedPrimingSnapshot !== null && acceptedPrimingSnapshot.startedAt >= readStartedAt
+        ? acceptedPrimingSnapshot.snapshot
+        : snapshot;
+    if (expectedRefreshGeneration !== widgetRefreshGeneration) return primingSnapshot();
     if (snapshot) {
       observedWidgetActivities = retainUnconfirmedWidgetActivities(
         observedWidgetActivities,
@@ -788,7 +799,7 @@ const refreshAgentActivityWidget = Effect.fn("remoteRegistration.refreshAgentAct
         const scoped = yield* readAgentActivitySnapshot(excludedEnvironmentIds);
         if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider)
           return null;
-        if (expectedRefreshGeneration !== widgetRefreshGeneration) return snapshot;
+        if (expectedRefreshGeneration !== widgetRefreshGeneration) return primingSnapshot();
         if (
           !sameWidgetEnvironmentScope(excludedEnvironmentIds, [...observedWidgetActivities.keys()])
         )
@@ -797,6 +808,7 @@ const refreshAgentActivityWidget = Effect.fn("remoteRegistration.refreshAgentAct
         break;
       }
       relayWidgetSnapshot = widgetSnapshot;
+      acceptedPrimingSnapshot = { snapshot, startedAt: readStartedAt };
       // A response confirms its request's observation time, not the later
       // arrival time. Failed and superseded reads never renew the timeline.
       relayWidgetConfirmedAt = readStartedAt;
@@ -1092,6 +1104,7 @@ export function updateAgentAwarenessRegistrationPreferences(
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   stopLiveWidgetObserver();
   relayWidgetSnapshot = null;
+  acceptedPrimingSnapshot = null;
   relayWidgetConfirmedAt = null;
   publishedWidgetContent = null;
   pushTokenSubscription?.remove();
