@@ -768,6 +768,35 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect("drops an earlier plan override after a complete reading without a label", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const usageLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed({ ...refreshedSnapshot, usageLimits }),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        yield* provider.applyUsageLimits({ ...usageLimits, complete: true, authLabel: "tier-2" });
+        assert.strictEqual((yield* provider.refresh).auth.label, "tier-2");
+
+        yield* provider.applyUsageLimits({ ...usageLimits, complete: true });
+        assert.strictEqual((yield* provider.getSnapshot).auth.label, undefined);
+        const refreshed = yield* provider.refresh;
+        assert.strictEqual(refreshed.auth.label, undefined);
+        assert.deepStrictEqual(refreshed.usageLimits, usageLimits);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
     Effect.scoped(
       Effect.gen(function* () {

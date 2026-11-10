@@ -221,17 +221,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
     function* (update) {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-        const usageLimits =
-          update.complete && update.windows.length > 0
-            ? makeUsageLimits(update)
-            : applyUsageLimitsUpdate({
-                previous: state.snapshot.usageLimits,
-                update,
-                checkedAt: update.checkedAt,
-              });
+        const complete = update.complete && update.windows.length > 0;
+        const usageLimits = complete
+          ? makeUsageLimits(update)
+          : applyUsageLimitsUpdate({
+              previous: state.snapshot.usageLimits,
+              update,
+              checkedAt: update.checkedAt,
+            });
         const { auth } = state.snapshot;
         const label = update.windows.length > 0 ? update.authLabel : undefined;
-        const relabel = label !== undefined && label !== auth.label;
+        const relabel =
+          (label !== undefined || (complete && state.usageAuthLabel !== undefined)) &&
+          label !== auth.label;
         if (usageLimits === state.snapshot.usageLimits && !relabel) {
           return [null, state] as const;
         }
@@ -241,7 +243,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           snapshot,
-          { ...state, snapshot, usageAuthLabel: label ?? state.usageAuthLabel },
+          {
+            ...state,
+            snapshot,
+            usageAuthLabel: label ?? (complete ? undefined : state.usageAuthLabel),
+          },
         ] as const;
       });
       if (snapshotToPublish !== null) {
