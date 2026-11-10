@@ -668,12 +668,16 @@ export function pullRequestCommentLinkMayLoad(
 ): boolean {
   const anchor = commentAnchor(url);
   if (!anchor) return false;
-  const kind = anchorKind(anchor);
-  return items.some((item) =>
-    pullRequestConversationItemComments(item).some(
-      (comment) => comment.url !== null && anchorKind(commentAnchor(comment.url) ?? "") === kind,
+  const kinds = new Set(
+    items.flatMap((item) =>
+      pullRequestConversationItemComments(item).flatMap((comment) => {
+        const loaded = comment.url === null ? null : commentAnchor(comment.url);
+        return loaded ? [anchorKind(loaded)] : [];
+      }),
     ),
   );
+  // With no loaded anchor to compare, the link may name the first comment.
+  return kinds.size === 0 || kinds.has(anchorKind(anchor));
 }
 
 export function filterPullRequestConversationItems(
