@@ -22,7 +22,7 @@ const state = vi.hoisted(() => ({
   connected: [] as Array<string>,
 }));
 vi.mock(import("../../state/entities"), () => ({
-  useThreadShell: ((ref: { environmentId: string } | null) =>
+  useLinkedThreadShell: ((ref: { environmentId: string } | null) =>
     ref?.environmentId === "remote"
       ? state.remote
       : ref?.environmentId === "saved-vm"

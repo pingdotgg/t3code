@@ -9,6 +9,7 @@ import type {
   ThreadStructure,
   ThreadStructureVisibleTurnItem,
 } from "@t3tools/client-runtime/state/shell";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
@@ -179,7 +180,7 @@ const linkedThreadShellAtom = Atom.family((key: string) => {
     const removedAt = get(removedThreadsAtom(ref.environmentId));
     if ((removedAt.get(ref.threadId) ?? -1) > family.snapshotSequence) return null;
     const thread = family.threads.find((row) => row.id === ref.threadId);
-    return thread ? { ...thread, environmentId: ref.environmentId } : null;
+    return thread ? presentThreadShell(ref.environmentId, thread) : null;
   });
 });
 
