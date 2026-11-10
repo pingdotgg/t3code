@@ -20,12 +20,15 @@ describe("Enriched link presentation", () => {
       "/tmp/report.md",
       "C:\\repo\\app.tsx",
       "app.tsx:12:3",
+      "src/http.ts:42-64",
+      "http.ts:42-64",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
     for (const text of [
       "npm run dev",
       "port:3000",
+      "port:3000-3010",
       "TODO:12",
       "example.com",
       "https://example.com/app.tsx",
