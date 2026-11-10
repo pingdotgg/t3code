@@ -24,5 +24,4 @@ export const nodeVersion: string | null = (() => {
  * Whether the spawned node can run alchemy's dev-mode source path: hooks
  * capable implies `.ts` capable (transform flag below v26, native from v26).
  */
-export const nodeSupportsDevMode =
-  nodeVersion !== null && isRegisterHooksSupported(nodeVersion);
+export const nodeSupportsDevMode = nodeVersion !== null && isRegisterHooksSupported(nodeVersion);

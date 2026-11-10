@@ -1,5 +1,7 @@
 import type {
   WorkflowBinding,
+  WorkflowBatchCreateOptions,
+  WorkflowBatchCreateResult,
   WorkflowInstanceRestartOptions,
 } from "../../../internal/workflows-shared/binding.ts";
 import type { WorkflowIntrospectionOperation } from "../../../internal/workflows-shared/types.ts";
@@ -15,22 +17,37 @@ class WorkflowImpl implements Workflow {
     return instanceHandle;
   }
 
-  async create(
-    options?: WorkflowInstanceCreateOptions,
-  ): Promise<WorkflowInstance> {
-    using result = (await this.binding.create(options)) as WorkflowInstance &
-      Disposable;
+  async create(options?: WorkflowInstanceCreateOptions): Promise<WorkflowInstance> {
+    using result = (await this.binding.create(options)) as WorkflowInstance & Disposable;
 
     return new InstanceImpl(result.id, this.binding);
   }
 
   async createBatch(
     options: Array<WorkflowInstanceCreateOptions>,
-  ): Promise<Array<WorkflowInstance>> {
+  ): Promise<Array<WorkflowInstance>>;
+  async createBatch(options: WorkflowBatchCreateOptions): Promise<{
+    created: Array<WorkflowInstance>;
+    errors: WorkflowBatchCreateResult["errors"];
+  }>;
+  async createBatch(
+    options: Array<WorkflowInstanceCreateOptions> | WorkflowBatchCreateOptions,
+  ): Promise<
+    | Array<WorkflowInstance>
+    | {
+        created: Array<WorkflowInstance>;
+        errors: WorkflowBatchCreateResult["errors"];
+      }
+  > {
+    if (Array.isArray(options)) {
+      const result = await this.binding.createBatch(options);
+      return result.map(({ id }) => new InstanceImpl(id, this.binding));
+    }
     const result = await this.binding.createBatch(options);
-    return result.map((res) => {
-      return new InstanceImpl(res.id, this.binding);
-    });
+    return {
+      created: result.created.map(({ id }) => new InstanceImpl(id, this.binding)),
+      errors: result.errors,
+    };
   }
 
   async deleteBatch(instanceIds: string[]): Promise<WorkflowBatchDeleteResult> {
@@ -56,14 +73,16 @@ class WorkflowImpl implements Workflow {
     return this.binding.unsafeSetIntrospectionOperations(sessionId, operations);
   }
 
-  async unsafeGetIntrospectionInstances(
-    sessionId: string,
-  ): Promise<Array<string>> {
+  async unsafeGetIntrospectionInstances(sessionId: string): Promise<Array<string>> {
     return this.binding.unsafeGetIntrospectionInstances(sessionId);
   }
 
   async unsafeAbort(instanceId: string, reason?: string): Promise<void> {
     return this.binding.unsafeAbort(instanceId, reason);
+  }
+
+  async unsafeDeletePersistedInstance(hexId: string): Promise<boolean> {
+    return this.binding.unsafeDeletePersistedInstance(hexId);
   }
 
   async unsafeGetInstanceModifier(instanceId: string): Promise<unknown> {
@@ -82,10 +101,7 @@ class WorkflowImpl implements Workflow {
     return await this.binding.unsafeWaitForStatus(instanceId, status);
   }
 
-  public async unsafeGetOutputOrError(
-    instanceId: string,
-    isOutput: boolean,
-  ): Promise<unknown> {
+  public async unsafeGetOutputOrError(instanceId: string, isOutput: boolean): Promise<unknown> {
     return this.binding.unsafeGetOutputOrError(instanceId, isOutput);
   }
 }
@@ -115,9 +131,7 @@ class InstanceImpl implements WorkflowInstance {
     await instance.terminate();
   }
 
-  public async restart(
-    options?: WorkflowInstanceRestartOptions,
-  ): Promise<void> {
+  public async restart(options?: WorkflowInstanceRestartOptions): Promise<void> {
     using instance = await this.getInstance();
     await instance.restart(options);
   }
@@ -135,10 +149,7 @@ class InstanceImpl implements WorkflowInstance {
     return await instance.subscribe(options);
   }
 
-  public async sendEvent(args: {
-    payload: unknown;
-    type: string;
-  }): Promise<void> {
+  public async sendEvent(args: { payload: unknown; type: string }): Promise<void> {
     using instance = await this.getInstance();
     await instance.sendEvent(args);
   }
@@ -149,8 +160,6 @@ class InstanceImpl implements WorkflowInstance {
   }
 }
 
-export default function makeBinding(env: {
-  binding: WorkflowBinding;
-}): Workflow {
+export default function makeBinding(env: { binding: WorkflowBinding }): Workflow {
   return new WorkflowImpl(env.binding);
 }
