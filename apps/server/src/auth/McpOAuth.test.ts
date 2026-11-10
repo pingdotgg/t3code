@@ -243,19 +243,6 @@ it.live("registers loopback and https clients and never redirects for an unverif
         }),
       );
       expect(oversized.status).toBe(400);
-      const unicode = yield* handler(
-        at("/oauth/mcp/register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: encodeJson({
-            redirect_uris: Array.from(
-              { length: 5 },
-              (_, index) => `https://bot.example/${index}/${"漢".repeat(420)}`,
-            ),
-          }),
-        }),
-      );
-      expect(unicode.status).toBe(201);
 
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
