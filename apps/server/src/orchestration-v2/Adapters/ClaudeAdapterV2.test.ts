@@ -1565,31 +1565,38 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           queryRunner: {
             allocateSessionId: Effect.succeed(nativeId),
             open: (input) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 openedOptions.push(input.options);
+                const messages = yield* Queue.unbounded<SDKMessage, Cause.Done>();
+                const lostConversation = {
+                  type: "result",
+                  subtype: "error_during_execution",
+                  duration_ms: 0,
+                  duration_api_ms: 0,
+                  is_error: true,
+                  num_turns: 0,
+                  stop_reason: null,
+                  total_cost_usd: 0,
+                  usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                  },
+                  modelUsage: {},
+                  permission_denials: [],
+                  errors: [`No conversation found with session ID: ${nativeId}`],
+                  uuid: "00000000-0000-4000-8000-000000031689",
+                  session_id: nativeId,
+                } as unknown as SDKMessage;
                 return {
-                  messages: Stream.make({
-                    type: "result",
-                    subtype: "error_during_execution",
-                    duration_ms: 0,
-                    duration_api_ms: 0,
-                    is_error: true,
-                    num_turns: 0,
-                    stop_reason: null,
-                    total_cost_usd: 0,
-                    usage: {
-                      input_tokens: 0,
-                      output_tokens: 0,
-                      cache_creation_input_tokens: 0,
-                      cache_read_input_tokens: 0,
-                    },
-                    modelUsage: {},
-                    permission_denials: [],
-                    errors: [`No conversation found with session ID: ${nativeId}`],
-                    uuid: "00000000-0000-4000-8000-000000031689",
-                    session_id: nativeId,
-                  } as unknown as SDKMessage),
-                  offer: () => Effect.void,
+                  messages: Stream.fromQueue(messages),
+                  // The CLI answers the prompt with this result, then exits.
+                  offer: () =>
+                    Queue.offer(messages, lostConversation).pipe(
+                      Effect.andThen(Queue.end(messages)),
+                      Effect.asVoid,
+                    ),
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
