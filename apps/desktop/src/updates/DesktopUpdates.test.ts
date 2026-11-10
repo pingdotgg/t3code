@@ -37,29 +37,43 @@ const { parseXml } = requireFromUpdater("builder-util-runtime") as {
 };
 const semver = requireFromUpdater("semver") as { parse: (version: string) => RunningVersion };
 
+const releaseTitle = (version: string) =>
+  version.includes("-nightly.")
+    ? `T3 Code Nightly ${version} (0123456789ab)`
+    : `T3 Code v${version}`;
+
 const releaseFeed = (...versions: ReadonlyArray<string>) =>
   parseXml(
     `<feed xmlns="http://www.w3.org/2005/Atom">${versions
       .map(
         (version) =>
-          `<entry><link rel="alternate" type="text/html" href="https://github.com/pingdotgg/t3code/releases/tag/v${version}"/><title>v${version}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
+          `<entry><link rel="alternate" type="text/html" href="https://github.com/pingdotgg/t3code/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
       )
       .join("")}</feed>`,
   );
 
-/** The notes electron-updater's GitHub provider reports when /releases/latest names `offeredVersion`. */
-const stableReleaseNotes = (
+/** The update info electron-updater's GitHub provider reports when /releases/latest names `version`. */
+const stableUpdateInfo = (
   feed: ReleaseFeed,
-  offeredVersion: string,
+  version: string,
   runningVersion: string,
   fullChangelog: boolean,
 ) => {
-  const entries = feed.getElements("entry");
   const latestRelease =
-    entries.find((entry) =>
-      entry.element("link").attribute("href").endsWith(`/tag/v${offeredVersion}`),
-    ) ?? feed.element("entry");
-  return computeReleaseNotes(semver.parse(runningVersion), fullChangelog, feed, latestRelease);
+    feed
+      .getElements("entry")
+      .find((entry) => entry.element("link").attribute("href").endsWith(`/tag/v${version}`)) ??
+    feed.element("entry");
+  return {
+    version,
+    releaseName: latestRelease.elementValueOrEmpty("title"),
+    releaseNotes: computeReleaseNotes(
+      semver.parse(runningVersion),
+      fullChangelog,
+      feed,
+      latestRelease,
+    ),
+  };
 };
 
 describe("DesktopUpdates", () => {
@@ -149,46 +163,47 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("shows no notes for a Stable release missing from the releases feed", () => {
+  it.effect.each([
+    {
+      name: "shows no notes for a Stable release missing from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.5-nightly.20261101.1"],
+      expected: [],
+    },
+    {
+      name: "shows a Stable release's own notes from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4", "1.2.4-nightly.20261030.1"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+    {
+      name: "shows a Stable release's notes when switching down from a newer Nightly",
+      runningVersion: "1.2.5-nightly.20261027.1",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+  ])("$name", ({ runningVersion, feedVersions, expected }) => {
     const harness = makeHarness();
-    const feed = releaseFeed("1.2.5-nightly.20261102.1", "1.2.5-nightly.20261101.1");
 
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        harness.emit("update-available", {
-          version: "1.2.4",
-          releaseNotes: stableReleaseNotes(feed, "1.2.4", "1.2.3", harness.fullChangelog()),
-        });
+        harness.emit(
+          "update-available",
+          stableUpdateInfo(
+            releaseFeed(...feedVersions),
+            "1.2.4",
+            runningVersion,
+            harness.fullChangelog(),
+          ),
+        );
         yield* flushCallbacks;
 
         const state = yield* updates.getState;
         assert.equal(state.availableVersion, "1.2.4");
-        assert.deepEqual(state.releaseNotes, [], "Stable release shows a Nightly's notes");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("shows a Stable release's own notes from the releases feed", () => {
-    const harness = makeHarness();
-    const feed = releaseFeed("1.2.5-nightly.20261102.1", "1.2.4", "1.2.4-nightly.20261030.1");
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", {
-          version: "1.2.4",
-          releaseNotes: stableReleaseNotes(feed, "1.2.4", "1.2.3", harness.fullChangelog()),
-        });
-        yield* flushCallbacks;
-
-        assert.deepEqual((yield* updates.getState).releaseNotes, [
-          { version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 },
-        ]);
+        assert.deepEqual(state.releaseNotes, expected);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

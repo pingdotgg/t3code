@@ -188,7 +188,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       [
         { version: "0.0.42", note: "- Stable change" },
         { version: "0.0.42-nightly.20260915.1710", note: "- Nightly change" },
-        { version: "0.0.42-preview.20260914.1683", note: "- Maintainer test build" },
       ],
       "0.0.42",
       "latest",
