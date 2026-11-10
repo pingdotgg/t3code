@@ -372,7 +372,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     });
   });
   // An answer asked for before a reset could repopulate what the reset cleared.
-  const recordGrant = Effect.fnUntraced(function* (
+  const recordGrant = Effect.fn("EnvironmentSupervisor.recordGrant")(function* (
     generation: number,
     routeId: string,
     grant: RouteGrant,
@@ -423,7 +423,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Routes ahead of the active one may be better, unless their known grant
   // lacks some of the active one's. With a known active grant that is not
   // already everything, routes behind it whose grant is unknown may be too.
-  const betterRouteCandidates = Effect.fnUntraced(function* (lease: ConnectedLease) {
+  const betterRouteCandidates = Effect.fn("EnvironmentSupervisor.betterRouteCandidates")(function* (
+    lease: ConnectedLease,
+  ) {
     const latest = yield* Ref.get(currentEntry);
     const grants = yield* Ref.get(routeGrants);
     const saved = connectionRoutes(latest);
@@ -526,14 +528,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
 
   // Only while another route could beat the session.
-  const activeGrantDue = Effect.fnUntraced(function* (lease: ConnectedLease) {
+  const activeGrantDue = Effect.fn("EnvironmentSupervisor.activeGrantDue")(function* (
+    lease: ConnectedLease,
+  ) {
     if (!hasGrant(lease.prepared.target) || (yield* currentRoutes).length < 2) return false;
     const check = yield* Ref.get(activeGrantCheck);
     if (check.session !== lease.session) return true;
     return check.retry !== undefined && check.retry.until <= (yield* Clock.monotonicTimeNanos);
   });
 
-  const checkActiveGrant = Effect.fnUntraced(function* (lease: ConnectedLease) {
+  const checkActiveGrant = Effect.fn("EnvironmentSupervisor.checkActiveGrant")(function* (
+    lease: ConnectedLease,
+  ) {
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
     if (!(yield* activeGrantDue(lease))) return;
