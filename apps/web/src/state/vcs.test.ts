@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { chatGitStatusAtom } from "./vcs";
 
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("./threads", () => ({ environmentThreadShells: {} }));
 vi.mock("@t3tools/client-runtime/state/vcs", () => ({
+  createGitActionQueue: () => ({}),
   createVcsActionManager: () => ({}),
   createVcsEnvironmentAtoms: () => ({}),
   createVcsStatusRevalidationAtomFamily: () => () => null,
