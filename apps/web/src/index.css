@@ -4670,6 +4670,16 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
+:root[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  [data-sidebar-header-control] {
+  @apply surface-raised;
+}
+
+:root[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  [data-sidebar-header-control]:hover {
+  @apply surface-raised-hover;
+}
+
 /* Aqua's gloss stays on controls. Pane tabs and the composer body keep the default style's
    calm faces, so the split does not run across the app's structure. */
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
