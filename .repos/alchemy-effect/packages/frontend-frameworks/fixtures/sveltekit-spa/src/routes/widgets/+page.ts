@@ -1,4 +1,4 @@
-import { describeWidgets, type Widget } from "$spa/widgets";
+import { describeWidgets, type Widget } from "#lib/widgets.js";
 
 export interface WidgetsPayload {
   readonly server: boolean;

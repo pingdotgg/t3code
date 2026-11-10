@@ -7,9 +7,7 @@ interface KvBinding {
 }
 
 export default defineEventHandler(async (event) => {
-  const env = (
-    event.context.cloudflare as { env?: Record<string, unknown> } | undefined
-  )?.env;
+  const env = (event.context.cloudflare as { env?: Record<string, unknown> } | undefined)?.env;
   const kv = env?.FIXTURE_KV as KvBinding | undefined;
   if (kv === undefined) {
     throw createError({
