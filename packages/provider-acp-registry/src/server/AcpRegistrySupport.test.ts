@@ -512,6 +512,44 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("launches the managed uv command over a PATH command named after the agent", () => {
+    const agent = makeAgent({
+      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-uv-path-collision-",
+      });
+      const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      const userBin = path.join(cacheDir, "user-bin");
+      const userCommand = path.join(userBin, "example-agent");
+      yield* fileSystem.makeDirectory(userBin, { recursive: true });
+      yield* fileSystem.writeFileString(userCommand, "#!/bin/sh\n");
+      yield* fileSystem.chmod(userCommand, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      });
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
