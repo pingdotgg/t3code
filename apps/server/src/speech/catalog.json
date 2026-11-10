@@ -15,7 +15,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 3.99 } },
-        "secondsPer30s": 1.19
+        "secondsPer30s": { "cpu": 2.15, "accelerated": 1.19 }
       },
       "recommended": true,
       "supportsStreaming": true,
@@ -92,7 +92,7 @@
           "ro": { "grade": "D", "errorPercent": 28.28 },
           "et": { "grade": "F", "errorPercent": 31.84 }
         },
-        "secondsPer30s": 1.75
+        "secondsPer30s": { "cpu": 2.83, "accelerated": 1.75 }
       },
       "recommended": true,
       "supportsStreaming": true,
@@ -116,7 +116,7 @@
           "es": { "grade": "B", "errorPercent": 6.54 },
           "fr": { "grade": "B-", "errorPercent": 8.53 }
         },
-        "secondsPer30s": 0.91
+        "secondsPer30s": { "cpu": 1.38, "accelerated": 0.91 }
       },
       "recommended": true,
       "supportsStreaming": false,
@@ -165,7 +165,7 @@
           "vi": { "grade": "B", "errorPercent": 7.39 },
           "ko": { "grade": "B", "errorPercent": 6.57 }
         },
-        "secondsPer30s": 3.71
+        "secondsPer30s": { "cpu": 6.96, "accelerated": 3.71 }
       },
       "recommended": true,
       "supportsStreaming": false,
@@ -367,7 +367,7 @@
           "yo": { "grade": "F", "errorPercent": 109 },
           "zh": { "grade": "C", "errorPercent": 13.13 }
         },
-        "secondsPer30s": 7.34
+        "secondsPer30s": { "cpu": 15.58, "accelerated": 7.34 }
       },
       "recommended": true,
       "supportsStreaming": false,
@@ -400,7 +400,7 @@
           "hi": { "grade": "C", "errorPercent": 14.44 },
           "ko": { "grade": "B+", "errorPercent": 5.27 }
         },
-        "secondsPer30s": 39.47
+        "secondsPer30s": { "cpu": 51.28, "accelerated": 39.47 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -471,7 +471,7 @@
           "el": { "grade": "F", "errorPercent": 32.25 },
           "mt": { "grade": "C-", "errorPercent": 17.01 }
         },
-        "secondsPer30s": 1.3
+        "secondsPer30s": { "cpu": 2.26, "accelerated": 1.3 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -542,7 +542,7 @@
           "sv": { "grade": "C", "errorPercent": 15.25 },
           "uk": { "grade": "B", "errorPercent": 6.84 }
         },
-        "secondsPer30s": 1.2
+        "secondsPer30s": { "cpu": 2.2, "accelerated": 1.2 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -561,7 +561,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.11 } },
-        "secondsPer30s": 1.09
+        "secondsPer30s": { "cpu": 2.1, "accelerated": 1.09 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -642,7 +642,7 @@
           "hu": { "grade": "F", "errorPercent": 56.24 },
           "mk": { "grade": "F", "errorPercent": 35.09 }
         },
-        "secondsPer30s": 3.09
+        "secondsPer30s": { "cpu": 5.67, "accelerated": 3.09 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -725,7 +725,7 @@
           "sl": { "grade": "F", "errorPercent": 75.22 },
           "sv": { "grade": "F", "errorPercent": 75.36 }
         },
-        "secondsPer30s": 3.4
+        "secondsPer30s": { "cpu": 5.48, "accelerated": 3.4 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -796,7 +796,7 @@
           "ru": { "grade": "B", "errorPercent": 7.83 },
           "uk": { "grade": "C+", "errorPercent": 10.58 }
         },
-        "secondsPer30s": 2.12
+        "secondsPer30s": { "cpu": 3.6, "accelerated": 2.12 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -815,7 +815,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A", "errorPercent": 3.58 } },
-        "secondsPer30s": 7.55
+        "secondsPer30s": { "cpu": 11.95, "accelerated": 7.55 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -837,7 +837,7 @@
           "en": { "grade": "A-", "errorPercent": 4.88 },
           "ar": { "grade": "C+", "errorPercent": 11.06 }
         },
-        "secondsPer30s": 3.61
+        "secondsPer30s": { "cpu": 6.96, "accelerated": 3.61 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -860,7 +860,7 @@
           "en": { "grade": "B+", "errorPercent": 5.49 },
           "ja": { "grade": "B-", "errorPercent": 8.5 }
         },
-        "secondsPer30s": 2.8
+        "secondsPer30s": { "cpu": 3.78, "accelerated": 2.8 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -879,7 +879,7 @@
       "languages": ["ru"],
       "benchmark": {
         "accuracy": { "ru": { "grade": "B+", "errorPercent": 5.53 } },
-        "secondsPer30s": 0.85
+        "secondsPer30s": { "cpu": 2.62, "accelerated": 0.85 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -898,7 +898,7 @@
       "languages": ["ru"],
       "benchmark": {
         "accuracy": { "ru": { "grade": "B+", "errorPercent": 5.35 } },
-        "secondsPer30s": 2
+        "secondsPer30s": { "cpu": 3.81, "accelerated": 2 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -917,7 +917,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.61 } },
-        "secondsPer30s": 1.31
+        "secondsPer30s": { "cpu": 1.74, "accelerated": 1.31 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -943,7 +943,7 @@
           "pt": { "grade": "B-", "errorPercent": 9.8 },
           "ja": { "grade": "B", "errorPercent": 6.3 }
         },
-        "secondsPer30s": 6.5
+        "secondsPer30s": { "cpu": 10.81, "accelerated": 6.5 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -962,7 +962,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "F", "errorPercent": 37.48 } },
-        "secondsPer30s": 0.42
+        "secondsPer30s": { "cpu": 1.16, "accelerated": 0.42 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -981,7 +981,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B+", "errorPercent": 6.11 } },
-        "secondsPer30s": 0.39
+        "secondsPer30s": { "cpu": 0.6, "accelerated": 0.39 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1000,7 +1000,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B", "errorPercent": 6.52 } },
-        "secondsPer30s": 1.14
+        "secondsPer30s": { "cpu": 2.24, "accelerated": 1.14 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -1081,7 +1081,7 @@
           "hu": { "grade": "F", "errorPercent": 32.84 },
           "mk": { "grade": "C-", "errorPercent": 18.22 }
         },
-        "secondsPer30s": 7.34
+        "secondsPer30s": { "cpu": 12.15, "accelerated": 7.34 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1106,7 +1106,7 @@
           "ja": { "grade": "B", "errorPercent": 7.63 },
           "ko": { "grade": "B-", "errorPercent": 8.27 }
         },
-        "secondsPer30s": 1.08
+        "secondsPer30s": { "cpu": 1.52, "accelerated": 1.08 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1134,7 +1134,7 @@
           "nl": { "grade": "B", "errorPercent": 6.57 },
           "hi": { "grade": "B-", "errorPercent": 8.93 }
         },
-        "secondsPer30s": 27.65
+        "secondsPer30s": { "cpu": 53.57, "accelerated": 27.65 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1336,7 +1336,7 @@
           "yo": { "grade": "F", "errorPercent": 118.5 },
           "zh": { "grade": "D", "errorPercent": 23.06 }
         },
-        "secondsPer30s": 2.57
+        "secondsPer30s": { "cpu": 5.12, "accelerated": 2.57 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1540,7 +1540,7 @@
           "yue": { "grade": "F", "errorPercent": 34.62 },
           "zh": { "grade": "B-", "errorPercent": 8.5 }
         },
-        "secondsPer30s": 9.69
+        "secondsPer30s": { "cpu": 20.98, "accelerated": 9.69 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1562,7 +1562,7 @@
           "zh": { "grade": "B-", "errorPercent": 8.1 },
           "en": { "grade": "A-", "errorPercent": 4.14 }
         },
-        "secondsPer30s": 14.85
+        "secondsPer30s": { "cpu": 31.25, "accelerated": 14.85 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1766,7 +1766,7 @@
           "yue": { "grade": "D", "errorPercent": 22.06 },
           "zh": { "grade": "B-", "errorPercent": 7.98 }
         },
-        "secondsPer30s": 15.04
+        "secondsPer30s": { "cpu": 30.93, "accelerated": 15.04 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1790,7 +1790,7 @@
           "es": { "grade": "B", "errorPercent": 6.73 },
           "fr": { "grade": "B", "errorPercent": 7.22 }
         },
-        "secondsPer30s": 1.94
+        "secondsPer30s": { "cpu": 3.39, "accelerated": 1.94 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1809,7 +1809,7 @@
       "languages": ["ru"],
       "benchmark": {
         "accuracy": { "ru": { "grade": "B-", "errorPercent": 8.42 } },
-        "secondsPer30s": 0.75
+        "secondsPer30s": { "cpu": 2.54, "accelerated": 0.75 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1828,7 +1828,7 @@
       "languages": ["ru"],
       "benchmark": {
         "accuracy": { "ru": { "grade": "B-", "errorPercent": 8.07 } },
-        "secondsPer30s": 1.12
+        "secondsPer30s": { "cpu": 2.9, "accelerated": 1.12 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1854,7 +1854,7 @@
           "pt": { "grade": "B-", "errorPercent": 9.6 },
           "ja": { "grade": "B", "errorPercent": 6.44 }
         },
-        "secondsPer30s": 6.47
+        "secondsPer30s": { "cpu": 10.89, "accelerated": 6.47 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1879,7 +1879,7 @@
           "es": { "grade": "A-", "errorPercent": 4.08 },
           "pt": { "grade": "B+", "errorPercent": 5.57 }
         },
-        "secondsPer30s": 7.51
+        "secondsPer30s": { "cpu": 13.99, "accelerated": 7.51 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1904,7 +1904,7 @@
           "es": { "grade": "B", "errorPercent": 6.53 },
           "pt": { "grade": "C+", "errorPercent": 10.61 }
         },
-        "secondsPer30s": 6.46
+        "secondsPer30s": { "cpu": 11.54, "accelerated": 6.46 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1923,7 +1923,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "C+", "errorPercent": 12.25 } },
-        "secondsPer30s": 0.84
+        "secondsPer30s": { "cpu": 1.28, "accelerated": 0.84 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -1942,7 +1942,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B", "errorPercent": 7.87 } },
-        "secondsPer30s": 2.1
+        "secondsPer30s": { "cpu": 3.1, "accelerated": 2.1 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -1961,7 +1961,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B-", "errorPercent": 8.55 } },
-        "secondsPer30s": 1.38
+        "secondsPer30s": { "cpu": 2.22, "accelerated": 1.38 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -1980,7 +1980,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "C-", "errorPercent": 18.18 } },
-        "secondsPer30s": 0.51
+        "secondsPer30s": { "cpu": 0.53, "accelerated": 0.51 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -1999,7 +1999,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "C", "errorPercent": 14.13 } },
-        "secondsPer30s": 0.5
+        "secondsPer30s": { "cpu": 0.73, "accelerated": 0.5 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2021,7 +2021,7 @@
           "en": { "grade": "B+", "errorPercent": 5.13 },
           "zh": { "grade": "B-", "errorPercent": 9.23 }
         },
-        "secondsPer30s": 9.79
+        "secondsPer30s": { "cpu": 19.11, "accelerated": 9.79 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2040,7 +2040,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B", "errorPercent": 6.43 } },
-        "secondsPer30s": 1.11
+        "secondsPer30s": { "cpu": 2.21, "accelerated": 1.11 }
       },
       "recommended": false,
       "supportsStreaming": true,
@@ -2111,7 +2111,7 @@
           "sv": { "grade": "C", "errorPercent": 13.26 },
           "uk": { "grade": "B", "errorPercent": 6.53 }
         },
-        "secondsPer30s": 1.2
+        "secondsPer30s": { "cpu": 2.2, "accelerated": 1.2 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2130,7 +2130,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B+", "errorPercent": 5.53 } },
-        "secondsPer30s": 1.05
+        "secondsPer30s": { "cpu": 1.98, "accelerated": 1.05 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2149,7 +2149,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B+", "errorPercent": 5.61 } },
-        "secondsPer30s": 1.79
+        "secondsPer30s": { "cpu": 3.36, "accelerated": 1.79 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2220,7 +2220,7 @@
           "sv": { "grade": "C-", "errorPercent": 16.42 },
           "uk": { "grade": "B-", "errorPercent": 8.11 }
         },
-        "secondsPer30s": 1.2
+        "secondsPer30s": { "cpu": 2.2, "accelerated": 1.2 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2239,7 +2239,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.57 } },
-        "secondsPer30s": 1.11
+        "secondsPer30s": { "cpu": 2.02, "accelerated": 1.11 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2258,7 +2258,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.45 } },
-        "secondsPer30s": 1.87
+        "secondsPer30s": { "cpu": 3.49, "accelerated": 1.87 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2277,7 +2277,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.68 } },
-        "secondsPer30s": 1.76
+        "secondsPer30s": { "cpu": 3.22, "accelerated": 1.76 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2296,7 +2296,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.24 } },
-        "secondsPer30s": 1.82
+        "secondsPer30s": { "cpu": 3.41, "accelerated": 1.82 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2324,7 +2324,7 @@
           "nl": { "grade": "B+", "errorPercent": 5.12 },
           "hi": { "grade": "B", "errorPercent": 7.4 }
         },
-        "secondsPer30s": null
+        "secondsPer30s": { "cpu": null, "accelerated": null }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2526,7 +2526,7 @@
           "yo": { "grade": "F", "errorPercent": 103.28 },
           "zh": { "grade": "F", "errorPercent": 36.21 }
         },
-        "secondsPer30s": 1.03
+        "secondsPer30s": { "cpu": 1.55, "accelerated": 1.03 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2545,7 +2545,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B", "errorPercent": 7.6 } },
-        "secondsPer30s": 0.94
+        "secondsPer30s": { "cpu": 1.46, "accelerated": 0.94 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2747,7 +2747,7 @@
           "yo": { "grade": "F", "errorPercent": 113.72 },
           "zh": { "grade": "C-", "errorPercent": 19.32 }
         },
-        "secondsPer30s": 14.96
+        "secondsPer30s": { "cpu": 31.25, "accelerated": 14.96 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2949,7 +2949,7 @@
           "yo": { "grade": "F", "errorPercent": 96 },
           "zh": { "grade": "C", "errorPercent": 15.39 }
         },
-        "secondsPer30s": 14.93
+        "secondsPer30s": { "cpu": 31.25, "accelerated": 14.93 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2968,7 +2968,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "A-", "errorPercent": 4.88 } },
-        "secondsPer30s": 6.81
+        "secondsPer30s": { "cpu": 14.53, "accelerated": 6.81 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -2987,7 +2987,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "B+", "errorPercent": 6.14 } },
-        "secondsPer30s": 2.4
+        "secondsPer30s": { "cpu": 4.79, "accelerated": 2.4 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -3189,7 +3189,7 @@
           "yo": { "grade": "F", "errorPercent": 102.29 },
           "zh": { "grade": "F", "errorPercent": 41.91 }
         },
-        "secondsPer30s": 0.7
+        "secondsPer30s": { "cpu": 0.75, "accelerated": 0.7 }
       },
       "recommended": false,
       "supportsStreaming": false,
@@ -3208,7 +3208,7 @@
       "languages": ["en"],
       "benchmark": {
         "accuracy": { "en": { "grade": "C+", "errorPercent": 10.72 } },
-        "secondsPer30s": 0.63
+        "secondsPer30s": { "cpu": 0.73, "accelerated": 0.63 }
       },
       "recommended": false,
       "supportsStreaming": false,
