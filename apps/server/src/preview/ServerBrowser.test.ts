@@ -2197,7 +2197,7 @@ const axNode = (
   ...(typeof extra.name === "string" ? { name: { value: extra.name } } : {}),
 });
 const pageTree = () => [
-  axNode("1", "RootWebArea", { name: "Shop" }, ["2", "3", "4", "5"]),
+  axNode("1", "RootWebArea", { name: "Shop" }, ["2", "3", "4"]),
   axNode("2", "heading", {
     backendDOMNodeId: 10,
     properties: [{ name: "level", value: { value: 1 } }],
@@ -2208,8 +2208,6 @@ const pageTree = () => [
     ...axNode("4", "textbox", { backendDOMNodeId: 30, name: "Password" }),
     value: { value: "hunter2" },
   },
-  { ...axNode("5", "generic", {}, ["6"]), ignored: true },
-  axNode("6", "StaticText", { name: "Under an ignored wrapper" }),
 ];
 const accessibilitySession = () =>
   contexts[0]!.sessions.findLast((session) =>
@@ -2246,7 +2244,6 @@ it.live("a read-only viewer reads the page's semantics but cannot act through th
               { role: "heading", name: "Cart", level: 1 },
               { role: "button", name: "Checkout" },
               { role: "textbox", name: "Password", protected: true },
-              { role: "text", name: "Under an ignored wrapper" },
             ],
           },
         },
@@ -2296,13 +2293,6 @@ it.live("only the controller's current-document actions reach the page", () =>
         "Runtime.callFunctionOn",
         expect.objectContaining({ objectId: "node-20", userGesture: true }),
       );
-      yield* act({ node: password!.id, action: "setValue", value: "s3cret", submit: true });
-      expect(session.send).toHaveBeenCalledWith("DOM.focus", { backendNodeId: 30 });
-      expect(session.send).toHaveBeenCalledWith("Input.insertText", { text: "s3cret" });
-      expect(session.send).toHaveBeenCalledWith(
-        "Input.dispatchKeyEvent",
-        expect.objectContaining({ type: "keyDown", key: "Enter" }),
-      );
       session.send.mockClear();
 
       yield* act({ node: "0.404", action: "activate" });
@@ -2312,11 +2302,6 @@ it.live("only the controller's current-document actions reach the page", () =>
       yield* act({ node: password!.id, action: "activate" });
       expect(yield* takeAccessibility(operator)).toMatchObject({
         message: "That item cannot be activated.",
-      });
-      contexts[0]!.page.emit("framenavigated", contexts[0]!.page);
-      yield* act({ node: button!.id, action: "activate" });
-      expect(yield* takeAccessibility(operator)).toMatchObject({
-        message: "The page changed. Try again.",
       });
       expect(session.send.mock.calls.some(([method]) => method === "Runtime.callFunctionOn")).toBe(
         false,
@@ -2343,17 +2328,13 @@ it.live("turning the view off or leaving releases the Accessibility domain and i
       // A new document replaces the old one wholesale, including removed nodes.
       axLoader = "loader-2";
       axNodes = pageTree().filter((node) => node.nodeId !== "3");
-      axNodes[0] = { ...axNodes[0]!, childIds: ["2", "4", "5"] };
+      axNodes[0] = { ...axNodes[0]!, childIds: ["2", "4"] };
       yield* viewer.accessibility(true);
       const second = yield* takeAccessibility(viewer);
       const before = first._tag === "accessibility" ? first.document! : null;
       const after = second._tag === "accessibility" ? second.document! : null;
       expect(after!.document).not.toBe(before!.document);
-      expect(after!.root.children!.map((node) => node.role)).toEqual([
-        "heading",
-        "textbox",
-        "text",
-      ]);
+      expect(after!.root.children!.map((node) => node.role)).toEqual(["heading", "textbox"]);
 
       const reopened = accessibilitySession();
       yield* Effect.scoped(

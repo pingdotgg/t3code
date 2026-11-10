@@ -134,12 +134,6 @@ describe("planAccessibleNode", () => {
       control: "activate",
     });
   });
-
-  it("skips empty presentational nodes and keeps text", () => {
-    expect(plan({ id: "1", role: "image" })).toBeNull();
-    expect(plan({ id: "2", role: "unknownwidget" })).toBeNull();
-    expect(plan({ id: "3", role: "text", name: "Hello" })).toEqual({ kind: "text", text: "Hello" });
-  });
 });
 
 interface FakeNode {

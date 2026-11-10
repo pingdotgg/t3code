@@ -105,6 +105,7 @@ const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const decodeAccessibilityAction = Schema.decodeUnknownOption(PreviewAccessibilityAction);
+const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
@@ -2738,7 +2739,7 @@ const make = Effect.gen(function* () {
       const notice = await tab.control
         .human(viewer.id, () => tab.accessibility.act(action.value))
         .catch((cause: unknown) =>
-          cause instanceof BrowserControlInterrupted
+          isBrowserControlInterrupted(cause)
             ? AccessibilityNotice.notController
             : AccessibilityNotice.stale,
         );
