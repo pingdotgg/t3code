@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "./models.ts";
@@ -6,6 +6,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
@@ -84,7 +85,7 @@ const repositoryIdentity = {
     remoteName: "upstream",
     remoteUrl: "https://github.com/t3tools/t3code.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "t3tools",
   name: "t3code",
   displayName: "T3 Code",
@@ -264,28 +265,6 @@ describe("buildProjectGroups", () => {
     }
   });
 
-  it("uses a shared custom title as the repository group's label", () => {
-    const projects = [
-      makeProject("first", "/work/t3code", { title: "Custom project" }),
-      makeProject("second", "/work/t3code-2", { title: "Custom project" }),
-    ];
-
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "Custom project",
-    );
-  });
-
-  it("keeps the repository label when shared titles match its repository name", () => {
-    const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
-    ];
-
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
-    );
-  });
-
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
@@ -308,34 +287,6 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
-  });
-
-  it("labels a fork by its canonical key when its origin has no display name", () => {
-    const identity = {
-      ...repositoryIdentity,
-      origin: { canonicalKey: "internal-host" },
-    };
-    const projects = [
-      makeProject("fork", "/work/fork", { repositoryIdentity: identity }),
-      makeProject("fork-2", "/work/fork-2", { repositoryIdentity: identity }),
-    ];
-
-    const groups = buildProjectGroups({ projects, settings: settings("repository") });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("internal-host");
-  });
-
-  it("keeps physical clones in separate groups when requested", () => {
-    const projects = [
-      makeProject("t3code", "/work/t3code"),
-      makeProject("t3code-2", "/work/t3code-2"),
-      makeProject("t3code-3", "/work/t3code-3"),
-    ];
-
-    const groups = buildProjectGroups({ projects, settings: settings("separate") });
-    expect(groups).toHaveLength(3);
-    expect(groups.flatMap((group) => group.members)).toHaveLength(3);
-    expect(groups.map((group) => group.label)).toEqual(["t3code", "t3code-2", "t3code-3"]);
   });
 
   it("applies a physical-project override without dropping its siblings", () => {
@@ -374,24 +325,6 @@ describe("buildProjectGroups", () => {
     expect(groups[0]?.members).toHaveLength(1);
     expect(groups[0]?.representative.id).toBe("fresh");
     expect(groups[0]?.memberProjectRefs).toHaveLength(2);
-  });
-
-  it("uses repository identity from a duplicate registration when the winner lacks it", () => {
-    const identified = makeProject("identified", "/work/t3code", {
-      updatedAt: "2026-07-01T00:00:00.000Z",
-    });
-    const freshUnidentified = makeProject("fresh", "/work/t3code/", {
-      repositoryIdentity: null,
-      updatedAt: "2026-07-02T00:00:00.000Z",
-    });
-    const sibling = makeProject("sibling", "/work/t3code-2");
-
-    const groups = buildProjectGroups({
-      projects: [identified, freshUnidentified, sibling],
-      settings: settings("repository"),
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["fresh", "sibling"]);
   });
 
   it("uses the freshest winner's repository identity when stale duplicates disagree", () => {
@@ -447,6 +380,31 @@ describe("buildProjectGroups", () => {
   });
 });
 
+describe("project pins and archives", () => {
+  const at = "2026-07-02T00:00:00.000Z";
+  const remote = EnvironmentId.make("remote");
+  const group = (...projects: EnvironmentProject[]) =>
+    buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+  it("keeps a project visible while its machines disagree", () => {
+    const local = makeProject("local", "/work/t3code");
+    const other = makeProject("remote", "/work/t3code", { environmentId: remote });
+    const partial = group({ ...local, pinnedAt: at, archivedAt: at }, other);
+    expect(partial).toMatchObject({ pinned: true, archived: false });
+    expect(group({ ...local, archivedAt: at }, { ...other, archivedAt: at }).archived).toBe(true);
+  });
+
+  it("offers pinned projects first and leaves archived ones out", () => {
+    const pickable = pickableProjectGroups([
+      { key: "a", pinned: false, archived: false },
+      { key: "b", pinned: true, archived: true },
+      { key: "c", pinned: true, archived: false },
+      { key: "d", pinned: false, archived: true },
+    ]);
+    expect(pickable.map((entry) => entry.key)).toEqual(["c", "a"]);
+  });
+});
+
 describe("sortProjectsByGroupOrder", () => {
   const remote = EnvironmentId.make("remote");
   const ref = (projectId: string, env = environmentId) => ({
@@ -454,26 +412,6 @@ describe("sortProjectsByGroupOrder", () => {
     projectId: ProjectId.make(projectId),
   });
   const project = (id: string, env: string = environmentId) => ({ id, environmentId: env });
-
-  it("follows the group order, keeping ungrouped projects last in their own order", () => {
-    const sorted = sortProjectsByGroupOrder(
-      [
-        project("alpha"),
-        project("zeta"),
-        project("orphan-b"),
-        project("beta"),
-        project("orphan-a"),
-      ],
-      [{ memberProjectRefs: [ref("zeta")] }, { memberProjectRefs: [ref("beta"), ref("alpha")] }],
-    );
-    expect(sorted.map((entry) => entry.id)).toEqual([
-      "zeta",
-      "alpha",
-      "beta",
-      "orphan-b",
-      "orphan-a",
-    ]);
-  });
 
   it("tells the same project id on two environments apart", () => {
     const sorted = sortProjectsByGroupOrder(

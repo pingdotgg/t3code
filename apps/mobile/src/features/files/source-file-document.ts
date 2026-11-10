@@ -1,4 +1,4 @@
-import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
+import type { HighlightedToken } from "../../lib/highlights";
 import { buildNativeSourceRows } from "./nativeSourceFileAdapter";
 
 const MAX_CACHED_DOCUMENTS = 8;
@@ -54,10 +54,9 @@ export function prepareSourceFileDocument(contents: string): SourceFileDocument 
   return document;
 }
 
-// A selectable document cannot virtualize its rows. Cap React spans instead; large
-// attachments remain fully selectable as one plain string, including every newline.
+// Virtualization prevents document-wide selection; cap spans and fall back to a fully selectable string.
 export function boundedSelectableSourceTokens(
-  tokens: ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>> | null,
+  tokens: ReadonlyArray<ReadonlyArray<HighlightedToken>> | null,
 ): typeof tokens {
   if (!tokens) return null;
   let spans = tokens.length;
@@ -66,4 +65,29 @@ export function boundedSelectableSourceTokens(
     if (spans > 2_000) return null;
   }
   return tokens;
+}
+
+export interface SelectableSourceHtmlStyle {
+  readonly foreground: string;
+  readonly selection: string;
+  readonly fontSize: number;
+  readonly rowHeight: number;
+  readonly wordBreak: boolean;
+}
+
+// A <pre> would drop a leading newline, so whitespace is preserved on a plain <div>.
+export function selectableSourceHtml(contents: string, style: SelectableSourceHtmlStyle): string {
+  const text = contents
+    .split("\n")
+    .map(
+      (line, index) =>
+        `<span id="L${index + 1}">${line.replace(/[&<>]/g, (char) =>
+          char === "&" ? "&amp;" : char === "<" ? "&lt;" : "&gt;",
+        )}</span>`,
+    )
+    .join("\n");
+  const wrap = style.wordBreak
+    ? "white-space:pre-wrap;overflow-wrap:anywhere"
+    : "white-space:pre;width:max-content";
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';style-src 'unsafe-inline'"><style>html,body{margin:0;background:transparent}div{box-sizing:border-box;padding:8px 12px ${style.rowHeight}px;color:${style.foreground};font-family:monospace;font-size:${style.fontSize}px;line-height:${style.rowHeight / style.fontSize};${wrap}}::selection{background:color-mix(in srgb,${style.selection} 32%,transparent)}</style></head><body><div>${text}</div></body></html>`;
 }

@@ -132,12 +132,9 @@ export function testR2Conditional(
   }
 
   const { etag, uploaded: lastModifiedRaw } = metadata;
-  const ifMatch =
-    cond.etagMatches === undefined ||
-    includesEtag(cond.etagMatches, etag, "strong");
+  const ifMatch = cond.etagMatches === undefined || includesEtag(cond.etagMatches, etag, "strong");
   const ifNoneMatch =
-    cond.etagDoesNotMatch === undefined ||
-    !includesEtag(cond.etagDoesNotMatch, etag, "weak");
+    cond.etagDoesNotMatch === undefined || !includesEtag(cond.etagDoesNotMatch, etag, "weak");
 
   const maybeTruncate = cond.secondsGranularity ? truncateToSeconds : identity;
   const lastModified = maybeTruncate(lastModifiedRaw);

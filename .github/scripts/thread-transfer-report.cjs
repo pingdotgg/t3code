@@ -244,10 +244,26 @@ async function resolve({ github, context, core }) {
 
   let pullNumber = source.pull_requests?.[0]?.number;
   if (!pullNumber) {
-    const associated = await github.paginate(
-      github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { owner, repo, commit_sha: source.head_sha, per_page: 100 },
-    );
+    let associated;
+    try {
+      associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+        owner,
+        repo,
+        commit_sha: source.head_sha,
+        per_page: 100,
+      });
+    } catch (error) {
+      // A force-pushed or deleted PR head can disappear before this workflow runs.
+      if (
+        error.status === 422 &&
+        error.response?.data?.message === `No commit found for SHA: ${source.head_sha}`
+      ) {
+        core.info(`Skipping CI result for unavailable commit ${source.head_sha}.`);
+        core.setOutput("publish", "false");
+        return;
+      }
+      throw error;
+    }
     const matchingPulls = associated.filter(
       (pull) =>
         pull.state === "open" &&
@@ -278,25 +294,34 @@ async function resolve({ github, context, core }) {
 
   const sourceArtifacts = await artifactsForRun(github, owner, repo, source.id);
   const sourceArtifact = findResultArtifact(sourceArtifacts);
-  // CI requires the artifact whenever the server tests run, so a passing run
-  // without one skipped them because the PR cannot affect the server.
+  // Successful server tests require this artifact; its absence means CI skipped them.
   if (!sourceArtifact && source.conclusion === "success") {
     core.info("CI skipped the server tests for this change; nothing to report.");
     core.setOutput("publish", "false");
     return;
   }
-  const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    owner,
-    repo,
-    workflow_id: source.workflow_id,
-    branch: pull.base.ref,
-    event: "push",
-    status: "success",
-    per_page: 100,
-  });
+  // One page each for the exact base and the newest runs; paging through
+  // every successful main run costs up to ten requests to keep 20.
+  const listRuns = async (filters) => {
+    const { data } = await github.rest.actions.listWorkflowRuns({
+      owner,
+      repo,
+      workflow_id: source.workflow_id,
+      branch: pull.base.ref,
+      event: "push",
+      status: "success",
+      per_page: 20,
+      ...filters,
+    });
+    return data.workflow_runs;
+  };
+  const [baseRuns, recentRuns] = await Promise.all([
+    listRuns({ head_sha: pull.base.sha }),
+    listRuns({}),
+  ]);
   const orderedRuns = [
-    ...workflowRuns.filter((run) => run.head_sha === pull.base.sha),
-    ...workflowRuns.filter((run) => run.head_sha !== pull.base.sha),
+    ...baseRuns,
+    ...recentRuns.filter((run) => run.head_sha !== pull.base.sha),
   ].slice(0, 20);
 
   let baselineRun;

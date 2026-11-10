@@ -3,12 +3,15 @@ import type { ParamListBase, StackNavigationState } from "@react-navigation/nati
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  collapsedSplitTransition,
   nativeStackPopAction,
   nativeWorkspacePopAction,
   nativeWorkspacePopCount,
+  projectStackPresentation,
   projectWorkspaceStack,
   partitionStackPresentations,
   reconcileStackScreens,
+  type CollapsedSplitColumn,
 } from "./workspace-stack-projection";
 
 const requireNavigation = NodeModule.createRequire(
@@ -21,7 +24,7 @@ const { StackRouter } = requireNavigation("@react-navigation/routers") as {
 const home = { key: "home", name: "Home" };
 const thread = { key: "thread", name: "Thread", params: { threadId: "draft-thread" } };
 const files = { key: "files", name: "ThreadFiles", params: thread.params };
-const settings = { key: "settings", name: "SettingsSheet" };
+const settings = { key: "settings", name: "Settings" };
 const legal = { key: "legal", name: "SettingsLegal" };
 
 function history(
@@ -32,40 +35,103 @@ function history(
     type: "stack",
     stale: false,
     index: routes.length - 1,
-    routeNames: ["Home", "Thread", "ThreadFiles", "SettingsSheet", "SettingsLegal"],
+    routeNames: ["Home", "Thread", "ThreadFiles", "Settings", "SettingsLegal"],
     routes,
     preloadedRoutes: [],
   };
 }
 
-describe("workspace router projection", () => {
-  it("keeps workspace flows beside Home and restores them after a modal closes", () => {
-    const draft = { key: "draft", name: "NewTaskSheet" };
-    const modal = { key: "connect", name: "ConnectOnboarding" };
-    const routes = [home, thread, draft, settings, legal];
-    const isOverlay = (route: { name: string }) => route.name === "ConnectOnboarding";
-    expect(projectWorkspaceStack(history([...routes, modal]), isOverlay)).toEqual({
-      primary: home,
-      detail: [thread, draft, settings, legal],
-      overlays: [modal],
-    });
-    expect(projectWorkspaceStack(history(routes), isOverlay)).toEqual({
-      primary: home,
-      detail: [thread, draft, settings, legal],
+describe("workspace presentation envelope", () => {
+  const isOverlay = (route: { name: string }) => route.name === "ReviewSheet";
+
+  it("keeps card settings in the detail history and restores it after system Back closes a sheet", () => {
+    const router = StackRouter({});
+    const state = history([home, thread, settings]);
+    const routerOptions = {
+      routeNames: [...state.routeNames, "ReviewSheet", "ReviewDetails"],
+      routeParamList: {},
+      routeGetIdList: {},
+    };
+    const opened = router.getStateForAction(
+      { ...state, routeNames: routerOptions.routeNames },
+      { type: "PUSH", payload: { name: "ReviewSheet" } },
+      routerOptions,
+    );
+    if (!opened || opened.stale !== false) throw new Error("Expected an opened sheet history");
+    const projection = projectStackPresentation(opened, isOverlay);
+    expect(projection.workspace).toEqual(state.routes);
+    expect(projection.workspace.at(-1)).toBe(settings);
+    expect(projection.overlays.map((route) => route.name)).toEqual(["ReviewSheet"]);
+    const closed = router.getStateForAction(opened, { type: "GO_BACK" }, routerOptions);
+    if (!closed || closed.stale !== false) throw new Error("Expected a restored workspace history");
+    expect(projectStackPresentation(closed, isOverlay)).toEqual({
+      workspace: state.routes,
       overlays: [],
     });
   });
 
-  it("keeps the thread and file history in the detail column when a modal is opened", () => {
-    const state = history([home, thread, files, settings, legal]);
-    const projection = projectWorkspaceStack(state, (route) => route.name === "SettingsSheet");
-    expect(projection).toEqual({
-      primary: home,
-      detail: [thread, files],
-      overlays: [settings, legal],
+  it("keeps pushed sheet pages above the workspace and dismisses the entire sheet group", () => {
+    const sheet = { key: "review", name: "ReviewSheet" };
+    const page = { key: "review-details", name: "ReviewDetails" };
+    const state = history([home, thread, sheet, page]);
+    expect(projectStackPresentation(state, isOverlay)).toEqual({
+      workspace: [home, thread],
+      overlays: [sheet, page],
     });
-    expect(projection.detail[0]).toBe(thread);
-    expect(state.routes).toEqual([home, thread, files, settings, legal]);
+    const closed = StackRouter({}).getStateForAction(
+      state,
+      nativeWorkspacePopAction(state, sheet.key)!,
+      { routeNames: state.routeNames, routeParamList: {}, routeGetIdList: {} },
+    );
+    if (!closed || closed.stale !== false) throw new Error("Expected a dismissed sheet history");
+    expect(projectStackPresentation(closed, isOverlay)).toEqual({
+      workspace: [home, thread],
+      overlays: [],
+    });
+    expect(closed.routes[1]).toBe(thread);
+  });
+
+  it("preserves a cold-linked detail history without requiring a Home route", () => {
+    const sheet = { key: "review", name: "ReviewSheet" };
+    expect(projectStackPresentation(history([thread, files, sheet]), isOverlay)).toEqual({
+      workspace: [thread, files],
+      overlays: [sheet],
+    });
+  });
+});
+
+describe("workspace router projection", () => {
+  it("keeps workspace flows beside Home and restores them after a modal closes", () => {
+    const draft = { key: "draft", name: "Thread", params: { draft: {} } };
+    const modal = { key: "connect", name: "ConnectOnboarding" };
+    const routes = [home, thread, draft, legal];
+    const isOverlay = (route: { name: string }) => route.name === "ConnectOnboarding";
+    expect(projectWorkspaceStack(history([...routes, modal]), isOverlay)).toEqual({
+      primary: home,
+      detail: [thread, draft, legal],
+      overlays: [modal],
+    });
+    expect(projectWorkspaceStack(history(routes), isOverlay)).toEqual({
+      primary: home,
+      detail: [thread, draft, legal],
+      overlays: [],
+    });
+  });
+
+  it("shows the Settings list as the primary content and its pages as the detail", () => {
+    const environments = { key: "environments", name: "SettingsEnvironments" };
+    expect(projectWorkspaceStack(history([home, settings, environments]), () => false)).toEqual({
+      primary: home,
+      detail: [environments],
+      overlays: [],
+    });
+  });
+
+  it("returns from a Settings page to the Settings list that Home is showing", () => {
+    const environments = { key: "environments", name: "SettingsEnvironments" };
+    expect(
+      nativeStackPopAction(history([home, settings, environments]), environments.key, home.key),
+    ).toMatchObject({ payload: { count: 1 } });
   });
 
   it("retains a cold-linked detail route without changing the router history", () => {
@@ -76,14 +142,6 @@ describe("workspace router projection", () => {
       overlays: [],
     });
     expect(state.routes[0]).toBe(thread);
-  });
-
-  it("restores the empty detail column after Back reaches the thread list", () => {
-    expect(projectWorkspaceStack(history([home]), () => false)).toEqual({
-      primary: home,
-      detail: [],
-      overlays: [],
-    });
   });
 });
 
@@ -105,9 +163,6 @@ describe("native workspace dismissal", () => {
     const state = { ...history([home, thread, settings, legal]), index: 1 };
     expect(nativeWorkspacePopAction(state, settings.key)).toBeNull();
     expect(nativeWorkspacePopAction(state, legal.key)).toBeNull();
-  });
-  it("pops a native dismissed file while keeping the conversation and its draft mounted", () => {
-    expect(nativeWorkspacePopCount(history([home, thread, files]), files.key)).toBe(1);
   });
 
   it("removes the descendants when UIKit dismisses their parent conversation", () => {
@@ -185,6 +240,111 @@ describe("native card pop handoff", () => {
   });
 });
 
+describe("collapsed split Back", () => {
+  const routerOptions = {
+    routeNames: history([home]).routeNames,
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  type Appearance = "willAppear" | "didAppear" | "willDisappear";
+  // UIKit's appearance callbacks for one collapsed transition, against the router at each step.
+  function replay(
+    steps: ReadonlyArray<readonly [Appearance, string, StackNavigationState<ParamListBase>]>,
+  ) {
+    let column: CollapsedSplitColumn = { visible: "secondary", leaving: null };
+    let pop: ReturnType<typeof nativeStackPopAction> = null;
+    for (const [type, key, state] of steps) {
+      const transition = collapsedSplitTransition(column, { type, key }, state, home.key);
+      column = transition.column;
+      pop ??= transition.pop;
+    }
+    return { visible: column.visible, pop };
+  }
+
+  it("returns the router to the list so the next selection opens a new detail", () => {
+    const state = history([home, thread]);
+    const back = replay([
+      ["willDisappear", thread.key, state],
+      ["willAppear", home.key, state],
+      ["didAppear", home.key, state],
+    ]);
+    expect(back.visible).toBe("primary");
+    const router = StackRouter({});
+    const listed = router.getStateForAction(state, back.pop!, routerOptions);
+    expect(listed?.routes).toEqual([home]);
+    if (!listed || listed.stale !== false) throw new Error("Expected a rehydrated router history");
+    const select = {
+      type: "NAVIGATE",
+      payload: { name: "Thread", params: { threadId: "next" } },
+    } as const;
+    expect(router.getStateForAction(listed, select, routerOptions)?.routes[1]?.key).not.toBe(
+      thread.key,
+    );
+    // Left on the hidden detail, the selection would only rename it and never show the column.
+    expect(router.getStateForAction(state, select, routerOptions)?.routes[1]?.key).toBe(thread.key);
+  });
+
+  it("clears every detail while keeping a presentation opened during the Back animation", () => {
+    const leaving = history([home, thread, files]);
+    const presented = history([home, thread, files, settings]);
+    const { pop } = replay([
+      ["willDisappear", files.key, leaving],
+      ["didAppear", home.key, presented],
+    ]);
+    expect(StackRouter({}).getStateForAction(presented, pop!, routerOptions)?.routes).toEqual([
+      home,
+      settings,
+    ]);
+  });
+
+  it("keeps the detail when it appears again before the list finishes appearing", () => {
+    const state = history([home, thread]);
+    const cancelledSwipe = replay([
+      ["willDisappear", thread.key, state],
+      ["willAppear", home.key, state],
+      ["willAppear", thread.key, state],
+      ["didAppear", thread.key, state],
+    ]);
+    expect(cancelledSwipe).toEqual({ visible: "secondary", pop: null });
+    expect(
+      replay([
+        ["willDisappear", thread.key, state],
+        ["willAppear", thread.key, state],
+        ["didAppear", home.key, state],
+      ]).pop,
+    ).toBeNull();
+  });
+
+  it("does not mistake JS navigation or a cold link for native Back", () => {
+    const pushed = history([home, thread, files]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, pushed],
+        ["didAppear", files.key, pushed],
+      ]),
+    ).toEqual({ visible: "secondary", pop: null });
+    const presented = history([home, thread, settings]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, presented],
+        ["didAppear", home.key, presented],
+      ]).pop,
+    ).toBeNull();
+    const popped = history([home]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, popped],
+        ["didAppear", home.key, popped],
+      ]).pop,
+    ).toBeNull();
+    // A linked thread whose list appears first still needs its detail column shown.
+    expect(replay([["didAppear", home.key, history([home, thread])]])).toEqual({
+      visible: "primary",
+      pop: null,
+    });
+  });
+});
+
 describe("v5 stack handoff", () => {
   it("releases a completed native pop when the router acknowledges it", () => {
     const completed = new Set([files.key]);
@@ -227,6 +387,7 @@ describe("v5 stack handoff", () => {
       settings,
     ]);
   });
+  // regression: #17231 keep native screens ordered during stack pops
   it("retains a multi-page pop in order without changing the active router order", () => {
     const replacement = { ...thread, key: "replacement" };
     const screens = reconcileStackScreens([home, thread, files], [home, replacement]);
@@ -245,7 +406,7 @@ describe("v5 stack handoff", () => {
     expect(
       partitionStackPresentations(
         [home, thread, settings, legal, secondModal],
-        (route) => route.name === "SettingsSheet",
+        (route) => route.name === "Settings",
       ),
     ).toEqual([[home, thread], [settings, legal], [secondModal]]);
   });

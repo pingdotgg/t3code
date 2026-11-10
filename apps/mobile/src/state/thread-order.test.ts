@@ -11,6 +11,7 @@ import {
   getPendingThreadOrder,
   pendingThreadOrderAtom,
 } from "./thread-order";
+import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadShells } from "./threads";
 
 vi.mock("./atom-registry", async () => {
@@ -19,7 +20,9 @@ vi.mock("./atom-registry", async () => {
 });
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { environmentThreadShells: { threadShellsAtom: Atom.make([]).pipe(Atom.keepAlive) } };
+  return {
+    environmentThreadShells: { navigationThreadShellsAtom: Atom.make([]).pipe(Atom.keepAlive) },
+  };
 });
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -30,7 +33,10 @@ vi.mock("./use-thread-outbox", async () => {
   return { queuedThreadKeysAtom: Atom.make(new Set<string>()).pipe(Atom.keepAlive) };
 });
 
-const shellsAtom = environmentThreadShells.threadShellsAtom as Atom.Writable<
+type ServerConfigs = Atom.Type<typeof environmentServerConfigsAtom>;
+type ServerConfig = ServerConfigs extends ReadonlyMap<EnvironmentId, infer Config> ? Config : never;
+const configsAtom = environmentServerConfigsAtom as Atom.Writable<ServerConfigs, ServerConfigs>;
+const shellsAtom = environmentThreadShells.navigationThreadShellsAtom as Atom.Writable<
   readonly EnvironmentThreadShell[],
   readonly EnvironmentThreadShell[]
 >;
@@ -90,7 +96,7 @@ describe("shared mobile pending move", () => {
     expect(getPendingThreadOrder()).toBeNull();
   });
 
-  it.each(["failure", "interruption"])("releases a %s without restoring old canonical keys", () => {
+  it("releases a cancelled move without restoring old canonical keys", () => {
     const { start, upsert } = fixture();
     const move = start();
     upsert("b", "aa");
@@ -112,5 +118,52 @@ describe("shared mobile pending move", () => {
     move.complete();
     appAtomRegistry.set(shellsAtom, rows);
     expect(getPendingThreadOrder()).toBeNull();
+  });
+
+  it("retires the hold when a snooze expiry changes the section without a shell event", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-01T03:00:00.000Z"));
+      const { rows, start } = fixture();
+      // Only the snooze capability matters to the section filter; afterEach's
+      // registry reset restores the empty configs.
+      const config = { environment: { capabilities: { threadSnooze: true } } } as ServerConfig;
+      appAtomRegistry.set(configsAtom, new Map([[EnvironmentId.make("env"), config]]));
+      const snoozed = makeThreadShellFixture({
+        id: ThreadId.make("c"),
+        environmentId: EnvironmentId.make("env"),
+        createdAt: "2026-06-01T00:00:00.000Z",
+        snoozedUntil: "2026-06-01T03:00:05.000Z",
+      });
+      appAtomRegistry.set(shellsAtom, [...rows, snoozed]);
+      start();
+      expect(getPendingThreadOrder()).not.toBeNull();
+
+      vi.advanceTimersByTime(5_000);
+
+      expect(appAtomRegistry.get(pendingThreadOrderAtom)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tears down a superseded hold's clocks when another hold begins", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-01T03:00:00.000Z"));
+      const { rows, start } = fixture();
+      const snoozed = makeThreadShellFixture({
+        id: ThreadId.make("c"),
+        environmentId: EnvironmentId.make("env"),
+        createdAt: "2026-06-01T00:00:00.000Z",
+        snoozedUntil: "2026-06-01T04:00:00.000Z",
+      });
+      appAtomRegistry.set(shellsAtom, [...rows, snoozed]);
+      start();
+      start().cancel();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

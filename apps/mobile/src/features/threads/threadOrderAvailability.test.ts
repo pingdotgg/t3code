@@ -183,16 +183,6 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     expect(batch.get("env:thread:2")).toEqual({ canMoveUp: true, canMoveDown: false });
   });
 
-  it("denies single-row sections on both directions", () => {
-    const rows = [makeRow("t0", "env-w", "a", true)];
-    const batch = computeThreadMoveAvailability({
-      ordered: rows,
-      section: "pinned",
-      reorderableEnvironmentIds: WRITABLE,
-    });
-    expect(batch.get("env-w:t0")).toEqual({ canMoveUp: false, canMoveDown: false });
-  });
-
   it("answers empty and single-row sections without consulting hidden rows", () => {
     const hidden = [makeRow("h0", "env-w", "b", true), makeRow("h1", "env-x", null, true)];
     expect(
@@ -254,18 +244,6 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
       reorderableEnvironmentIds: WRITABLE,
     });
     const reference = referenceAvailability(ordered, allThreads, WRITABLE);
-    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
-  });
-
-  it("agrees on an adversarial section of consecutive single-char keys", () => {
-    const rows = ["a", "b", "c", "d"].map((key, index) => makeRow(`t${index}`, "env-w", key, true));
-    const batch = computeThreadMoveAvailability({
-      ordered: rows,
-      allThreads: rows,
-      section: "pinned",
-      reorderableEnvironmentIds: WRITABLE,
-    });
-    const reference = referenceAvailability(rows, rows, WRITABLE);
     expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
   });
 });

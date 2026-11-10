@@ -137,6 +137,19 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    assert.equal(
+      historicalMessage({
+        ...base,
+        type: "file_change",
+        fileName: "src/a.ts",
+        changes: [
+          { operation: "update", path: "src/a.ts" },
+          { operation: "add", path: "src/b.ts" },
+          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+        ],
+      })?.text,
+      "File change: src/a.ts, src/b.ts, src/new.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,
@@ -146,19 +159,6 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
-  });
-
-  it("retains short conversations verbatim in role and order", () => {
-    const selected = selectHistory({ messages, coverage: "History", budget: 16_000 });
-    assert.deepEqual(selected.messages, messages);
-    const items = historyResponseItems(selected.messages, selected.context);
-    assert.deepEqual(
-      items.map((item) => item.role),
-      ["user", "user", "assistant"],
-    );
-    assert.include(items[1]!.content[0]!.text, messages[0]!.text);
-    assert.include(items[2]!.content[0]!.text, messages[1]!.text);
-    assert.equal(selected.omittedItems, 0);
   });
 
   it("omits oversized multilingual items whole, preserves original constraints and recent work", () => {
@@ -455,39 +455,6 @@ describe("handoff delivery", () => {
       );
       assert.deepEqual(durable.delivery?.omittedItemIds, [omittedBeforeDelivery, oversized.itemId]);
       assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
-    }),
-  );
-  it.effect("loads the history budget only when a handoff needs delivery", () =>
-    Effect.gen(function* () {
-      let reads = 0;
-      const input = {
-        providerThread,
-        budget: Effect.sync(() => {
-          reads++;
-          return 16_000;
-        }),
-        alreadyDeliveredItemIds: new Set<string>(),
-        persist: () => Effect.void,
-      };
-      yield* deliverContextHandoffs({ ...input, handoffs: [] });
-      yield* deliverContextHandoffs({ ...input, handoffs: [handoff], deferInline: true });
-      yield* deliverContextHandoffs({
-        ...input,
-        handoffs: [
-          {
-            ...handoff,
-            delivery: {
-              nativeThreadId: providerThread.nativeThreadRef!.nativeId!,
-              status: "injected",
-              itemIds: [],
-            },
-          },
-        ],
-      });
-      assert.equal(reads, 0);
-      const result = yield* deliverContextHandoffs({ ...input, handoffs: [handoff] });
-      assert.equal(reads, 1);
-      assert.include(result.context, messages[0]!.text);
     }),
   );
 

@@ -1,4 +1,5 @@
-import { Pressable, View } from "react-native";
+import { Button } from "../../../components/ui/Button";
+import { View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -38,30 +39,15 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
       <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
         <Text className="text-sm leading-6 text-foreground-muted">{notice.description}</Text>
       </View>
-      <View className="min-h-12 flex-row items-center justify-between gap-3">
+      <View className="min-h-12 flex-row flex-wrap items-center justify-between gap-3">
         {state.canWrite || busy || notice.kind === "unavailable" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: busy, busy }}
+          <Button
+            label={notice.action}
+            tone={compact ? "secondary" : "contrast"}
             disabled={busy}
-            style={{ width: 152 }}
-            className={
-              compact
-                ? "min-h-12 items-center justify-center rounded-full bg-secondary px-4 active:opacity-70"
-                : "min-h-12 items-center justify-center rounded-full bg-foreground px-4 active:opacity-70"
-            }
             onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
-          >
-            <Text
-              className={
-                compact
-                  ? "text-center font-t3-medium text-secondary-foreground"
-                  : "text-center font-t3-medium text-screen"
-              }
-            >
-              {notice.action}
-            </Text>
-          </Pressable>
+            loading={busy}
+          />
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"

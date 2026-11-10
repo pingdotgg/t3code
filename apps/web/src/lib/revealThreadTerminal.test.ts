@@ -17,20 +17,6 @@ beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
 });
 
-it("reveals a server-created setup terminal without adding a default shell", () => {
-  revealThreadTerminal(threadRef, "setup-install");
-  expect(
-    selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      threadRef,
-    ),
-  ).toMatchObject({
-    terminalOpen: true,
-    terminalIds: ["setup-install"],
-    activeTerminalId: "setup-install",
-  });
-});
-
 it("reopens the existing panel and selects a running terminal in its split", () => {
   const panels = useRightPanelStore.getState();
   panels.openTerminal(threadRef, "terminal-1");

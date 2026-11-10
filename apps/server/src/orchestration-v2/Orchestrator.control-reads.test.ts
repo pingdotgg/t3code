@@ -21,12 +21,19 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  orchestrationCommandDuration,
+  orchestrationCommandsTotal,
+} from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -47,11 +54,148 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
+);
+
+it.effect(
+  "records approval feedback and targets only its runtime request without dispatching a parent turn",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:approval-feedback");
+      const sessionId = ProviderSessionId.make("session:approval-feedback");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-approval-feedback"),
+        threadId,
+        projectId: ProjectId.make("project:approval-feedback"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* projections.apply({
+        id: EventId.make("session:approval-feedback"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      for (const name of ["child", "other"]) {
+        yield* projections.apply({
+          id: EventId.make(`request:${name}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(name),
+            nodeId: NodeId.make(`node:${name}`),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: sessionId,
+              supportsFeedback: name === "child",
+            },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
+      const commandId = CommandId.make("respond:approval-feedback");
+      const feedback = "Run it in a safer manner.";
+      for (const [index, invalid] of [
+        { requestId: RuntimeRequestId.make("other"), decision: "decline" as const, feedback },
+        { requestId: RuntimeRequestId.make("child"), decision: "accept" as const, feedback },
+        { requestId: RuntimeRequestId.make("child"), decision: "decline" as const, feedback: "  " },
+      ].entries()) {
+        const rejectedId = CommandId.make(`invalid-feedback:${index}`);
+        const rejected = yield* orchestrator
+          .dispatch({
+            type: "runtime-request.respond",
+            commandId: rejectedId,
+            threadId,
+            ...invalid,
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(rejected));
+        assert.deepEqual(yield* outbox.listByCommandId(rejectedId), []);
+      }
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId: RuntimeRequestId.make("child"),
+        decision: "decline",
+        feedback,
+      });
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(
+        projection.runtimeRequests.find((request) => request.id === "child")?.feedback,
+        feedback,
+      );
+      assert.equal(
+        projection.runtimeRequests.find((request) => request.id === "other")?.status,
+        "pending",
+      );
+      assert.equal(projection.messages.at(-1)?.text, feedback);
+      const feedbackMessageId = MessageId.make("approval-feedback:child");
+      assert.ok(
+        projection.visibleTurnItems.some(
+          ({ item }) =>
+            item.type === "user_message" &&
+            item.messageId === feedbackMessageId &&
+            item.text === feedback,
+        ),
+      );
+      const history = yield* projections.getTimelinePage(threadId, { limit: 20, view: "messages" });
+      assert.ok(
+        history.items.some(
+          ({ item }) =>
+            item.type === "user_message" &&
+            item.messageId === feedbackMessageId &&
+            item.text === feedback,
+        ),
+      );
+      assert.equal(projection.runs.length, 0);
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request),
+        [
+          {
+            type: "runtime-request.respond",
+            providerSessionId: sessionId,
+            requestId: RuntimeRequestId.make("child"),
+            decision: "decline",
+            feedback,
+          },
+        ],
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("marks a never-visited thread's first completion unread", () =>
@@ -116,6 +260,120 @@ it.effect("marks a never-visited thread's first completion unread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(function* (
+  name: string,
+  snoozeMinutes: number,
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make(`thread:${name}`);
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`create-${name}`),
+    threadId,
+    projectId: ProjectId.make(`project:${name}`),
+    title: "Snoozed completion",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* orchestrator.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(`dispatch-${name}`),
+    threadId,
+    messageId: MessageId.make(`dispatch-${name}`),
+    text: "Run in the background",
+    attachments: [],
+    dispatchMode: { type: "defer_start" },
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  yield* orchestrator.dispatch({
+    type: "run.interrupt",
+    commandId: CommandId.make(`interrupt-${name}`),
+    threadId,
+    runId: (yield* projections.getThreadProjection(threadId)).runs[0]!.id,
+  });
+  const completedAt = (yield* projections.getThreadProjection(threadId)).runs.at(-1)?.completedAt;
+  assert.ok(completedAt);
+  yield* TestClock.adjust("1 second");
+  const snoozedUntil = DateTime.add(yield* DateTime.now, { minutes: snoozeMinutes });
+  yield* orchestrator.dispatch({
+    type: "thread.snooze",
+    commandId: CommandId.make(`snooze-${name}`),
+    threadId,
+    snoozedUntil: DateTime.formatIso(snoozedUntil),
+  });
+  return { threadId, completedAt, snoozedUntil };
+});
+
+it.effect("mark unread retires an expired snooze so a dismissed wake stays dismissed", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, completedAt, snoozedUntil } = yield* completeAndSnoozeThread(
+      "mark-unread-expired-snooze",
+      1,
+    );
+    yield* TestClock.adjust("2 minutes");
+    yield* orchestrator.dispatch({
+      type: "thread.visit",
+      commandId: CommandId.make("dismiss-woke"),
+      threadId,
+      visitedAt: DateTime.formatIso(snoozedUntil),
+    });
+    const dismissed = yield* projections.getThread(threadId);
+    assert.deepEqual(dismissed.lastVisitedAt, snoozedUntil);
+
+    yield* orchestrator.dispatch({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("mark-unread-expired-snooze"),
+      threadId,
+    });
+    assert.deepEqual(yield* projections.getThread(threadId), {
+      ...dismissed,
+      lastVisitedAt: DateTime.subtract(completedAt, { milliseconds: 1 }),
+      snoozedUntil: null,
+      snoozedAt: null,
+      lastSnoozeWakeAt: snoozedUntil,
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("mark unread leaves a future snooze untouched", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, completedAt } = yield* completeAndSnoozeThread(
+      "mark-unread-future-snooze",
+      60,
+    );
+    yield* TestClock.adjust("1 minute");
+    yield* orchestrator.dispatch({
+      type: "thread.visit",
+      commandId: CommandId.make("visit-snoozed"),
+      threadId,
+      visitedAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    const visited = yield* projections.getThread(threadId);
+    assert.isNotNull(visited.snoozedUntil);
+
+    yield* orchestrator.dispatch({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("mark-unread-future-snooze"),
+      threadId,
+    });
+    assert.deepEqual(yield* projections.getThread(threadId), {
+      ...visited,
+      lastVisitedAt: DateTime.subtract(completedAt, { milliseconds: 1 }),
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
@@ -123,6 +381,7 @@ it.effect(
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const threadId = ThreadId.make("thread:control-dispatch");
       const now = yield* DateTime.now;
       yield* orchestrator.dispatch({
@@ -269,6 +528,45 @@ it.effect(
             questions: [],
           },
         });
+        const answers = { text: "Blue", list: ["Red"], codex: { answers: ["Green"] } };
+        const normalizedAnswers = { ...answers, codex: ["Green"] };
+        if (mode === "live") {
+          const pending = yield* projections.getRuntimeResponseContext(threadId, requestId);
+          const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+          for (const [index, value] of [
+            null,
+            42,
+            { choice: "Blue" },
+            ["Blue", 42],
+            { answers: [42] },
+          ].entries()) {
+            const commandId = CommandId.make(`invalid-answer:${index}`);
+            const result = yield* orchestrator
+              .dispatch({
+                type: "runtime-request.respond",
+                commandId,
+                threadId,
+                requestId,
+                answers: { ...answers, invalid: value },
+              })
+              .pipe(Effect.result);
+            assert.isTrue(Result.isFailure(result));
+            assert.deepEqual(
+              yield* projections.getRuntimeResponseContext(threadId, requestId),
+              pending,
+            );
+            assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+            assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          }
+        }
+        if (mode === "live") {
+          yield* orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze-live-control"),
+            threadId,
+            snoozedUntil: "2099-07-25T09:00:00.000Z",
+          });
+        }
         yield* orchestrator.dispatch(
           mode === "live"
             ? {
@@ -276,7 +574,7 @@ it.effect(
                 commandId: CommandId.make(`respond:${mode}`),
                 threadId,
                 requestId,
-                decision: "accept",
+                answers,
               }
             : {
                 type: "thread.user-input.dismiss",
@@ -292,6 +590,27 @@ it.effect(
         const response = yield* projections.getRuntimeResponseContext(threadId, requestId);
         assert.equal(response.node?.status, mode === "live" ? "completed" : "cancelled");
         assert.equal(response.item?.status, mode === "live" ? "completed" : "cancelled");
+        if (mode === "live") {
+          assert.isNull((yield* projections.getThread(threadId)).snoozedUntil);
+          assert.isNull((yield* projections.getThread(threadId)).snoozedAt);
+          assert.deepEqual(response.request?.answers, normalizedAnswers);
+          assert.equal(response.item?.type, "user_input_request");
+          if (response.item?.type === "user_input_request") {
+            assert.deepEqual(response.item.questionAnswer?.answers, normalizedAnswers);
+          }
+          const effects = yield* outbox.listByCommandId(CommandId.make(`respond:${mode}`));
+          assert.deepEqual(
+            effects.map((effect) => effect.request),
+            [
+              {
+                type: "runtime-request.respond",
+                providerSessionId: sessionId,
+                requestId,
+                answers: normalizedAnswers,
+              },
+            ],
+          );
+        }
       }
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -345,6 +664,55 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the store's read failure as the cause when a command projection fails", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const unreadableMessage = ThreadId.make("thread:control-unreadable-message");
+    const unreadableRequest = ThreadId.make("thread:control-unreadable-request");
+    for (const threadId of [unreadableMessage, unreadableRequest]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:control-unreadable"),
+        title: "Unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    yield* sql`INSERT INTO orchestration_v2_projection_messages
+      (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('obsolete-user', ${unreadableMessage}, NULL, NULL, 'user', 0, ${now}, ${now}, '{"obsolete":true}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+      (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+      VALUES ('request:unreadable', ${unreadableRequest}, 'node:unreadable', 'user-input', 'pending', ${now}, '{}')`;
+    for (const command of [
+      {
+        type: "queue.resume",
+        commandId: CommandId.make("resume-unreadable"),
+        threadId: unreadableMessage,
+      },
+      {
+        type: "thread.user-input.dismiss",
+        commandId: CommandId.make("dismiss-unreadable"),
+        threadId: unreadableRequest,
+        requestId: RuntimeRequestId.make("request:unreadable"),
+      },
+    ] as const) {
+      const failure = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.instanceOf(failure, Orchestrator.OrchestratorProjectionError);
+      assert.instanceOf(failure.cause, ProjectionStore.ProjectionStoreReadError);
+    }
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>
@@ -1095,8 +1463,207 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
     const before = yield* projections.getThread(threadId);
     const replayed = yield* orchestrator.dispatch(create);
     assert.equal(replayed.sequence, original.sequence);
-    assert.deepEqual(replayed, original);
+    // Marked so client analytics do not count the retry again.
+    assert.deepEqual(replayed, { ...original, replayed: true });
     assert.deepEqual(yield* projections.getThread(threadId), before);
     assert.equal(yield* orchestrator.getThreadEventSequence(threadId), original.sequence);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make("thread:settle-snoozed");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-settle-snoozed"),
+      threadId,
+      projectId: ProjectId.make("project:settle-snoozed"),
+      title: "Snoozed thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const now = yield* DateTime.now;
+    const settledAt = DateTime.add(now, { seconds: 1 });
+    const snoozedUntil = DateTime.add(now, { hours: 1 });
+    for (const round of [1, 2]) {
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-before-settle-${round}`),
+        threadId,
+        snoozedUntil: DateTime.formatIso(snoozedUntil),
+      });
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        snoozedUntil,
+        snoozedAt: yield* DateTime.now,
+      });
+      yield* TestClock.adjust("1 second");
+      const commandId = CommandId.make(`settle-snoozed-${round}`);
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId, threadId });
+      const expected = {
+        settledOverride: "settled",
+        settledAt,
+        snoozedUntil: null,
+        snoozedAt: null,
+        updatedAt: yield* DateTime.now,
+      } as const;
+      const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);
+      assert.lengthOf(committed, 1);
+      assert.equal(committed[0]?.event.type, "thread.settled");
+      assert.deepInclude(committed[0]?.event.payload, expected);
+      const settled = yield* projections.getThreadShell(threadId);
+      assert.deepInclude(settled, expected);
+      assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, expected);
+
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle-again-${round}`),
+        threadId,
+      });
+      assert.deepEqual(yield* projections.getThreadShell(threadId), settled);
+    }
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle-after-snooze"),
+      threadId,
+      reason: "user",
+    });
+    const active = {
+      settledOverride: "active",
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+    } as const;
+    assert.deepInclude(yield* projections.getThreadShell(threadId), active);
+    assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a snooze when a live question is cancelled or an approval is answered", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const now = yield* DateTime.now;
+    for (const kind of ["user_input", "command"] as const) {
+      const threadId = ThreadId.make(`thread:snoozed-live-${kind}`);
+      const requestId = RuntimeRequestId.make(`request:snoozed-live-${kind}`);
+      const sessionId = ProviderSessionId.make(`session:snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-snoozed-live-${kind}`),
+        threadId,
+        projectId: ProjectId.make("project:snoozed-live"),
+        title: "Deferred question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-live-${kind}`),
+        threadId,
+        snoozedUntil: "2099-07-25T09:00:00.000Z",
+      });
+      const before = yield* projections.getThread(threadId);
+      yield* projections.apply({
+        id: EventId.make(`attach-snoozed-live-${kind}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`request-snoozed-live-${kind}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: requestId,
+          nodeId: NodeId.make(`node:snoozed-live-${kind}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId: sessionId },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      const commandId = CommandId.make(`respond-snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        decision: kind === "user_input" ? "cancel" : "accept",
+      });
+      const after = yield* projections.getThread(threadId);
+      assert.deepEqual(after.snoozedUntil, before.snoozedUntil);
+      assert.deepEqual(after.snoozedAt, before.snoozedAt);
+      assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, "resolved");
+      assert.equal(
+        (yield* outbox.listByCommandId(commandId))[0]?.request.type,
+        "runtime-request.respond",
+      );
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("dispatch records the command outcome and its duration", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const successes = Metric.value(
+      Metric.withAttributes(orchestrationCommandsTotal, {
+        commandType: "thread.create",
+        outcome: "success",
+      }),
+    );
+    const durations = Metric.value(
+      Metric.withAttributes(orchestrationCommandDuration, { commandType: "thread.create" }),
+    );
+    const successesBefore = (yield* successes).count;
+    const durationsBefore = (yield* durations).count;
+
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-dispatch-metrics"),
+      threadId: ThreadId.make("thread:dispatch-metrics"),
+      projectId: ProjectId.make("project:dispatch-metrics"),
+      title: "Dispatch metrics",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    assert.strictEqual((yield* successes).count - successesBefore, 1);
+    assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );

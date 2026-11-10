@@ -10,11 +10,7 @@ import {
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
-/**
- * Ceiling on the *source* file handed to the re-encoder. File size is a
- * proxy for pixel count, and decoding hundreds of megapixels into an
- * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
- */
+/** Bound source decoding: enormous ImageBitmaps can OOM the tab before resizing. */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
@@ -204,60 +200,74 @@ async function encodeCanvas(
   return blob?.type === mimeType ? blob : null;
 }
 
-const COMPOSER_THUMBNAIL_SIZES = {
-  square: { width: 256, height: 256 },
-  // The 208x112 snapshot tile at retina density and 2x app zoom.
-  snapshot: { width: 832, height: 448 },
-} as const;
-export type ComposerImageThumbnailMode = keyof typeof COMPOSER_THUMBNAIL_SIZES;
-const composerThumbnails = new WeakMap<
-  File,
-  Partial<Record<ComposerImageThumbnailMode, Promise<string | null>>>
->();
+const composerThumbnails = new WeakMap<File, Promise<string | null>>();
+const settledComposerThumbnails = new WeakMap<File, string | null>();
 
-export function createComposerImageThumbnail(
+function cacheComposerImageThumbnail(
   file: File,
-  mode: ComposerImageThumbnailMode = "square",
+  thumbnail: Promise<string | null>,
 ): Promise<string | null> {
-  const fileThumbnails = composerThumbnails.get(file);
-  const cached = fileThumbnails?.[mode];
-  if (cached) return cached;
-  const thumbnail = (async () => {
-    if (!canRecompress()) return null;
-    let bitmap: ImageBitmap | undefined;
-    try {
-      bitmap = await createImageBitmap(file);
-      if (bitmap.width <= 0 || bitmap.height <= 0) return null;
-      const side = Math.min(bitmap.width, bitmap.height);
-      const sourceWidth = mode === "square" ? side : bitmap.width;
-      const sourceHeight = mode === "square" ? side : bitmap.height;
-      const bounds = COMPOSER_THUMBNAIL_SIZES[mode];
-      const scale = Math.min(1, bounds.width / sourceWidth, bounds.height / sourceHeight);
-      const width = Math.max(1, Math.round(sourceWidth * scale));
-      const height = Math.max(1, Math.round(sourceHeight * scale));
-      const surface = createCanvas(width, height);
-      if (!surface) return null;
-      surface.context.drawImage(
-        bitmap,
-        (bitmap.width - sourceWidth) / 2,
-        (bitmap.height - sourceHeight) / 2,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        width,
-        height,
-      );
-      const blob = await encodeCanvas(surface.canvas, 1, "image/png");
-      return blob ? await readFileAsDataUrl(blob) : null;
-    } catch {
-      return null;
-    } finally {
-      bitmap?.close();
-    }
-  })();
-  composerThumbnails.set(file, { ...fileThumbnails, [mode]: thumbnail });
+  composerThumbnails.set(file, thumbnail);
+  void thumbnail.then((src) => settledComposerThumbnails.set(file, src));
   return thumbnail;
+}
+
+/** `undefined` until the thumbnail settles, so a tile can paint a known thumbnail immediately. */
+export function readComposerImageThumbnail(file: File): string | null | undefined {
+  return settledComposerThumbnails.get(file);
+}
+
+export function createComposerImageThumbnail(file: File): Promise<string | null> {
+  return (
+    composerThumbnails.get(file) ??
+    cacheComposerImageThumbnail(file, renderComposerImageThumbnail(file))
+  );
+}
+
+/**
+ * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
+ * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ */
+export function inheritComposerImageThumbnail(source: File, target: File): void {
+  const sourceThumbnail = composerThumbnails.get(source);
+  if (source === target || !sourceThumbnail || composerThumbnails.has(target)) return;
+  const settled = settledComposerThumbnails.get(source);
+  if (settled) settledComposerThumbnails.set(target, settled);
+  cacheComposerImageThumbnail(
+    target,
+    sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target)),
+  );
+}
+
+async function renderComposerImageThumbnail(file: File): Promise<string | null> {
+  // Placeholders thumbnail the uncompressed source, which can be big enough to OOM the decode.
+  if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    if (side <= 0) return null;
+    const dimension = Math.min(256, side);
+    const surface = createCanvas(dimension, dimension);
+    if (!surface) return null;
+    surface.context.drawImage(
+      bitmap,
+      (bitmap.width - side) / 2,
+      (bitmap.height - side) / 2,
+      side,
+      side,
+      0,
+      0,
+      dimension,
+      dimension,
+    );
+    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+    return blob ? await readFileAsDataUrl(blob) : null;
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
 }
 
 async function encodeWithinBudget(
@@ -272,8 +282,7 @@ async function encodeWithinBudget(
   const target = createCanvas(width, height);
   if (!target) return null;
 
-  // Probe WebP once; JPEG (no alpha) needs a white matte, so the fill has to
-  // happen before drawing and depends on which codec we end up using.
+  // Probe the codec before drawing; JPEG needs a white matte because it has no alpha.
   const mimeType =
     preferredMimeType ??
     ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp"))
@@ -317,10 +326,7 @@ async function reencodeWithinBudget(
   }
 
   try {
-    // Each pass shrinks relative to the *previous target*, capped by
-    // MAX_DIMENSION. Scaling a fixed ceiling instead would be a no-op for
-    // images already smaller than that ceiling — the fallback passes would
-    // all resolve to the source size and never actually reduce resolution.
+    // Shrink the previous target; using MAX_DIMENSION leaves smaller images unchanged.
     const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
     let encodeFailed = false;
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {

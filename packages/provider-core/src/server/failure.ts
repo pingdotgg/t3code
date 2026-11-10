@@ -22,12 +22,21 @@ export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoff
   {},
 ) {
   override get message() {
-    return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
+    return "The request leaves too little context for a provider handoff. Shorten the request or use a larger-context model; the current request has not been truncated.";
+  }
+}
+
+export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<ContextHandoffBackgroundWorkError>()(
+  "ContextHandoffBackgroundWorkError",
+  {},
+) {
+  override get message() {
+    return "The target provider still has background work running. Wait for it to finish or stop it before retrying the handoff.";
   }
 }
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
-export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
+const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
@@ -52,15 +61,33 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+// codex_protocol::protocol::validate_thread_goal_objective
+const CODEX_GOAL_VALIDATION_MESSAGE =
+  /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
+
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
 };
 
-function causeMessage(cause: unknown): string | undefined {
+/**
+ * Walks a cause chain for curated text without reading arbitrary provider
+ * defect text. `known` is the message of a domain error T3 raised itself;
+ * `category` is the generic message of the innermost provider wrapper seen.
+ */
+function curatedCauseMessages(cause: unknown): {
+  readonly known: string | undefined;
+  readonly category: string | undefined;
+} {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
   let reason: string | undefined;
+  const categoryMessage = () => {
+    if (category === undefined) return undefined;
+    return reason
+      ? `${category.summary}: ${reason}. ${category.guidance}`
+      : `${category.summary}. ${category.guidance}`;
+  };
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -72,12 +99,51 @@ function causeMessage(cause: unknown): string | undefined {
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
         case "ContextHandoffBudgetError":
-          return new ContextHandoffBudgetError().message;
+          return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
+        case "ContextHandoffBackgroundWorkError":
+          return {
+            known: new ContextHandoffBackgroundWorkError().message,
+            category: categoryMessage(),
+          };
+        case "AcpModelSelectionError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
+        case "ClaudeAppendSystemPromptFileError":
+        case "ClaudeAppendSystemPromptMissingValueError":
+        case "ClaudeSettingsLaunchArgError":
+        case "ClaudeMcpRegistrationTimeoutError":
+        case "ClaudeCodeRootRefusalError":
         case "CursorModelUnavailableError":
-          return stringField(cause, "message");
+        case "CodexGoalObjectiveTooLongError":
+        case "ProviderSetupError":
+        case "ProviderAdapterThreadInUseError":
+          return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "CodexAppServerRequestError": {
+          // Only Codex's fixed-shape goal validation text is actionable and
+          // safe to show; other request error text stays hidden.
+          const rejection = stringField(cause, "message");
+          if (
+            (cause as Record<string, unknown>).method === "thread/goal/set" &&
+            rejection !== undefined &&
+            CODEX_GOAL_VALIDATION_MESSAGE.test(rejection)
+          ) {
+            return { known: `Codex rejected the goal: ${rejection}.`, category: categoryMessage() };
+          }
+          break;
+        }
+        case "AcpProcessExitedError": {
+          const exit = `provider process exited${processExitStatus(cause)}`;
+          const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
+          return {
+            known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,
+            category: categoryMessage(),
+          };
+        }
         case "ContextHandoffDeliveryUncertainError":
-          return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
+          return {
+            known:
+              "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
+            category: categoryMessage(),
+          };
         case "ProviderAdapterProtocolError": {
           const typedReason = (cause as Record<string, unknown>).reason;
           if (
@@ -99,10 +165,25 @@ function causeMessage(cause: unknown): string | undefined {
       break;
     }
   }
-  if (category === undefined) return undefined;
-  return reason
-    ? `${category.summary}: ${reason}. ${category.guidance}`
-    : `${category.summary}. ${category.guidance}`;
+  return { known: undefined, category: categoryMessage() };
+}
+
+// Only the structured status; stderr and the spawner cause can carry provider output.
+function processExitStatus(exited: object): string {
+  const { signal, code } = exited as Record<string, unknown>;
+  if (typeof signal === "string" && /^SIG[A-Z0-9]{1,16}$/u.test(signal)) {
+    return ` after signal ${signal}`;
+  }
+  return typeof code === "number" && Number.isSafeInteger(code) ? ` with code ${code}` : "";
+}
+
+/**
+ * The curated message of a domain error in a failure's cause chain, if any.
+ * Callers that pass their own `message` to `makeProviderFailure` check it
+ * first, so a known reason is not hidden behind a wrapper's text.
+ */
+export function knownProviderFailureMessage(cause: unknown): string | undefined {
+  return curatedCauseMessages(cause).known;
 }
 
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
@@ -151,11 +232,11 @@ function redactProviderFailureText(value: string): string {
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(
-      /(["'](?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
+      /(["'][\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2",
     )
     .replace(
-      /(\b(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
@@ -181,7 +262,9 @@ export function makeProviderFailure(input: {
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const curated = curatedCauseMessages(input.cause);
+  const rawMessage =
+    input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =

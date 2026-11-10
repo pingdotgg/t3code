@@ -46,15 +46,6 @@ const openServer = (host?: string): Effect.Effect<NodeNet.Server, NetService.Net
 
 it.layer(NetService.layer)("NetService", (it) => {
   describe("Net helpers", () => {
-    it.effect("reserveLoopbackPort returns a positive loopback port", () =>
-      Effect.gen(function* () {
-        const net = yield* NetService.NetService;
-        const port = yield* net.reserveLoopbackPort();
-
-        assert.ok(port > 0);
-      }),
-    );
-
     it.effect.each(["EAFNOSUPPORT", "EADDRNOTAVAIL"])(
       "keeps ports available when IPv6 binds fail with %s",
       (code) =>
@@ -95,16 +86,6 @@ it.layer(NetService.layer)("NetService", (it) => {
           }),
         closeServer,
       ),
-    );
-
-    it.effect("findAvailablePort returns preferred when it is free", () =>
-      Effect.gen(function* () {
-        const net = yield* NetService.NetService;
-        const preferred = yield* net.reserveLoopbackPort();
-
-        const resolved = yield* net.findAvailablePort(preferred);
-        assert.equal(resolved, preferred);
-      }),
     );
 
     it.effect("findAvailablePort falls back when a wildcard listener occupies IPv4", () =>

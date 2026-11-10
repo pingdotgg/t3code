@@ -20,17 +20,12 @@ function getTimestampFormatOptions(
   };
 }
 
-export function resolveTimestampLocale(
-  systemLocale: string | null | undefined,
-): string | undefined {
+function resolveTimestampLocale(systemLocale: string | null | undefined): string | undefined {
   const tag = systemLocale?.trim();
   if (!tag) return undefined;
 
   try {
-    // Every timestamp in the UI runs through this formatter, so a tag the host
-    // could not normalize falls back rather than throwing. Throws on a
-    // structurally invalid tag; a well-formed tag ICU has no data for resolves
-    // here and is left to ICU's own fallback.
+    // Reject structurally invalid tags; let ICU fall back for valid tags it lacks data for.
     Intl.DateTimeFormat.supportedLocalesOf([tag]);
     return tag;
   } catch {
@@ -40,7 +35,7 @@ export function resolveTimestampLocale(
 
 function readHostSystemLocale(): string | null {
   if (typeof window === "undefined") return null;
-  return window.desktopBridge?.getSystemLocale?.() ?? null;
+  return window.desktopBridge?.getSystemLocale() ?? null;
 }
 
 const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
@@ -58,7 +53,7 @@ type LocaleWithWeekInfo = Intl.Locale & {
  * `undefined` when the runtime has no week data, so callers keep their own
  * default.
  */
-export function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefined {
+function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefined {
   try {
     const resolved: LocaleWithWeekInfo = new Intl.Locale(
       locale ?? Intl.DateTimeFormat().resolvedOptions().locale,
@@ -78,17 +73,18 @@ const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
+  timeZone?: string,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone ?? ""}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(
-    timestampLocale,
-    getTimestampFormatOptions(timestampFormat, includeSeconds),
-  );
+  const formatter = new Intl.DateTimeFormat(timestampLocale, {
+    ...getTimestampFormatOptions(timestampFormat, includeSeconds),
+    ...(timeZone ? { timeZone } : {}),
+  });
   timestampFormatterCache.set(cacheKey, formatter);
   return formatter;
 }
@@ -100,12 +96,6 @@ export function resolveHour12(timestampFormat: TimestampFormat): boolean {
 export function parseTimestampDate(isoDate: string): Date | null {
   const date = new Date(isoDate);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-export function formatTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
-  const date = parseTimestampDate(isoDate);
-  if (!date) return "";
-  return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
 // Deliberately not the host locale: the tooltip's ordinal suffix and
@@ -147,58 +137,88 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   return getTimestampFormatter(timestampFormat, false).format(date);
 }
 
-const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {
-  month: "numeric",
-  day: "numeric",
-});
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
-  month: "numeric",
-  day: "numeric",
+const numericDateOptions: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };
+const numericDateWithYearOptions: Intl.DateTimeFormatOptions = {
+  ...numericDateOptions,
   year: "numeric",
-});
+};
+const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, numericDateOptions);
+const numericDateWithYearFormatter = new Intl.DateTimeFormat(
+  timestampLocale,
+  numericDateWithYearOptions,
+);
+
+interface CalendarDay {
+  year: number;
+  /** Days since the epoch, so differences are whole days across DST shifts. */
+  index: number;
+}
+
+function calendarDay(date: Date, timeZone: string | undefined): CalendarDay {
+  if (!timeZone) {
+    const year = date.getFullYear();
+    return { year, index: Date.UTC(year, date.getMonth(), date.getDate()) / 86_400_000 };
+  }
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((entry) => entry.type === type)?.value);
+  const year = part("year");
+  return { year, index: Date.UTC(year, part("month") - 1, part("day")) / 86_400_000 };
+}
+
+function formatNumericDate(date: Date, sameYear: boolean, timeZone: string | undefined): string {
+  if (!timeZone) {
+    return (sameYear ? numericDateFormatter : numericDateWithYearFormatter).format(date);
+  }
+  return new Intl.DateTimeFormat(timestampLocale, {
+    ...(sameYear ? numericDateOptions : numericDateWithYearOptions),
+    timeZone,
+  }).format(date);
+}
 
 export function formatDayAwareTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
+  timeZone?: string,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false).format(date);
+  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
 
-  const now = new Date(nowMs);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfMessageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  // Round so DST-shifted 23/25 hour days still count as whole days.
-  const dayDiff = Math.round((startOfToday - startOfMessageDay) / 86_400_000);
+  const today = calendarDay(new Date(nowMs), timeZone);
+  const messageDay = calendarDay(date, timeZone);
+  const dayDiff = today.index - messageDay.index;
 
   if (dayDiff <= 0) return time;
   if (dayDiff === 1) return `yesterday at ${time}`;
-  const dateFormatter =
-    date.getFullYear() === now.getFullYear() ? numericDateFormatter : numericDateWithYearFormatter;
-  return `${dateFormatter.format(date)} ${time}`;
+  return `${formatNumericDate(date, messageDay.year === today.year, timeZone)} ${time}`;
 }
 
+/** `timeZone` overrides the zone the formatters cached when they were built. */
 export function formatUpcomingTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
+  timeZone?: string,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false).format(date);
+  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
 
-  const now = new Date(nowMs);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfTargetDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const dayDiff = Math.round((startOfTargetDay - startOfToday) / 86_400_000);
+  const today = calendarDay(new Date(nowMs), timeZone);
+  const targetDay = calendarDay(date, timeZone);
+  const dayDiff = targetDay.index - today.index;
 
-  if (dayDiff < 0) return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs);
+  if (dayDiff < 0) return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs, timeZone);
   if (dayDiff === 0) return time;
   if (dayDiff === 1) return `tomorrow at ${time}`;
-  const dateFormatter =
-    date.getFullYear() === now.getFullYear() ? numericDateFormatter : numericDateWithYearFormatter;
-  return `${dateFormatter.format(date)} ${time}`;
+  return `${formatNumericDate(date, targetDay.year === today.year, timeZone)} ${time}`;
 }
 
 type RelativeTimeParts = { value: string; suffix: string | null };
@@ -217,10 +237,7 @@ function relativeTimeUnitMs(elapsedMs: number): number {
   return DAY_MS;
 }
 
-/**
- * Elapsed time floored to the precision `formatRelativeTime` shows, so two
- * instants with the same label return the same number.
- */
+/** Elapsed time floored to formatRelativeTime precision; equal labels yield equal values. */
 export function relativeTimeElapsedMs(isoDate: string, nowMs: number = Date.now()): number | null {
   const date = parseTimestampDate(isoDate);
   if (!date) return null;
@@ -229,7 +246,6 @@ export function relativeTimeElapsedMs(isoDate: string, nowMs: number = Date.now(
   return Math.floor(elapsedMs / unitMs) * unitMs;
 }
 
-/** Milliseconds until the `formatRelativeTime` label for `isoDate` next changes. */
 export function msUntilRelativeTimeChange(
   isoDate: string,
   nowMs: number = Date.now(),
@@ -239,8 +255,7 @@ export function msUntilRelativeTimeChange(
   const elapsedMs = Math.max(0, nowMs - date.getTime());
   const unitMs = relativeTimeUnitMs(elapsedMs);
   const nextChangeMs = date.getTime() + (Math.floor(elapsedMs / unitMs) + 1) * unitMs;
-  // setTimeout fires at once past 2^31-1 ms, which would loop on a far-future
-  // timestamp. Waking early is harmless: the caller re-reads and re-schedules.
+  // Delays above 2^31-1 fire immediately; cap safely and let callers reschedule.
   return Math.min(nextChangeMs - nowMs, DAY_MS);
 }
 
@@ -289,31 +304,7 @@ export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date
   return `${days}d`;
 }
 
-export function formatRelativeTimeUntil(isoDate: string): RelativeTimeParts | null {
-  const date = parseTimestampDate(isoDate);
-  if (!date) return null;
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return { value: "Expired", suffix: null };
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 5) return { value: "Soon", suffix: null };
-  if (seconds < 60) return { value: `${seconds}s`, suffix: "left" };
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: `${minutes}m`, suffix: "left" };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: `${hours}h`, suffix: "left" };
-  const days = Math.floor(hours / 24);
-  return { value: `${days}d`, suffix: "left" };
-}
-
-export function formatRelativeTimeUntilLabel(isoDate: string): string {
-  const relative = formatRelativeTimeUntil(isoDate);
-  if (!relative) return "";
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
-}
-
-/**
- * Pass `nowMs` when a parent tick drives re-renders so the diff matches that snapshot.
- */
+/** Pass nowMs to match a parent-driven render tick. */
 export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";

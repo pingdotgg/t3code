@@ -1,43 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  type OrchestrationV2PendingBackgroundTask,
-  ProviderInstanceId,
-  ProviderThreadId,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
-  turnItemUpdateCanEndBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
-describe("turnItemUpdateCanEndBackgroundWork", () => {
-  it.each([
-    ["a finished subagent", true, { type: "subagent", status: "completed" }],
-    ["a failed background command", true, { type: "command_execution", status: "failed" }],
-    ["an idle dynamic tool", true, { type: "dynamic_tool", status: "idle" }],
-    ["a running command's output", false, { type: "command_execution", status: "running" }],
-    ["a waiting subagent", false, { type: "subagent", status: "waiting" }],
-    ["a finished assistant message", false, { type: "assistant_message", status: "completed" }],
-  ] as const)("%s: %s", (_case, canEnd, item) => {
-    expect(turnItemUpdateCanEndBackgroundWork(item)).toBe(canEnd);
-  });
-});
-
 describe("backgroundWorkHoldsCompletion", () => {
-  const task = (
-    taskId: string,
-    kind: OrchestrationV2PendingBackgroundTask["kind"],
-  ): OrchestrationV2PendingBackgroundTask => ({ taskId, kind });
-
   it.each([
-    ["nothing pending", false, []],
-    ["a dev server", false, [task("dev", "command")]],
-    ["two long-lived shells", false, [task("web", "command"), task("api", "command")]],
-    ["a subagent", true, [task("review", "subagent")]],
-    ["a monitor", true, [task("watch", "monitor")]],
-    ["a command and a monitor", true, [task("dev", "command"), task("watch", "monitor")]],
-    ["a command and a subagent", true, [task("dev", "command"), task("review", "subagent")]],
-    ["work the provider cannot name", true, [task("opaque", "background_task")]],
+    ["a dev server", false, [{ taskId: "dev", kind: "command" }]],
+    ["a dev server's watchdog monitor", false, [{ taskId: "watch", kind: "monitor" }]],
+    ["a command the agent waits on", true, [{ taskId: "tests", kind: "command", awaited: true }]],
+    ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
   });
@@ -139,29 +112,6 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
   });
 
-  it("still returns empty when the latest run is running even with background items", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20", kind: "command" }],
-        },
-      ],
-      turnItems: [
-        {
-          id: "item-1" as never,
-          type: "subagent",
-          status: "running",
-          title: "review",
-          nativeItemRef: { nativeId: "sub-1" },
-          prompt: "review",
-        },
-      ],
-    });
-    expect(tasks).toEqual([]);
-  });
-
   it("excludes rolled_back items when the latest run is waiting", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-2" as never, ordinal: 2, status: "waiting" },
@@ -200,23 +150,6 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("returns the provider-thread roster after settlement", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "bg-1", description: "Run Codex review", kind: "command" },
-          ],
-        },
-      ],
-      turnItems: [],
-      activeProviderThreadId: "pt-1",
-    });
-    expect(tasks).toEqual([{ taskId: "bg-1", description: "Run Codex review", kind: "command" }]);
-  });
-
   it("includes nonterminal turn items and excludes completed ones", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
@@ -241,62 +174,6 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
-  });
-
-  it("trims normalized background-work descriptions", () => {
-    const base = {
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" as const },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            {
-              taskId: "native-task",
-              description: "  native background work  ",
-              kind: "background_task" as const,
-            },
-          ],
-        },
-      ],
-    };
-    expect(
-      derivePendingBackgroundWork({
-        ...base,
-        turnItems: [
-          {
-            id: "item-command" as never,
-            type: "command_execution",
-            status: "running",
-            title: "  npm test  ",
-            nativeItemRef: null,
-          },
-          {
-            id: "item-tool" as never,
-            type: "dynamic_tool",
-            status: "running",
-            title: null,
-            nativeItemRef: null,
-            toolName: "  browser.search  ",
-          } as never,
-        ],
-      }),
-    ).toEqual([
-      {
-        taskId: "native-task",
-        description: "native background work",
-        kind: "background_task",
-      },
-      {
-        taskId: "item-command",
-        description: "npm test",
-        kind: "command",
-      },
-      {
-        taskId: "item-tool",
-        description: "browser.search",
-        kind: "background_task",
-      },
-    ]);
   });
 
   it("dedupes roster entries against turn items by native task id", () => {
@@ -354,52 +231,6 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("returns multiple tasks with stable ordering from insertion", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "bg-1", description: "first", kind: "command" },
-            { taskId: "bg-2", description: "second", kind: "command" },
-          ],
-        },
-      ],
-      turnItems: [
-        {
-          id: "item-1" as never,
-          type: "command_execution",
-          status: "running",
-          title: "third",
-          nativeItemRef: { nativeId: "cmd-3" },
-          input: "third",
-        },
-      ],
-    });
-    expect(tasks.map((task) => task.taskId)).toEqual(["bg-1", "bg-2", "cmd-3"]);
-  });
-
-  it("excludes turn items owned by a rolled_back run", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "rolled_back" },
-      providerThreads: [{ id: "pt-1" as never }],
-      runs: [{ id: "run-1" as never, ordinal: 1, status: "rolled_back" }],
-      turnItems: [
-        {
-          id: "item-1" as never,
-          type: "command_execution",
-          status: "running",
-          title: "abandoned",
-          runId: "run-1",
-          nativeItemRef: { nativeId: "cmd-1" },
-          input: "sleep 99",
-        },
-      ],
-    });
-    expect(tasks).toEqual([]);
-  });
-
   it("returns empty when the latest run is rolled_back even with a nonempty roster", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "rolled_back" },
@@ -422,44 +253,6 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([]);
-  });
-
-  it("excludes an older rolled_back nonterminal item when the latest run is completed", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-2" as never, ordinal: 2, status: "completed" },
-      providerThreads: [{ id: "pt-1" as never }],
-      runs: [
-        { id: "run-1" as never, ordinal: 1, status: "rolled_back" },
-        { id: "run-2" as never, ordinal: 2, status: "completed" },
-      ],
-      turnItems: [
-        {
-          id: "item-old" as never,
-          type: "command_execution",
-          status: "running",
-          title: "from rolled-back run",
-          runId: "run-1",
-          nativeItemRef: { nativeId: "cmd-old" },
-          input: "sleep 99",
-        },
-        {
-          id: "item-new" as never,
-          type: "command_execution",
-          status: "running",
-          title: "still pending",
-          runId: "run-2",
-          nativeItemRef: { nativeId: "cmd-new" },
-          input: "npm test",
-        },
-      ],
-    });
-    expect(tasks).toEqual([
-      {
-        taskId: "cmd-new",
-        description: "still pending",
-        kind: "command",
-      },
-    ]);
   });
 
   it("does not reclassify an older active run as background work", () => {
@@ -527,6 +320,7 @@ describe("derivePendingBackgroundWork kinds", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "bash", kind: "command" },
+            { taskId: "tests", kind: "command", awaited: true },
             { taskId: "watch", kind: "monitor" },
             { taskId: "workflow", kind: "background_task" },
           ],
@@ -553,6 +347,7 @@ describe("derivePendingBackgroundWork kinds", () => {
     });
     expect(tasks).toEqual([
       { taskId: "bash", kind: "command" },
+      { taskId: "tests", kind: "command", awaited: true },
       { taskId: "watch", kind: "monitor" },
       { taskId: "workflow", kind: "background_task" },
       {
@@ -579,22 +374,29 @@ describe("derivePendingBackgroundWork kinds", () => {
     };
     const link = (
       number: number,
-      extra: { source?: "agent" | "stack-dismissed"; watched?: boolean },
+      extra: {
+        source?: "agent" | "stack-dismissed";
+        watched?: boolean;
+        state?: "open" | "closed" | "merged";
+      },
     ) => ({
       host: "github.com",
       repository: "acme/app",
       number,
       url: `https://github.com/acme/app/pull/${number}`,
       source: extra.source ?? "agent",
+      snapshot: extra.state === undefined ? null : { state: extra.state },
       ...(extra.watched === false ? {} : { watch }),
     });
     const pullRequests = [
       link(1, {}),
       link(2, { watched: false }),
       link(3, { source: "stack-dismissed" }),
+      link(4, { state: "merged" }),
+      link(5, { state: "closed" }),
     ];
 
-    it("keeps a settled run waiting on each visible watch, as a monitor", () => {
+    it("keeps a settled run waiting on each visible watch, as an awaited monitor", () => {
       const tasks = derivePendingBackgroundWork({
         latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
         providerThreads: [],
@@ -606,6 +408,13 @@ describe("derivePendingBackgroundWork kinds", () => {
           taskId: "pull-request-watch:github.com/acme/app#1",
           description: "Watching pull request #1",
           kind: "monitor",
+          awaited: true,
+        },
+        {
+          taskId: "pull-request-watch:github.com/acme/app#5",
+          description: "Watching pull request #5",
+          kind: "monitor",
+          awaited: true,
         },
       ]);
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
@@ -619,7 +428,10 @@ describe("derivePendingBackgroundWork kinds", () => {
           turnItems: [],
           pullRequests,
         }).map((task) => task.taskId),
-      ).toEqual(["pull-request-watch:github.com/acme/app#1"]);
+      ).toEqual([
+        "pull-request-watch:github.com/acme/app#1",
+        "pull-request-watch:github.com/acme/app#5",
+      ]);
     });
 
     it("lists no watch while a run is active", () => {

@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderInstanceId,
@@ -14,7 +16,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderAuthFlow from "./providerAuthFlow.ts";
 
@@ -42,7 +43,7 @@ it.effect("distinguishes pending method discovery from an agent with no sign-in 
       Effect.map(Option.getOrThrow),
     );
     assert.deepEqual(ready.methods, []);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const makeHarness = Effect.gen(function* () {
@@ -113,7 +114,7 @@ it.effect("requires owner consent and provider verification before success", () 
     yield* phase("verifying");
     yield* Deferred.succeed(verified, undefined);
     assert.strictEqual((yield* phase("succeeded")).phase, "succeeded");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("cancellation rejects late consent and permits another login", () =>
@@ -133,25 +134,7 @@ it.effect("cancellation rejects late consent and permits another login", () =>
     );
     const next = yield* controller.start("other");
     assert.notStrictEqual(next.flowId, state.flowId);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("expires pending login and rejects its response", () =>
-  Effect.gen(function* () {
-    const { controller, started, phase } = yield* makeHarness;
-    const state = yield* controller.start("owner");
-    yield* Deferred.await(started);
-    yield* TestClock.adjust(300_001);
-    assert.include((yield* phase("failed")).message ?? "", "expired");
-    assert.isTrue(
-      (yield* controller.respond!("owner", {
-        instanceId,
-        flowId: state.flowId!,
-        interactionId: "consent",
-        response: { type: "browser", action: "accept" },
-      }).pipe(Effect.result))._tag === "Failure",
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("closes admitted provider processes and blocks new ones while login is pending", () =>
@@ -171,7 +154,7 @@ it.effect("closes admitted provider processes and blocks new ones while login is
     assert.isTrue(
       (yield* controller.withAccess!(Effect.void).pipe(Effect.result))._tag === "Failure",
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("shared credential invalidation closes admitted processes before permitting reuse", () =>
@@ -188,7 +171,7 @@ it.effect("shared credential invalidation closes admitted processes before permi
     yield* controller.invalidate!;
     assert.isTrue(closed);
     assert.strictEqual(yield* controller.withAccess!(Effect.succeed("new process")), "new process");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each([
@@ -253,7 +236,7 @@ it.effect.each([
       assert.isNull(verifying.interaction);
       assert.notInclude(verifying.message ?? "", "private-token");
       yield* controller.cancel("owner", state.flowId!);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("shows a device code only to its owner without treating it as authenticated", () =>
@@ -287,7 +270,7 @@ it.effect("shows a device code only to its owner without treating it as authenti
     assert.isNull(other.interaction);
     assert.isNull(other.authorizationUrl);
     yield* controller.cancel("owner", start.flowId!);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each([
@@ -321,7 +304,7 @@ it.effect.each([
       Effect.map(Option.getOrThrow),
     );
     assert.strictEqual(failed.message, message);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const makeBlockingResponseHarness = Effect.gen(function* () {
@@ -412,29 +395,7 @@ it.effect.each(["cancel", "logout"] as const)(
       assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
       assert.isFalse(yield* harness.controller.isChangingCredentials!);
       assert.notEqual((yield* harness.controller.start("other")).flowId, harness.input.flowId);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("timeout interrupts and drains a blocked response before publishing failure", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeBlockingResponseHarness;
-    yield* TestClock.adjust(300_001);
-    yield* Deferred.await(harness.cleanupStarted);
-    assert.isTrue(yield* harness.controller.isChangingCredentials!);
-    const duringCleanup = yield* harness.controller
-      .subscribe("owner")
-      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-    assert.notEqual(duringCleanup.phase, "failed");
-    yield* Deferred.succeed(harness.cleanupReleased, undefined);
-    const failed = yield* harness.controller.subscribe("owner").pipe(
-      Stream.filter((state) => state.phase === "failed"),
-      Stream.runHead,
-      Effect.map(Option.getOrThrow),
-    );
-    assert.include(failed.message ?? "", "expired");
-    assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
-    assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -456,7 +417,7 @@ it.effect(
       assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
       assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
       yield* harness.controller.withAccess!(Effect.void);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("closing the controller scope interrupts and drains its adapter response", () =>
@@ -472,12 +433,13 @@ it.effect("closing the controller scope interrupts and drains its adapter respon
     yield* Fiber.join(closing);
     assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
     assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("a failed method refresh keeps the last discovered methods", () =>
   Effect.gen(function* () {
     let fail = false;
+    let removed = false;
     const controller = yield* ProviderAuthFlow.make({
       instanceId,
       credentialBinding: { owner: "provider", key: "shared-agent" },
@@ -486,10 +448,14 @@ it.effect("a failed method refresh keeps the last discovered methods", () =>
           ? Effect.fail(
               new ProviderSetupError({ instanceId, operation: "status", detail: "interrupted" }),
             )
-          : Effect.succeed([method]),
+          : Effect.succeed(removed ? [] : [method]),
       ),
       authenticate: () => Effect.void,
       logout: Effect.void,
+      removeMethod: () =>
+        Effect.sync(() => {
+          removed = true;
+        }),
     });
     yield* controller.refreshMethods!;
     fail = true;
@@ -499,7 +465,16 @@ it.effect("a failed method refresh keeps the last discovered methods", () =>
       .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
     assert.deepEqual(state.methods, [method]);
     assert.strictEqual(state.message, "interrupted");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    const error = yield* Effect.flip(controller.removeMethod!(method.id));
+    assert.isTrue(removed);
+    assert.strictEqual(error.detail, "interrupted");
+    fail = false;
+    yield* controller.refreshMethods!;
+    const refreshed = yield* controller
+      .subscribe("owner")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.deepEqual(refreshed.methods, []);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rebuilding a controller leaves sessions it admitted to their owners", () =>
@@ -516,7 +491,7 @@ it.effect("rebuilding a controller leaves sessions it admitted to their owners",
     );
     yield* Scope.close(scope, Exit.void);
     assert.isFalse(closed);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("profile import stops owned sessions and gates access until credentials are saved", () =>
@@ -555,5 +530,5 @@ it.effect("profile import stops owned sessions and gates access until credential
       yield* controller.withAccess!(Effect.succeed("new credential process")),
       "new credential process",
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

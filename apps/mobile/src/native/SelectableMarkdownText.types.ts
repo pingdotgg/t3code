@@ -10,7 +10,6 @@ export interface NativeMarkdownTextStyle {
   readonly codeBackgroundColor: string;
   readonly codeBlockBackgroundColor: string;
   readonly fileTextColor: string;
-  readonly skillTextColor: string;
   readonly quoteMarkerColor: string;
   readonly dividerColor: string;
   readonly contextChipBorderColor?: string;
@@ -25,6 +24,15 @@ export interface NativeMarkdownTextStyle {
 export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
+  readonly path?: string;
+}
+
+export interface SelectableMarkdownModel {
+  readonly source: string;
+  readonly label: string;
+  readonly providerLabel: string;
+  readonly driver: string;
+  readonly iconUrl?: string | undefined;
 }
 
 export interface MarkdownImageRequest {
@@ -33,11 +41,7 @@ export interface MarkdownImageRequest {
   readonly title: string | null;
 }
 
-/**
- * The module cannot load workspace-relative image paths itself — the host app
- * resolves them (for example through a signed asset URL) and returns the
- * element to show. Returning null keeps Enriched's native media rendering.
- */
+/** Host apps resolve workspace-relative images. Return null to retain Enriched's native media rendering. */
 export type MarkdownImageRenderer = (image: MarkdownImageRequest) => import("react").ReactNode;
 
 export type MarkdownImageSourceResolver = (
@@ -63,12 +67,14 @@ export interface MarkdownLinkCustomization {
   readonly color?: string;
   readonly label?: string;
   readonly icon?: import("react-native").ImageSourcePropType;
+  readonly chip?: { readonly accent?: string; readonly tintsIcon: boolean };
 }
 
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
@@ -76,8 +82,20 @@ export interface SelectableMarkdownTextProps {
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
   readonly contextClipboardFragment?: string;
   readonly renderImage?: MarkdownImageRenderer;
+  readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
+  /**
+   * Makes task checkboxes tappable. The renderer ticks the box itself; `index` counts checkboxes
+   * in document order and `checked` is the new state.
+   */
+  readonly onTaskListItemPress?: (event: {
+    readonly index: number;
+    readonly checked: boolean;
+    readonly text: string;
+  }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
+  readonly writingDirection?: "ltr" | "rtl";
+  readonly textAlign?: "left" | "right";
 }

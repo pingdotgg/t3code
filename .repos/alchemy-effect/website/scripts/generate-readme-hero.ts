@@ -1,12 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path, { join } from "node:path";
 import { render } from "takumi-js";
-import {
-  README_HERO_H,
-  README_HERO_W,
-  ReadmeHero,
-} from "../src/brand/ReadmeHero.tsx";
 import { brandFonts } from "../src/brand/fonts.ts";
+import { README_HERO_H, README_HERO_W, ReadmeHero } from "../src/brand/ReadmeHero.tsx";
 
 const webp = await render(ReadmeHero(), {
   devicePixelRatio: 2,

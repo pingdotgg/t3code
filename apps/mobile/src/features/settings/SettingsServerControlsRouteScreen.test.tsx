@@ -1,6 +1,4 @@
-// @vitest-environment jsdom
 import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -14,6 +12,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     updateSettings: vi.fn(),
     alert: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
+    readOnly: new Set<string>(),
     projectSelected: false,
   },
 }));
@@ -46,27 +45,57 @@ vi.mock("../../state/preferences", () => ({
   updateMobilePreferencesAtom: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
+vi.mock("./components/SourceControlSignInSection", () => ({
+  SourceControlSignInSection: () => null,
+}));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
-  useEnvironmentsWithScope: () => new Set(mocks.targets.map((target) => target.environmentId)),
+  useEnvironmentsWithScope: () =>
+    new Set(
+      mocks.targets
+        .map((target) => target.environmentId)
+        .filter((environmentId) => !mocks.readOnly.has(environmentId)),
+    ),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
-vi.mock("../threads/thread-settings-options", () => ({ RUNTIME_MODE_CHOICES: [] }));
+vi.mock("../threads/thread-settings-options", () => ({
+  RUNTIME_MODE_CHOICES: [],
+  withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
+}));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: ({
+    label,
+    disabled,
+    onPress,
+  }: {
+    label: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button disabled={disabled} onClick={onPress}>
+      {label}
+    </button>
+  ),
+}));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
-  SettingsEnvironmentFilterHeader: () => null,
+  useSettingsEnvironmentMenu: () => ({
+    title: "Filter",
+    icon: "line.3.horizontal.decrease.circle",
+    items: [],
+  }),
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("./components/SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
+vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: ({
     label,
@@ -112,8 +141,10 @@ vi.mock("./settings-environment-filter", () => ({
   }),
 }));
 
-import { SettingsEnvironmentSourceControlRouteScreen } from "./SettingsServerControlsRouteScreen";
-import { SettingsThreadsRouteScreen } from "./SettingsThreadsRouteScreen";
+import {
+  SettingsThreadsRouteScreen,
+  SettingsWorktreesRouteScreen,
+} from "./SettingsServerControlsRouteScreen";
 
 function environment(environmentId: string, label: string) {
   return {
@@ -133,38 +164,6 @@ function environment(environmentId: string, label: string) {
   };
 }
 
-function button(label: string) {
-  const result = Array.from(container.querySelectorAll("button")).find(
-    (element) => element.textContent === label || element.getAttribute("aria-label") === label,
-  );
-  if (!result) throw new Error(`Missing button: ${label}`);
-  return result;
-}
-
-function expectFailures() {
-  const messages = mocks.alert.mock.calls
-    .map(([title, message]) => `${title}\n${message}`)
-    .join("\n");
-  expect.soft(messages).toMatch(/Alpha(?:(?!Beta)[\s\S])*Permission denied/);
-  expect.soft(messages).toMatch(/Beta(?:(?!Alpha)[\s\S])*Disk full/);
-  expect.soft(messages).not.toContain("Healthy");
-}
-
-function failTwoEnvironments() {
-  mocks.targets = [
-    environment("healthy", "Healthy"),
-    environment("alpha", "Alpha"),
-    environment("beta", "Beta"),
-  ];
-  mocks.updateSettings.mockImplementation(async ({ environmentId }: { environmentId: string }) =>
-    environmentId === "healthy"
-      ? AsyncResult.success(undefined)
-      : AsyncResult.failure(
-          Cause.fail(new Error(environmentId === "alpha" ? "Permission denied" : "Disk full")),
-        ),
-  );
-}
-
 let root: Root;
 let container: HTMLDivElement;
 
@@ -174,6 +173,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.targets = [environment("local", "Local")];
   mocks.projectSelected = false;
+  mocks.readOnly = new Set();
   mocks.alert.mockReset();
   mocks.updateSettings.mockReset();
   mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
@@ -187,10 +187,9 @@ describe("SettingsServerControlsRouteScreen", () => {
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
+    act(() => root.render(<SettingsWorktreesRouteScreen />));
 
     act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
-    // The branch naming view closes with a draft while the mode write is pending.
     act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
 
@@ -204,112 +203,36 @@ describe("SettingsServerControlsRouteScreen", () => {
       },
     });
   });
-});
 
-describe.each([
-  {
-    name: "source control",
-    Screen: SettingsEnvironmentSourceControlRouteScreen,
-    label: "Automatically pull",
-    key: "defaultAutoPull",
-  },
-  {
-    name: "thread behavior",
-    Screen: SettingsThreadsRouteScreen,
-    label: "Auto-settle merged threads",
-    key: "sidebarAutoSettleOnMerge",
-  },
-] as const)("$name shared settings", ({ Screen, label, key }) => {
-  it("identifies each failed environment and reason, then allows a subscription-driven retry", async () => {
-    failTwoEnvironments();
+  it("holds auto-settle changes until a pending project override write settles", async () => {
+    mocks.projectSelected = true;
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<Screen />));
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    const toggle = (label: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+        (button) => button.textContent === label,
+      )!;
 
-    act(() => button(label).click());
-    expect(button(label).disabled).toBe(true);
+    act(() => toggle("Agent browser access").click());
+    act(() => toggle("Auto-settle merged threads").click());
+
+    // Both rewrite the whole project override, so a second write planned now would drop the first.
+    expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
-
-    expectFailures();
-    expect(mocks.updateSettings.mock.calls.map(([input]) => input.environmentId)).toEqual([
-      "healthy",
-      "alpha",
-      "beta",
-    ]);
-    expect(button(label).disabled).toBe(false);
-    expect(button(label).getAttribute("aria-checked")).toBe("false");
-
-    mocks.alert.mockClear();
-    mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
-    await act(async () => button(label).click());
-    expect(mocks.updateSettings).toHaveBeenCalledTimes(6);
-    expect(mocks.alert).not.toHaveBeenCalled();
-    expect(button(label).getAttribute("aria-checked")).toBe("false");
-
-    mocks.targets = mocks.targets.map((target) => ({
-      ...target,
-      serverConfig: {
-        ...target.serverConfig,
-        settings: { ...target.serverConfig.settings, [key]: true },
-      },
-    }));
-    act(() => root.render(<Screen />));
-    expect(button(label).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("reports failed project resets and keeps overrides visible until a successful retry is received", async () => {
-    failTwoEnvironments();
-    mocks.projectSelected = true;
-    mocks.targets = mocks.targets.map((target) => ({
-      ...target,
-      serverConfig: {
-        ...target.serverConfig,
-        settings: {
-          ...target.serverConfig.settings,
-          projectSettingsOverrides: { project: { [key]: true } },
-        },
-      },
-    }));
-    act(() => root.render(<Screen />));
+  it("disables auto-settle when a selected environment cannot save settings", () => {
+    const remote = environment("remote", "Remote");
+    // Auto-settle rows skip a server without auto-settlement, but the page still saves to it.
+    remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
+    mocks.targets = [environment("local", "Local"), remote];
+    mocks.readOnly = new Set(["remote"]);
+    act(() => root.render(<SettingsThreadsRouteScreen />));
 
-    await act(async () => button("Use environment defaults").click());
-
-    expectFailures();
-    expect(button(label).getAttribute("aria-checked")).toBe("true");
-    expect(button("Use environment defaults").disabled).toBe(false);
-
-    mocks.alert.mockClear();
-    mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
-    await act(async () => button("Use environment defaults").click());
-    expect(mocks.updateSettings).toHaveBeenCalledTimes(6);
-    expect(mocks.alert).not.toHaveBeenCalled();
-    expect(button(label).getAttribute("aria-checked")).toBe("true");
-
-    mocks.targets = mocks.targets.map((target) => ({
-      ...target,
-      serverConfig: {
-        ...target.serverConfig,
-        settings: { ...target.serverConfig.settings, projectSettingsOverrides: {} },
-      },
-    }));
-    act(() => root.render(<Screen />));
-    expect(button(label).getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent).not.toContain("Use defaults");
-  });
-
-  it("does not alert for an interrupted write and releases the controls for retry", async () => {
-    const pending = Promise.withResolvers<AsyncResult.Failure<void>>();
-    mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<Screen />));
-
-    act(() => button(label).click());
-    expect(button(label).disabled).toBe(true);
-    await act(async () => pending.resolve(AsyncResult.failure(Cause.interrupt(1))));
-
-    expect(mocks.alert).not.toHaveBeenCalled();
-    expect(button(label).disabled).toBe(false);
-    await act(async () => button(label).click());
-    expect(mocks.updateSettings).toHaveBeenCalledTimes(2);
-    expect(mocks.alert).not.toHaveBeenCalled();
+    const autoSettle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (button) => button.textContent === "Auto-settle merged threads",
+    )!;
+    expect(autoSettle.disabled).toBe(true);
   });
 });

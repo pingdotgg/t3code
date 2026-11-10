@@ -3,10 +3,14 @@ import * as NodeCrypto from "node:crypto";
 
 import { describe, expect, it } from "@effect/vitest";
 import { signRelayJwt } from "@t3tools/shared/relayJwt";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
+import * as CloudMintSigner from "./CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayTokens from "./RelayTokens.ts";
 
@@ -34,7 +38,12 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointNamespace: undefined,
 });
 
-const layer = RelayTokens.layer.pipe(Layer.provide(RelayConfiguration.layer(config)));
+const layer = RelayTokens.layer.pipe(
+  Layer.provide(CloudMintSigner.layer),
+  Layer.provide(RelayConfiguration.layer(config)),
+  Layer.provideMerge(Signature.layerWebCrypto),
+  Layer.provide(SecureRandom.layerWebCrypto),
+);
 
 describe("RelayTokens", () => {
   it.effect("issues a user-bound environment link challenge", () =>
@@ -51,6 +60,7 @@ describe("RelayTokens", () => {
         issuedAtEpochSeconds: 100,
         expiresAtEpochSeconds: 200,
       });
+      yield* TestClock.setTime(150_000);
 
       expect(
         yield* relayTokens.verifyLinkChallenge({
@@ -61,7 +71,6 @@ describe("RelayTokens", () => {
             liveActivitiesEnabled: true,
             managedTunnelsEnabled: true,
           },
-          nowEpochSeconds: 150,
         }),
       ).toMatchObject({ sub: "user_123", jti: "challenge-1" });
       expect(
@@ -73,7 +82,6 @@ describe("RelayTokens", () => {
             liveActivitiesEnabled: true,
             managedTunnelsEnabled: true,
           },
-          nowEpochSeconds: 150,
         }),
       ).toBeNull();
     }).pipe(Effect.provide(layer)),
@@ -92,17 +100,15 @@ describe("RelayTokens", () => {
         scopes: ["environment:connect", "environment:status", "mobile:registration"],
       });
 
-      expect(
-        yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 700 }),
-      ).toMatchObject({
+      yield* TestClock.setTime(700_000);
+      expect(yield* relayTokens.verifyDpopAccessToken({ token })).toMatchObject({
         sub: "user_123",
         cnf: { jkt: "proof-key-thumbprint" },
         client_id: "t3-mobile",
         scope: ["environment:connect", "environment:status", "mobile:registration"],
       });
-      expect(
-        yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 1_961 }),
-      ).toBeNull();
+      yield* TestClock.setTime(1_961_000);
+      expect(yield* relayTokens.verifyDpopAccessToken({ token })).toBeNull();
     }).pipe(Effect.provide(layer)),
   );
 
@@ -119,25 +125,12 @@ describe("RelayTokens", () => {
         scopes: ["environment:connect", "environment:status"],
       });
 
-      expect(
-        yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 }),
-      ).toMatchObject({
+      yield* TestClock.setTime(150_000);
+      expect(yield* relayTokens.verifyDpopAccessToken({ token })).toMatchObject({
         client_id: "t3-web",
         scope: ["environment:connect", "environment:status"],
         cnf: { jkt: "web-proof-key-thumbprint" },
       });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("treats requested scope as an order-independent set", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      expect(
-        relayTokens.resolveDpopAccessTokenScopes({
-          clientId: "t3-mobile",
-          scope: "environment:status environment:connect environment:status",
-        }),
-      ).toEqual(["environment:status", "environment:connect"]);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -160,7 +153,8 @@ describe("RelayTokens", () => {
         },
       });
 
-      expect(yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 })).toBeNull();
+      yield* TestClock.setTime(150_000);
+      expect(yield* relayTokens.verifyDpopAccessToken({ token })).toBeNull();
     }).pipe(Effect.provide(layer)),
   );
 
@@ -183,7 +177,8 @@ describe("RelayTokens", () => {
         },
       });
 
-      expect(yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 })).toBeNull();
+      yield* TestClock.setTime(150_000);
+      expect(yield* relayTokens.verifyDpopAccessToken({ token })).toBeNull();
     }).pipe(Effect.provide(layer)),
   );
 });

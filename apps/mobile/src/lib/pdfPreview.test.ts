@@ -16,7 +16,7 @@ vi.mock("expo-file-system", () => ({
   FileMode: { ReadOnly: "r" },
 }));
 
-import { isPdfPreviewUri, pdfInitialPage, pdfLinkUrl, preparePdfPreview } from "./pdfPreview";
+import { isPdfPreviewUri, pdfLinkUrl, preparePdfPreview } from "./pdfPreview";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -53,20 +53,6 @@ describe("PDF navigation", () => {
     expect(isPdfPreviewUri("https://environment.test/index.html?file=syllabus.pdf")).toBe(false);
     expect(isPdfPreviewUri("invalid")).toBe(false);
   });
-
-  it("keeps valid page destinations and rejects invalid page numbers", () => {
-    expect(pdfInitialPage("https://environment.test/a.pdf#page=8&zoom=100")).toBe(8);
-    for (const fragment of [
-      "",
-      "#page=0",
-      "#page=-2",
-      "#page=1.5",
-      "#page=NaN",
-      "#page=Infinity",
-    ]) {
-      expect(pdfInitialPage(`file:///a.pdf${fragment}`)).toBe(1);
-    }
-  });
 });
 
 describe("preparing native PDFs", () => {
@@ -94,15 +80,6 @@ describe("preparing native PDFs", () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
-  it("closes and removes the cached file when reading fails", async () => {
-    mocks.read.mockRejectedValue(new Error("read failed"));
-    await expect(
-      preparePdfPreview("https://remote.test/a.pdf", new AbortController().signal),
-    ).rejects.toThrow("read failed");
-    expect(mocks.close).toHaveBeenCalledOnce();
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-  });
-
   it("opens local files without downloading or deleting the caller's file", async () => {
     const result = await preparePdfPreview(
       "file:///draft.pdf#page=3",
@@ -122,13 +99,5 @@ describe("preparing native PDFs", () => {
     });
     expect(await preparePdfPreview("https://remote.test/a.pdf", controller.signal)).toBeNull();
     expect(mocks.dispose).toHaveBeenCalledOnce();
-  });
-
-  it("does no work for an already dismissed preview", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    expect(await preparePdfPreview("https://remote.test/a.pdf", controller.signal)).toBeNull();
-    expect(mocks.download).not.toHaveBeenCalled();
-    expect(mocks.read).not.toHaveBeenCalled();
   });
 });

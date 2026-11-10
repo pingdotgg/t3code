@@ -226,7 +226,7 @@ By the end you'll have:
 
    ```diff lang="typescript"
    import * as Alchemy from "alchemy";
-   +import * as GitHub from "alchemy/GitHub";
+   +import * as GitHub from "@alchemy.run/github";
    +import * as Output from "alchemy/Output";
    import * as Effect from "effect/Effect";
 
@@ -267,14 +267,14 @@ By the end you'll have:
    PR is closed the preview environment is destroyed automatically.
 
    <Tabs syncKey="pkgManager">
+     <TabItem label="pnpm">
+       <DeployWorkflow manager="pnpm" />
+     </TabItem>
      <TabItem label="bun">
        <DeployWorkflow manager="bun" />
      </TabItem>
      <TabItem label="npm">
        <DeployWorkflow manager="npm" />
-     </TabItem>
-     <TabItem label="pnpm">
-       <DeployWorkflow manager="pnpm" />
      </TabItem>
      <TabItem label="yarn">
        <DeployWorkflow manager="yarn" />
@@ -335,6 +335,13 @@ alchemy profile create admin
 alchemy profile edit --profile admin
 ```
 
+For Cloudflare, choose **API Token or API Key** when asked for the
+authentication method, not the recommended OAuth: Cloudflare's OAuth
+scopes can't manage API tokens, so an OAuth `admin` profile fails
+when `stacks/github.ts` creates the CI token. See
+[required Cloudflare permissions](#cloudflare) for which key or token
+to use.
+
 :::danger[Heads up]
 The credentials stored under `--profile admin` can mint new tokens
 and roles with arbitrary scope. Treat it like root. Use it only
@@ -378,8 +385,8 @@ token-management token.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -506,8 +513,8 @@ your environment when deploying this stack.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -610,8 +617,8 @@ administration.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as GitHub from "alchemy/GitHub";
+import * as AWS from "@alchemy.run/aws";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -742,7 +749,7 @@ AWS console.
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
-import * as GitHub from "alchemy/GitHub";
+import * as GitHub from "@alchemy.run/github";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";

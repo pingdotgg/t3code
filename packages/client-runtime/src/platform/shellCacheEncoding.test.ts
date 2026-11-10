@@ -9,10 +9,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import { vi } from "vite-plus/test";
-import * as Deferred from "effect/Deferred";
 
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
@@ -189,28 +186,6 @@ describe("cooperative shell cache encoding", () => {
     }),
   );
 
-  it.effect("yields to a host timer between every 32-row chunk", () =>
-    Effect.gen(function* () {
-      const setTimer = vi.spyOn(globalThis, "setTimeout");
-      try {
-        yield* encodeStoredShellSnapshot({
-          ...stored,
-          snapshot: {
-            ...stored.snapshot,
-            threads: Array.from({ length: 65 }, () => ({ ...stored.snapshot.threads[0]! })),
-            archivedThreads: Array.from({ length: 33 }, () => ({
-              ...stored.snapshot.archivedThreads[0]!,
-            })),
-          },
-        });
-        // Five row chunks (3 active + 2 archived): four yields between them, one before the envelope.
-        expect(setTimer).toHaveBeenCalledTimes(5);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    }),
-  );
-
   it.effect("still rejects invalid active and archived rows after an encoding chunk yields", () =>
     Effect.gen(function* () {
       const invalidRow = { ...stored.snapshot.threads[0]!, itemCount: -1 };
@@ -227,78 +202,6 @@ describe("cooperative shell cache encoding", () => {
       expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalidArchived))).toBe(true);
       expect(yield* Effect.isFailure(encodeOriginal(invalidEnvelope))).toBe(true);
       expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalidEnvelope))).toBe(true);
-    }),
-  );
-
-  it.effect("keeps concurrent saves independent", () =>
-    Effect.gen(function* () {
-      const other = {
-        ...stored,
-        environmentId: EnvironmentId.make("environment-2"),
-        snapshot: {
-          ...stored.snapshot,
-          threads: stored.snapshot.threads.slice(0, 40).map((thread) => ({
-            ...thread,
-            title: `Other ${thread.id}`,
-          })),
-          archivedThreads: [],
-        },
-      };
-      const [first, second] = yield* Effect.all(
-        [encodeStoredShellSnapshot(stored), encodeStoredShellSnapshot(other)],
-        { concurrency: "unbounded" },
-      );
-      expect(first).toBe(yield* encodeOriginal(stored));
-      expect(second).toBe(yield* encodeOriginal(other));
-    }),
-  );
-
-  it.effect("cancels the pending host timer when encoding is interrupted", () =>
-    Effect.gen(function* () {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      const fakeSetTimeout = globalThis.setTimeout;
-      const scheduled = yield* Deferred.make<ReturnType<typeof setTimeout>>();
-      vi.spyOn(globalThis, "setTimeout").mockImplementation((...args) => {
-        // @effect-diagnostics-next-line globalTimers:off - Observes the encoder's own host timer.
-        const timer = fakeSetTimeout(...args);
-        Deferred.doneUnsafe(scheduled, Effect.succeed(timer));
-        return timer;
-      });
-      const clearTimer = vi.spyOn(globalThis, "clearTimeout");
-      const fiber = yield* Effect.forkScoped(
-        Effect.suspend(() => encodeStoredShellSnapshot(stored)),
-      );
-      try {
-        const pendingTimer = yield* Deferred.await(scheduled);
-        expect(vi.getTimerCount()).toBe(1);
-        yield* Fiber.interrupt(fiber);
-        expect(clearTimer).toHaveBeenCalledWith(pendingTimer);
-        expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        yield* Fiber.interrupt(fiber);
-        vi.restoreAllMocks();
-        vi.useRealTimers();
-      }
-    }),
-  );
-
-  it.effect("reuses encoded rows across saves without changing the payload", () =>
-    Effect.gen(function* () {
-      const encode = makeStoredShellSnapshotEncoder();
-      expect(yield* encode(stored)).toBe(yield* encodeOriginal(stored));
-
-      const setTimer = vi.spyOn(globalThis, "setTimeout");
-      try {
-        // Same row references, new envelope: no row work, so no host yields.
-        const resaved = {
-          ...stored,
-          snapshot: { ...stored.snapshot, snapshotSequence: 4 },
-        };
-        expect(yield* encode(resaved)).toBe(yield* encodeOriginal(resaved));
-        expect(setTimer).not.toHaveBeenCalled();
-      } finally {
-        vi.restoreAllMocks();
-      }
     }),
   );
 

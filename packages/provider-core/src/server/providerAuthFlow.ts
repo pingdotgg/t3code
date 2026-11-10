@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -69,10 +69,11 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     context: ProviderAuthFlowContext,
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
+  readonly removeMethod?: (methodId: string) => Effect.Effect<void, ProviderSetupError>;
   readonly timeoutMs?: number;
 }) {
   const scope = yield* Scope.Scope;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const timeoutMs = options.timeoutMs ?? 300_000;
   const empty: ProviderAuthState = {
@@ -140,41 +141,64 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
 
   const controller: ProviderAuth.ProviderAuthController = {
     credentialBinding: options.credentialBinding,
-    adoptCredentials: (update, stopSessions) =>
-      Effect.gen(function* () {
-        yield* lock.withPermit(
-          Effect.gen(function* () {
-            if (operation !== "idle")
-              return yield* new ProviderSetupError({
-                instanceId: options.instanceId,
-                operation: "import",
-                detail: "Finish or cancel the existing sign-in first.",
-              });
-            operation = "stopping";
-          }),
-        );
-        const result = yield* Effect.gen(function* () {
-          yield* stopOwnedSessions;
-          yield* stopSessions;
-          yield* update;
-          yield* refreshMethods;
-        }).pipe(Effect.exit);
-        const state: ProviderAuthState = {
-          ...empty,
-          methods: snapshot.value.state.methods ?? [],
-          phase: Exit.isSuccess(result) ? "succeeded" : "failed",
-          message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
-        };
-        yield* lock.withPermit(
-          Effect.gen(function* () {
-            yield* SubscriptionRef.set(snapshot, { owner: null, state });
-            operation = "idle";
-          }),
-        );
-        if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
-        return state;
-      }).pipe(Effect.uninterruptible),
+    adoptCredentials: Effect.fn("providerAuthFlow.adoptCredentials")(function* (
+      update,
+      stopSessions,
+    ) {
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (operation !== "idle")
+            return yield* new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "import",
+              detail: "Finish or cancel the existing sign-in first.",
+            });
+          operation = "stopping";
+        }),
+      );
+      const result = yield* Effect.gen(function* () {
+        yield* stopOwnedSessions;
+        yield* stopSessions;
+        yield* update;
+        yield* refreshMethods;
+      }).pipe(Effect.exit);
+      const state: ProviderAuthState = {
+        ...empty,
+        methods: snapshot.value.state.methods ?? [],
+        phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+        message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
+      };
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          yield* SubscriptionRef.set(snapshot, { owner: null, state });
+          operation = "idle";
+        }),
+      );
+      if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+      return state;
+    }, Effect.uninterruptible),
     refreshMethods,
+    ...(options.removeMethod
+      ? {
+          removeMethod: Effect.fn("providerAuthFlow.removeMethod")(function* (methodId: string) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (operation !== "idle")
+                  return yield* new ProviderSetupError({
+                    instanceId: options.instanceId,
+                    operation: "removeMethod",
+                    detail: "Finish or cancel the existing sign-in first.",
+                  });
+                yield* options.removeMethod!(methodId);
+                const methods = yield* options.methods;
+                const state = { ...empty, methods };
+                yield* SubscriptionRef.set(snapshot, { owner: null, state });
+                return state;
+              }),
+            );
+          }, Effect.uninterruptible),
+        }
+      : {}),
     invalidate: lock.withPermit(
       Effect.gen(function* () {
         if (operation !== "idle") return;
@@ -219,7 +243,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
             Effect.forkIn(child),
           );
           return yield* restore(Fiber.await(fiber)).pipe(
-            Effect.flatMap((result) => result),
+            Effect.flatten,
             Effect.onExit((result) =>
               Exit.isFailure(result) ? Scope.close(child, Exit.void) : Effect.void,
             ),
@@ -236,7 +260,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               operation: "start",
               detail: "Provider setup is already in progress.",
             });
-          const id = yield* crypto.randomUUIDv4().pipe(
+          const id = yield* random.uuidV4().pipe(
             Effect.mapError(
               () =>
                 new ProviderSetupError({
@@ -279,21 +303,21 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               expiresAt: flow.expiresAt,
               ...(returnUrl ? { returnUrl } : {}),
               ...(callbackMode ? { callbackMode } : {}),
-              setInteraction: (interaction, respond, complete) =>
-                Effect.gen(function* () {
-                  if (active !== flow) return;
-                  flow.respond = respond;
-                  flow.complete = complete;
-                  yield* publish(flow, {
-                    phase: "waiting",
-                    interaction,
-                    authorizationUrl:
-                      interaction.type === "browser" || interaction.type === "deviceCode"
-                        ? interaction.url
-                        : null,
-                    message: "Complete sign-in to continue.",
-                  });
-                }),
+              // Terminal sign-in updates this for every output chunk within the auth operation.
+              setInteraction: Effect.fnUntraced(function* (interaction, respond, complete) {
+                if (active !== flow) return;
+                flow.respond = respond;
+                flow.complete = complete;
+                yield* publish(flow, {
+                  phase: "waiting",
+                  interaction,
+                  authorizationUrl:
+                    interaction.type === "browser" || interaction.type === "deviceCode"
+                      ? interaction.url
+                      : null,
+                  message: "Complete sign-in to continue.",
+                });
+              }),
               verifying: Effect.gen(function* () {
                 flow.respond = undefined;
                 flow.complete = undefined;
@@ -424,69 +448,67 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           return snapshot.value.state;
         }),
       ),
-    cancel: (owner, id) =>
-      Effect.gen(function* () {
-        const flow = yield* lock.withPermit(
-          Effect.gen(function* () {
-            const flow = yield* requireFlow(owner, id);
-            yield* publish(flow, {
-              phase: "cancelled",
-              interaction: null,
-              authorizationUrl: null,
-              expiresAt: null,
-              message: "Sign-in cancelled.",
+    cancel: Effect.fn("providerAuthFlow.cancel")(function* (owner, id) {
+      const flow = yield* lock.withPermit(
+        Effect.gen(function* () {
+          const flow = yield* requireFlow(owner, id);
+          yield* publish(flow, {
+            phase: "cancelled",
+            interaction: null,
+            authorizationUrl: null,
+            expiresAt: null,
+            message: "Sign-in cancelled.",
+          });
+          active = undefined;
+          operation = "stopping";
+          return flow;
+        }),
+      );
+      if (flow.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
+      if (flow.fiber) yield* Fiber.interrupt(flow.fiber);
+      operation = "idle";
+      return snapshot.value.state;
+    }, Effect.uninterruptible),
+    logout: Effect.fn("providerAuthFlow.logout")(function* (stopSessions) {
+      const flow = yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (operation !== "idle" && operation !== "auth")
+            return yield* new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "logout",
+              detail: "Provider setup is already stopping.",
             });
-            active = undefined;
-            operation = "stopping";
-            return flow;
-          }),
-        );
-        if (flow.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
-        if (flow.fiber) yield* Fiber.interrupt(flow.fiber);
-        operation = "idle";
-        return snapshot.value.state;
-      }).pipe(Effect.uninterruptible),
-    logout: (stopSessions) =>
-      Effect.gen(function* () {
-        const flow = yield* lock.withPermit(
-          Effect.gen(function* () {
-            if (operation !== "idle" && operation !== "auth")
-              return yield* new ProviderSetupError({
-                instanceId: options.instanceId,
-                operation: "logout",
-                detail: "Provider setup is already stopping.",
-              });
-            operation = "stopping";
-            const flow = active;
-            active = undefined;
-            return flow;
-          }),
-        );
-        const result = yield* Effect.gen(function* () {
-          if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
-          if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-          yield* stopSessions.pipe(Effect.ensuring(stopOwnedSessions));
-          const message = yield* options.logout;
-          if (options.refreshMethodsAfterAuth) yield* refreshMethods;
-          return message;
-        }).pipe(Effect.exit);
-        const state: ProviderAuthState = {
-          ...empty,
-          methods: snapshot.value.state.methods ?? [],
-          phase: Exit.isSuccess(result) ? "idle" : "failed",
-          message: Exit.isSuccess(result)
-            ? (result.value ?? "Signed out.")
-            : "Could not sign out. Try again.",
-        };
-        yield* lock.withPermit(
-          Effect.gen(function* () {
-            yield* SubscriptionRef.set(snapshot, { owner: null, state });
-            operation = "idle";
-          }),
-        );
-        if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
-        return state;
-      }).pipe(Effect.uninterruptible),
+          operation = "stopping";
+          const flow = active;
+          active = undefined;
+          return flow;
+        }),
+      );
+      const result = yield* Effect.gen(function* () {
+        if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
+        if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
+        yield* stopSessions.pipe(Effect.ensuring(stopOwnedSessions));
+        const message = yield* options.logout;
+        if (options.refreshMethodsAfterAuth) yield* refreshMethods;
+        return message;
+      }).pipe(Effect.exit);
+      const state: ProviderAuthState = {
+        ...empty,
+        methods: snapshot.value.state.methods ?? [],
+        phase: Exit.isSuccess(result) ? "idle" : "failed",
+        message: Exit.isSuccess(result)
+          ? (result.value ?? "Signed out.")
+          : "Could not sign out. Try again.",
+      };
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          yield* SubscriptionRef.set(snapshot, { owner: null, state });
+          operation = "idle";
+        }),
+      );
+      if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+      return state;
+    }, Effect.uninterruptible),
     subscribe: (owner) =>
       SubscriptionRef.changes(snapshot).pipe(
         Stream.map((current) =>
@@ -512,8 +534,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       active = undefined;
       if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
       if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-      // Settings edits rebuild instances; admitted sessions (including those of
-      // peers sharing this binding) end with their own scopes, not this one.
+      // Settings rebuild instances; admitted sessions sharing this binding retain their own scopes.
     }),
   );
   return controller;
