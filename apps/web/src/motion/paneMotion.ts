@@ -101,20 +101,6 @@ function holdCoveredCards(cards: Shown["cards"], box: Box, edge: HTMLElement) {
   };
 }
 
-/** Before a sidebar toggle commits: what its split panes show now. */
-export function holdPaneContent(): void {
-  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
-    snapshot(stage, true);
-  }
-}
-
-/** Once the sidebar slide starts, a held snapshot no pane motion took is stale. */
-export function releasePaneContent(): void {
-  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
-    if (shownBefore.get(stage)?.held) shownBefore.delete(stage);
-  }
-}
-
 type Slots = ReadonlyMap<string, { slot: { paneId: string } }>;
 
 /** Measures the tracked elements before React writes a new pane layout to the DOM. */
