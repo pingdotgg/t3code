@@ -4154,7 +4154,10 @@ describe("AcpAdapterV2", () => {
       // The agent logs the upstream error and leaves session/prompt open.
       const harness = yield* makePromptInactivityHarness({
         environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
-        watchPromptOutcome: () => Effect.succeed(() => Effect.succeed(badGateway)),
+        watchPromptOutcome: () =>
+          Effect.succeed((_result, options) =>
+            Effect.succeed(options?.retired === true ? badGateway : undefined),
+          ),
       });
       yield* harness.startTurn(1);
       yield* TestClock.adjust("15 minutes");
