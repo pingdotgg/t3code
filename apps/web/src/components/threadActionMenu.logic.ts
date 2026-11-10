@@ -175,7 +175,11 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: state.background ? ("foreground" as const) : ("background" as const),
-            label: state.background ? "Move to Active" : "Run in background",
+            label: state.background
+              ? "Move to Active"
+              : state.isSettled || state.isSnoozed
+                ? "Run future turns in background"
+                : "Run in background",
             icon: "layers",
           },
           ...(state.background

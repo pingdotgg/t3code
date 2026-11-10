@@ -1749,10 +1749,11 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("background failures stay reported when another automated run starts", () =>
+it.effect("provider failures stay reported when another automated run starts", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     const { threadId } = yield* completeAndSnoozeThread("background-failure", 30);
     yield* orchestrator.dispatch({
       type: "thread.metadata.update",
@@ -1771,13 +1772,34 @@ it.effect("background failures stay reported when another automated run starts",
       createdBy: "agent",
       creationSource: "server",
     });
-    const runId = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!.id;
-    yield* orchestrator.dispatch({
-      type: "run.interrupt",
-      commandId: CommandId.make("background-failure:stop"),
+    const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    const terminalEvent: OrchestrationV2DomainEvent = {
+      id: EventId.make("background-failure:provider-terminal"),
+      type: "run.updated",
       threadId,
-      runId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: { ...run, status: "failed", completedAt: now },
+    };
+    const stale = yield* eventSink.writeIfRunCurrent({
+      threadId,
+      runId: run.id,
+      activeAttemptId: RunAttemptId.make("stale-attempt"),
+      expectedStatus: run.status,
+      events: [terminalEvent],
     });
+    assert.isFalse(stale.committed);
+    assert.isNull((yield* projections.getThreadShell(threadId))!.background?.reportedAt);
+    const finalized = yield* eventSink.writeIfRunCurrent({
+      threadId,
+      runId: run.id,
+      activeAttemptId: run.activeAttemptId!,
+      expectedStatus: run.status,
+      events: [terminalEvent],
+    });
+    assert.isTrue(finalized.committed);
     const reported = (yield* projections.getThreadShell(threadId))!.background;
     assert.ok(reported?.reportedAt);
     yield* orchestrator.dispatch({

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -357,6 +358,71 @@ const layerBase: Layer.Layer<
         });
       });
 
+    const withBackgroundReports = Effect.fn("orchestrationV2.EventSink.withBackgroundReports")(
+      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        const reports: Array<OrchestrationV2DomainEvent> = [];
+        const reported = new Set<ThreadId>();
+        const runStatuses = new Map<RunId, string>();
+        for (const event of events) {
+          if (event.type === "run.created") {
+            runStatuses.set(event.payload.id, event.payload.status);
+            continue;
+          }
+          if (event.type !== "run.updated") continue;
+          const previousStatus = runStatuses.get(event.payload.id);
+          runStatuses.set(event.payload.id, event.payload.status);
+          if (
+            !["failed", "interrupted", "cancelled"].includes(event.payload.status) ||
+            reported.has(event.threadId) ||
+            (event.payload.status === "cancelled" &&
+              events.some(
+                (candidate) =>
+                  candidate.type === "message.updated" &&
+                  candidate.threadId === event.threadId &&
+                  candidate.payload.runId != null &&
+                  candidate.payload.id === event.payload.userMessageId &&
+                  candidate.payload.runId !== event.payload.id,
+              )) ||
+            events.some(
+              (candidate) =>
+                candidate.type === "run.created" &&
+                candidate.payload.restartContinuationOfRunId === event.payload.id,
+            )
+          )
+            continue;
+          const pending = events.findLast(
+            (candidate) => candidate.threadId === event.threadId && "lineage" in candidate.payload,
+          );
+          const thread =
+            pending !== undefined && "lineage" in pending.payload
+              ? pending.payload
+              : yield* projectionStore.getThread(event.threadId);
+          if (thread.background == null || thread.background.reportedAt != null) continue;
+          const priorStatus =
+            previousStatus ??
+            (yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
+              runIds: [event.payload.id],
+            })).runs[0]?.status;
+          if (priorStatus === event.payload.status) continue;
+          reported.add(event.threadId);
+          reports.push({
+            ...event,
+            id: EventId.make(`${event.id}:background-report`),
+            type: "thread.metadata-updated",
+            payload: {
+              ...thread,
+              background: {
+                ...thread.background,
+                reportedAt: DateTime.formatIso(event.occurredAt),
+              },
+              updatedAt: event.occurredAt,
+            },
+          });
+        }
+        return [...events, ...reports];
+      },
+    );
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -365,18 +431,24 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
-      return Effect.forEach(
-        events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
-        { concurrency: 1 },
+      return withBackgroundReports(events).pipe(
+        Effect.flatMap((reportEvents) =>
+          Effect.forEach(
+            reportEvents,
+            (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
+              event.type === "turn-item.updated"
+                ? turnItemPositions
+                    .normalize(
+                      event.payload,
+                      event.payload.runId === null
+                        ? undefined
+                        : runOrdinals.get(event.payload.runId),
+                    )
+                    .pipe(Effect.map((payload) => ({ ...event, payload })))
+                : Effect.succeed(event),
+            { concurrency: 1 },
+          ),
+        ),
       );
     };
 

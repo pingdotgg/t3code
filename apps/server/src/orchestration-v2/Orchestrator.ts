@@ -1432,59 +1432,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } as Event;
     });
 
-  const withBackgroundReports = Effect.fn("Orchestrator.withBackgroundReports")(function* (
-    events: ReadonlyArray<OrchestrationV2DomainEvent>,
-  ) {
-    const reports: Array<OrchestrationV2DomainEvent> = [];
-    const reported = new Set<ThreadId>();
-    const runStatuses = new Map<RunId, string>();
-    for (const event of events) {
-      if (event.type === "run.created") {
-        runStatuses.set(event.payload.id, event.payload.status);
-        continue;
-      }
-      if (event.type !== "run.updated") continue;
-      const previousStatus = runStatuses.get(event.payload.id);
-      runStatuses.set(event.payload.id, event.payload.status);
-      if (
-        !["failed", "interrupted", "cancelled"].includes(event.payload.status) ||
-        reported.has(event.threadId) ||
-        events.some(
-          (candidate) =>
-            candidate.type === "run.created" &&
-            candidate.payload.restartContinuationOfRunId === event.payload.id,
-        )
-      )
-        continue;
-      const pending = events.findLast(
-        (candidate) => candidate.threadId === event.threadId && "lineage" in candidate.payload,
-      );
-      const thread =
-        pending !== undefined && "lineage" in pending.payload
-          ? pending.payload
-          : yield* projectionStore.getThread(event.threadId);
-      if (thread.background == null || thread.background.reportedAt != null) continue;
-      const priorStatus =
-        previousStatus ??
-        (yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
-          runIds: [event.payload.id],
-        })).runs[0]?.status;
-      if (priorStatus === event.payload.status) continue;
-      reported.add(event.threadId);
-      reports.push({
-        ...event,
-        id: yield* idAllocator.allocate.event({ threadId: event.threadId }),
-        type: "thread.metadata-updated",
-        payload: {
-          ...thread,
-          background: { ...thread.background, reportedAt: DateTime.formatIso(event.occurredAt) },
-          updatedAt: event.occurredAt,
-        },
-      });
-    }
-    return [...events, ...reports];
-  });
-
   const writeSystemEvents =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (
@@ -1494,7 +1441,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       const withIds = yield* Effect.forEach(events, (event) => makeSystemEvent(event));
       yield* eventSink.writeWithEffects({
-        events: yield* withBackgroundReports(withIds),
+        events: withIds,
         effects,
         ...options,
       });
@@ -14119,17 +14066,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         storedEvents: [],
       } satisfies OrchestratorV2DispatchResult;
     }
-    const eventsWithReports = yield* withBackgroundReports(plan.events).pipe(
-      mapDispatchError(command),
-    );
-    const acceptedAt = eventsWithReports.at(-1)?.occurredAt ?? (yield* DateTime.now);
+    const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
     const committed = yield* eventSink
       .commitCommand({
         commandId: command.commandId,
         threadId: commandThreadId(command),
         commandType: command.type,
         acceptedAt,
-        events: eventsWithReports,
+        events: plan.events,
         effects: plan.effects,
         ...(plan.cancelUnsettledEffects === undefined
           ? {}

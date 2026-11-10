@@ -2836,8 +2836,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "background":
           case "foreground":
-          case "acknowledge-background":
-            await updateThreadMetadata({
+          case "acknowledge-background": {
+            const result = await updateThreadMetadata({
               environmentId: threadRef.environmentId,
               input: {
                 threadId: threadRef.threadId,
@@ -2846,7 +2846,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   : { background: clicked.value === "background" }),
               },
             });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to update background placement",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
             return;
+          }
           case "mark-unread":
             markThreadUnread(threadRef);
             return;

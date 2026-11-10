@@ -1354,6 +1354,12 @@ it.effect("steers a promoted queued message with the selection it was queued wit
           (run) => run.status === "queued",
         )!;
         yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("background-before-promote"),
+          threadId,
+          background: true,
+        });
+        yield* orchestrator.dispatch({
           type: "queued-message.promote-to-steer",
           commandId: CommandId.make("promote"),
           threadId,
@@ -1364,6 +1370,7 @@ it.effect("steers a promoted queued message with the selection it was queued wit
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(steered, ["queued"]);
+        assert.isNull(projection.thread.background?.reportedAt);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
       }).pipe(Effect.provide(layer));
     }),
