@@ -8,7 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -55,23 +57,42 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemoveError>()(
+  "RelayClientLockRemoveError",
+  { lockPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the relay client lock ${this.lockPath}.`;
+  }
+}
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+export class RelayClientInstallError extends Schema.TaggedError<RelayClientInstallError>()(
+  "RelayClientInstallError",
+  {
+    reason: Schema.Literals([
+      "download_failed",
+      "invalid_checksum",
+      "install_locked",
+      "managed_by_policy",
+      "override_missing",
+      "unsupported_platform",
+      "validation_failed",
+      "write_failed",
+    ]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const isRelayClientInstallError = Schema.is(RelayClientInstallError);
+
+class CloudflaredCommandError extends Schema.TaggedError<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {}
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -248,12 +269,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   RelayClientShape,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const path = yield* Path.Path;
@@ -468,7 +491,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       ),
     );
     yield* report("verifying");
-    const checksum = yield* crypto.digest("SHA-256", bytes).pipe(
+    const checksum = yield* digest.digest(Digest.sha256, bytes).pipe(
       Effect.mapError(
         (cause) =>
           new RelayClientInstallError({
@@ -488,7 +511,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const removeEmptyLock = (lockPath: string) =>
-    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+    Effect.tryPromise({
+      try: () => NodeFSP.rmdir(lockPath),
+      catch: (cause) => new RelayClientLockRemoveError({ lockPath, cause }),
+    }).pipe(Effect.ignore);
 
   const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
     lockPath: string,
@@ -502,7 +528,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
-    const owner = `${process.pid}-${yield* crypto.randomUUIDv4()}`;
+    const owner = `${process.pid}-${yield* random.uuidV4()}`;
     const candidate = yield* Effect.acquireRelease(
       fileSystem.makeTempDirectory({ directory: path.dirname(lockPath), prefix: ".lock-" }),
       (directory) =>
@@ -639,7 +665,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         });
       }
 
-      const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4()}.tmp`;
+      const stagedPath = `${managedPath}.${yield* random.uuidV4()}.tmp`;
       yield* report("activating");
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),
@@ -657,7 +683,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.catchIf(
-        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) => !isRelayClientInstallError(cause),
         (cause) =>
           Effect.fail(
             new RelayClientInstallError({

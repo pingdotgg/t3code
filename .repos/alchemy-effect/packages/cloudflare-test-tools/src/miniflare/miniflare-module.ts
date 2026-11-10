@@ -3,13 +3,7 @@ import type { OutputAsset, OutputChunk } from "rolldown";
 
 export interface MiniflareModule {
   path: string;
-  type:
-    | "ESModule"
-    | "CommonJS"
-    | "Text"
-    | "Data"
-    | "CompiledWasm"
-    | "PythonModule";
+  type: "ESModule" | "CommonJS" | "Text" | "Data" | "CompiledWasm" | "PythonModule";
   contents?: string | Uint8Array<ArrayBuffer> | undefined;
 }
 
@@ -19,9 +13,7 @@ export function miniflareModulesFromRolldownOutput(
   return output.flatMap((item) => {
     const type = moduleTypeFromExtension(path.extname(item.fileName));
     const contents =
-      item.type === "chunk"
-        ? item.code
-        : (item.source as string | Uint8Array<ArrayBuffer>);
+      item.type === "chunk" ? item.code : (item.source as string | Uint8Array<ArrayBuffer>);
     if (type === "SourceMap") {
       return [];
     }
@@ -33,9 +25,7 @@ export function miniflareModulesFromRolldownOutput(
   });
 }
 
-export function moduleTypeFromExtension(
-  ext: string,
-): MiniflareModule["type"] | "SourceMap" {
+export function moduleTypeFromExtension(ext: string): MiniflareModule["type"] | "SourceMap" {
   switch (ext) {
     case ".wasm":
       return "CompiledWasm";
