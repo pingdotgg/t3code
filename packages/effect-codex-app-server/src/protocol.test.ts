@@ -504,7 +504,6 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       yield* Queue.offer(input, heldChunk);
       yield* Queue.offer(input, laterChunk);
 
-      // On main the reader stays blocked behind the handler, so this never completes.
       yield* Deferred.await(laterChunkPulled);
       assert.isUndefined(
         pending.pollUnsafe(),
