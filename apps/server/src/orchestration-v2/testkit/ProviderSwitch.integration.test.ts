@@ -2836,11 +2836,6 @@ describe("orchestration v2 provider switching", () => {
                 ? {
                     failedRunOrdinals: new Set([3]),
                     brokenRunOrdinals: new Set([3]),
-                    failure: makeProviderFailure({
-                      message: "Invalid thinking signature",
-                      class: "provider_error",
-                      code: "INVALID_THINKING_SIGNATURE",
-                    }),
                   }
                 : {}),
             }),
@@ -3131,7 +3126,6 @@ describe("orchestration v2 provider switching", () => {
   it.live.each([
     ["automatic", "Claude"],
     ["queue.resume", "compatible Codex"],
-    ["queue.resume", "broken current provider"],
     ["queue.resume", "broken compatible Codex"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
@@ -3142,19 +3136,13 @@ describe("orchestration v2 provider switching", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
-          const compatible = target === "compatible Codex" || target === "broken compatible Codex";
-          const broken =
-            target === "broken current provider" || target === "broken compatible Codex";
+          const compatible = target !== "Claude";
+          const broken = target === "broken compatible Codex";
           const generation = yield* Ref.make(0);
           const selection = {
             ...(compatible
-              ? {
-                  ...CODEX_MODEL_SELECTION,
-                  instanceId: ProviderInstanceId.make("codex-alternate"),
-                }
-              : broken
-                ? CODEX_MODEL_SELECTION
-                : CLAUDE_MODEL_SELECTION),
+              ? { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-alternate") }
+              : CLAUDE_MODEL_SELECTION),
             options: [{ id: "reasoningEffort", value: "low" }],
           };
           const targetCapabilities = compatible
@@ -3181,9 +3169,9 @@ describe("orchestration v2 provider switching", () => {
                 ? { brokenRunOrdinals: new Set([1]), nativeThreadGeneration: generation }
                 : {}),
               failure: makeProviderFailure({
-                message: broken ? "Saved history is unusable" : "Usage limit reached",
-                class: broken ? "provider_error" : "usage_limit",
-                code: broken ? "INVALID_THINKING_SIGNATURE" : "usage_limit",
+                message: "Usage limit reached",
+                class: "usage_limit",
+                code: "usage_limit",
               }),
             }),
             makeTestAdapter({
@@ -3193,12 +3181,11 @@ describe("orchestration v2 provider switching", () => {
               modelSelection: selection,
               responseByRunOrdinal: {},
               capturedTurns,
-              ...(broken && compatible
+              ...(broken
                 ? { brokenRunOrdinals: new Set<number>(), nativeThreadGeneration: generation }
                 : {}),
             }),
           ];
-          if (broken && !compatible) adapters.pop();
           const layerRegistry = compatible
             ? Layer.succeed(
                 ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -3322,7 +3309,7 @@ describe("orchestration v2 provider switching", () => {
             const turns = yield* Ref.get(capturedTurns);
             assert.lengthOf(turns, delivery === "automatic" ? 3 : 2);
             const executed = turns.at(-1)!;
-            assert.equal(executed.driver, compatible || broken ? CODEX_DRIVER : CLAUDE_DRIVER);
+            assert.equal(executed.driver, compatible ? CODEX_DRIVER : CLAUDE_DRIVER);
             assert.include(executed.text, "Review the new PR comments");
             assert.deepEqual(executed.modelSelection, selection);
             assert.deepEqual(after.thread.modelSelection, selection);

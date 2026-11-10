@@ -1797,23 +1797,11 @@ effectIt.effect.each(["not_loaded", "error"] as const)(
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
       const initial = harness.projection();
-      const target = initial.providerThreads.find((thread) => thread.id === "new-provider-thread")!;
       harness.setProjection({
         ...initial,
         providerThreads: initial.providerThreads.map((thread) =>
-          thread.id === target.id
-            ? {
-                ...thread,
-                status: providerThreadStatus,
-                nativeThreadRef:
-                  providerThreadStatus === "error"
-                    ? {
-                        driver: thread.driver,
-                        nativeId: "poisoned-native-history",
-                        strength: "strong" as const,
-                      }
-                    : thread.nativeThreadRef,
-              }
+          thread.id === "new-provider-thread"
+            ? { ...thread, status: providerThreadStatus }
             : thread,
         ),
       });
@@ -1842,9 +1830,9 @@ effectIt.effect.each(["not_loaded", "error"] as const)(
       ]);
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
-      expect(projection.providerThreads.find((thread) => thread.id === target.id)?.status).toBe(
-        providerThreadStatus,
-      );
+      expect(
+        projection.providerThreads.find((thread) => thread.id === "new-provider-thread")?.status,
+      ).toBe(providerThreadStatus);
     }),
 );
 

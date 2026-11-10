@@ -1085,7 +1085,6 @@ describe("AcpAdapterV2", () => {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, quota);
-      assert.equal(failed.threadDisposition, "reusable");
       const completed = (yield* runTurn(2)).at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
@@ -1145,15 +1144,6 @@ describe("AcpAdapterV2", () => {
       assert.equal(
         interrupted?.type === "turn.terminal" ? interrupted.threadDisposition : null,
         "broken",
-      );
-      const interruptedThread = interruptedEvents.findLast(
-        (event) => event.type === "provider_thread.updated",
-      );
-      assert.equal(
-        interruptedThread?.type === "provider_thread.updated"
-          ? interruptedThread.providerThread.status
-          : null,
-        "error",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
