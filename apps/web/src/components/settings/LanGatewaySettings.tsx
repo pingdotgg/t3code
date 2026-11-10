@@ -1,4 +1,5 @@
 import type { EnvironmentId, LanGatewayPeerSummary } from "@t3tools/contracts";
+import { useEffect } from "react";
 
 import { lanGatewayEnvironment } from "~/state/lanGateway";
 import { useEnvironmentQuery } from "~/state/query";
@@ -9,13 +10,18 @@ import { searchableSetting } from "./settingsSearch";
 export function LanGatewaySettings({
   environmentId,
   environmentLabel,
+  peerRevision,
   isSearchTarget,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string | null;
+  readonly peerRevision: string;
   readonly isSearchTarget: boolean;
 }) {
   const peers = useEnvironmentQuery(lanGatewayEnvironment.list({ environmentId, input: {} }));
+  const { refresh } = peers;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync, react/exhaustive-effect-dependencies -- Server advertisement changes invalidate the cached peer list.
+  useEffect(() => refresh(), [peerRevision, refresh]);
   const search = searchableSetting("lan-gateway-peers");
   return (
     <SettingsSection

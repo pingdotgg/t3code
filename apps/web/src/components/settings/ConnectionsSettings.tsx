@@ -1758,6 +1758,7 @@ function ConnectionsSettingsContent({
           key={`lan-gateway:${environment.environmentId}`}
           environmentId={environment.environmentId}
           environmentLabel={lanGatewayHosts.length > 1 ? environment.label : null}
+          peerRevision={JSON.stringify(environment.serverConfig?.lanGatewayPeers ?? [])}
           isSearchTarget={index === 0}
         />
       ))}

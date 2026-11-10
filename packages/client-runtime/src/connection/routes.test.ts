@@ -877,5 +877,8 @@ describe("gateway peer upstream selection", () => {
       new Set([pairedThroughGateway]),
     );
     expect(desiredGatewayPeers([gatewayOnly], GATEWAY_ID)).toEqual([]);
+    expect(retainedGatewayPeerIds([{ ...gatewayOnly, enabled: false }], GATEWAY_ID)).toEqual(
+      new Set(),
+    );
   });
 });
