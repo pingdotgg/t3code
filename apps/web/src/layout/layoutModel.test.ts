@@ -20,6 +20,7 @@ import {
   type LayoutState,
   type LayoutTab,
   type LayoutTabContent,
+  type LayoutTabPlacement,
 } from "./layoutModel";
 import type { DraftId } from "../composerDraftStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
@@ -292,6 +293,47 @@ describe("openLayoutKeptTab", () => {
     },
   ])("$case", ({ layout, expected }) => {
     expect(shapeOf(openLayoutKeptTab(layoutOf(...layout), chatOf("D")))).toEqual(expected);
+  });
+});
+
+describe("placeLayoutTabs", () => {
+  // An app's open (focus: false) leaves the user where they are, an empty workspace included.
+  const focusOn = (state: LayoutState, workspaceId: string) => ({
+    ...state,
+    focusedWorkspaceId: workspaceId,
+  });
+  it.each<{ case: string; layout: LayoutState; placement: LayoutTabPlacement; expected: Shape[] }>([
+    {
+      case: "into another workspace from an empty middle one",
+      layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
+      placement: { kind: "after", tabId: "C" },
+      expected: [[[["A"]]], [[["C*", "X"]]]],
+    },
+    {
+      case: "into another workspace from the empty last one",
+      layout: focusOn(layoutOf([[["A"]]], [[["C"]]], []), "w2"),
+      placement: { kind: "after", tabId: "C" },
+      expected: [[[["A"]]], [[["C*", "X"]]]],
+    },
+    {
+      case: "into a new workspace from an empty middle one",
+      layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
+      placement: { kind: "column", workspaceId: "w3", index: 0 },
+      expected: [[[["A"]]], [[["C"]]], [[["X"]]]],
+    },
+    {
+      case: "into the focused workspace",
+      layout: layoutOf([[["A!"]], [["B"]]], []),
+      placement: { kind: "after", tabId: "B" },
+      expected: [[[["A!"]], [["B*", "X"]]]],
+    },
+  ])("$case", ({ layout, placement, expected }) => {
+    const placed = placeLayoutTabs(layout, [tabOf("X")], placement, {
+      activate: null,
+      focus: false,
+    });
+    expect(shapeOf(placed)).toEqual(expected);
+    expect(placed.focusedWorkspaceId).toBe(layout.focusedWorkspaceId);
   });
 });
 

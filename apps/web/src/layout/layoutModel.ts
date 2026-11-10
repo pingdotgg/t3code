@@ -1064,6 +1064,7 @@ function insertTabIntoPane(
   paneId: string,
   tab: LayoutTab,
   index: number | "after-current" | "end",
+  focus = true,
 ): LayoutState {
   const inserted = mapPanes(state, (pane) => {
     if (pane.id !== paneId) return pane;
@@ -1077,7 +1078,7 @@ function insertTabIntoPane(
     tabs.splice(at, 0, tab);
     return { ...pane, tabs, activeTabId: tab.id };
   });
-  return focusLayoutPane(inserted, paneId);
+  return focus ? focusLayoutPane(inserted, paneId) : inserted;
 }
 
 function insertColumn(
@@ -1085,6 +1086,7 @@ function insertColumn(
   workspaceId: string,
   index: number,
   column: LayoutColumn,
+  focus = true,
 ): LayoutState {
   const inserted = mapWorkspaces(state, (workspace) => {
     if (workspace.id !== workspaceId) return workspace;
@@ -1092,7 +1094,8 @@ function insertColumn(
     columns.splice(Math.max(0, Math.min(index, columns.length)), 0, column);
     return { ...workspace, columns };
   });
-  return focusLayoutPane(normalizeLayout(inserted), column.panes[0]!.id);
+  const normalized = normalizeLayout(inserted);
+  return focus ? focusLayoutPane(normalized, column.panes[0]!.id) : normalized;
 }
 
 /**
@@ -1131,6 +1134,7 @@ function splitPaneWithTab(
   paneId: string,
   side: LayoutDirection,
   tab: LayoutTab,
+  focus = true,
 ): LayoutState {
   const found = findPane(state, paneId);
   if (!found) return state;
@@ -1144,7 +1148,13 @@ function splitPaneWithTab(
             ? companionRunEnd(found.workspace, columnIndex)
             : columnIndex) + 1;
     // A horizontal split adds a full-width column without resizing its source.
-    return insertColumn(state, found.workspace.id, insertIndex, createColumn(createPane(tab)));
+    return insertColumn(
+      state,
+      found.workspace.id,
+      insertIndex,
+      createColumn(createPane(tab)),
+      focus,
+    );
   }
   const size = found.pane.size / 2;
   const newPane = createPane(tab, size);
@@ -1164,7 +1174,7 @@ function splitPaneWithTab(
           }),
         },
   );
-  return focusLayoutPane(split, newPane.id);
+  return focus ? focusLayoutPane(split, newPane.id) : split;
 }
 
 /**
@@ -1662,10 +1672,16 @@ export function placeLayoutTabs(
   let next: LayoutState;
   if (destination.kind === "pane") {
     if (!findPane(state, destination.paneId)) return state;
-    next = insertTabIntoPane(state, destination.paneId, first, destination.index ?? "end");
+    next = insertTabIntoPane(
+      state,
+      destination.paneId,
+      first,
+      destination.index ?? "end",
+      options.focus,
+    );
   } else if (destination.kind === "split") {
     if (!findPane(state, destination.paneId)) return state;
-    next = splitPaneWithTab(state, destination.paneId, destination.side, first);
+    next = splitPaneWithTab(state, destination.paneId, destination.side, first, options.focus);
   } else {
     if (!state.workspaces.some((workspace) => workspace.id === destination.workspaceId)) {
       return state;
@@ -1675,6 +1691,7 @@ export function placeLayoutTabs(
       destination.workspaceId,
       destination.index,
       createColumn(createPane(first)),
+      options.focus,
     );
   }
   const pane = findLayoutTab(next, (tab) => tab.id === first.id)?.pane;
