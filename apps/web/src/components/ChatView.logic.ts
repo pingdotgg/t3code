@@ -1049,6 +1049,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
+export function isCoveredByModal(element: Pick<Element, "closest"> | null): boolean {
+  return element?.closest('[aria-hidden="true"]') != null;
+}
+
 // Returning to the window should land the caret in the composer, so the reader can type right
 // away. The exceptions are places where focus is deliberate: another text field, a terminal in
 // the drawer or the right panel, an open dialog, menu, or popup, or a region or sidebar row
