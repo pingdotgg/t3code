@@ -22,6 +22,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  FRAME_FIND_REQUEST_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
@@ -38,6 +39,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { FIND_FRAME_NAME_PREFIX, isFindShortcut } from "./FrameFind.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -705,6 +707,18 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      // Opaque-origin file previews cannot forward Cmd/Ctrl+F, and Electron has no page find.
+      if (isFindShortcut(input, environment.platform)) {
+        const main = window.webContents.mainFrame;
+        for (let frame = window.webContents.focusedFrame; frame && frame !== main;) {
+          if (frame.name.startsWith(FIND_FRAME_NAME_PREFIX)) {
+            event.preventDefault();
+            window.webContents.send(FRAME_FIND_REQUEST_CHANNEL, frame.name);
+            break;
+          }
+          frame = frame.parent;
+        }
+      }
       // Cmd/Ctrl+W reaches the renderer; DevTools uses the native menu shortcut.
       window.webContents.setIgnoreMenuShortcuts(
         (environment.platform === "darwin" ? input.meta : input.control) &&

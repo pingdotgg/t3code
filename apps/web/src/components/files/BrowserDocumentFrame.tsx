@@ -33,6 +33,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import { FrameFileFind } from "./RenderedFileFind";
 import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -165,12 +166,17 @@ export function BrowserDocumentFrame(props: {
 function FileDocument(props: { readonly src: string; readonly title: string }) {
   const [src] = useState(props.src);
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0 bg-white"
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <FrameFileFind>
+      {(frameName) => (
+        <iframe
+          src={src}
+          name={frameName}
+          title={props.title}
+          className="min-h-0 flex-1 border-0 bg-white"
+          sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+        />
+      )}
+    </FrameFileFind>
   );
 }
 

@@ -1043,6 +1043,10 @@ export interface DesktopBridge {
    * only the main process can spend a notification click's activation token.
    */
   revealWindow: () => Promise<void>;
+  /** Searches a named file-preview iframe whose opaque origin the renderer cannot reach; returns the match count. */
+  findInFrame?: (frameName: string, query: string, index: number) => Promise<number>;
+  /** Cmd/Ctrl+F pressed inside a named file-preview iframe. */
+  onFrameFindRequest?: (listener: (frameName: string) => void) => () => void;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so

@@ -115,6 +115,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
   },
   revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
+  findInFrame: (frameName, query, index) =>
+    ipcRenderer.invoke(IpcChannels.FIND_IN_FRAME_CHANNEL, { frameName, query, index }),
+  onFrameFindRequest: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, frameName: unknown) => {
+      if (typeof frameName === "string") listener(frameName);
+    };
+    ipcRenderer.on(IpcChannels.FRAME_FIND_REQUEST_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.FRAME_FIND_REQUEST_CHANNEL, handler);
+  },
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;

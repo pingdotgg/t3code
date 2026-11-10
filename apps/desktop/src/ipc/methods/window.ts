@@ -42,6 +42,7 @@ import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
+import { findFrameByName, frameFindScript } from "../../window/FrameFind.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   extractDistroFromUncPath,
@@ -448,6 +449,35 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
       return;
     }
     yield* electronWindow.reveal(window.value);
+  }),
+});
+
+export const findInFrame = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.FIND_IN_FRAME_CHANNEL,
+  payload: Schema.Struct({
+    frameName: Schema.String,
+    query: Schema.String.check(Schema.isMaxLength(200)),
+    index: Schema.Number,
+  }),
+  result: Schema.Number,
+  handler: Effect.fn("desktop.ipc.window.findInFrame")(function* (input, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.isDestroyed() ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return 0;
+    }
+    const frame = findFrameByName(window.value.webContents, input.frameName);
+    if (frame === undefined) return 0;
+    const count: unknown = yield* Effect.promise(() =>
+      frame.executeJavaScript(frameFindScript(input.query, input.index)).catch(() => 0),
+    );
+    // The page can replace the globals the script uses, so the count is untrusted.
+    return typeof count === "number" && Number.isSafeInteger(count) && count > 0 ? count : 0;
   }),
 });
 
