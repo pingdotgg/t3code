@@ -29,7 +29,6 @@ import {
   DraftId,
 } from "../../composerDraftStore";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import { removeInlineContextReference } from "../../lib/composerContextReferences";
 import { createModelSelection } from "@t3tools/shared/model";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
@@ -261,13 +260,7 @@ export function restoreComposerDraft(
 ): ComposerImageAttachment[] {
   const store = useComposerDraftStore.getState();
   const images = snapshot.images.map(cloneComposerImageForRetry);
-  // The reply goes back above the composer, so its reference leaves the text.
-  store.setPrompt(
-    draftTarget,
-    snapshot.replyTo
-      ? removeInlineContextReference(snapshot.messageText, snapshot.replyTo.contextId).prompt
-      : snapshot.messageText,
-  );
+  store.setPrompt(draftTarget, snapshot.draftText);
   store.setReplyTo(draftTarget, snapshot.replyTo);
   store.addImages(draftTarget, images);
   store.addFiles(draftTarget, snapshot.files);
