@@ -61,6 +61,11 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
   environment: NodeJS.ProcessEnv | undefined,
 ) {
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+  const timeoutMs = resolveProviderProbeTimeoutMs(
+    "opencode",
+    OPENCODE_VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const { stdout } = yield* runtime
     .runOpenCodeCommand({
       binaryPath,
@@ -69,16 +74,12 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
     })
     .pipe(
       Effect.timeoutOrElse({
-        duration: resolveProviderProbeTimeoutMs(
-          "opencode",
-          OPENCODE_VERSION_PROBE_TIMEOUT_MS,
-          environment,
-        ),
+        duration: timeoutMs,
         orElse: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "probeOpenCodeBinary",
-              detail: `OpenCode CLI version probe timed out after ${resolveProviderProbeTimeoutMs("opencode", OPENCODE_VERSION_PROBE_TIMEOUT_MS, environment) / 1_000} seconds.`,
+              detail: `OpenCode CLI version probe timed out after ${timeoutMs / 1_000} seconds.`,
             }),
           ),
       }),

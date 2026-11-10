@@ -171,20 +171,12 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
+  const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
-  const stateData = yield* connection.request(
-    { type: "get_state" },
-    resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-  );
-  const modelsData = yield* connection.request(
-    { type: "get_available_models" },
-    resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-  );
+  const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
+  const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
   const commandsData = yield* connection
-    .request(
-      { type: "get_commands" },
-      resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-    )
+    .request({ type: "get_commands" }, timeoutMs)
     .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
@@ -228,23 +220,15 @@ export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
     return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
   },
   Effect.scoped,
-  (effect, _settings, environment) =>
-    effect.pipe(
+  (effect, _settings, environment) => {
+    const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
+    return effect.pipe(
       Effect.timeoutOrElse({
-        duration: resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-        orElse: () =>
-          Effect.fail(
-            new PiRpcTimeoutError({
-              operation: "discovery",
-              timeoutMs: resolveProviderProbeTimeoutMs(
-                "pi",
-                PI_RPC_DISCOVERY_TIMEOUT_MS,
-                environment,
-              ),
-            }),
-          ),
+        duration: timeoutMs,
+        orElse: () => Effect.fail(new PiRpcTimeoutError({ operation: "discovery", timeoutMs })),
       }),
-    ),
+    );
+  },
 );
 
 const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
