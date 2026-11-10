@@ -1978,7 +1978,13 @@ const make = Effect.gen(function* () {
         return statusWithTitle(
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
+            : ((await runPromise(
+                findTab(request.threadId, request.tabId).pipe(
+                  Effect.catchTags({
+                    ServerBrowserTabNotFoundError: () => Effect.void,
+                  }),
+                ),
+              )) ?? undefined),
           request.agentSessionId,
         );
       case "open": {
