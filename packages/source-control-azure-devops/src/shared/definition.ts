@@ -118,6 +118,7 @@ export const definition = defineSourceControl({
   changeRequestCloseCommand:
     /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
   changeRequestCreateCommand: /\baz\s+repos\s+pr\s+create\b/u,
+  changeRequestListCommand: /\baz\s+repos\s+pr\s+list\b/u,
   // `az` prints the new pull request as JSON whose `url` is its REST API address.
   changeRequestCreateOutputUrls: azureDevOpsCreatedPullRequestUrls,
   authorProfileUrl: () => null,

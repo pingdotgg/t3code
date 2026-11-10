@@ -281,6 +281,11 @@ export interface SourceControlDefinition {
    */
   readonly changeRequestCreateCommand?: RegExp;
   /**
+   * Matches a shell command that prints this host's existing change requests in the form its
+   * create command does, so output beside it proves nothing about what a create opened.
+   */
+  readonly changeRequestListCommand?: RegExp;
+  /**
    * The change request URLs the create command's output names, for a CLI that does not print each
    * on a line of its own. Absent means those lines.
    */

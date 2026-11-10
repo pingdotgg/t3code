@@ -1779,6 +1779,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a GitHub pull request created after listing Azure DevOps pull requests",
+      input: "az repos pr list --top 1 && gh pr create --fill",
+      output: `[\n${AZURE_PULL_REQUEST_CREATED}\n]\nhttps://github.com/owner/repository/pull/124\n`,
+      linked: [124],
+    },
+    {
       name: "an Azure DevOps pull request after a push",
       input:
         'git push -u origin feature 2>&1 && az repos pr create --source-branch feature --target-branch main --title "Fix the thing"',

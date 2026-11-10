@@ -84,7 +84,7 @@ const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 // Commands that print other change requests' URLs, so output beside them proves nothing.
 const LISTS_CHANGE_REQUESTS =
-  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api)|az\s+repos\s+pr\s+list)\b/u;
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
 /** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
@@ -158,7 +158,8 @@ export function changeRequestsCreatedBy(input: string, output: string) {
     .join("\n");
   const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
   for (const { definition, run } of CREATE_COMMANDS) {
-    if (code.match(run) === null) continue;
+    if (code.match(run) === null || definition.changeRequestListCommand?.test(otherCommands))
+      continue;
     const printed =
       definition.changeRequestCreateOutputUrls?.(output) ??
       Array.from(output.matchAll(URL_LINE), ([, url = ""]) => url);
