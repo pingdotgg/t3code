@@ -32,6 +32,7 @@ const run = Effect.fn("LinuxArm64Sea.run")(function* (args: Array<string>, verbo
 // Builds the SEA blob with this Node and injects it into a copy of this Node with postject.
 export const injectLinuxArm64Sea = Effect.fn("LinuxArm64Sea.inject")(function* (input: {
   bundlePath: string;
+  cliAssetPath: string;
   outputPath: string;
   nodeVersion: string;
   verbose: boolean;
@@ -51,11 +52,14 @@ export const injectLinuxArm64Sea = Effect.fn("LinuxArm64Sea.inject")(function* (
     configPath,
     yield* encodeJson({
       main: input.bundlePath,
+      assets: { "binMain.mjs": input.cliAssetPath },
       output: blobPath,
       mainFormat: "module",
       disableExperimentalSEAWarning: true,
       // Node SEA useCodeCache breaks import(), which the server needs.
       useCodeCache: false,
+      // The bootstrap loads the embedded CLI with require(esm).
+      execArgv: ["--require-module"],
     }),
   );
   yield* run(["--experimental-sea-config", configPath], input.verbose);

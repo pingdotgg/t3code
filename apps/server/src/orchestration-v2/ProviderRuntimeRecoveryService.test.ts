@@ -601,6 +601,16 @@ it.effect.each([
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getMessagesById: (requestedThreadId, messageIds) =>
+            Effect.succeed(
+              new Map(
+                projection.messages
+                  .filter(
+                    (message) => requestedThreadId === threadId && messageIds.includes(message.id),
+                  )
+                  .map((message) => [message.id, message]),
+              ),
+            ),
           getThreadRecords: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -674,6 +684,7 @@ it.effect(
           driver: ProviderDriverKind.make("codex"),
           providerInstanceId: ProviderInstanceId.make("codex"),
           status: "ready",
+          extensionStatuses: [{ key: "watch", text: "Watching" }],
         },
       ],
       providerThreads: [
@@ -788,6 +799,13 @@ it.effect(
       );
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
+      const stoppedSession = events.find((event) => event.type === "provider-session.updated");
+      assert.deepEqual(
+        stoppedSession?.type === "provider-session.updated"
+          ? stoppedSession.payload.extensionStatuses
+          : undefined,
+        [],
+      );
       assert.deepEqual(
         events.flatMap((event) =>
           event.type === "turn-item.updated" && "streaming" in event.payload
