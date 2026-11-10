@@ -504,8 +504,21 @@ jobs:
         with:
           ref: ${{ needs.production.outputs.android_sha }}
           fetch-depth: 0
-          # Dependency scripts and the build run in this job; only Record build gets a token.
-          persist-credentials: false
+
+      # Dependency scripts and the build run in this job; only Record build gets a token.
+      # persist-credentials: false would clean up via `git submodule foreach`, which fails on .repos gitlinks.
+      - name: Drop checkout credentials
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          { git config --local --name-only --get-regexp '^includeif\.' || true; } | while read -r key; do
+            path=$(git config --local --get "$key")
+            git config --local --unset-all "$key"
+            case "$path" in "$RUNNER_TEMP"/*) rm -f "$path" ;; esac
+          done
+          if git config --local --get-regexp '^(http\..*\.extraheader|includeif\.)'; then
+            echo "::error::Checkout credentials are still configured"
+            exit 1
+          fi
 
       # A queued run can follow a build of the same fingerprint; manual runs always build.
       - id: record
@@ -687,8 +700,21 @@ jobs:
         with:
           ref: ${{ needs.production.outputs.ios_sha }}
           fetch-depth: 0
-          # Dependency scripts and the build run in this job; only Record build gets a token.
-          persist-credentials: false
+
+      # Dependency scripts and the build run in this job; only Record build gets a token.
+      # persist-credentials: false would clean up via `git submodule foreach`, which fails on .repos gitlinks.
+      - name: Drop checkout credentials
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          { git config --local --name-only --get-regexp '^includeif\.' || true; } | while read -r key; do
+            path=$(git config --local --get "$key")
+            git config --local --unset-all "$key"
+            case "$path" in "$RUNNER_TEMP"/*) rm -f "$path" ;; esac
+          done
+          if git config --local --get-regexp '^(http\..*\.extraheader|includeif\.)'; then
+            echo "::error::Checkout credentials are still configured"
+            exit 1
+          fi
 
       # A queued run can follow a build of the same fingerprint; manual runs always build.
       - id: record
