@@ -9338,6 +9338,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               budget.compacting = null;
               yield* persistAttachmentBudget(context.nativeThreadId);
             }
+            const previousUsage = context.streamUsage?.usage;
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             const postTokens = message.compact_metadata.post_tokens;
             const afterTokenCount =
@@ -9345,7 +9346,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             context.compactionTokens = afterTokenCount;
-            if (afterTokenCount !== undefined) yield* emitContextUsage(context, afterTokenCount);
+            // An empty split invalidates the pre-compaction categories until the next summary.
+            const compactedUsage =
+              afterTokenCount ?? previousUsage ?? message.compact_metadata.pre_tokens;
+            if (compactedUsage != null) {
+              yield* emitContextUsage(context, compactedUsage, false, []);
+            }
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,

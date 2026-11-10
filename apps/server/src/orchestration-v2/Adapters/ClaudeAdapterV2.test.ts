@@ -8105,86 +8105,105 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("merges cumulative stream usage into the message_start counts", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({
-        settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "150000" },
-      });
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-merged-stream-usage"),
-          text: "Continue.",
-          attachments: [],
-        }),
-      );
-      const startUsage = {
-        input_tokens: 10,
-        output_tokens: 1,
-        cache_creation_input_tokens: 200,
-        cache_read_input_tokens: 1_000,
-      };
-      const frames = [
-        usageStreamFrame({
-          type: "message_start",
-          message: { id: "msg_native", usage: startUsage },
-        }),
-        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000680", startUsage),
-        usageStreamFrame({
-          type: "message_delta",
-          delta: { stop_reason: null, stop_sequence: null },
-          usage: { input_tokens: null, output_tokens: 20 },
-        }),
-        usageStreamFrame({
-          type: "message_delta",
-          delta: { stop_reason: "end_turn", stop_sequence: null },
-          usage: {
-            input_tokens: 25,
-            output_tokens: 50,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 1_000,
-          },
-        }),
-        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000681", startUsage),
-        claudeSdkFrame({
-          type: "system",
-          subtype: "compact_boundary",
-          compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
-          uuid: "00000000-0000-4000-8000-000000000682",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000684", startUsage),
-        usageStreamFrame({
-          type: "message_delta",
-          delta: { stop_reason: "end_turn", stop_sequence: null },
-          usage: { input_tokens: null, output_tokens: 60 },
-        }),
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000683", result: "Done." }),
-      ];
-      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
-      const terminal = yield* Queue.take(harness.terminalReceipts);
-      assert.equal(terminal.status, "completed");
-      assert.deepEqual(reportedContextTokens(harness.events), [1_211, 1_230, 1_075, 400]);
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
-            ? [event.providerTurn.tokenUsage.autoCompactThreshold]
-            : [],
-        ),
-        [117_000, 117_000, 117_000, 117_000],
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+  it.effect.each([400, undefined])(
+    "merges stream usage and clears categories after compaction to %s",
+    (postTokens) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "150000" },
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-merged-stream-usage"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        const startUsage = {
+          input_tokens: 10,
+          output_tokens: 1,
+          cache_creation_input_tokens: 200,
+          cache_read_input_tokens: 1_000,
+        };
+        const frames = [
+          usageStreamFrame({
+            type: "message_start",
+            message: { id: "msg_native", usage: startUsage },
+          }),
+          usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000680", startUsage),
+          usageStreamFrame({
+            type: "message_delta",
+            delta: { stop_reason: null, stop_sequence: null },
+            usage: { input_tokens: null, output_tokens: 20 },
+          }),
+          usageStreamFrame({
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: {
+              input_tokens: 25,
+              output_tokens: 50,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 1_000,
+            },
+          }),
+          usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000681", startUsage),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 1_075,
+              ...(postTokens === undefined ? {} : { post_tokens: postTokens }),
+            },
+            uuid: "00000000-0000-4000-8000-000000000682",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000684", startUsage),
+          usageStreamFrame({
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { input_tokens: null, output_tokens: 60 },
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000683", result: "Done." }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.deepEqual(reportedContextTokens(harness.events), [
+          1_211,
+          1_230,
+          1_075,
+          postTokens ?? 1_075,
+        ]);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage.breakdown]
+              : [],
+          ),
+          [undefined, undefined, undefined, []],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+              : [],
+          ),
+          [117_000, 117_000, 117_000, 117_000],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each([
