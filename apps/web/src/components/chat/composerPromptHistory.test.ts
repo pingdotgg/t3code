@@ -132,6 +132,16 @@ describe("buildComposerPromptHistoryEntries", () => {
       prompt: `Agent in ${threadChip} finished on ${machineChip}. See`,
       mentions: { threadContexts: [thread], environmentContexts: [machine] },
     });
+    const recalled = stepComposerPromptHistory({
+      direction: "backward",
+      entries: [entry!],
+      position: null,
+      currentPrompt: "",
+    });
+    expect(recalled?.mentions).toEqual({
+      threadContexts: [thread],
+      environmentContexts: [machine],
+    });
   });
 
   it("skips messages sent by automations, agents, and T3 Code", () => {
