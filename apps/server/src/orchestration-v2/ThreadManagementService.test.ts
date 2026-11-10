@@ -16,11 +16,13 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -468,6 +470,9 @@ it.effect.each([
   "no-match-clear",
   "no-session",
   "unsupported-runtime",
+  "runtime-failed",
+  "timed-out",
+  "interrupted",
 ] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
@@ -498,6 +503,12 @@ it.effect.each([
         updatedAt: now,
       };
       const calls: Array<{ providerThreadId: ProviderThreadId; awaited: boolean }> = [];
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const providerFailure = new ProviderAdapter.ProviderAdapterProtocolError({
+        driver,
+        detail: "Background task registration failed",
+      });
       const runtime = {
         driver,
         providerSessionId,
@@ -509,11 +520,18 @@ it.effect.each([
                 readonly taskIds: ReadonlyArray<string>;
                 readonly awaited: boolean;
               }) =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   calls.push({
                     providerThreadId: input.providerThread.id,
                     awaited: input.awaited,
                   });
+                  yield* Deferred.succeed(started, undefined);
+                  if (state === "runtime-failed") return yield* providerFailure;
+                  if (state === "timed-out" || state === "interrupted") {
+                    return yield* Effect.never.pipe(
+                      Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+                    );
+                  }
                   return { matched: input.taskIds.filter((taskId) => taskId === "tests") };
                 }),
             }),
@@ -543,13 +561,28 @@ it.effect.each([
       );
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
-        return yield* service
+        const request = yield* service
           .awaitBackgroundTasks({
             threadId,
             taskIds: state.startsWith("no-match") ? ["finished"] : ["tests", "finished"],
             awaited: state !== "no-match-clear",
           })
-          .pipe(Effect.result);
+          .pipe(Effect.result, Effect.forkChild);
+        if (state === "timed-out" || state === "interrupted") {
+          yield* Deferred.await(started);
+          if (state === "interrupted") {
+            yield* Fiber.interrupt(request);
+            const exit = yield* Fiber.await(request);
+            expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+            yield* Deferred.await(interrupted);
+            return;
+          }
+          yield* TestClock.adjust("14999 millis");
+          expect(request.pollUnsafe()).toBeUndefined();
+          yield* TestClock.adjust("1 millis");
+          yield* Deferred.await(interrupted);
+        }
+        return yield* Fiber.join(request);
       }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
 
       if (state === "live") {
@@ -565,7 +598,7 @@ it.effect.each([
       } else if (state === "no-match-clear") {
         expect(result).toMatchObject({ success: { matched: [], unmatched: ["finished"] } });
         expect(calls).toEqual([{ providerThreadId, awaited: false }]);
-      } else {
+      } else if (state === "no-session" || state === "unsupported-runtime") {
         expect(result).toMatchObject({
           failure: {
             _tag: "ThreadManagementBackgroundWaitError",
@@ -573,6 +606,18 @@ it.effect.each([
           },
         });
         expect(calls).toEqual([]);
+      } else {
+        if (state !== "interrupted") {
+          expect(result).toMatchObject({
+            failure: {
+              _tag: "ThreadManagementBackgroundWaitError",
+              threadId,
+              reason: state === "timed-out" ? "timed-out" : "failed",
+              cause: state === "timed-out" ? expect.any(Cause.TimeoutError) : providerFailure,
+            },
+          });
+        }
+        expect(calls).toEqual([{ providerThreadId, awaited: true }]);
       }
     }),
 );
