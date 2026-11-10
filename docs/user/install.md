@@ -147,9 +147,9 @@ take longer.
 
 The WSL environment is separate from the Windows one. To reach it from your phone
 or another device, open **Settings → Sharing & access**. If **Showing access for**
-appears, choose **WSL (distro)** there, then turn on **T3 Connect** for it. Once
-Windows is linked, that page also lists a WSL environment that is still missing
-its own link.
+appears, choose **WSL (distro)** there to set up its access. The row for linking
+WSL appears only in the Windows view, after Windows is linked; switch **Showing
+access for** back to Windows to find it.
 
 ### Open a project from a terminal
 
