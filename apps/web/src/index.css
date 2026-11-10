@@ -4228,7 +4228,27 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
   )
   [data-chrome-scope] {
-  --destructive-foreground: oklch(from var(--destructive) max(l, 0.8) c h);
+  --destructive-foreground: oklch(from var(--destructive) max(l, 0.88) calc(c * 0.6) h);
+}
+
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+  --flat-primary: var(--primary);
+}
+
+:root.dark[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+:root.dark[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+  --destructive-foreground: oklch(from var(--destructive) max(l, 0.85) calc(c * 0.75) h);
+}
+
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style]:not(
+    [data-surface-style="gradient-rim"],
+    [data-surface-style="flat"]
+  )
+  > body,
+:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
+  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
+  --contrast-muted-foreground: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
 }
 
 /* Named light palettes already pair action and hover colors with their label. */
