@@ -41,6 +41,7 @@ import {
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   providerModelsFromSettings,
+  providerProbeEnvironment,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -674,7 +675,10 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
-  const { client } = yield* withCodexAppServerClient(input);
+  const { client } = yield* withCodexAppServerClient({
+    ...input,
+    environment: providerProbeEnvironment(input.environment ?? process.env),
+  });
   const skillsResponse = yield* requestCodexSkills({
     client,
     cwd: input.cwd,
@@ -781,7 +785,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const resolvedEnvironment = environment ?? process.env;
+  const resolvedEnvironment = providerProbeEnvironment(environment ?? process.env);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
 

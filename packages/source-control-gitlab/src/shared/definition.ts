@@ -62,7 +62,8 @@ export const definition = defineSourceControl({
     "delete-branch",
   ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
-  changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,
+  // `accept` is glab's alias for `merge`.
+  changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|accept|close)\b/u,
   changeRequestCreateCommand: /\bglab\s+mr\s+create\b/u,
   // Bot users, unlike GitHub's, have real profile pages.
   authorProfileUrl: (login, repositoryUrl) =>
