@@ -1800,7 +1800,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     draftText: prompt,
     disabled: dictationDisabled,
+    finishOnOwnerChange: questionAttachmentTarget === null,
+    // Once the editor shows another draft, this render's draft is reached through the store.
     readDraft: () => {
+      if (composerDraftTargetKeyRef.current !== composerDraftTargetKey) {
+        const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+        return { text, selection: { start: text.length, end: text.length } };
+      }
       const snapshot = readComposerSnapshot();
       return {
         text: snapshot.value,
@@ -1811,6 +1817,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       };
     },
     commitDraft: (text, selection) => {
+      if (composerDraftTargetKeyRef.current !== composerDraftTargetKey) {
+        setComposerDraftPrompt(composerDraftTarget, text);
+        return;
+      }
       const snapshot = readComposerSnapshot();
       const applied = applyPromptReplacement(0, snapshot.value.length, text, {
         expectedText: snapshot.value,

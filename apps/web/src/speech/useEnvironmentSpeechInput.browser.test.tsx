@@ -262,6 +262,7 @@ function Probe(props: {
       selection: { start: mocks.draft.length, end: mocks.draft.length },
     }),
     commitDraft: props.commitDraft ?? mocks.committed,
+    finishOnOwnerChange: true,
   });
   useLayoutEffect(() => {
     mocks.voice = value;
@@ -389,6 +390,25 @@ it("finishes a recording into the thread it started in when the editor moves to 
     expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("the login bug", expect.anything()),
   );
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(commitThreadB).not.toHaveBeenCalled();
+});
+
+it("keeps a recording that failed after its editor moved on for a retry in its own thread", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed"), "second try"];
+  const commitThreadB = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await screen.rerender(<Probe ownerKey="thread-b" commitDraft={commitThreadB} />);
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  expect(mocks.voice.state.phase).toBe("idle");
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  await vi.waitFor(() =>
+    expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" }),
+  );
+  await act(() => mocks.voice.start());
+  expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
   expect(commitThreadB).not.toHaveBeenCalled();
 });
 
