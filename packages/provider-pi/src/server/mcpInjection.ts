@@ -2,7 +2,7 @@ import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- randomUUID keeps concurrent materializations from colliding on one staging path; the effect version here has no Crypto service.
-import * as Crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import {
@@ -238,7 +238,7 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
     // sibling and rename so readers and other writers never see a partial file.
     // Same-volume renames are atomic; the unique suffix keeps concurrent
     // materializations from colliding on one staging path.
-    const staging = `${dest}.${Crypto.randomUUID()}.materializing`;
+    const staging = `${dest}.${NodeCrypto.randomUUID()}.materializing`;
     yield* fs.writeFileString(staging, PI_T3_MCP_EXTENSION_SOURCE);
     // A Windows reader holding the destination open denies the rename; sleep
     // before each retry so a continuous reader cannot exhaust them.

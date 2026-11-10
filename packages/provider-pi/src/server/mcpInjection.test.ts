@@ -12,9 +12,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The reader mirrors the external pi process: raw Node reads observe the file without effect-fs handles that deny the rename on Windows.
-import * as NodeFSn from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "effect/Path";
-import * as NodeFS from "effect/FileSystem";
+import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   buildPiRpcLaunch,
@@ -171,7 +171,7 @@ describe("materializePiT3McpExtension", () => {
   // the launch loads a broken extension.
   it.live("never exposes a torn extension file to a concurrent reader", () =>
     Effect.gen(function* () {
-      const fs = yield* NodeFS.FileSystem;
+      const fs = yield* FileSystem.FileSystem;
       const path = yield* NodePath.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-atomic-" });
       const anomalies: Array<string> = [];
@@ -192,19 +192,17 @@ describe("materializePiT3McpExtension", () => {
       const reader = yield* Effect.forkChild(
         Effect.forever(
           Effect.gen(function* () {
-            // Synchronous raw Node reads mirror the real reader: a pi process
-            // loads the extension through ordinary file reads, and in-process
-            // async readers hold the destination open in ways that deny the
-            // rename on Windows. The torn-read property this asserts is also
-            // proven under real two-process contention.
+            // Raw sync reads mirror the external pi process that loads the extension.
             const text = yield* Effect.try({
               try: () =>
-                NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
+                NodeFS.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
               catch: () => new ExtensionReadError(),
             }).pipe(Effect.option);
             if (Option.isNone(text)) return; // Missing between writes: legitimate.
-            // A production reader (a pi launch) reads once, never in a zero-gap
-            // loop; pace this one so the writer's rename gets realistic gaps.
+            // The pacing models a production reader's cadence and gives the
+            // writer's rename realistic gaps on Windows; real fs timing is the
+            // fixture under test here.
+            // @effect-diagnostics-next-line no-real-time-wait-in-tests:off -- see above
             yield* Effect.sleep("1 millis");
             // A read that SUCCEEDS must return the full extension: an empty or
             // partial read means the writer truncated the file mid-write.
