@@ -101,6 +101,9 @@ function threadDetailToShell(
     archivedAt: thread.archivedAt,
     settledOverride: thread.settledOverride,
     settledAt: thread.settledAt,
+    ...(thread.settledOverride === "settled" && thread.settleReason
+      ? { settleReason: thread.settleReason }
+      : {}),
     unsettledAt: thread.unsettledAt,
     activeOrderKey: thread.activeOrderKey,
     autoSettleDisabledAt: thread.autoSettleDisabledAt,

@@ -1090,6 +1090,7 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`server:settle-after-run:${input.runId}:${sequence}`),
         threadId: input.threadId,
         expectedLatestRunId: latest.id,
+        reason: { type: "agent" },
       }).pipe(
         Effect.as(true),
         // A notification can start between the projection read and the guarded dispatch.
@@ -1131,6 +1132,7 @@ const make = Effect.gen(function* () {
       type: "thread.settle",
       commandId: input.commandId,
       threadId: input.threadId,
+      reason: { type: "agent" },
     });
     return { sequence: result.sequence };
   });

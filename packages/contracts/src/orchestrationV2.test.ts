@@ -447,8 +447,8 @@ describe("orchestration V2 contracts", () => {
   });
 });
 
-describe("thread open stats", () => {
-  it("reads a thread whose open stats this build cannot read, without them", () => {
+describe("thread open stats and settle reason", () => {
+  it("reads a thread whose open stats or settle reason this build cannot read, without them", () => {
     const shell = {
       id: "thread-test",
       projectId: "project-test",
@@ -484,6 +484,10 @@ describe("thread open stats", () => {
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
+    expect(decode(shell).settleReason).toBeUndefined();
+    const settleReason = { type: "inactive", days: 3 };
+    expect(decode({ ...shell, settleReason }).settleReason).toEqual(settleReason);
+    expect(decode({ ...shell, settleReason: { type: "later-reason" } }).settleReason).toBeNull();
   });
 });
 

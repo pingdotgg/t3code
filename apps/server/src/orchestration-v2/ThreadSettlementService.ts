@@ -9,6 +9,7 @@ import {
   isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadSettleReason,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -38,6 +39,8 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 export interface SettlementPullRequest {
+  readonly number: number;
+  readonly url: string;
   readonly state: "open" | "closed" | "merged";
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
@@ -193,14 +196,19 @@ export function isSnoozed(
   return !wokeOnError;
 }
 
-export function resolveAutoSettlementAt(input: {
+export interface AutoSettlement {
+  readonly settledAt: DateTime.Utc;
+  readonly reason: OrchestrationV2ThreadSettleReason;
+}
+
+export function resolveAutoSettlement(input: {
   readonly thread: ProjectionStore.ProjectionSettlementCandidate;
   readonly pullRequest: SettlementPullRequest | null;
   readonly nowMs: number;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
   readonly autoSettleKeepPullRequests?: boolean;
-}): DateTime.Utc | null {
+}): AutoSettlement | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
   const links = settlementPullRequestLinks(thread.pullRequests ?? []);
@@ -218,6 +226,8 @@ export function resolveAutoSettlementAt(input: {
       latest.snapshot === null
         ? null
         : {
+            number: latest.number,
+            url: latest.url,
             state: latest.snapshot.state,
             mergedAt: latest.snapshot.mergedAt ?? null,
             closedAt: latest.snapshot.closedAt ?? null,
@@ -232,7 +242,15 @@ export function resolveAutoSettlementAt(input: {
       toMillis(thread.latestRunCompletedAt),
     ]) ?? DateTime.toEpochMillis(thread.createdAt);
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
-    return DateTime.makeUnsafe(activityAtMs);
+    return {
+      settledAt: DateTime.makeUnsafe(activityAtMs),
+      reason: {
+        type: "pull-request",
+        state: pullRequest.state === "merged" ? "merged" : "closed",
+        number: pullRequest.number,
+        ...(pullRequest.url.trim() === "" ? {} : { url: pullRequest.url }),
+      },
+    };
   }
   const hasPullRequest =
     hasOpenLink ||
@@ -247,7 +265,10 @@ export function resolveAutoSettlementAt(input: {
   const inactivityAtMs =
     latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
   return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
-    ? DateTime.makeUnsafe(inactivityAtMs)
+    ? {
+        settledAt: DateTime.makeUnsafe(inactivityAtMs),
+        reason: { type: "inactive", days: input.autoSettleAfterDays },
+      }
     : null;
 }
 
@@ -340,7 +361,7 @@ export const make = Effect.gen(function* () {
           thread.projectId,
         ).settings;
         const decisionNow = yield* DateTime.now;
-        const settledAt = resolveAutoSettlementAt({
+        const settlement = resolveAutoSettlement({
           thread,
           pullRequest,
           nowMs: DateTime.toEpochMillis(decisionNow),
@@ -348,14 +369,15 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
-        if (settledAt === null) return thread;
+        if (settlement === null) return thread;
         const uuid = yield* random.uuidV4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
           commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
           threadId: thread.id,
           snapshotAt: thread.updatedAt,
-          settledAt,
+          settledAt: settlement.settledAt,
+          reason: settlement.reason,
         });
         return null;
       },
@@ -377,7 +399,7 @@ export const make = Effect.gen(function* () {
       (thread) => {
         const projectSettings = resolveProjectSettings(settings, thread.projectId).settings;
         // Skip no-op decisions; actual settlement still reads fresh settings before dispatch.
-        const settledAt = resolveAutoSettlementAt({
+        const settlement = resolveAutoSettlement({
           thread,
           pullRequest: null,
           nowMs,
@@ -385,7 +407,7 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
         });
-        return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
+        return settlement === null ? Effect.succeed(thread) : settleThread(thread, null);
       },
       { concurrency: 8 },
     ))
@@ -456,7 +478,7 @@ export const make = Effect.gen(function* () {
       return group.some((thread) => {
         const { settings } = resolveProjectSettings(currentSettings, thread.projectId);
         return (
-          resolveAutoSettlementAt({
+          resolveAutoSettlement({
             thread,
             pullRequest,
             nowMs: DateTime.toEpochMillis(decisionNow),
@@ -485,6 +507,8 @@ export const make = Effect.gen(function* () {
         }
         const summary = matchesMerge
           ? ({
+              number: mergedPullRequest.number,
+              url: reference.url,
               state: "merged",
               closedAt: null,
               mergedAt: mergedPullRequest.mergedAt,
@@ -498,6 +522,8 @@ export const make = Effect.gen(function* () {
               { recoverTransientFailure: false },
             );
         const terminal = {
+          number: reference.number,
+          url: reference.url,
           state: summary.state,
           closedAt: summary.closedAt ?? null,
           mergedAt: summary.mergedAt ?? null,

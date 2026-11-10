@@ -194,6 +194,8 @@ settlement unless you turn on **Keep threads with a PR** in **Settings → Threa
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
+At the end of a settled thread, the status line says why it settled (its pull request
+merged or closed, it sat idle, or you or an agent settled it) and how its pull request ended.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick

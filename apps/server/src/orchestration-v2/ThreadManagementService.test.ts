@@ -588,7 +588,7 @@ it.effect.each([
       status: "running" as OrchestrationV2Run["status"],
       userMessageId: MessageId.make("follow-up"),
     };
-    const dispatched: Array<string> = [];
+    const dispatched: Array<unknown> = [];
     // The notification starts after the completed run was observed, before settlement commits.
     let raced = false;
     const layerTest = ThreadManagementService.layer.pipe(
@@ -661,7 +661,7 @@ it.effect.each([
                   detail: "Thread is still running",
                 });
               }
-              dispatched.push(command.type);
+              dispatched.push(command);
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -699,7 +699,11 @@ it.effect.each([
       } as unknown as OrchestrationV2StoredEvent);
     }
     yield* Fiber.join(fiber);
-    expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
+    expect(dispatched).toEqual(
+      settles
+        ? [expect.objectContaining({ type: "thread.settle", reason: { type: "agent" } })]
+        : [],
+    );
   }),
 );
 
