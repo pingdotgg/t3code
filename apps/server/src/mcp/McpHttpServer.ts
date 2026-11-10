@@ -377,7 +377,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   });
   let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Elements carry the locators, so they go last; logs shed newest-last.
+    // Logs shed first, oldest first. Below the floors, locator-bearing elements and tree go last.
     const key =
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
