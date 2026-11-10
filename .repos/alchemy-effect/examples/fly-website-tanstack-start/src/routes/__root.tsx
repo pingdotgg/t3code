@@ -1,9 +1,4 @@
-import {
-  createRootRoute,
-  HeadContent,
-  Outlet,
-  Scripts,
-} from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 // Tailwind is wired through vite.config.ts (@tailwindcss/vite) — Alchemy
 // runs the project's own `vite build`, so the utilities below compile.
