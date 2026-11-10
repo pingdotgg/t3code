@@ -60,13 +60,16 @@ function ownsShortcut(id: symbol) {
   return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
 
-// Escape inside another dictation editor, or the dialog hosting it, belongs to that editor.
+const targetScope = (field: HTMLElement | null | undefined) =>
+  field?.closest('[role="dialog"]') ?? field;
+
+// Escape inside another shown dictation editor, or the dialog hosting it, belongs to that editor.
 function inOtherShortcutTarget(id: symbol, target: EventTarget | null) {
   if (!(target instanceof Node)) return false;
-  if (shortcutTargets.get(id)?.().targetRef?.current?.contains(target)) return false;
+  if (targetScope(shortcutTargets.get(id)?.().targetRef?.current)?.contains(target)) return false;
   return [...shortcutTargets].some(([other, read]) => {
     const field = read().targetRef?.current;
-    return other !== id && (field?.closest('[role="dialog"]') ?? field)?.contains(target);
+    return other !== id && !!field?.getClientRects().length && targetScope(field)?.contains(target);
   });
 }
 

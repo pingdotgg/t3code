@@ -108,6 +108,30 @@ type TranscriptCommitResult =
 
 const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
 
+function mapSelection(
+  before: string,
+  text: string,
+  selection: { readonly start: number; readonly end: number },
+  suffixFirst: boolean,
+): readonly [number, number] {
+  const shared = Math.min(before.length, text.length);
+  const matchesFromEnd = (offset: number) =>
+    before[before.length - 1 - offset] === text[text.length - 1 - offset];
+  let prefix = 0;
+  let suffix = 0;
+  if (suffixFirst) while (suffix < shared && matchesFromEnd(suffix)) suffix += 1;
+  while (prefix < shared - suffix && before[prefix] === text[prefix]) prefix += 1;
+  if (!suffixFirst) while (suffix < shared - prefix && matchesFromEnd(suffix)) suffix += 1;
+  const editEnd = before.length - suffix;
+  const map = (position: number, afterInsertion: boolean) =>
+    position < prefix || (position === prefix && !afterInsertion)
+      ? position
+      : position >= editEnd
+        ? position + text.length - before.length
+        : text.length - suffix;
+  return [map(selection.start, true), map(selection.end, false)];
+}
+
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
   current: VoiceDraftSnapshot | null,
@@ -124,33 +148,19 @@ export function resolveTranscriptCommit(
   }
 
   // The read-only editor still lets a selection move, so carry the starting one through edits instead.
-  const before = captured.text;
+  // Repeated text makes the edit's position ambiguous, so map through both extreme alignments.
+  const early = mapSelection(captured.text, current.text, captured.selection, false);
+  const late = mapSelection(captured.text, current.text, captured.selection, true);
   const { text } = current;
-  const shared = Math.min(before.length, text.length);
-  let prefix = 0;
-  while (prefix < shared && before[prefix] === text[prefix]) prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < shared - prefix &&
-    before[before.length - 1 - suffix] === text[text.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-  const editEnd = before.length - suffix;
-  const map = (position: number, afterInsertion: boolean) =>
-    position < prefix || (position === prefix && !afterInsertion)
-      ? position
-      : position >= editEnd
-        ? position + text.length - before.length
-        : text.length - suffix;
-  const mapped = [map(captured.selection.start, true), map(captured.selection.end, false)] as const;
-  // Replace the selection only while it still holds what was selected; never incoming edits.
+  // Replace the selection only while it surely still holds what was selected; never incoming edits.
   const keepsSelection =
-    mapped[0] <= mapped[1] &&
-    text.slice(mapped[0], mapped[1]) ===
-      before.slice(captured.selection.start, captured.selection.end);
-  const end = keepsSelection ? mapped[1] : Math.max(mapped[0], mapped[1]);
-  const start = keepsSelection ? mapped[0] : end;
+    early[0] === late[0] &&
+    early[1] === late[1] &&
+    early[0] <= early[1] &&
+    text.slice(early[0], early[1]) ===
+      captured.text.slice(captured.selection.start, captured.selection.end);
+  const end = keepsSelection ? early[1] : Math.max(...early, ...late);
+  const start = keepsSelection ? early[0] : end;
   const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;

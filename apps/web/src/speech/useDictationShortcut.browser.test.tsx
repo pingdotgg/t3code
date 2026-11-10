@@ -129,17 +129,31 @@ it("lets Escape in another dictation editor reach that editor instead of canceli
   expect(editorEscape).toHaveBeenCalledTimes(2);
 });
 
-it("cancels the recording on Escape in a text field that does not dictate", async () => {
+it("cancels the recording on Escape outside other shown dictation editors", async () => {
   const speech = recording();
+  const reviewRef = createRef<HTMLTextAreaElement>();
+  const commentRef = createRef<HTMLTextAreaElement>();
   await using screen = await render(
     <>
-      <Probe speech={speech} />
+      <Probe speech={speech} targetRef={reviewRef} />
+      <Probe speech={actions(true)} targetRef={commentRef} />
       <input aria-label="Search" />
+      <div role="dialog" aria-label="Pull request">
+        <textarea aria-label="Review" ref={reviewRef} />
+        <div hidden>
+          <textarea aria-label="Comment" ref={commentRef} />
+        </div>
+        <button type="button">Submit</button>
+      </div>
     </>,
   );
-  const field = screen.getByRole("textbox", { name: "Search" }).element();
-  if (!(field instanceof HTMLInputElement)) throw new Error("expected the search field");
-  field.focus();
-  field.dispatchEvent(escape());
-  expect(speech.cancel).toHaveBeenCalledOnce();
+  for (const control of [
+    screen.getByRole("textbox", { name: "Search" }).element(),
+    screen.getByRole("button", { name: "Submit" }).element(),
+  ]) {
+    if (!(control instanceof HTMLElement)) throw new Error("expected a focusable control");
+    control.focus();
+    control.dispatchEvent(escape());
+  }
+  expect(speech.cancel).toHaveBeenCalledTimes(2);
 });

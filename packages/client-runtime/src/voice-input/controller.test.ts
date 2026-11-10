@@ -293,6 +293,24 @@ describe("resolveTranscriptCommit", () => {
       "hello wo[cite]rld new text",
     ],
     ["at the caret", { start: 6, end: 6 }, "hello [cite] world", "hello [cite] new text world"],
+    [
+      "at the caret before a space",
+      { start: 5, end: 5 },
+      "hello [Assistant quote](t3-citation://v1/a) world",
+      "hello [Assistant quote](t3-citation://v1/a) new text world",
+    ],
+    [
+      "that repeats the selection",
+      { start: 0, end: 5 },
+      "hello there hello world",
+      "hello there hello new text world",
+    ],
+    [
+      "that repeats the selection next to it",
+      { start: 0, end: 5 },
+      "hello hello world",
+      "hello hello new text world",
+    ],
   ])("keeps text inserted %s while recording", (_, selection, current, expected) => {
     const captured = draft({ text: "hello world", selection });
     const result = resolveTranscriptCommit(
