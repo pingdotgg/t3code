@@ -43,7 +43,10 @@ const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
   state: "open",
 } as const satisfies PullRequestListPreferences;
 
-const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
+const MAX_PREFERENCE_LENGTH = 200;
+const MAX_PREFERENCE_LABELS = 10;
+const BoundedPreference = Schema.String.check(Schema.isMaxLength(MAX_PREFERENCE_LENGTH));
+const bounded = (value: string) => value.slice(0, MAX_PREFERENCE_LENGTH);
 const PullRequestListPreferencesSchema = Schema.Struct({
   involvement: PullRequestInvolvement,
   state: PullRequestListState,
@@ -55,7 +58,9 @@ const PullRequestListPreferencesSchema = Schema.Struct({
   review: PullRequestListFilters.fields.review,
   checks: PullRequestListFilters.fields.checks,
   author: Schema.optional(BoundedPreference),
-  labels: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(10))),
+  labels: Schema.optional(
+    Schema.Array(BoundedPreference).check(Schema.isMaxLength(MAX_PREFERENCE_LABELS)),
+  ),
   sort: Schema.optional(PullRequestListSort),
 });
 
@@ -79,13 +84,15 @@ export function pullRequestListPreferences(
     state: search.state,
     ...(search.environmentId ? { environmentId: search.environmentId } : {}),
     ...(search.projectId ? { projectId: search.projectId } : {}),
-    ...(search.host ? { host: search.host } : {}),
-    ...(search.q ? { q: search.q } : {}),
+    ...(search.host ? { host: bounded(search.host) } : {}),
+    ...(search.q ? { q: bounded(search.q) } : {}),
     ...(search.draft ? { draft: search.draft } : {}),
     ...(search.review ? { review: search.review } : {}),
     ...(search.checks ? { checks: search.checks } : {}),
-    ...(search.author ? { author: search.author } : {}),
-    ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
+    ...(search.author ? { author: bounded(search.author) } : {}),
+    ...(search.labels && search.labels.length > 0
+      ? { labels: search.labels.slice(0, MAX_PREFERENCE_LABELS).map(bounded) }
+      : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
   };
 }

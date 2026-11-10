@@ -39,6 +39,7 @@ import {
   settlePullRequestOverrides,
 } from "./pullRequestList.logic";
 import {
+  pullRequestListPreferences,
   readPullRequestListPreferences,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
@@ -379,6 +380,32 @@ describe("remembered pull request list controls", () => {
     expect(() =>
       writePullRequestListPreferences({ involvement: "all", state: "open" }, denied),
     ).not.toThrow();
+  });
+
+  it("keeps the saved controls when a value is longer than the page accepts", () => {
+    const storage = makeStorage();
+    const labels = Array.from({ length: 11 }, (_, index) => `label-${index}`);
+    writePullRequestListPreferences(
+      pullRequestListPreferences({
+        involvement: "authored",
+        state: "merged",
+        sort: "oldest",
+        host: "h".repeat(201),
+        q: "x".repeat(201),
+        author: "a".repeat(201),
+        labels: ["l".repeat(201), ...labels],
+      }),
+      storage,
+    );
+    expect(readPullRequestListPreferences(storage)).toEqual({
+      involvement: "authored",
+      state: "merged",
+      sort: "oldest",
+      host: "h".repeat(200),
+      q: "x".repeat(200),
+      author: "a".repeat(200),
+      labels: ["l".repeat(200), ...labels.slice(0, 9)],
+    });
   });
 });
 
