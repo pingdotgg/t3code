@@ -168,21 +168,29 @@ it.layer(NodeServices.layer)("server self update", (it) => {
   ])("reports an HTTP $status downloading $asset and allows retry", ({ asset, status }) =>
     Effect.gen(function* () {
       let failDownload = true;
+      const downloadFailed = yield* Deferred.make<void>();
       const { selfUpdate, order, baseDir } = yield* makeHarness({
         httpClient: releaseHttpClient([], []).pipe(
-          HttpClient.transform((response, request) =>
-            failDownload && request.url.endsWith("/SHA256SUMS") === (asset === "checksums")
-              ? Effect.succeed(
-                  HttpClientResponse.fromWeb(
-                    HttpClientRequest.get("https://user:password@cdn.example/private?token=secret"),
-                    new Response("private response body", { status }),
-                  ),
-                )
-              : response,
-          ),
+          HttpClient.transform((response, request) => {
+            if (!failDownload || request.url.endsWith("/SHA256SUMS") !== (asset === "checksums"))
+              return response;
+            Deferred.doneUnsafe(downloadFailed, Effect.void);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                HttpClientRequest.get("https://user:password@cdn.example/private?token=secret"),
+                new Response("private response body", { status }),
+              ),
+            );
+          }),
         ),
       });
-      const error = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      const failing = yield* selfUpdate
+        .update({ targetVersion: "1.1.0" })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(downloadFailed);
+      // A 5xx is retried after 2, 4, then 8 seconds before the update gives up.
+      yield* TestClock.adjust("14 seconds");
+      const error = yield* Fiber.join(failing);
       expect(error.reason).toBe(
         `Could not prepare t3@1.1.0 while downloading the t3 release ${asset} (HTTP ${status} from cdn.example).`,
       );
