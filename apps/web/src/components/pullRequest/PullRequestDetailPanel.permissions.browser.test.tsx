@@ -9,7 +9,7 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 
 const { permissions, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
@@ -192,11 +192,14 @@ it("keeps the actions menu still while a shown pull request is read again in the
 it("reads the first diff page once the pointer rests on the Code tab", async () => {
   setup();
   await using screen = await render(panel());
+  using _timers = fakeTimers({ now: 0 });
   const code = screen.getByRole("button", { name: "Code", exact: true });
   await expect.element(code).toBeVisible();
-  expect(reads.diff).toEqual([]);
 
   await userEvent.hover(code);
+  await act(() => vi.advanceTimersByTime(149));
+  expect(reads.diff).toEqual([]);
+  await act(() => vi.advanceTimersByTime(1));
   // The page the Code tab reads first, keyed as the tab keys it, so a click paints from it.
   expect(reads.diff).toContainEqual({
     environmentId,
