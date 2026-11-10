@@ -225,6 +225,15 @@ it.each([
     configArgs: BLANK_SHELL_NO_PROXY,
   },
   {
+    name: "ignores no_proxy mentioned outside shell_environment_policy.set",
+    platform: "darwin",
+    environment: {},
+    codexConfig:
+      '# no_proxy is not configured\n[shell_environment_policy]\nexclude = ["no_proxy"]\n',
+    expected: { NO_PROXY: LOOPBACK, no_proxy: LOOPBACK },
+    configArgs: BLANK_SHELL_NO_PROXY,
+  },
+  {
     name: "keeps shell bypasses the user's Codex config sets",
     platform: "darwin",
     environment: {},

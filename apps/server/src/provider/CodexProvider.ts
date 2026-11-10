@@ -54,6 +54,7 @@ import {
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parse as parseToml } from "smol-toml";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
@@ -461,6 +462,24 @@ const withLoopback = (value: string) => {
   return hosts.includes("*") ? value : [...new Set([...hosts, ...LOOPBACK_HOSTS])].join(",");
 };
 
+const configSetsShellNoProxy = (codexConfig: string) => {
+  let config: unknown;
+  try {
+    config = parseToml(codexConfig);
+  } catch {
+    // Codex refuses an unparseable config, so there are no shells to protect.
+    return true;
+  }
+  const policy = (config as { shell_environment_policy?: unknown }).shell_environment_policy;
+  const set =
+    typeof policy === "object" && policy !== null ? (policy as { set?: unknown }).set : {};
+  return (
+    typeof set === "object" &&
+    set !== null &&
+    Object.keys(set).some((name) => name.toUpperCase() === "NO_PROXY")
+  );
+};
+
 /**
  * Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models.
  * Exempts loopback from proxies so Codex's MCP client reaches T3's MCP endpoint directly.
@@ -492,7 +511,7 @@ export const codexAppServerEnvironment = (
     // Any non-empty *_proxy turns off Python's macOS system proxy, so agent shells get them blank.
     // `-c` outranks config.toml, so a config that names either spelling keeps its own values.
     configArgs:
-      usesEnvProxy || /no_proxy/i.test(codexConfig)
+      usesEnvProxy || configSetsShellNoProxy(codexConfig)
         ? []
         : names.flatMap((name) => ["-c", `shell_environment_policy.set.${name}=""`]),
   };
