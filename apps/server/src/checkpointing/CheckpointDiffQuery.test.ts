@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
+import { CheckpointRef, CheckpointScopeId, NodeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -52,14 +52,23 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
-  readonly runs?: ReadonlyArray<{ readonly id: RunId; readonly cwd?: string }>;
+  readonly runs?: ReadonlyArray<{
+    readonly id: RunId;
+    readonly cwd?: string;
+    readonly rootNodeId?: NodeId;
+  }>;
+  readonly nodes?: ReadonlyArray<{
+    readonly id: NodeId;
+    readonly checkpointScopeId: CheckpointScopeId;
+  }>;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getCheckpointContext: () => input.projection,
-          getThreadRecords: () => Effect.succeed({ runs: input.runs ?? [] } as never),
+          getThreadRecords: () =>
+            Effect.succeed({ runs: input.runs ?? [], nodes: input.nodes ?? [] } as never),
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
@@ -389,4 +398,41 @@ it.effect("preserves an exact-fit filtered patch across batches without a marker
     assert.isTrue(result.diff === patches.join(""));
     assert.strictEqual(patchReads, 2);
   }).pipe(Effect.provide(layer));
+});
+
+it.effect("retains the thread baseline when its first run failed without a checkpoint", () => {
+  const projection = makeProjectionAfterStoppedRun(true);
+  const rootNodeId = NodeId.make("node:failed-first-run");
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("diff"),
+  );
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
+    assert.strictEqual(result.diff, "diff");
+    assert.strictEqual(
+      diffCheckpoints.mock.calls[0]![0].fromCheckpointRef,
+      yield* checkpointRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 0 }),
+    );
+  }).pipe(
+    Effect.provide(
+      layerFor({
+        projection: Effect.succeed({
+          ...projection,
+          runs: projection.runs.map((run) =>
+            run.id === firstRunId ? { ...run, status: "failed" as const } : run,
+          ),
+          checkpoints: projection.checkpoints.filter(
+            (checkpoint) => checkpoint.runId !== firstRunId,
+          ),
+        }),
+        runs: [
+          { id: firstRunId, cwd: "/repo", rootNodeId },
+          { id: thirdRunId, cwd: "/repo" },
+        ],
+        nodes: [{ id: rootNodeId, checkpointScopeId: firstScopeId }],
+        diffCheckpoints,
+      }),
+    ),
+  );
 });
