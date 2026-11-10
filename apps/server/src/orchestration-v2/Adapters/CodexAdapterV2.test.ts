@@ -2847,6 +2847,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #33823 a turn effort that differs from the thread's makes Codex end turns early
+  it.effect("starts a thread at the selected reasoning effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-thread-start-effort";
+        const preamble = codexReplayPreamble({
+          nativeThreadId: `native-${scenario}-thread`,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        }).slice(0, 5);
+        const highStarted = withReplayRequestId(preamble[4]!, 3);
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble,
+            {
+              type: "expect_outbound",
+              label: "thread/start with effort",
+              frame: {
+                id: 3,
+                method: "thread/start",
+                params: {
+                  config: { ...CodexAdapterV2.CODEX_THREAD_CONFIG, model_reasoning_effort: "high" },
+                },
+              },
+            },
+            highStarted,
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.ensureThread({
+          threadId: ThreadId.make(`thread-${scenario}-high`),
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {
