@@ -54,9 +54,9 @@ in Settings.
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`
-to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
-Both shortcuts can be changed in Settings. Search for “Copy Link or Thread”
-or “Copy Number”. They copy the selected PR and leave terminal input alone.
+to copy its URL, `mod+shift+k` to copy its number with a `#` prefix, and
+`mod+shift+o` to open it in your browser. These shortcuts can be changed in
+Settings. Search for “Copy Link or Thread”, “Copy Number” or “Open in Browser”. They copy the selected PR and leave terminal input alone.
 Without a PR, `mod+shift+c` copies the thread itself, which pastes into a
 composer as a thread chip.
 

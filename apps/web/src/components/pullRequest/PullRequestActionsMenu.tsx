@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 
-import { shortcutLabelForCommand } from "~/keybindings";
+import { pullRequestPanelKeybindings, shortcutLabelForCommand } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -398,6 +398,15 @@ export function PullRequestActionsMenu({
         <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
+          <MenuShortcut>
+            {shortcutLabelForCommand(
+              pullRequestPanelKeybindings(keybindings),
+              "pullRequest.openOnHost",
+              {
+                context: { pullRequestPanelActive: true },
+              },
+            )}
+          </MenuShortcut>
         </MenuItem>
         <MenuItem onClick={() => copyReference(detail.url, `${terminology.shortLabel} link`)}>
           <LinkIcon className="size-3.5" />

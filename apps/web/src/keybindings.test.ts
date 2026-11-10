@@ -17,6 +17,7 @@ import {
   isRichTextBoldShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
+  pullRequestPanelKeybindings,
   resolveChatShortcutCommand,
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
@@ -787,7 +788,9 @@ describe("composer and pull request shortcuts", () => {
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>
-        binding.command !== "pullRequest.copyNumber" && binding.command !== "thread.copyReference",
+        binding.command !== "pullRequest.copyNumber" &&
+        binding.command !== "pullRequest.openOnHost" &&
+        binding.command !== "thread.copyReference",
     );
     const bindings = mergeWithDefaultKeybindings([
       ...olderServerBindings,
@@ -808,6 +811,18 @@ describe("composer and pull request shortcuts", () => {
         command,
       );
     }
+    const openChord = event({ key: "o", metaKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(openChord, pullRequestPanelKeybindings(bindings), {
+        platform: "MacIntel",
+        context: { pullRequestPanelActive: true },
+      }),
+      "pullRequest.openOnHost",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(openChord, bindings, { platform: "MacIntel" }),
+      "chat.new",
+    );
   });
 
   it.each(["MacIntel", "Win32", "Linux"])(

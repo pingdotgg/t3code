@@ -47,7 +47,11 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import {
+  pullRequestPanelKeybindings,
+  resolveShortcutCommand,
+  type ShortcutMatchContext,
+} from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
   usePullRequestDefaultMergeMethodResolver,
@@ -483,19 +487,25 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
-  const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+  const handlePullRequestShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
-    const command = resolveShortcutCommand(event, keybindings, {
-      context: getShortcutContext(),
+    const command = resolveShortcutCommand(event, pullRequestPanelKeybindings(keybindings), {
+      context: { ...getShortcutContext(), pullRequestPanelActive: true },
     });
-    if (command !== "pullRequest.copyNumber") return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
+    if (command === "pullRequest.copyNumber") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
+    } else if (command === "pullRequest.openOnHost") {
+      event.preventDefault();
+      event.stopPropagation();
+      const url = handoffSummary?.url;
+      if (!event.repeat && url !== undefined) void readLocalApi()?.shell.openExternal(url);
+    }
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number and open-on-host shortcuts
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
+    const onKeyDown = (event: KeyboardEvent) => handlePullRequestShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);

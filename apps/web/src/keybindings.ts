@@ -196,6 +196,14 @@ export function resolveShortcutCommand(
   return null;
 }
 
+// Persisted configs keep chat.new on mod+shift+o after backfilled defaults, so a PR panel
+// resolves only its own commands to let them win while it is active.
+export function pullRequestPanelKeybindings(
+  keybindings: ResolvedKeybindingsConfig,
+): ResolvedKeybindingsConfig {
+  return keybindings.filter((binding) => binding.command.startsWith("pullRequest."));
+}
+
 export function resolveChatShortcutCommand(
   event: ShortcutEventLike,
   primaryKeybindings: ResolvedKeybindingsConfig,
