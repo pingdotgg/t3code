@@ -1831,6 +1831,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   return (
     <div
       className={cn(
+        row.superseded && "ms-6",
         isWorkLogRow || isSubagentGroup
           ? undefined
           : row.kind === "background-activity" && row.precedesPrompt
@@ -1866,6 +1867,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         wakeUpsRail === "body" && "before:bottom-0",
         wakeUpsRail === "end" && "before:bottom-3",
       )}
+      data-superseded-content={row.superseded || undefined}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={
