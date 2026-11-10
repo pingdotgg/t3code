@@ -112,8 +112,12 @@ spend limit to continue sooner.
 In a Codex thread, send `/review` to have Codex review your uncommitted changes.
 Use `/review branch main` to review the current branch against `main`,
 `/review commit <sha>` to review one commit, or `/review` followed by your own
-instructions. A review cannot be steered while it runs. Stop it and send a new
-`/review` instead.
+instructions.
+
+Codex runs a review with the permission mode of the thread's last turn, so
+`/review` first needs a message sent in the current mode: in a new thread, after
+T3 Code restarts, and after you change the mode. A review cannot be steered
+while it runs. Stop it and send a new `/review` instead.
 
 ## Send feedback to OpenAI
 

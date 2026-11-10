@@ -928,6 +928,21 @@ class CodexGoalObjectiveTooLongError extends Schema.TaggedError<CodexGoalObjecti
   }
 }
 
+class CodexReviewPolicyUnappliedError extends Schema.TaggedError<CodexReviewPolicyUnappliedError>()(
+  "CodexReviewPolicyUnappliedError",
+  {},
+) {
+  override get message() {
+    return "Codex runs /review with the settings of this thread's last turn, which differ from the selected mode. Send a message in this mode first, then /review.";
+  }
+}
+
+// review/start takes no policy and thread/resume ignores overrides on a loaded thread.
+function codexTurnPolicyKey(params: CodexSchema.V2TurnStartParams): string {
+  const { cwd, approvalPolicy, approvalsReviewer, sandboxPolicy } = params;
+  return JSON.stringify({ cwd, approvalPolicy, approvalsReviewer, sandboxPolicy });
+}
+
 function validateCodexGoalObjective(objective: string) {
   let length = 0;
   for (const _ of objective) length++;
@@ -1930,6 +1945,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         // Keyed by native thread; turn/started for the inner review turn can beat registration.
+        const turnPolicies = new Map<string, string>();
         const reviewStarts = new Map<
           string,
           { context?: ActiveCodexTurnContext; reviewTurnId?: string }
@@ -7049,6 +7065,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(activeTurns)),
             ]);
             const started = yield* client.request("turn/start", turnStartParams);
+            turnPolicies.set(threadId, codexTurnPolicyKey(turnStartParams));
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7091,6 +7108,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           target: CodexSchema.V2ReviewStartParams["target"],
         ) {
           const threadId = yield* getNativeThreadId(turnInput.providerThread);
+          const policy = yield* buildCodexTurnStartParams({
+            nativeThreadId: threadId,
+            codexInput: [],
+            runtimePolicy: turnInput.runtimePolicy,
+            modelSelection: turnInput.modelSelection,
+          });
+          if (turnPolicies.get(threadId) !== codexTurnPolicyKey(policy)) {
+            return yield* new CodexReviewPolicyUnappliedError();
+          }
           const reviewStart: { context?: ActiveCodexTurnContext; reviewTurnId?: string } = {};
           reviewStarts.set(threadId, reviewStart);
           const started = yield* client

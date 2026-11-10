@@ -1741,21 +1741,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     assert.isNull(CodexAdapterV2.parseCodexReviewCommand({ text: "/review", attachments: [{}] }));
   });
 
-  it.effect("starts /review as an inline Codex review and stops its inner turn", () =>
+  it.effect("runs /review only under the last turn's policy and stops its inner turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "review-thread";
+      const firstTurnId = "review-first-turn";
       const nativeTurnId = "review-root-turn";
       const innerTurnId = "review-inner-turn";
-      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "/review" });
+      const prompt = "Fix the bug.";
       const transcript = makeCodexReplayTranscript({
         scenario: "review-start-and-stop",
         entries: [
-          ...preamble.slice(0, -3),
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: firstTurnId, prompt }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: firstTurnId, status: "completed" }),
+              },
+            },
+          },
           {
             type: "expect_outbound",
             label: "review/start",
             frame: {
-              id: 3,
+              id: 4,
               method: "review/start",
               params: {
                 threadId: nativeThreadId,
@@ -1768,7 +1780,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             type: "emit_inbound",
             label: "review/start",
             frame: {
-              id: 3,
+              id: 4,
               result: {
                 reviewThreadId: nativeThreadId,
                 turn: {
@@ -1794,12 +1806,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             type: "expect_outbound",
             label: "turn/interrupt",
             frame: {
-              id: 4,
+              id: 5,
               method: "turn/interrupt",
               params: { threadId: nativeThreadId, turnId: innerTurnId },
             },
           },
-          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 5, result: {} } },
           {
             type: "emit_inbound",
             label: "turn/completed",
@@ -1814,15 +1826,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ],
       });
       const harness = yield* makeCodexReplayHarness(transcript);
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("review-attempt"),
-          text: "/review branch main",
-        }),
+      const turnInput = (attempt: string, text: string) =>
+        Effect.map(DateTime.now, (now) =>
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text,
+          }),
+        );
+      yield* harness.runtime.startTurn(yield* turnInput("first-attempt", prompt));
+      yield* harness.awaitTerminal(1);
+      const supervised = yield* turnInput("supervised-review-attempt", "/review");
+      const refused = yield* harness.runtime
+        .startTurn({
+          ...supervised,
+          runtimePolicy: { ...supervised.runtimePolicy, runtimeMode: "approval-required" },
+        })
+        .pipe(Effect.flip);
+      assert.include(
+        makeProviderFailure({ cause: refused }).message,
+        "Send a message in this mode first",
       );
+      yield* harness.runtime.startTurn(yield* turnInput("review-attempt", "/review branch main"));
       const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
         driver: CodexAdapterV2.CODEX_DRIVER_KIND,
         nativeTurnId,
@@ -1832,9 +1859,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         .pipe(Effect.forkScoped);
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(interrupt);
-      yield* harness.firstTerminal;
-      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
-      assert.lengthOf(harness.terminalEvents(), 1);
+      yield* harness.awaitTerminal(2);
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed", "interrupted"],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
