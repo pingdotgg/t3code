@@ -100,7 +100,11 @@ const PI_USAGE_LIMIT = /usage[ _]limit/i;
 const PI_USAGE_LIMIT_RESET = /Try again in ~([1-9]\d{0,5}) min\b/;
 const PI_USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
 
-function piModelErrorFailure(message: string, receivedAt: DateTime.Utc, retryable?: boolean) {
+function piModelErrorFailure(
+  message: string,
+  receivedAt: DateTime.Utc,
+  retryable: boolean | null = null,
+) {
   if (!PI_USAGE_LIMIT.test(message))
     return makeProviderFailure({ message, class: "provider_error", retryable });
   const minutes = PI_USAGE_LIMIT_RESET.exec(message)?.[1];

@@ -4746,9 +4746,9 @@ describe("PiAdapterV2", () => {
       }
       assert.strictEqual(
         terminal.failure.resetAt,
-        new Date(
-          DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000 + 30_000,
-        ).toISOString(),
+        DateTime.formatIso(
+          DateTime.add(receivedAt, { milliseconds: resetsInMinutes * 60_000 + 30_000 }),
+        ),
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
