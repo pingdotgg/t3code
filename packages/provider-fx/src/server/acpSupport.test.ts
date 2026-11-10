@@ -3,7 +3,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 
-import { fxPermissionDisposition } from "./acpSupport.ts";
+import { fxPermissionDisposition, fxSessionModeForPolicy } from "./acpSupport.ts";
 
 const editRequest = {
   sessionId: "fx-session-01",
@@ -49,5 +49,14 @@ describe("fx permission prompts", () => {
       ),
       "ask",
     );
+    for (const confined of [
+      { approvalPolicy: "on-request" },
+      { sandboxPolicy: { type: "readOnly" } },
+    ] as const) {
+      assert.equal(
+        fxSessionModeForPolicy(ProviderAdapterV2RuntimePolicy.make({ ...fullAccess, ...confined })),
+        "ask",
+      );
+    }
   });
 });
