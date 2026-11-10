@@ -61,7 +61,7 @@ export function BranchNamingSettings() {
               }
             }}
           >
-            <SelectTrigger size="sm" aria-label="Worktree branch naming">
+            <SelectTrigger variant="well" size="compact" aria-label="Worktree branch naming">
               <SelectValue>
                 {(value: BranchNamingMode | null) => (value === null ? "Mixed" : MODES[value])}
               </SelectValue>
@@ -95,6 +95,7 @@ export function BranchNamingSettings() {
           }
           control={
             <Input
+              size="settings"
               key={`${scopeKey}:${prefixMixed}:${settings.branchNamePrefix}`}
               aria-label="Branch prefix"
               autoCapitalize="none"
