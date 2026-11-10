@@ -91,23 +91,43 @@ class GoogleVoiceTranscriberTest {
   }
 
   @Test
-  fun checksSupportWithoutDownloadingAndClosesProbedClients() = runBlocking {
-    for ((advancedStatus, basicStatus, supported) in listOf(
-      Triple(FeatureStatus.AVAILABLE, FeatureStatus.UNAVAILABLE, true),
-      Triple(FeatureStatus.DOWNLOADABLE, FeatureStatus.UNAVAILABLE, true),
-      Triple(FeatureStatus.DOWNLOADING, FeatureStatus.UNAVAILABLE, true),
-      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.AVAILABLE, true),
-      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.DOWNLOADABLE, true),
-      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.DOWNLOADING, true),
-      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.UNAVAILABLE, false)
+  fun probesSupportWithoutDownloadingAndClosesProbedClients() = runBlocking {
+    val advanced = SpeechRecognizerOptions.Mode.MODE_ADVANCED
+    val basic = SpeechRecognizerOptions.Mode.MODE_BASIC
+    for ((advancedStatus, basicStatus, expected) in listOf(
+      Triple(
+        FeatureStatus.AVAILABLE,
+        FeatureStatus.UNAVAILABLE,
+        GoogleVoiceSupport(advanced, true)
+      ),
+      Triple(
+        FeatureStatus.DOWNLOADABLE,
+        FeatureStatus.AVAILABLE,
+        GoogleVoiceSupport(advanced, false)
+      ),
+      Triple(
+        FeatureStatus.DOWNLOADING,
+        FeatureStatus.UNAVAILABLE,
+        GoogleVoiceSupport(advanced, false)
+      ),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.AVAILABLE, GoogleVoiceSupport(basic, true)),
+      Triple(
+        FeatureStatus.UNAVAILABLE,
+        FeatureStatus.DOWNLOADABLE,
+        GoogleVoiceSupport(basic, false)
+      ),
+      Triple(
+        FeatureStatus.UNAVAILABLE,
+        FeatureStatus.DOWNLOADING,
+        GoogleVoiceSupport(basic, false)
+      ),
+      Triple(FeatureStatus.UNAVAILABLE, FeatureStatus.UNAVAILABLE, null)
     )) {
       val clients = mutableListOf<Client>()
       assertEquals(
-        supported,
-        isGoogleVoiceTranscriptionSupported { mode ->
-          Client(
-            if (mode == SpeechRecognizerOptions.Mode.MODE_ADVANCED) advancedStatus else basicStatus
-          ).also { clients.add(it) }
+        expected,
+        probeGoogleVoiceTranscription { mode ->
+          Client(if (mode == advanced) advancedStatus else basicStatus).also { clients.add(it) }
         }
       )
       assertTrue(clients.all { it.closed && it.downloads == 0 })

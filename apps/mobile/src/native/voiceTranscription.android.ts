@@ -6,13 +6,17 @@ import type { NativeVoiceRecorder } from "../features/voice-input/lazyVoiceRecor
 import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
-  type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
+import type { LocalVoiceTranscriber } from "./voiceTranscription";
 
 type PreparedGoogleTranscription = { readonly locale: string; readonly mode: number };
 
 type GoogleTranscriptionModule = {
-  checkAvailability(): Promise<boolean>;
+  checkAvailability(): Promise<{
+    readonly language: string;
+    readonly advanced: boolean;
+    readonly downloaded: boolean;
+  } | null>;
   prepare(id: number): Promise<PreparedGoogleTranscription>;
   transcribe(id: number, uri: string, locale: string, mode: number): Promise<string>;
   cancel(id: number): Promise<void>;
@@ -44,10 +48,12 @@ export function createLiveVoiceRecorder() {
     : null;
 }
 
-export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
-  if (!native || !(await native.checkAvailability())) return null;
+export async function getLocalVoiceTranscriber(): Promise<LocalVoiceTranscriber | null> {
+  const support = await native?.checkAvailability();
+  if (!native || !support) return null;
   const module = native;
   return {
+    engine: { kind: "google", ...support },
     prepare: async ({ signal }) => {
       const prepared = await runOperation(module, signal, "preparation-failed", (id) =>
         module.prepare(id),

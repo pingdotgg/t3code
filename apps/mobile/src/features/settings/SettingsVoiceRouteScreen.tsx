@@ -32,6 +32,7 @@ import {
 import { VoiceModelSection } from "./VoiceModelSection";
 import { CloudVoiceSection } from "./CloudVoiceSection";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { LocalVoiceEngine } from "../../native/voiceTranscription";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
@@ -113,6 +114,17 @@ const UNAVAILABLE_EXPLANATION =
     ? "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate."
     : "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.";
 
+const LOCAL_ENGINE_EXPLANATION =
+  Platform.OS === "android"
+    ? "Basic is Google’s standard speech model. Advanced uses Gemini Nano on supported phones and is usually more accurate. Your keyboard’s voice typing is separate."
+    : "Your keyboard’s dictation is separate.";
+
+function localEngineLabel(engine: LocalVoiceEngine) {
+  if (engine.kind === "apple") return "Apple on-device speech";
+  const language = engine.downloaded ? engine.language : "Downloads on first use";
+  return `Google on-device speech · ${engine.advanced ? "Advanced" : "Basic"} · ${language}`;
+}
+
 function saveDestination(id: EnvironmentId | null) {
   try {
     chooseVoiceDestination(id);
@@ -168,6 +180,8 @@ function EnvironmentChoice({
 
 export function SettingsVoiceRouteScreen() {
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const localEngine =
+    transcriber === null || transcriber === "checking" ? null : transcriber.engine;
   const grant = useAtomValue(voiceGrantAtom);
   const { environments, isReady } = useEnvironments();
   const grantEnvironment = grant
@@ -230,10 +244,20 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Transcribe on">
+        <SettingsSection
+          title="Transcribe on"
+          footer={localEngine ? LOCAL_ENGINE_EXPLANATION : undefined}
+        >
           <ListChoiceRow
             label="This device"
             description="Audio stays on this device and is transcribed here."
+            meta={
+              localEngine ? (
+                <Text textRole="footnote" className="text-foreground">
+                  {localEngineLabel(localEngine)}
+                </Text>
+              ) : undefined
+            }
             selected={!grant}
             onPress={() => saveDestination(null)}
           />

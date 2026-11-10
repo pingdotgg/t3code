@@ -224,7 +224,10 @@ first time. After that it works offline for that language. iPhone dictates in th
 first of your preferred languages (**Settings → General → Language & Region**)
 that Apple’s speech model supports. If none is supported, it tries the app’s
 language. Android transcribes on the device while you
-record and finishes after you stop. Recordings can be up to five
+record and finishes after you stop. **Settings → Voice** shows which speech engine
+**This device** uses. On Android, **Advanced** uses Gemini Nano on supported phones
+and **Basic** is Google’s standard model. This is separate from your keyboard’s
+voice typing. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays

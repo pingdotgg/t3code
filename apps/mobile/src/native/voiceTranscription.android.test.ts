@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
-  checkAvailability: vi.fn<() => Promise<boolean>>(),
+  checkAvailability:
+    vi.fn<() => Promise<{ language: string; advanced: boolean; downloaded: boolean } | null>>(),
   prepare: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
   transcribe: vi.fn<(id: number, uri: string, locale: string, mode: number) => Promise<string>>(),
   cancel: vi.fn<(id: number) => Promise<void>>(),
@@ -38,11 +39,11 @@ it.each([
   expect(createLiveVoiceRecorder()?.uri ?? null).toBe(uri);
 });
 
-it.each([false, true])(
-  "waits for device support before offering a transcriber (%s)",
+it.each([null, { language: "English (United States)", advanced: false, downloaded: true }])(
+  "waits for device support before offering a transcriber (%o)",
   async (supported) => {
     vi.resetAllMocks();
-    const probe = Promise.withResolvers<boolean>();
+    const probe = Promise.withResolvers<typeof supported>();
     mocks.checkAvailability.mockReturnValue(probe.promise);
     let settled = false;
     const result = Promise.resolve(getLocalVoiceTranscriber()).then((transcriber) => {
@@ -52,7 +53,7 @@ it.each([false, true])(
     await Promise.resolve();
     expect(settled).toBe(false);
     probe.resolve(supported);
-    expect((await result) !== null).toBe(supported);
+    expect((await result)?.engine ?? null).toEqual(supported && { kind: "google", ...supported });
   },
 );
 
@@ -64,7 +65,11 @@ it.each([
 ] as const)("preserves an actionable %s error: %s", async (phase, code, expected) => {
   vi.resetAllMocks();
   resetVoiceInputGlobalsForTests();
-  mocks.checkAvailability.mockResolvedValue(true);
+  mocks.checkAvailability.mockResolvedValue({
+    language: "English (United States)",
+    advanced: false,
+    downloaded: true,
+  });
   mocks.prepare.mockResolvedValue({ locale: "en-US", mode: 0 });
   mocks.transcribe.mockResolvedValue("Complete transcript.");
   mocks.cancel.mockResolvedValue(undefined);
