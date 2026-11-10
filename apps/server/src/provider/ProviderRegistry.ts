@@ -113,7 +113,7 @@ export class ProviderRegistry extends Context.Service<
 
     /**
      * For an opened model picker: refetch a model manifest older than a few
-     * minutes, and probe providers only when it has models they have not seen.
+     * minutes. When it changed, recheck latest CLI versions and probe providers.
      */
     readonly refreshModelCatalog: Effect.Effect<void>;
 
@@ -1164,6 +1164,8 @@ export const layer = Layer.effect(
       // The first pass can be one that started before the fetch, so allow one more.
       for (let pass = 0; pass < 2; pass++) {
         if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) return;
+        // A new model usually ships with the CLI release that supports it.
+        yield* latestVersions.invalidateAll;
         yield* refreshAll();
       }
     });
