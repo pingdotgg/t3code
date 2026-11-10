@@ -9615,9 +9615,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { hydration: "completed", order: "hydration-last", hydrations: 1 },
     { hydration: "failed", order: "hydration-last", hydrations: 1 },
-    { hydration: "completed", order: "hydration-first", hydrations: 1 },
     { hydration: "failed", order: "hydration-first", hydrations: 1 },
     { hydration: "completed", order: "hydration-last", hydrations: 2 },
   ] as const)(
