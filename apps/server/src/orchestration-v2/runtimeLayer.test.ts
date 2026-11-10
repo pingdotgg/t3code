@@ -6602,7 +6602,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       let lockCalls = 0;
       let armed = false;
       const withLock = executor.withLock;
-      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation((key, effect) => {
+      const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        key,
+        effect,
+      ) => {
         if (key !== threadId || !armed) return withLock(key, effect);
         lockCalls += 1;
         if (lockCalls === 1) {
@@ -6617,7 +6620,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           );
         }
         return withLock(key, effect);
-      });
+      };
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
       yield* Effect.gen(function* () {
         armed = true;
         const now = yield* DateTime.now;

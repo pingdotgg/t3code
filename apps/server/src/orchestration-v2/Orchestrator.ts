@@ -13976,6 +13976,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* replayCommandReceipt(command, existingReceipt.value);
     }
 
+    // The run-end release can lag behind a new send; start the queue first so the send waits behind it.
+    if (
+      command.type === "message.dispatch" &&
+      (command.dispatchMode.type === "start_immediately" ||
+        command.dispatchMode.type === "queue_after_active" ||
+        command.dispatchMode.type === "defer_start")
+    ) {
+      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    }
+
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
     if (limit !== undefined) {
