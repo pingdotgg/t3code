@@ -1786,6 +1786,61 @@ export function resizeLayoutColumn(
   });
 }
 
+export function resizeLayoutColumnEdge(
+  state: LayoutState,
+  columnId: string,
+  width: number,
+  mode: LayoutWhenNoRoom,
+  cameraWidth: number,
+  drawnUnitWidth = cameraWidth,
+): LayoutState {
+  const scale = drawnUnitWidth / cameraWidth;
+  const rebased =
+    scale === 1
+      ? state
+      : mapWorkspaces(state, (workspace) =>
+          workspace.columns.some((column) => column.id === columnId)
+            ? {
+                ...workspace,
+                columns: workspace.columns.map((column) => ({
+                  ...column,
+                  width: column.width * scale,
+                })),
+              }
+            : workspace,
+        );
+  const workspace = rebased.workspaces.find((candidate) =>
+    candidate.columns.some((column) => column.id === columnId),
+  );
+  const index = workspace?.columns.findIndex((column) => column.id === columnId) ?? -1;
+  const neighbor = workspace?.columns[index + 1];
+  if (mode !== "always-shrink" || !workspace || !neighbor || !Number.isFinite(width)) {
+    return arrangeLayoutWorkspaces(
+      state,
+      resizeLayoutColumn(rebased, columnId, width),
+      cameraWidth,
+    );
+  }
+  const pair = workspace.columns[index]!.width + neighbor.width;
+  const floor = Math.min(LAYOUT_MIN_COLUMN_WIDTH, pair / 2);
+  const resized = Math.min(pair - floor, Math.max(floor, width));
+  const shared = mapWorkspaces(rebased, (candidate) =>
+    candidate === workspace
+      ? {
+          ...candidate,
+          columns: candidate.columns.map((column, columnIndex) =>
+            columnIndex === index
+              ? { ...column, width: resized }
+              : columnIndex === index + 1
+                ? { ...column, width: pair - resized }
+                : column,
+          ),
+        }
+      : candidate,
+  );
+  return arrangeLayoutWorkspaces(state, shared, cameraWidth);
+}
+
 /** Step to the next width preset, wrapping from 2/3 back to 1/3. A lone column keeps filling the window. */
 export function cycleLayoutColumnWidth(state: LayoutState, columnId: string): LayoutState {
   const workspace = state.workspaces.find((candidate) =>

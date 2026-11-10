@@ -10,19 +10,19 @@ import {
 
 import { settleStripCamera } from "../motion/stripCamera";
 import {
-  arrangeLayoutWorkspaces,
   LAYOUT_COLUMN_WIDTH_PRESETS,
   LAYOUT_MIN_COLUMN_WIDTH,
   LAYOUT_MIN_PANE_SIZE,
   LAYOUT_READABLE_COLUMN_PX,
   findLayoutPane,
-  resizeLayoutColumn,
+  resizeLayoutColumnEdge,
   resizeLayoutPane,
   type LayoutColumn,
   type LayoutPaneSlot,
   type LayoutState,
   type LayoutWorkspace,
 } from "./layoutModel";
+import { getLayoutBehavior } from "./layoutBehavior";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 /** Handles fill the gap between panes (the chrome gutter), centered on the boundary. */
@@ -94,8 +94,9 @@ type ActiveDrag =
       columnId: string;
       /** Where the column starts, in arranged widths from the strip's left edge. */
       columnLeft: number;
-      /** The width its workspace is drawn against, in px: the unit column shares use. */
+      /** The strip's visible width in px: the unit column shares use. */
       unitWidth: number;
+      drawnUnitWidth: number;
       contentLeft: number;
       scrollLeft: number;
       bounds: { min: number; max: number };
@@ -137,13 +138,14 @@ export function LayoutResizeHandles({
   stripWidth: number;
   unitWidth: number;
   scrollerRef: RefObject<HTMLDivElement | null>;
-  onPreview: (layout: LayoutState | null) => void;
+  onPreview: (preview: { layout: LayoutState; heldStripPx: number } | null) => void;
 }) {
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
   const dragRef = useRef<ActiveDrag | null>(null);
   const baseLayoutRef = useRef<LayoutState>(layout);
   const frameRef = useRef<number | null>(null);
   const pointerRef = useRef({ x: 0, y: 0, scrollLeft: 0 });
+  const heldStripPxRef = useRef(0);
 
   const cancelFrame = () => {
     if (frameRef.current === null) return;
@@ -171,10 +173,13 @@ export function LayoutResizeHandles({
   // release does, so the preview never jumps between fitting and scrolling.
   const applyDrag = (base: LayoutState, active: ActiveDrag): LayoutState =>
     active.kind === "column"
-      ? arrangeLayoutWorkspaces(
+      ? resizeLayoutColumnEdge(
           base,
-          resizeLayoutColumn(base, active.columnId, active.value),
+          active.columnId,
+          active.value,
+          getLayoutBehavior().whenNoRoom,
           active.unitWidth,
+          active.drawnUnitWidth,
         )
       : resizeLayoutPane(base, active.paneId, active.value);
 
@@ -183,12 +188,16 @@ export function LayoutResizeHandles({
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     baseLayoutRef.current = layout;
+    heldStripPxRef.current = scrollerRef.current?.scrollWidth ?? 0;
     pointerRef.current = {
       x: event.clientX,
       y: event.clientY,
       scrollLeft: scrollerRef.current?.scrollLeft ?? 0,
     };
     updateDrag(active);
+    if (active.kind === "column") {
+      onPreview({ layout: applyDrag(layout, active), heldStripPx: heldStripPxRef.current });
+    }
   };
 
   const dragAtPointer = (active: ActiveDrag, event: PointerEvent<HTMLDivElement>): ActiveDrag => {
@@ -222,7 +231,10 @@ export function LayoutResizeHandles({
       const latest = dragRef.current;
       if (!latest) return;
       setDrag(latest);
-      onPreview(applyDrag(baseLayoutRef.current, latest));
+      onPreview({
+        layout: applyDrag(baseLayoutRef.current, latest),
+        heldStripPx: heldStripPxRef.current,
+      });
     });
   };
 
@@ -234,7 +246,12 @@ export function LayoutResizeHandles({
     onPreview(null);
     const store = useLayoutStore.getState();
     if (active.kind === "column") {
-      store.resizeColumnEdge(active.columnId, active.value, active.unitWidth);
+      store.resizeColumnEdge(
+        active.columnId,
+        active.value,
+        active.unitWidth,
+        active.drawnUnitWidth,
+      );
     } else store.resizePane(active.paneId, active.value);
     saveLayoutNow();
   };
@@ -260,6 +277,7 @@ export function LayoutResizeHandles({
     settleStripCamera();
     const rect = scroller.getBoundingClientRect();
     return {
+      width: scroller.clientWidth,
       height: scroller.clientHeight,
       contentLeft: rect.left - scroller.scrollLeft,
       contentTop: rect.top,
@@ -279,9 +297,9 @@ export function LayoutResizeHandles({
     };
   });
   // No wider than the strip, so a column can always be wholly on screen.
-  const columnBounds = () => ({
-    ...edgeBounds(MIN_COLUMN_PX, unitWidth, null, LAYOUT_MIN_COLUMN_WIDTH),
-    max: (scrollerRef.current?.clientWidth ?? unitWidth) / unitWidth,
+  const columnBounds = (unit: number) => ({
+    ...edgeBounds(MIN_COLUMN_PX, unit, null, LAYOUT_MIN_COLUMN_WIDTH),
+    max: (scrollerRef.current?.clientWidth ?? unit) / unit,
   });
   const paneBounds = (panes: LayoutColumn["panes"], index: number, heightPx: number) =>
     edgeBounds(
@@ -372,16 +390,18 @@ export function LayoutResizeHandles({
         }}
         onPointerDown={(event) => {
           const metrics = measure();
-          if (!metrics) return;
+          if (!metrics || metrics.width <= 0) return;
+          const scale = unitWidth / metrics.width;
           startDrag(event, {
             kind: "column",
             columnId: column.id,
-            columnLeft: thisColumnLeft,
-            unitWidth,
+            columnLeft: thisColumnLeft * scale,
+            unitWidth: metrics.width,
+            drawnUnitWidth: unitWidth,
             contentLeft: metrics.contentLeft,
             scrollLeft: scrollerRef.current?.scrollLeft ?? 0,
-            bounds: columnBounds(),
-            value: width,
+            bounds: columnBounds(metrics.width),
+            value: width * scale,
             snapped: null,
           });
         }}
@@ -395,7 +415,7 @@ export function LayoutResizeHandles({
           const step = stepPreset(width, event.key === "ArrowRight" ? 1 : -1);
           useLayoutStore
             .getState()
-            .resizeColumnEdge(column.id, clampToBounds(step, columnBounds()), unitWidth);
+            .resizeColumnEdge(column.id, clampToBounds(step, columnBounds(unitWidth)), unitWidth);
         }}
       />,
     );
