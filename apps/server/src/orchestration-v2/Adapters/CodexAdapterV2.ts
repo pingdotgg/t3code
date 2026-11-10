@@ -244,6 +244,7 @@ export function codexAutoCompactLimit(config: CodexSchema.V2ConfigReadResponse["
     ? limit
     : undefined;
 }
+
 const CODEX_CONFIG_READ_TIMEOUT = "3 seconds";
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 // Plan flushes store three copies; use the client's assistant-text cadence.
