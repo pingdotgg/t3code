@@ -33,7 +33,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { request, subscribeDynamic } from "../rpc/client.ts";
+import { isAuthorizationFailure, request, subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -189,6 +189,20 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
   };
 }
 
+function hasMissingPendingQuestionCard(projection: OrchestrationV2ThreadProjection): boolean {
+  const pending = new Set(
+    projection.runtimeRequests
+      .filter((request) => request.kind === "user_input" && request.status === "pending")
+      .map((request) => request.id),
+  );
+  if (pending.size === 0) return false;
+  for (const item of projection.turnItems) {
+    if (item.type === "user_input_request") pending.delete(item.requestId);
+    if (pending.size === 0) return false;
+  }
+  return true;
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
@@ -206,10 +220,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
-  const retained = resumeCache?.snapshot;
+  const candidate = resumeCache?.snapshot;
+  const retained =
+    candidate &&
+    Option.isSome(candidate.state.data) &&
+    hasMissingPendingQuestionCard(candidate.state.data.value)
+      ? undefined
+      : candidate;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
-  const cached =
+  const loaded =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
           Effect.map(Option.map(knownThreadDetailSnapshot)),
@@ -225,6 +245,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ),
         )
       : Option.none<OrchestrationV2ThreadDetailSnapshot>();
+  // Old bounded caches can omit a pending question's card; replay alone cannot restore it.
+  const cached = Option.filter(
+    loaded,
+    (snapshot) => !hasMissingPendingQuestionCard(snapshot.projection),
+  );
   const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
@@ -478,9 +503,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     OrchestrationV2ThreadStreamItem,
     { kind: "event" | "unknown-event" }
   >;
-  const applyEventsLocked = Effect.fn("EnvironmentThreadState.applyEventsLocked")(function* (
-    items: ReadonlyArray<SequencedItem>,
-  ) {
+  // Per-batch streaming spans add trace volume without a useful timing boundary.
+  const applyEventsLocked = Effect.fnUntraced(function* (items: ReadonlyArray<SequencedItem>) {
     const appliedSequence = yield* SubscriptionRef.get(lastSequence);
     let sequence = appliedSequence;
     const fresh: EventItem[] = [];
@@ -639,7 +663,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* applyEventsLocked([item]);
   });
 
-  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
+  // Keep this per-batch streaming path untraced for the same reason as applyEventsLocked.
+  const applyItems = Effect.fnUntraced(function* (
     items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
   ) {
     yield* applyLock.withPermits(1)(
@@ -926,6 +951,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // status. A replacement session or foreground resubscribe on the same scope
   // may have missed events, so those show sync progress until confirmed.
   const resumingLive = yield* Ref.make(initialState.status === "live");
+  // A cold open tries the socket snapshot once. Any later cold attempt, after a
+  // failure or a dropped session, asks HTTP, which also tells a missing thread
+  // apart from a failed load.
+  const socketOpenTried = yield* Ref.make(false);
+  const socketOnlyOpen = yield* Ref.make(false);
+  const failedSocketOnlyOpen = Effect.gen(function* () {
+    return (
+      (yield* Ref.get(socketOnlyOpen)) && Option.isNone((yield* SubscriptionRef.get(state)).data)
+    );
+  });
+  // A defect parks the subscription, so a socket-only open resubscribes once.
+  const httpRetries = yield* Queue.unbounded<void>();
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -948,12 +985,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* Effect.never;
         }
 
-        yield* Effect.ignore(session.initialConfig);
+        const config = yield* Effect.option(session.initialConfig);
         yield* Ref.set(awaitingCompletion, true);
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
+        // A server that pages snapshots sends the same bounded window over the
+        // socket, so a cold open can skip the HTTP round trip.
+        const socketOnly =
+          Option.isNone(current.data) &&
+          canLoadHistory &&
+          Option.exists(config, (value) => value.threadSnapshotPagination === true) &&
+          !(yield* Ref.getAndSet(socketOpenTried, true));
+        yield* Ref.set(socketOnlyOpen, socketOnly);
+
+        if (Option.isNone(current.data) && !socketOnly) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -1001,6 +1047,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
             case "missing": {
               yield* setDeleted();
+              // A 404 also means "not created yet". Only a delete event may outlive this mount.
+              if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
               return yield* Effect.never;
             }
             case "unavailable": {
@@ -1029,10 +1077,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onDefect: () => setStreamError("Could not synchronize the thread."),
-        onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
+        // A socket-only open that fails retries over HTTP, which tells a
+        // missing thread apart from a failure, before showing an error.
+        onDefect: Effect.fn("EnvironmentThreadState.onDefect")(function* () {
+          if (yield* failedSocketOnlyOpen) {
+            yield* Ref.set(socketOnlyOpen, false);
+            return yield* Queue.offer(httpRetries, undefined);
+          }
+          yield* setStreamError("Could not synchronize the thread.");
+        }),
+        onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
+          const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
+          if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
+        }),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, Stream.fromQueue(httpRetries)),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );
@@ -1114,3 +1173,4 @@ export * from "./threadFamilies.ts";
 export * from "./olderSettledThreads.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
+export * from "./threadTagFilter.ts";

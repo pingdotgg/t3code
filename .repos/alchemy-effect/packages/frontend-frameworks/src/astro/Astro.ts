@@ -1,4 +1,3 @@
-import * as FrameworkCore from "../core/index.ts";
 import type { AstroInlineConfig, AstroIntegration } from "astro";
 import type * as AstroNamespace from "astro";
 import * as Effect from "effect/Effect";
@@ -6,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as ViteModule from "vite";
+import * as FrameworkCore from "../core/index.ts";
 import { NODE_ENVIRONMENTS } from "./environments.ts";
 import {
   DEFAULT_TARGET_SPECIFIER,
@@ -106,9 +106,7 @@ export interface AstroConfigInputs {
  *   per-route `prerender = false` opt-outs enabled by the adapter) applies.
  * - User `vite.plugins` are preserved ahead of the collector.
  */
-export const makeAstroInlineConfig = (
-  inputs: AstroConfigInputs,
-): AstroInlineConfig => {
+export const makeAstroInlineConfig = (inputs: AstroConfigInputs): AstroInlineConfig => {
   const user = inputs.userConfig;
   const serverOverrides = {
     ...(inputs.port !== undefined ? { port: inputs.port } : {}),
@@ -131,10 +129,7 @@ export const makeAstroInlineConfig = (
     server,
     vite: {
       ...user?.vite,
-      plugins: [
-        ...(user?.vite?.plugins ?? []),
-        ...(inputs.extraVitePlugins ?? []),
-      ],
+      plugins: [...(user?.vite?.plugins ?? []), ...(inputs.extraVitePlugins ?? [])],
     },
   };
 };
@@ -161,11 +156,7 @@ export const makeAstroInlineConfig = (
  */
 export const make = <TargetConfig = unknown>(
   options?: AstroFrameworkOptions<TargetConfig>,
-): Effect.Effect<
-  FrameworkCore.Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<FrameworkCore.Framework["Service"], never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -190,9 +181,7 @@ export const make = <TargetConfig = unknown>(
     });
 
     const resolveRoot = (override: string | undefined) =>
-      Effect.sync(() =>
-        path.resolve(override ?? options?.root ?? process.cwd()),
-      );
+      Effect.sync(() => path.resolve(override ?? options?.root ?? process.cwd()));
 
     /**
      * The user's inline Astro overlay with `config` resolved into
@@ -209,8 +198,7 @@ export const make = <TargetConfig = unknown>(
     ): Effect.Effect<AstroTarget, FrameworkCore.FrameworkError> =>
       FrameworkCore.resolveDeployTarget<AstroTarget, TargetConfig | undefined>(
         root,
-        (options?.target ??
-          DEFAULT_TARGET_SPECIFIER) as FrameworkCore.DeployTargetInput<
+        (options?.target ?? DEFAULT_TARGET_SPECIFIER) as FrameworkCore.DeployTargetInput<
           AstroTarget,
           TargetConfig | undefined
         >,
@@ -229,9 +217,7 @@ export const make = <TargetConfig = unknown>(
         ),
       );
 
-    const loadAstro = (
-      root: string,
-    ): Effect.Effect<AstroModule, FrameworkCore.FrameworkError> =>
+    const loadAstro = (root: string): Effect.Effect<AstroModule, FrameworkCore.FrameworkError> =>
       FrameworkCore.loadProjectModule<AstroModule>(root, "astro").pipe(
         Effect.mapError(fail("Failed to load the project's astro")),
       );
@@ -311,22 +297,13 @@ export const make = <TargetConfig = unknown>(
         // `resolveViteDevPort`. Astro's dev server runs on Astro's own
         // Vite dependency, so the version is resolved from the astro
         // package's directory, not the project root.
-        const viteVersion = yield* FrameworkCore.resolveProjectPackageDirectory(
-          root,
-          "astro",
-        ).pipe(
+        const viteVersion = yield* FrameworkCore.resolveProjectPackageDirectory(root, "astro").pipe(
           Effect.flatMap((astroDirectory) =>
-            FrameworkCore.resolveInstalledPackageVersion(
-              astroDirectory,
-              "vite",
-            ),
+            FrameworkCore.resolveInstalledPackageVersion(astroDirectory, "vite"),
           ),
           Effect.orElseSucceed(() => undefined),
         );
-        const port = yield* FrameworkCore.resolveViteDevPort(
-          viteVersion,
-          devOptions?.port,
-        );
+        const port = yield* FrameworkCore.resolveViteDevPort(viteVersion, devOptions?.port);
         const config = makeConfig(root, target, {
           port,
           host: devOptions?.host,
@@ -344,11 +321,7 @@ export const make = <TargetConfig = unknown>(
             ? `http://localhost:${server.address.port}/`
             : undefined);
         if (url === undefined) {
-          return yield* Effect.fail(
-            fail("Could not determine the URL of the astro dev server")(
-              undefined,
-            ),
-          );
+          return yield* fail("Could not determine the URL of the astro dev server")(undefined);
         }
         return { url };
       }),
@@ -361,8 +334,5 @@ export const make = <TargetConfig = unknown>(
  */
 export const layer = <TargetConfig = unknown>(
   options?: AstroFrameworkOptions<TargetConfig>,
-): Layer.Layer<
-  FrameworkCore.Framework,
-  never,
-  FileSystem.FileSystem | Path.Path
-> => Layer.effect(FrameworkCore.Framework, make(options));
+): Layer.Layer<FrameworkCore.Framework, never, FileSystem.FileSystem | Path.Path> =>
+  Layer.effect(FrameworkCore.Framework, make(options));

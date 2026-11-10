@@ -6,10 +6,10 @@ import path from "pathe";
  * `ALCHEMY_HOME`, which relocates profiles, credential files,
  * and cross-process locks together — used by tests to isolate a temp home
  * and available to users who keep dotfiles elsewhere. Resolved lazily so an
- * override set after module load (e.g. in a test) still takes effect.
+ * override set after module load (e.g. in a test) still takes effect. An
+ * empty `ALCHEMY_HOME` counts as unset, never as the current directory.
  */
-export const rootDir = () =>
-  process.env.ALCHEMY_HOME ?? path.join(os.homedir(), ".alchemy");
+export const rootDir = () => process.env.ALCHEMY_HOME || path.join(os.homedir(), ".alchemy");
 
 export const configFilePath = () => path.join(rootDir(), "profiles.json");
 
@@ -17,8 +17,11 @@ export const configFilePath = () => path.join(rootDir(), "profiles.json");
 export const profilesDirPath = () => path.join(rootDir(), "profiles");
 
 /** Directory containing all provider documents for a named profile. */
-export const profileDirPath = (profile: string) =>
-  path.join(profilesDirPath(), profile);
+export const profileDirPath = (profile: string) => path.join(profilesDirPath(), profile);
+
+/** Cached state-store credentials for a profile, beside its provider documents. */
+export const profileStateStoresDirPath = (profile: string) =>
+  path.join(profileDirPath(profile), "state-stores");
 
 /** The single persisted document for one provider in one profile. */
 export const profileProviderFilePath = (profile: string, provider: string) =>

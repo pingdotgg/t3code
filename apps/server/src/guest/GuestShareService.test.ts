@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -8,6 +9,7 @@ import {
   knownThreadProjection,
   type GuestStreamEvent,
   MessageId,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
@@ -79,6 +81,7 @@ const layerOrchestration = Layer.mergeAll(
 const hostname = Ref.makeUnsafe<string | null>("env.t3.test");
 const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
   inspectConnector: Effect.map(Ref.get(hostname), (value) => ({
+    pid: 1,
     readyConnections: 1,
     hostname: value,
     protocol: "http2",
@@ -109,7 +112,10 @@ const layerCleanup = Layer.effect(
         ),
     };
   }),
-).pipe(Layer.provide(layerConfig), Layer.provide(NodeServices.layer));
+).pipe(
+  Layer.provide(layerConfig),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 class RecordedAnalytics extends Context.Service<
   RecordedAnalytics,
   Ref.Ref<ReadonlyArray<Readonly<Record<string, unknown>>>>
@@ -142,7 +148,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const threadId = ThreadId.make("thread:guest-share-service");
@@ -530,6 +536,90 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("pages the guest back through turns older than the stream's snapshot", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/old.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const base = { threadId, runId, nodeId: null, providerThreadId: null, providerTurnId: null };
+    const turnItem = (id: string, ordinal: number, payload: object) => ({
+      id: EventId.make(`event:${id}`),
+      type: "turn-item.updated" as const,
+      threadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        ...base,
+        id: TurnItemId.make(id),
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make(id),
+        ...payload,
+      } as OrchestrationV2TurnItem,
+    });
+    yield* eventSink.write({
+      events: [
+        turnItem("item:old-image", 1, {
+          type: "assistant_message",
+          text: `![Old](${shot})`,
+          streaming: false,
+        }),
+        ...Array.from({ length: 30 }, (_, index) =>
+          turnItem(`item:ask-${index}`, index + 2, {
+            type: "user_message",
+            text: `Ask ${index}`,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            attachments: [],
+          }),
+        ),
+      ],
+    });
+
+    const [, opening] = Array.from(
+      yield* Stream.runCollect(Stream.take(yield* guestShares.stream(session), 2)),
+    );
+    if (opening?.type !== "thread" || opening.item.kind !== "snapshot") {
+      return assert.fail("Expected the thread snapshot second.");
+    }
+    const ids = (rows: ReadonlyArray<{ readonly sourceItemId: string }>) =>
+      rows.map((row) => row.sourceItemId);
+    assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-image");
+    let cursor = opening.item.historyCursor ?? null;
+    assert.isNotNull(cursor);
+    // The page has not shown the old reply yet, so its image does not load.
+    assert.equal((yield* Effect.flip(guestShares.media(session, shot))).reason, "unavailable");
+    // Only a session pages.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.history(credential, cursor!))));
+
+    const older: Array<string> = [];
+    while (cursor !== null) {
+      const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
+      older.push(...ids(page.items));
+      cursor = page.hasMoreHistory ? page.nextCursor : null;
+    }
+    assert.include(older, "item:old-image");
+    assert.deepStrictEqual(yield* guestShares.media(session, shot), {
+      path: shot,
+      mimeType: "image/png",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
 it.effect("ends a running command's output once the owner stops sharing", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
@@ -875,6 +965,82 @@ it.effect("serves the shared thread's files to its guest, never another thread's
     );
     assert.isDefined(shareId);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("gives a fork's guest the files on messages the fork shows from its source", () =>
+  Effect.gen(function* () {
+    const { orchestrator } = yield* shareThread;
+    const guestShares = yield* GuestShareService.GuestShareService;
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const ownerImage = Effect.fn(function* (name: string) {
+      const image = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+        name,
+        mimeType: "image/png",
+        sizeBytes: PNG.length,
+      };
+      yield* fileSystem.writeFile(
+        resolveAttachmentPath({ attachmentsDir, attachment: image })!,
+        PNG,
+      );
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`owner:${name}`),
+        threadId,
+        messageId: MessageId.make(`message:${name}`),
+        text: name,
+        attachments: [image],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      return image;
+    });
+    const inherited = yield* ownerImage("before.png");
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* (yield* EventSink.EventSinkV2).write({
+      events: [
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const later = yield* ownerImage("after.png");
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    assert.equal(
+      (yield* guestShares.attachment(session, inherited.id)).attachment.id,
+      inherited.id,
+    );
+    // The source's messages after the fork point are not part of the fork.
+    assert.equal(
+      (yield* Effect.flip(guestShares.attachment(session, later.id))).reason,
+      "unavailable",
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("serves an image on the host only when an agent reply the guest sees shows it", () =>

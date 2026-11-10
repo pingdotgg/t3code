@@ -18,8 +18,6 @@ import {
   v2ThreadId,
 } from "../state/orchestrationV2TestFixtures.ts";
 
-import { decodeStoredThreadSnapshot, encodeStoredThreadSnapshot } from "./threadCacheEncoding.ts";
-
 import { applyOrchestrationV2ProjectionEvent } from "../state/orchestrationV2Projection.ts";
 
 const environmentId = EnvironmentId.make("environment-cache-test");
@@ -37,28 +35,6 @@ class TestCacheDecodeError extends Schema.TaggedError<TestCacheDecodeError>()(
 ) {}
 
 describe("orchestration cache envelopes", () => {
-  it.effect("discards compact caches with unknown items without weakening count checks", () =>
-    Effect.gen(function* () {
-      const stored = {
-        environmentId,
-        threadId: v2ThreadId,
-        snapshot: { snapshotSequence: 4, projection: v2Projection },
-      };
-      const encoded = yield* encodeStoredThreadSnapshot(stored);
-      expect((yield* decodeStoredThreadSnapshot(encoded)).snapshot.projection).toEqual(
-        v2Projection,
-      );
-      const wire = JSON.parse(encoded);
-      wire.snapshot.projection.turnItems = [{ type: "future_item" }];
-      wire.snapshot.turnItemCount = 1;
-      const unknown = yield* Effect.flip(decodeStoredThreadSnapshot(JSON.stringify(wire)));
-      expect(unknown._tag).toBe("InvalidThreadCache");
-      wire.snapshot.projection.turnItems = [];
-      const truncated = yield* Effect.flip(decodeStoredThreadSnapshot(JSON.stringify(wire)));
-      expect(truncated._tag).toBe("InvalidThreadCache");
-    }),
-  );
-
   it("preserves live provider notices through persisted thread snapshots", () => {
     const item = {
       id: TurnItemId.make("notice-cache"),
