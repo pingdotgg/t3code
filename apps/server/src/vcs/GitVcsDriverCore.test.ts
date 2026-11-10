@@ -4731,8 +4731,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(error._tag, "GitCommandError");
         assert.equal(error.operation, "GitVcsDriver.createWorktree.createBranch");
-        assert.isDefined(error.reason, `unclassified ref-name conflict: ${error.detail}`);
-        assert.notEqual(error.detail, "git worktree add failed");
+        assert.equal(error.reason, "ref_name_conflict");
       }),
     );
 

@@ -41,7 +41,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -62,7 +61,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -2463,34 +2461,10 @@ it.effect.each([
   { requested: "foo", blocking: "foo/bar" },
 ])("refuses a new worktree branch $requested that collides with branch $blocking", (testCase) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const driver = yield* GitVcsDriver.GitVcsDriver;
-    const workflow = yield* GitWorkflow.GitWorkflowService;
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "launch-branch-conflict-" });
-    for (const args of [
-      ["init", "-b", "main"],
-      ["config", "user.name", "Test"],
-      ["config", "user.email", "test@example.test"],
-      ["commit", "--allow-empty", "-m", "initial"],
-      ["branch", "werkstatt"],
-      ["branch", "foo/bar"],
-    ]) {
-      yield* driver.execute({ operation: "launch-test", cwd, args });
-    }
-    const atRepo = <A>(input: A): A =>
-      input === project.workspaceRoot
-        ? (cwd as A)
-        : typeof input === "object" && input !== null && "cwd" in input
-          ? { ...input, cwd }
-          : input;
-    const git = Object.fromEntries(
-      Object.entries(workflow).map(([name, method]) => [
-        name,
-        (input: unknown, ...rest: ReadonlyArray<unknown>) =>
-          (method as (...args: ReadonlyArray<unknown>) => unknown)(atRepo(input), ...rest),
-      ]),
-    ) as GitWorkflow.GitWorkflowService["Service"];
-    const harness = makeHarness({ git });
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      git: { listLocalBranchNames: () => Effect.succeed(["main", "werkstatt", "foo/bar"]) },
+    });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const check = (branch: string) =>
@@ -2499,30 +2473,14 @@ it.effect.each([
           workspaceStrategy: { type: "worktree", baseRef: "main", branch },
         });
       yield* check("werkstatt-baseline");
-      const exit = yield* check(testCase.requested).pipe(Effect.exit);
-      assert.isTrue(
-        Exit.isFailure(exit),
-        `branch "${testCase.requested}" was accepted although "${testCase.blocking}" exists`,
-      );
-      const message = Cause.pretty((exit as Exit.Failure<void, unknown>).cause);
-      assert.include(message, testCase.requested);
-      assert.match(message, new RegExp(`${testCase.blocking}(?![\\w/-])`));
+      const error = yield* check(testCase.requested).pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "ThreadLaunchBranchConflictError",
+        branch: testCase.requested,
+        conflictingBranch: testCase.blocking,
+      });
     }).pipe(Effect.provide(harness.layer));
-  }).pipe(
-    Effect.provide(
-      GitWorkflow.layer.pipe(
-        Layer.provide(
-          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-            resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
-          }),
-        ),
-        Layer.provide(Layer.mock(GitManager.GitManager)({})),
-        Layer.provideMerge(GitVcsDriver.layer),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-branch-git-" })),
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
-  ),
+  }),
 );
 
 it.effect("replays an accepted send after the project disables the instance", () => {
