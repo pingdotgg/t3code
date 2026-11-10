@@ -18,11 +18,11 @@
     "waku": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/unenv-preset": "catalog:",
-    "@cloudflare/workers-types": "catalog:",
     "@alchemy.run/cloudflare-runtime": "workspace:*",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/unenv-preset": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:node24",
     "@types/react": "catalog:",
