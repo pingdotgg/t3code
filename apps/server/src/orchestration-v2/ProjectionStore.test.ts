@@ -2253,6 +2253,40 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
           });
         }
       }
+      if (turn === 2) {
+        const subagentId = NodeId.make("node:pending-request-window:subagent");
+        yield* store.apply({
+          id: EventId.make("event:pending-request-window:subagent"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: subagentId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: subagentId,
+            threadId,
+            runId,
+            parentNodeId: nodeId,
+            origin: "app_owned",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: ThreadId.make("thread:pending-request-window:child"),
+            nativeTaskRef: null,
+            prompt: "Do the work",
+            title: "early child",
+            model: null,
+            status: "completed",
+            result: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+      }
       for (const item of items) {
         yield* store.apply({
           id: EventId.make(`event:pending-request-window:${item.id}`),
@@ -2314,6 +2348,12 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
+    // regression: #33409 Lineage counts children from this list, so a finished child of a turn
+    // outside the window must stay discoverable.
+    assert.deepEqual(
+      snapshot.projection.subagents.map((subagent) => subagent.childThreadId),
+      [ThreadId.make("thread:pending-request-window:child")],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
