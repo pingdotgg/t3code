@@ -206,81 +206,102 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
   }),
 );
 
-it.effect("transcribes Soniox uploads with vocabulary hints and deletes temporary data", () =>
-  Effect.gen(function* () {
-    const polled = yield* Deferred.make<void>();
-    let polls = 0;
-    const upstream = vi.fn<typeof fetch>(async (input, init) => {
-      const path = new URL(String(input)).pathname;
-      if (init?.method === "DELETE") return new Response(null, { status: 204 });
-      if (path === "/v1/files") return Response.json({ id: "file-id" });
-      if (path === "/v1/transcriptions") return Response.json({ id: "job-id" });
-      if (path.endsWith("/transcript")) return Response.json({ text: " uh tea three " });
-      polls++;
-      if (polls === 1) {
-        Deferred.doneUnsafe(polled, Effect.void);
-        return Response.json({ status: "processing" });
-      }
-      return Response.json({ status: "completed" });
-    });
-    const service = yield* CloudSpeech.CloudSpeech.pipe(
-      Effect.provide(
-        CloudSpeech.layer.pipe(
-          Layer.provide(FetchHttpClient.layer),
-          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
-          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+it.effect.each([false, true])(
+  "transcribes Soniox uploads with vocabulary hints and deletes temporary data (slow upload: %s)",
+  (slowUpload) =>
+    Effect.gen(function* () {
+      const polled = yield* Deferred.make<void>();
+      const uploading = yield* Deferred.make<void>();
+      const upload = Promise.withResolvers<Response>();
+      let polls = 0;
+      const upstream = vi.fn<typeof fetch>(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        if (path === "/v1/files") {
+          if (slowUpload && polls === 0) {
+            Deferred.doneUnsafe(uploading, Effect.void);
+            return upload.promise;
+          }
+          return Response.json({ id: "file-id" });
+        }
+        if (path === "/v1/transcriptions") return Response.json({ id: "job-id" });
+        if (path.endsWith("/transcript")) return Response.json({ text: " uh tea three " });
+        polls++;
+        if (polls === 1) {
+          Deferred.doneUnsafe(polled, Effect.void);
+          return Response.json({ status: "processing" });
+        }
+        return Response.json({ status: "completed" });
+      });
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+            Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+          ),
         ),
-      ),
-    );
-    const transcribe = (language = "en") =>
-      service
-        .transcribe("soniox", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
-          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-          speechLanguage: language,
-          speechCustomWords: [{ term: "T3", aliases: ["tea three"] }],
-        })
-        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-    yield* service.setKey("openai", Redacted.make("other-key"));
-    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
-    expect(upstream).not.toHaveBeenCalled();
-    yield* service.setKey("soniox", Redacted.make("soniox-key"));
-    expect((yield* service.configured).soniox).toBe(true);
-    const fiber = yield* transcribe().pipe(Effect.forkChild);
-    yield* Deferred.await(polled);
-    yield* TestClock.adjust("1 second");
-    expect(yield* Fiber.join(fiber)).toBe("T3");
-    expect(polls).toBe(2);
-    expect(upstream.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
-      "POST https://api.soniox.com/v1/files",
-      "POST https://api.soniox.com/v1/transcriptions",
-      "GET https://api.soniox.com/v1/transcriptions/job-id",
-      "GET https://api.soniox.com/v1/transcriptions/job-id",
-      "GET https://api.soniox.com/v1/transcriptions/job-id/transcript",
-      "DELETE https://api.soniox.com/v1/transcriptions/job-id",
-      "DELETE https://api.soniox.com/v1/files/file-id",
-    ]);
-    for (const [, init] of upstream.mock.calls) {
-      expect(init?.redirect).toBe("error");
-      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer soniox-key");
-    }
-    const form = upstream.mock.calls[0]![1]!.body as FormData;
-    const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));
-    expect(wav.getUint32(24, true)).toBe(16_000);
-    expect(wav.getInt16(46, true)).toBe(16384);
-    const body = yield* Effect.promise(() => new Response(upstream.mock.calls[1]![1]!.body).json());
-    expect(body).toEqual({
-      model: "stt-async-v6",
-      file_id: "file-id",
-      language_hints: ["en"],
-      context: { terms: ["T3"] },
-    });
-    expect(yield* transcribe("auto")).toBe("T3");
-    const auto = yield* Effect.promise(() => new Response(upstream.mock.calls[8]![1]!.body).json());
-    expect(auto).not.toHaveProperty("language_hints");
-    yield* service.setKey("soniox", null);
-    expect((yield* service.configured).soniox).toBe(false);
-    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
-  }),
+      );
+      const transcribe = (language = "en") =>
+        service
+          .transcribe("soniox", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+            ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+            speechLanguage: language,
+            speechCustomWords: [{ term: "T3", aliases: ["tea three"] }],
+          })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      yield* service.setKey("openai", Redacted.make("other-key"));
+      expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
+      expect(upstream).not.toHaveBeenCalled();
+      yield* service.setKey("soniox", Redacted.make("soniox-key"));
+      expect((yield* service.configured).soniox).toBe(true);
+      const fiber = yield* transcribe().pipe(Effect.forkChild);
+      if (slowUpload) {
+        yield* Deferred.await(uploading);
+        yield* TestClock.adjust("20 seconds");
+        upload.resolve(Response.json({ id: "file-id" }));
+      }
+      yield* Effect.raceFirst(Deferred.await(polled), Fiber.join(fiber));
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(fiber)).toBe("T3");
+      expect(polls).toBe(2);
+      expect(upstream.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
+        "POST https://api.soniox.com/v1/files",
+        "POST https://api.soniox.com/v1/transcriptions",
+        "GET https://api.soniox.com/v1/transcriptions/job-id",
+        "GET https://api.soniox.com/v1/transcriptions/job-id",
+        "GET https://api.soniox.com/v1/transcriptions/job-id/transcript",
+        "DELETE https://api.soniox.com/v1/transcriptions/job-id",
+        "DELETE https://api.soniox.com/v1/files/file-id",
+      ]);
+      for (const [, init] of upstream.mock.calls) {
+        expect(init?.redirect).toBe("error");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer soniox-key");
+      }
+      const form = upstream.mock.calls[0]![1]!.body as FormData;
+      const wav = new DataView(
+        yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()),
+      );
+      expect(wav.getUint32(24, true)).toBe(16_000);
+      expect(wav.getInt16(46, true)).toBe(16384);
+      const body = yield* Effect.promise(() =>
+        new Response(upstream.mock.calls[1]![1]!.body).json(),
+      );
+      expect(body).toEqual({
+        model: "stt-async-v6",
+        file_id: "file-id",
+        language_hints: ["en"],
+        context: { terms: ["T3"] },
+      });
+      expect(yield* transcribe("auto")).toBe("T3");
+      const auto = yield* Effect.promise(() =>
+        new Response(upstream.mock.calls[8]![1]!.body).json(),
+      );
+      expect(auto).not.toHaveProperty("language_hints");
+      yield* service.setKey("soniox", null);
+      expect((yield* service.configured).soniox).toBe(false);
+      expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
+    }),
 );
 
 it.effect.each([

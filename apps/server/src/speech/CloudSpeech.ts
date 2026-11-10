@@ -156,12 +156,13 @@ export const layer = Layer.effect(
       const unavailable = () => new CloudSpeechError({ provider: "soniox", reason: "unavailable" });
       const request = Effect.fn("CloudSpeech.sonioxRequest")(function* (
         input: HttpClientRequest.HttpClientRequest,
+        timeoutMs = 15_000,
       ) {
         const response = yield* execute(
           input.pipe(HttpClientRequest.bearerToken(Redacted.make(key))),
         ).pipe(
           Effect.timeoutOrElse({
-            duration: "15 seconds",
+            duration: timeoutMs,
             orElse: () => Effect.fail(unavailable()),
           }),
           Effect.mapError(unavailable),
@@ -190,10 +191,11 @@ export const layer = Layer.effect(
       const file = yield* Effect.acquireRelease(
         request(
           HttpClientRequest.post(endpoints.soniox.url).pipe(HttpClientRequest.bodyFormData(form)),
+          60_000,
         ).pipe(
           Effect.flatMap(HttpClientResponse.schemaBodyJson(resource)),
           Effect.timeoutOrElse({
-            duration: "15 seconds",
+            duration: "60 seconds",
             orElse: () => Effect.fail(unavailable()),
           }),
           Effect.mapError((error) => (isCloudSpeechError(error) ? error : unavailable())),
