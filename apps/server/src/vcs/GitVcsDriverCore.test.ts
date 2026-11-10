@@ -265,6 +265,8 @@ describe("Git output collection", () => {
   );
 });
 
+const originMain = { remoteName: "origin", branchName: "main" } as const;
+
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
@@ -1528,7 +1530,7 @@ it.effect.each([
     );
     const cwd = yield* makeTmpDir();
     const error = yield* driver
-      .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+      .fetchWorktreeBaseCommit({ cwd, refName: "main", remote: originMain })
       .pipe(Effect.flip);
     assert.include(error.detail, scenario.expected);
     assert.equal(error.exitCode, 128);
@@ -1573,7 +1575,7 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
-    yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "main" });
+    yield* driver.fetchWorktreeBaseCommit({ cwd, refName: "main", remote: originMain });
     assert.equal(yield* Ref.get(attempts), 2);
   }).pipe(
     Effect.provide(
@@ -1614,62 +1616,67 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("fetches for status only the moved default branch and checked-out upstreams", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fetches: Array<ReadonlyArray<string>> = [];
-      const spawner = ChildProcessSpawner.make((command) => {
-        if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
-          fetches.push(command.args.slice(command.args.indexOf("fetch")).map(String));
-        }
-        return delegate.spawn(command);
-      });
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const cwd = yield* makeTmpDir();
-      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
-      const worktree = NodePath.join(yield* makeTmpDir("git-vcs-driver-worktrees-"), "stale");
-      yield* initRepoWithCommit(cwd);
-      yield* git(cwd, ["branch", "-M", "main"]);
-      yield* git(remote, ["init", "--bare"]);
-      yield* git(cwd, ["remote", "add", "origin", remote]);
-      const branches = ["main", "feature", "gone", "idle", "unrelated"];
-      yield* git(cwd, ["push", "origin", ...branches.map((name) => `HEAD:refs/heads/${name}`)]);
-      yield* git(cwd, ["remote", "set-head", "origin", "main"]);
-      yield* git(cwd, ["checkout", "-b", "feature", "--track", "origin/feature"]);
-      yield* git(cwd, ["branch", "--track", "idle", "origin/idle"]);
-      yield* git(cwd, ["worktree", "add", "-b", "stale", "--track", worktree, "origin/gone"]);
-      yield* git(remote, ["--git-dir=.", "update-ref", "-d", "refs/heads/gone"]);
-      // Pushing by path leaves the local remote-tracking refs behind the remote.
-      const moved = yield* git(cwd, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "moved"]);
-      const movedBranches = ["main", "feature", "idle", "unrelated"];
-      yield* git(cwd, [
-        "push",
-        remote,
-        ...movedBranches.map((name) => `${moved}:refs/heads/${name}`),
-      ]);
-      const before = yield* git(cwd, ["rev-parse", "origin/unrelated"]);
+it.effect(
+  "fetches for status only the moved default branch and checked-out upstreams and bases",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetches: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
+            fetches.push(command.args.slice(command.args.indexOf("fetch")).map(String));
+          }
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const worktree = NodePath.join(yield* makeTmpDir("git-vcs-driver-worktrees-"), "stale");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const branches = ["main", "feature", "parent", "idle-base", "gone", "idle", "unrelated"];
+        yield* git(cwd, ["push", "origin", ...branches.map((name) => `HEAD:refs/heads/${name}`)]);
+        yield* git(cwd, ["remote", "set-head", "origin", "main"]);
+        yield* git(cwd, ["checkout", "-b", "feature", "--track", "origin/feature"]);
+        yield* git(cwd, ["branch", "--track", "idle", "origin/idle"]);
+        yield* git(cwd, ["config", "branch.feature.t3-merge-base", "origin/parent"]);
+        yield* git(cwd, ["config", "branch.idle.t3-merge-base", "origin/idle-base"]);
+        yield* git(cwd, ["worktree", "add", "-b", "stale", "--track", worktree, "origin/gone"]);
+        yield* git(remote, ["--git-dir=.", "update-ref", "-d", "refs/heads/gone"]);
+        // Pushing by path leaves the local remote-tracking refs behind the remote.
+        const moved = yield* git(cwd, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "moved"]);
+        const movedBranches = ["main", "feature", "parent", "idle-base", "idle", "unrelated"];
+        yield* git(cwd, [
+          "push",
+          remote,
+          ...movedBranches.map((name) => `${moved}:refs/heads/${name}`),
+        ]);
+        const before = yield* git(cwd, ["rev-parse", "origin/unrelated"]);
 
-      const status = yield* driver.statusDetailsRemote(cwd);
+        const status = yield* driver.statusDetailsRemote(cwd);
 
-      assert.deepStrictEqual(fetches, [
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          "--no-auto-gc",
-          "--",
-          "origin",
-          "+refs/heads/feature:refs/remotes/origin/feature",
-          "+refs/heads/main:refs/remotes/origin/main",
-        ],
-      ]);
-      assert.equal(status.behindCount, 1);
-      assert.equal(yield* git(cwd, ["rev-parse", "origin/unrelated"]), before);
-    }),
-  ).pipe(Effect.provide(layerTest)),
+        assert.deepStrictEqual(fetches, [
+          [
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-auto-gc",
+            "--",
+            "origin",
+            "+refs/heads/feature:refs/remotes/origin/feature",
+            "+refs/heads/main:refs/remotes/origin/main",
+            "+refs/heads/parent:refs/remotes/origin/parent",
+          ],
+        ]);
+        assert.equal(status.behindCount, 1);
+        assert.equal(yield* git(cwd, ["rev-parse", "origin/unrelated"]), before);
+      }),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("lets a worktree checkout that is still working run past five minutes", () =>
@@ -5719,7 +5726,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const missingRemote = `${cwd}/private-missing-remote`;
         yield* git(cwd, ["remote", "add", "origin", missingRemote]);
         const error = yield* driver
-          .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+          .fetchWorktreeBaseCommit({ cwd, refName: "main", remote: originMain })
           .pipe(Effect.flip);
         assert.include(error.detail, "could not access the remote repository");
         assert.equal(error.exitCode, 128);
@@ -5749,7 +5756,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(yield* driver.resolvePrimaryRemoteName(cwd), remoteName);
         yield* driver.fetchRemoteTrackingBranch({ cwd, remoteName, remoteBranch: initialBranch });
-        yield* driver.fetchRemote({ cwd, remoteName, refName: initialBranch });
+        yield* driver.fetchWorktreeBaseCommit({
+          cwd,
+          refName: initialBranch,
+          remote: { remoteName, branchName: initialBranch },
+        });
         const head = yield* driver.fetchRefCommit({ cwd, ref: "refs/pull/7/head" });
 
         assert.isFalse(yield* fileSystem.exists((yield* Path.Path).join(cwd, "t3-marker")));
@@ -6218,11 +6229,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         yield* git(peer, ["push", "origin", "HEAD:refs/heads/unrelated"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.fetchRemote({
-          cwd,
-          remoteName: "origin",
-          refName: `origin/${initialBranch}`,
-        });
+        yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch });
         assert.isFalse(
           yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "unrelated" }),
         );
@@ -6292,11 +6299,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadCount, 0);
         assert.equal(status.aheadOfDefaultCount, 0);
 
-        // A missing branch fails instead of falling back to fetching every branch.
-        const missing = yield* driver
-          .fetchRemote({ cwd, remoteName: "origin", refName: "local-only" })
-          .pipe(Effect.flip);
-        assert.equal(missing.detail, "Branch 'local-only' was not found on remote 'origin'.");
+        // A missing branch must not fall back to fetching every branch.
+        assert.isNull(
+          yield* driver.fetchWorktreeBaseCommit({
+            cwd,
+            refName: "local-only",
+            remote: { remoteName: "origin", branchName: "local-only" },
+          }),
+        );
         assert.isFalse(
           yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "unrelated" }),
         );

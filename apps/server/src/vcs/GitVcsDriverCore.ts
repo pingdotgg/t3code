@@ -537,15 +537,19 @@ function branchNameFromHeadRef(value: string): string | null {
 const STATUS_FETCH_REF_FORMAT =
   "%(refname)%00%(objectname)%00%(symref)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)";
 
-// Status reads only the remote's default branch and the upstreams of checked-out branches.
-// Fetching every branch costs tens of seconds on remotes with thousands of them.
+const STATUS_FETCH_BASE_CONFIG_PATTERN = String.raw`^branch\..*\.(t3-merge-base-ref|t3-merge-base|gh-merge-base)$`;
+
+// Status reads only the remote's default branch, plus the upstreams and recorded bases of
+// checked-out branches. Fetching every branch takes tens of seconds on large remotes.
 function statusFetchBranches(
   forEachRefStdout: string,
+  baseConfigStdout: string,
   lsRemoteStdout: string,
   remoteName: string,
 ): string[] {
   const trackingPrefix = `refs/remotes/${remoteName}/`;
   const localOids = new Map<string, string>();
+  const checkedOut = new Set<string>();
   const wanted = new Set<string>();
   let defaultBranch: string | null = null;
   for (const line of forEachRefStdout.split("\n")) {
@@ -555,16 +559,31 @@ function statusFetchBranches(
       defaultBranch = parseDefaultBranchFromRemoteHeadRef(symref, remoteName);
     } else if (refName.startsWith(trackingPrefix)) {
       localOids.set(refName.slice(trackingPrefix.length), oid);
-    } else if (
-      worktreePath &&
-      upstreamRemote === remoteName &&
-      upstreamRef.startsWith("refs/heads/")
-    ) {
-      wanted.add(upstreamRef.slice("refs/heads/".length));
+    } else if (worktreePath && refName.startsWith("refs/heads/")) {
+      checkedOut.add(refName.slice("refs/heads/".length));
+      if (upstreamRemote === remoteName && upstreamRef.startsWith("refs/heads/")) {
+        wanted.add(upstreamRef.slice("refs/heads/".length));
+      }
     }
   }
   for (const branch of defaultBranch === null ? DEFAULT_BASE_BRANCH_CANDIDATES : [defaultBranch]) {
     wanted.add(branch);
+  }
+  // `git config --null --get-regexp` prints `<key>\n<value>\0`.
+  for (const entry of baseConfigStdout.split("\0")) {
+    const separator = entry.indexOf("\n");
+    const key = entry.slice(0, separator);
+    const branch = key.slice("branch.".length, key.lastIndexOf("."));
+    if (separator < 0 || !checkedOut.has(branch)) continue;
+    const base = entry.slice(separator + 1).trim();
+    const name = base.startsWith(trackingPrefix)
+      ? base.slice(trackingPrefix.length)
+      : base.startsWith(`${remoteName}/`)
+        ? base.slice(remoteName.length + 1)
+        : base.startsWith("refs/")
+          ? ""
+          : base;
+    if (name.length > 0) wanted.add(name);
   }
   // A branch deleted on the remote fails the whole fetch, so only request advertised ones.
   const changed: string[] = [];
@@ -1403,8 +1422,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
     const gitDirArgs = ["--git-dir", gitCommonDir];
-    const runStatusGit = (args: readonly string[], fallbackErrorDetail: string) =>
+    const runStatusGit = (
+      args: readonly string[],
+      fallbackErrorDetail: string,
+      allowNonZeroExit = false,
+    ) =>
       executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, [...gitDirArgs, ...args], {
+        allowNonZeroExit,
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail,
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
@@ -1412,7 +1436,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         maxOutputBytes: 16 * 1024 * 1024,
       }).pipe(Effect.map((result) => result.stdout));
     const refresh = Effect.gen(function* () {
-      const [localRefs, remoteHeads] = yield* Effect.all(
+      const [localRefs, baseConfig, remoteHeads] = yield* Effect.all(
         [
           runStatusGit(
             [
@@ -1423,6 +1447,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ],
             "Git could not list local branches.",
           ),
+          // Exits 1 when no branch records a base.
+          runStatusGit(
+            ["config", "--null", "--get-regexp", STATUS_FETCH_BASE_CONFIG_PATTERN],
+            "Git could not read branch bases.",
+            true,
+          ),
           runStatusGit(
             ["ls-remote", "--heads", "--", remoteName],
             "Background Git ls-remote exited with a non-zero status.",
@@ -1430,7 +1460,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ],
         { concurrency: "unbounded" },
       );
-      const branches = statusFetchBranches(localRefs, remoteHeads, remoteName);
+      const branches = statusFetchBranches(localRefs, baseConfig, remoteHeads, remoteName);
       for (let start = 0; start < branches.length; start += STATUS_FETCH_REFSPEC_BATCH) {
         yield* runStatusGit(
           [
@@ -4656,7 +4686,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   // Fetches one branch: fetching a whole remote takes tens of seconds on hosts with thousands of branches.
-  const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
+  const fetchRemote = Effect.fn("fetchRemote")(function* (input: {
+    readonly cwd: string;
+    readonly remoteName: string;
+    readonly refName: string;
+  }) {
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
@@ -5218,27 +5252,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
-    fetchRemote: Effect.fnUntraced(function* (input) {
-      return yield* withListRefsInvalidation(
-        input.cwd,
-        fetchRemote(input).pipe(
-          Effect.flatMap((fetched) =>
-            fetched
-              ? Effect.void
-              : Effect.fail(
-                  new GitCommandError({
-                    ...gitCommandContext({
-                      operation: "GitVcsDriver.fetchRemote",
-                      cwd: input.cwd,
-                      args: ["fetch", "--", input.remoteName, input.refName],
-                    }),
-                    detail: `Branch '${input.refName}' was not found on remote '${input.remoteName}'.`,
-                  }),
-                ),
-          ),
-        ),
-      );
-    }),
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,

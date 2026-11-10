@@ -250,12 +250,6 @@ export interface GitFetchRemoteTrackingBranchInput {
   remoteBranch: string;
 }
 
-export interface GitFetchRemoteInput {
-  cwd: string;
-  remoteName: string;
-  refName: string;
-}
-
 export interface GitRemoteExistsInput {
   cwd: string;
   remoteName: string;
@@ -407,7 +401,6 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       remoteName: string,
     ) => Effect.Effect<string | null, GitCommandError>;
-    readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly remoteExists: (input: GitRemoteExistsInput) => Effect.Effect<boolean, GitCommandError>;
     readonly remoteBranchExists: (
       input: GitRemoteBranchExistsInput,
