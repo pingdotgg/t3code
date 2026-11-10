@@ -259,6 +259,9 @@ describe("Muse SDK host", () => {
   );
 });
 
+// Read outside Effect code, where `process.env` is not allowed.
+const hostPath = process.env.PATH;
+
 describe("Muse startup on Linux", () => {
   it.effect(
     "starts Muse in its cwd and environment without handing libuv the cwd or PATH search",
@@ -286,7 +289,7 @@ describe("Muse startup on Linux", () => {
             binaryPath: "node",
             launch: { command: "node", args: ["-e", fixture] },
             cwd: directory,
-            environment: { PATH: process.env.PATH, "BASH_FUNC_x%%": "() {  echo x\n}" },
+            environment: { PATH: hostPath, "BASH_FUNC_x%%": "() {  echo x\n}" },
           },
           (options) =>
             createMuseSdkHost(options, (spawnOptions) => {
