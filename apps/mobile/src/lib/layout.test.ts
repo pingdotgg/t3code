@@ -142,13 +142,40 @@ describe("isPrimarySidebarPinned", () => {
 
 describe("deriveWorkspacePaneLayout", () => {
   it.each([
-    { width: 744, leadingWidth: 72, hinge: null, inspectorWidth: 372, maximumWidth: 372, gap: 0 },
+    {
+      width: 704,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 352,
+      maximumWidth: 352,
+      mainEnd: 352,
+      gap: 0,
+    },
+    {
+      width: 933,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 466.5,
+      maximumWidth: 541,
+      mainEnd: 466.5,
+      gap: 0,
+    },
+    {
+      width: 744,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 372,
+      maximumWidth: 372,
+      mainEnd: 372,
+      gap: 0,
+    },
     {
       width: 900,
       leadingWidth: 72,
       hinge: { x: 450, width: 0 },
       inspectorWidth: 450,
       maximumWidth: 508,
+      mainEnd: 450,
       gap: 0,
     },
     {
@@ -157,30 +184,40 @@ describe("deriveWorkspacePaneLayout", () => {
       hinge: { x: 372, width: 8 },
       inspectorWidth: 364,
       maximumWidth: 372,
+      mainEnd: 372,
       gap: 8,
     },
+    {
+      width: 1000,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 371.2,
+      maximumWidth: 556.8,
+      mainEnd: 628.8,
+      gap: 0,
+    },
   ])(
-    "keeps the default Fold panes on either side of the physical split ($width dp)",
-    ({ width, leadingWidth, hinge, inspectorWidth, maximumWidth, gap }) => {
+    "derives the inspector from window width and existing hinge coordinates ($width dp)",
+    ({ width, leadingWidth, hinge, inspectorWidth, maximumWidth, mainEnd, gap }) => {
       const input = {
         layout: deriveLayout({ width, height: 900 }),
         viewportWidth: width - leadingWidth,
-        inspectorSizing: "foldable" as const,
-        foldableWindow: { width, leadingWidth, hinge },
+        inspectorSizing: "android" as const,
+        inspectorWindow: { width, leadingWidth, hinge },
         primarySidebarPreferredVisible: true,
         auxiliaryPanePreferredVisible: true,
       };
       expect(deriveWorkspacePaneLayout(input)).toMatchObject({
         auxiliaryPaneVisible: true,
-        auxiliaryPaneWidth: inspectorWidth,
+        auxiliaryPaneWidth: expect.closeTo(inspectorWidth),
         auxiliaryPaneGap: gap,
         primarySidebarVisible: false,
       });
-      expect(width - inspectorWidth - gap).toBe(hinge?.x ?? width / 2);
+      expect(width - inspectorWidth - gap).toBeCloseTo(mainEnd);
       expect(
         deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
       ).toMatchObject({
-        auxiliaryPaneWidth: maximumWidth,
+        auxiliaryPaneWidth: expect.closeTo(maximumWidth),
         auxiliaryPaneGap: 0,
       });
       expect(
@@ -192,15 +229,20 @@ describe("deriveWorkspacePaneLayout", () => {
     },
   );
 
-  it.each([660, 744, 745, 1100])(
-    "defaults Android content to equal panes and retains resized widths at %s dp",
-    (viewportWidth) => {
+  it.each([
+    { viewportWidth: 660, defaultWidth: 328, maximumWidth: 336 },
+    { viewportWidth: 744, defaultWidth: 370, maximumWidth: 420 },
+    { viewportWidth: 745, defaultWidth: 370.5, maximumWidth: 421 },
+    { viewportWidth: 1100, defaultWidth: 440, maximumWidth: 660 },
+  ])(
+    "sizes Android panes from the available width at $viewportWidth dp",
+    ({ viewportWidth, defaultWidth, maximumWidth }) => {
       const layout = deriveLayout({ width: viewportWidth + 96, height: 900 });
       for (const primarySidebarFloats of [false, true]) {
         const input = {
           layout,
           viewportWidth,
-          inspectorSizing: "foldable" as const,
+          inspectorSizing: "android" as const,
           primarySidebarFloats,
           primarySidebarPreferredVisible: true,
           auxiliaryPanePreferredVisible: true,
@@ -209,25 +251,23 @@ describe("deriveWorkspacePaneLayout", () => {
           primarySidebarVisible: false,
           primarySidebarSuppressedByAuxiliary: true,
           auxiliaryPaneVisible: true,
-          auxiliaryPaneWidth: (viewportWidth - 4) / 2,
+          auxiliaryPaneWidth: defaultWidth,
           contentPaneWidth: viewportWidth,
         });
         for (const preferredWidth of [320, 350, viewportWidth]) {
           const width = constrainAuxiliaryPaneWidth({
             preferredWidth,
             availableWidth: viewportWidth,
-            inspectorSizing: "foldable" as const,
+            inspectorSizing: "android" as const,
           });
-          expect(width).toBe(Math.min(preferredWidth, viewportWidth - 4 - 320));
+          expect(width).toBe(Math.min(preferredWidth, maximumWidth));
           expect(
             deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
-          ).toMatchObject({ auxiliaryPaneWidth: width, primarySidebarVisible: false });
+          ).toMatchObject({
+            auxiliaryPaneWidth: width,
+            primarySidebarVisible: !primarySidebarFloats && viewportWidth === 1100 && width <= 400,
+          });
         }
-        expect(deriveWorkspacePaneLayout({ ...input, inspectorSizing: "tablet" })).toMatchObject({
-          auxiliaryPaneWidth: viewportWidth * 0.4,
-          auxiliaryPaneVisible: true,
-          primarySidebarVisible: primarySidebarFloats,
-        });
         expect(
           deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),
         ).toMatchObject({ primarySidebarVisible: true });
@@ -259,7 +299,7 @@ describe("deriveWorkspacePaneLayout", () => {
               viewportWidth: width,
               horizontalSafeArea,
               nativeWorkspace,
-              inspectorSizing: nativeWorkspace ? undefined : "tablet",
+              inspectorSizing: nativeWorkspace ? undefined : "android",
               primarySidebarPreferredVisible,
               auxiliaryPanePreferredVisible: true,
               nativeInspectorWidth: nativeInspectorColumnWidth({

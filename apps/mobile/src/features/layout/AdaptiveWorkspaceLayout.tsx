@@ -331,15 +331,9 @@ function AdaptiveWorkspaceLayoutContent(
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
   // The rail stays whether or not the sidebar shows; only the list pane comes and goes.
   const navigationRailWidth = shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0;
-  const [isFoldable, setIsFoldable] = useState(false);
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
-  const handleHingeChange = (
-    next: VerticalHinge | null,
-    nextWindow: VerticalHinge | null,
-    foldable: boolean,
-  ) => {
-    setIsFoldable(foldable);
+  const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
     setHinge(next);
     setWindowHinge(nextWindow);
   };
@@ -372,15 +366,14 @@ function AdaptiveWorkspaceLayoutContent(
   const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
-  const inspectorSizing =
-    Platform.OS === "android" ? (isFoldable ? "foldable" : "tablet") : undefined;
+  const inspectorSizing = Platform.OS === "android" ? "android" : undefined;
   const auxiliaryPanePreferredWidth = fileInspectorPreferredWidth ?? undefined;
-  const foldableWindow = useMemo(
+  const inspectorWindow = useMemo(
     () =>
-      isFoldable
+      Platform.OS === "android"
         ? { width: viewportWidth, leadingWidth: viewportWidth - width, hinge: windowHinge }
         : undefined,
-    [isFoldable, viewportWidth, width, windowHinge],
+    [viewportWidth, width, windowHinge],
   );
   const fileInspector = useMemo(
     () =>
@@ -388,7 +381,7 @@ function AdaptiveWorkspaceLayoutContent(
         layout,
         viewportWidth: width,
         inspectorSizing,
-        foldableWindow,
+        inspectorWindow,
         preferredWidth: auxiliaryPanePreferredWidth,
         reservedLeadingWidth:
           shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
@@ -398,7 +391,7 @@ function AdaptiveWorkspaceLayoutContent(
     [
       auxiliaryPanePreferredWidth,
       inspectorSizing,
-      foldableWindow,
+      inspectorWindow,
       layout,
       showPrimarySidebar,
       shouldRenderPrimarySidebar,
@@ -427,7 +420,7 @@ function AdaptiveWorkspaceLayoutContent(
         layout,
         viewportWidth: width,
         inspectorSizing,
-        foldableWindow,
+        inspectorWindow,
         horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,
@@ -444,7 +437,7 @@ function AdaptiveWorkspaceLayoutContent(
       fileInspectorPreferredVisible,
       auxiliaryPanePreferredWidth,
       inspectorSizing,
-      foldableWindow,
+      inspectorWindow,
       inspectorActive,
       layout,
       nativeWorkspace,
@@ -947,7 +940,7 @@ function AdaptiveWorkspaceLayoutContent(
       layout,
       viewportWidth: width,
       inspectorSizing,
-      foldableWindow,
+      inspectorWindow,
       preferredWidth,
       reservedLeadingWidth:
         shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
