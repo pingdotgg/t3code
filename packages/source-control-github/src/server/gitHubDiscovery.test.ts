@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  ServerSettings,
   SourceControlProviderKind,
   VcsProcessExitError,
   VcsProcessTimeoutError,
@@ -10,10 +11,14 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
@@ -87,6 +92,103 @@ it.effect("asks for no credential when the identity resolver left the base URL e
       null,
     );
     assert.deepStrictEqual(hosts, []);
+  }),
+);
+
+const decodeSettings = Schema.decodeSync(ServerSettings);
+const referencedTokenSettings = decodeSettings({
+  sourceControlHosts: {
+    github: { tokens: { "github.com": { provider: "vault", reference: "op://v/gh" } } },
+  },
+});
+
+it.effect.each([
+  {
+    name: "a readable",
+    token: "resolved-token",
+    status: "authenticated",
+    detail: "the token saved in Settings",
+  },
+  {
+    name: "no",
+    token: "",
+    status: "authenticated",
+    detail: "GH_TOKEN from the server environment",
+  },
+  // getWithSecrets leaves a reference its secret provider could not read in place.
+  {
+    name: "an unreadable",
+    token: { provider: "vault", reference: "op://v/gh" },
+    status: "unauthenticated",
+    detail: 'secret provider "vault"',
+  },
+])("reports $name saved GitHub token instead of another credential", (scenario) =>
+  Effect.gen(function* () {
+    const paths: Array<string> = [];
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(GitHubRest.GitHubRest)({
+            rest: (input) => {
+              paths.push(input.path);
+              return Effect.succeed({
+                status: 200,
+                headers: {},
+                body: JSON.stringify({ login: "octocat" }),
+                truncated: false,
+                invalidUtf8: false,
+              });
+            },
+          }),
+          Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
+          Layer.effect(
+            SourceControlHost.SourceControlHost,
+            Effect.gen(function* () {
+              const host = yield* SourceControlHost.SourceControlHost;
+              return {
+                ...host,
+                settings: {
+                  ...host.settings,
+                  getWithSecrets: () =>
+                    Effect.succeed(
+                      decodeSettings({
+                        sourceControlHosts: {
+                          github: { tokens: { "github.com": scenario.token } },
+                        },
+                      }),
+                    ),
+                },
+              };
+            }),
+          ).pipe(
+            Layer.provide(
+              TestSourceControlHost.layer({
+                settings: referencedTokenSettings,
+                process: {
+                  run: () =>
+                    Effect.succeed(
+                      TestSourceControlHost.processOutput("", {
+                        exitCode: ChildProcessSpawner.ExitCode(1),
+                      }),
+                    ),
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, { GH_TOKEN: "environment-token" }),
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    const item = yield* discovery.probe("/repo");
+    const authenticated = scenario.status === "authenticated";
+    assert.deepStrictEqual(paths, authenticated ? ["user"] : []);
+    assert.strictEqual(item.auth.status, scenario.status);
+    assert.deepStrictEqual(
+      item.auth.account,
+      authenticated ? Option.some("octocat") : Option.none(),
+    );
+    assert.include(Option.getOrThrow(item.auth.detail), scenario.detail);
   }),
 );
 

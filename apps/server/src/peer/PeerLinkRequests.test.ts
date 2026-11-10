@@ -152,7 +152,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -482,6 +482,31 @@ it.live("the agent asks without waiting, and the user links the box after its tu
         { kind: "user_input" },
       );
 
+      for (const secretStatus of ["pending", "saved"] as const) {
+        yield* a.orchestrator.dispatch({
+          type: "secret_request.record",
+          commandId: CommandId.make("command:secret-" + secretStatus),
+          threadId,
+          runId,
+          nodeId: rootNode,
+          turnItemId: TurnItemId.make("turn-item:snoozed-secret"),
+          label: "Credential",
+          reason: "Connect",
+          secretStatus,
+        });
+        if (secretStatus === "pending") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("command:snooze-secret"),
+            threadId,
+            snoozedUntil: "2099-01-01T00:00:00.000Z",
+          });
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
+        } else {
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
+        }
+      }
+
       // The agent ends its turn; the card stays answerable, and the thread still asks.
       yield* endRun(a);
       expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
@@ -528,7 +553,18 @@ it.live("the agent asks without waiting, and the user links the box after its tu
           yield* a.orchestrator.getThreadProjection(threadId),
         ).pendingRuntimeRequest,
       ).toBeNull();
+      expect(
+        (yield* a.projections.getSettlementCandidates(threadId)).map((thread) => thread.id),
+      ).toEqual([threadId]);
       expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
+
+      yield* a.orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:snooze-link"),
+        threadId,
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+      });
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
 
       // The user's client mints a code on the box and picks more than the agent suggested.
       const pairing = yield* b.auth.issuePairingCredential();
@@ -537,6 +573,8 @@ it.live("the agent asks without waiting, and the user links the box after its tu
         turnItemId: card.id,
         answer: { type: "link", urls: [b.url], access: "auto", pairingCode: pairing.credential },
       });
+
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
 
       const link = yield* a.links.get(box.environmentId);
       expect(Option.getOrUndefined(link)?.access).toBe("auto");
@@ -947,6 +985,35 @@ it.live("naming a machine that is already linked returns the link at once, with 
       // Not both: the address could name another machine than the id.
       const both = yield* a.call({ environmentId: box.environmentId, url: b.url });
       expect(errorOf(both)).toMatchObject({ code: "invalid_request" });
+    }),
+  ),
+);
+
+it.live("a retry naming a machine linked meanwhile closes the card it left as linked", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url, clientRequestId: "link-box" });
+      yield* pendingCard(a);
+      // Linked from Settings meanwhile, not through the card.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      const retried = yield* a.call({
+        environmentId: box.environmentId,
+        clientRequestId: "link-box",
+      });
+      expect(retried.structuredContent).toEqual({
+        status: "linked",
+        environmentId: box.environmentId,
+        label: "Box",
+        access: "auto",
+      });
+      expect(yield* cardOf(a)).toMatchObject({
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
     }),
   ),
 );
