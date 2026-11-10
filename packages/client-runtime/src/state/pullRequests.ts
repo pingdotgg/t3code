@@ -352,10 +352,15 @@ function settleEdit(
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     if (Option.isNone(shown)) continue;
     // Text that changed during the write may be the host's own version of it, or an older read.
+    // A reader with no text from before the write checks against the edit itself.
     const sent = atSend?.get(atom);
     const changed =
-      sent !== undefined &&
-      hostRewroteEdit(Option.getOrUndefined(AsyncResult.value(sent)), shown.value, edit);
+      atSend !== undefined &&
+      hostRewroteEdit(
+        (sent === undefined ? undefined : Option.getOrUndefined(AsyncResult.value(sent))) ?? edit,
+        shown.value,
+        edit,
+      );
     registry.update(
       writable,
       AsyncResult.map((value) => reader.edit(value, [edit]) as never),

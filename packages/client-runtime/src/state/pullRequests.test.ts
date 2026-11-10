@@ -2709,7 +2709,12 @@ it.effect.each(["accepted", "refused"] as const)(
     ),
 );
 
-it.effect.each(["rewrites the title", "answers a read before it commits"] as const)(
+it.effect.each([
+  "rewrites the title",
+  "answers a read before it commits",
+  "rewrites the title for readers opened during it",
+  "rewrites the title for readers still loading at send",
+] as const)(
   "ends on the host's own title when a read answers during an accepted edit (host %s)",
   (timing) =>
     Effect.scoped(
@@ -2717,22 +2722,29 @@ it.effect.each(["rewrites the title", "answers a read before it commits"] as con
         let title = "Cached";
         const sent = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const read = () => Effect.sync(() => ({ ...actionReference, state: "open", title }));
+        const readsHeld = timing === "rewrites the title for readers still loading at send";
+        const releaseReads = yield* Deferred.make<void>();
+        const held = <A>(answer: () => A) =>
+          Effect.andThen(
+            readsHeld ? Deferred.await(releaseReads) : Effect.void,
+            Effect.sync(answer),
+          );
+        const read = () => held(() => ({ ...actionReference, state: "open", title }));
         const client = actionReplyClient({
           [WS_METHODS.pullRequestsDetail]: read,
           [WS_METHODS.pullRequestsPreview]: read,
           [WS_METHODS.pullRequestsList]: () =>
-            Effect.sync(() =>
+            held(() =>
               listResult([
                 { ...actionReference, state: "open", title, updatedAt: actionReply.updatedAt },
               ]),
             ),
           [WS_METHODS.pullRequestsUpdate]: (input: { readonly title: string }) =>
             Effect.gen(function* () {
-              title = timing === "rewrites the title" ? `Draft: ${input.title}` : "Original";
+              title = timing.startsWith("rewrites") ? `Draft: ${input.title}` : "Original";
               yield* Deferred.succeed(sent, undefined);
               yield* Deferred.await(release);
-              if (timing !== "rewrites the title") title = input.title;
+              if (!timing.startsWith("rewrites")) title = input.title;
             }),
         });
         const { atoms, registry } = yield* makeTestRuntime(client);
@@ -2749,17 +2761,27 @@ it.effect.each(["rewrites the title", "answers a read before it commits"] as con
           ...readers,
           page,
         ];
-        for (const atom of loaded) {
-          const unmount = registry.mount(atom);
-          yield* Effect.addFinalizer(() => Effect.sync(unmount));
-          yield* Effect.promise(() => executeAtomQuery(registry, atom));
-        }
+        const opensDuring = timing === "rewrites the title for readers opened during it";
+        const mount = Effect.forEach(loaded, (atom) =>
+          Effect.gen(function* () {
+            const unmount = registry.mount(atom);
+            yield* Effect.addFinalizer(() => Effect.sync(unmount));
+          }),
+        );
+        const load = Effect.forEach(loaded, (atom) =>
+          Effect.promise(() => executeAtomQuery(registry, atom)),
+        );
+        if (!opensDuring) yield* mount;
+        if (!opensDuring && !readsHeld) yield* load;
         const editing = yield* Effect.promise(() =>
           atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(sent);
-        for (const atom of loaded)
-          yield* Effect.promise(() => executeAtomQuery(registry, atom, { refresh: true }));
+        if (opensDuring) yield* Effect.andThen(mount, load);
+        else if (readsHeld) yield* Effect.andThen(Deferred.succeed(releaseReads, undefined), load);
+        else
+          for (const atom of loaded)
+            yield* Effect.promise(() => executeAtomQuery(registry, atom, { refresh: true }));
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(editing);
         // Readers whose title changed during the write read it again.
