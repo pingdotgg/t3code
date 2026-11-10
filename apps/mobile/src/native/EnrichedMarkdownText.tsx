@@ -179,6 +179,26 @@ function codeBlockElement(
   mathRenderingEnabled: boolean,
   scheme: HighlightScheme,
 ): ReactElement | undefined {
+  if (block.language === "mermaid") {
+    return block.isComplete ? (
+      <MermaidCodeBlock code={block.code} textStyle={textStyle} />
+    ) : undefined;
+  }
+  if (block.language === "math" && mathRenderingEnabled) {
+    return block.isComplete ? (
+      <EnrichedMarkdownText
+        // A blank line would end the paragraph, and so the math, early.
+        markdown={`$$\n${block.code.replace(/\n\s*\n/g, "\n").trim()}\n$$`}
+        markdownStyle={markdownStyle}
+        md4cFlags={{ latexMath: true }}
+        containerStyle={{ flexShrink: 1, minWidth: 0 }}
+        flavor="github"
+        selectable
+        selectionColor={textStyle.selectionColor}
+        selectionHandleColor={textStyle.selectionHandleColor}
+      />
+    ) : undefined;
+  }
   const language = fallbackHighlightLanguage(block.language);
   if (language && markdownStyle.codeBlock) {
     return (
@@ -190,25 +210,6 @@ function codeBlockElement(
         scheme={scheme}
         textStyle={textStyle}
         codeStyle={markdownStyle.codeBlock}
-      />
-    );
-  }
-  if (!block.isComplete) return undefined;
-  if (block.language === "mermaid") {
-    return <MermaidCodeBlock code={block.code} textStyle={textStyle} />;
-  }
-  if (block.language === "math" && mathRenderingEnabled) {
-    return (
-      <EnrichedMarkdownText
-        // A blank line would end the paragraph, and so the math, early.
-        markdown={`$$\n${block.code.replace(/\n\s*\n/g, "\n").trim()}\n$$`}
-        markdownStyle={markdownStyle}
-        md4cFlags={{ latexMath: true }}
-        containerStyle={{ flexShrink: 1, minWidth: 0 }}
-        flavor="github"
-        selectable
-        selectionColor={textStyle.selectionColor}
-        selectionHandleColor={textStyle.selectionHandleColor}
       />
     );
   }
