@@ -59,10 +59,11 @@ if (clientPlatform === "darwin") {
 
 const syncHtmlFullscreen = () => {
   const element = document.fullscreenElement;
-  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
+  // A preview guest's fullscreen surfaces here as its <webview>, and an html_render page's as its
+  // <iframe>; both stay inside the window.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
-    element !== null && element.tagName !== "WEBVIEW",
+    element !== null && element.tagName !== "WEBVIEW" && element.tagName !== "IFRAME",
   );
 };
 // A reload or renderer crash never reports the old document's exit, so each document reports its start.
