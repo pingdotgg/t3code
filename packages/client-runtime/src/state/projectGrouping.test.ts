@@ -289,31 +289,42 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
-  it("labels Azure DevOps checkouts by project and repository", () => {
-    const remoteUrl = "https://dev.azure.com/example-org/My%20Project/_git/my-repo";
-    const identity = {
+  it.each([
+    {
+      remoteUrl: "https://dev.azure.com/example-org/My%20Project/_git/my-repo",
       canonicalKey: "dev.azure.com/example-org/my%20project/_git/my-repo",
-      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
-      provider: SourceControlProviderKind.make("azure-devops"),
-      owner: "example-org",
-      name: "my-repo",
       displayName: "example-org/My%20Project/_git/my-repo",
-    };
-    const projects = [
-      makeProject("checkout-1", "/work/one/my-repo", {
-        title: "my-repo",
-        repositoryIdentity: identity,
-      }),
-      makeProject("checkout-2", "/work/two/my-repo", {
-        title: "my-repo",
-        repositoryIdentity: identity,
-      }),
-    ];
+      title: "my-repo",
+      label: "My Project/my-repo",
+    },
+    {
+      remoteUrl: "git@ssh.dev.azure.com:v3/example-org/MiXeD%20Project/My-Repo",
+      canonicalKey: "dev.azure.com/example-org/mixed%20project/_git/my-repo",
+      displayName: "example-org/mixed%20project/_git/my-repo",
+      title: "My-Repo",
+      label: "MiXeD Project/My-Repo",
+    },
+  ])(
+    "labels Azure DevOps checkouts of $remoteUrl by project and repository",
+    ({ remoteUrl, canonicalKey, displayName, title, label }) => {
+      const identity = {
+        canonicalKey,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        provider: SourceControlProviderKind.make("azure-devops"),
+        owner: "example-org",
+        name: "my-repo",
+        displayName,
+      };
+      const projects = [
+        makeProject("checkout-1", `/work/one/${title}`, { title, repositoryIdentity: identity }),
+        makeProject("checkout-2", `/work/two/${title}`, { title, repositoryIdentity: identity }),
+      ];
 
-    const groups = buildProjectGroups({ projects, settings: settings("repository") });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("My Project/my-repo");
-  });
+      const groups = buildProjectGroups({ projects, settings: settings("repository") });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe(label);
+    },
+  );
 
   it("labels an Azure DevOps fork the same whether or not its server reports the origin URL", () => {
     const identity = (origin: { readonly remoteUrl?: string }) => ({

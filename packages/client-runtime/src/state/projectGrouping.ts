@@ -242,11 +242,14 @@ export function deriveProjectGroupLabel(input: {
     input.members.map((member) => member.repositoryIdentity?.name),
   );
   const sharedTitle = sharedTitles[0];
+  // Servers lower-case names they cannot match to the remote, so a folder title can differ in case.
+  const titleKey = sharedTitle?.toLowerCase();
+  const namesTitle = (name: string) => name.toLowerCase() === titleKey;
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !displayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    !displayNames.some(namesTitle) &&
+    !sharedRepositoryNames.some(namesTitle)
   ) {
     return sharedTitle;
   }
