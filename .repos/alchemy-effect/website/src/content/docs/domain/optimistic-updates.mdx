@@ -1,0 +1,118 @@
+---
+title: Optimistic updates
+description: Show pending intent, confirm it by commandId from a View feed, and retry an unknown outcome safely.
+---
+
+Show a deposit when the customer clicks. Confirm it when the bank's event arrives. A successful command reply means the write committed. The line waits for the feed before it becomes confirmed.
+
+This guide uses `Bank = DomainFoldkit.make(CustomerApi)` from [Integrate with Foldkit](/domain/foldkit). The bank example keeps its own queue and line Model. The adapter has no generic pending-state helper.
+
+## Track each intent
+
+```typescript
+import * as DomainFoldkit from "@alchemy.run/domain/Foldkit";
+import { StatementLine } from "@bank/domain/Account/Statement.view";
+import * as Schema from "effect/Schema";
+
+const Line = Schema.Struct({
+  commandId: Schema.String,
+  kind: StatementLine.fields.kind,
+  amount: Schema.Number,
+  balance: Schema.Option(Schema.Number),
+  ack: Schema.Literals(["Pending", "Queued", "Confirmed", "Rejected", "Denied"]),
+  reason: Schema.Option(Schema.String),
+});
+type Line = typeof Line.Type;
+```
+
+Allocate the id with `DomainFoldkit.next(model.commandIds)`. Store the returned command id state in the Model. Add a pending line with the allocated id. Send `Bank.DepositMoney({ target, input, commandId })` through `Command.mapMessage`.
+
+The command and its pending line share one id. Each event caused by the command carries that id in `entry.envelope.commandId`.
+
+## Handle the command result
+
+Match the generated result with `Bank.Message.match`. Handle each failure through its named variant.
+
+| Result | Line state | What happens next |
+| --- | --- | --- |
+| `SucceededDepositMoney` | `Pending` | Wait for the feed. |
+| `Rejected` | `Rejected` | Show the Rejection's fields. |
+| `Denied` | `Denied` | Request authentication or MFA before a retry. |
+| `Unknown` | `Queued` | Retry with the original id. |
+
+Do not mark a confirmed line pending when a late reply arrives. The feed can arrive before the reply.
+
+## Confirm by command id
+
+```typescript
+import * as Option from "effect/Option";
+import { modifyFields } from "foldkit/struct";
+
+const confirm = (model: Model, commandId: string, event: StatementLine) => {
+  const nextLine = Line.make({
+    commandId,
+    kind: event.kind,
+    amount: event.amount,
+    balance: Option.some(event.balance),
+    ack: "Confirmed",
+    reason: Option.none(),
+  });
+  const otherLines = model.lines.filter((line) => line.commandId !== commandId);
+  return modifyFields(model, { lines: () => [nextLine, ...otherLines] });
+};
+```
+
+`Model` is the app's Model with a `lines: Schema.Array(Line)` field. This example replaces a pending line with the feed's line. It also accepts history and writes from another device. A repeated confirmation replaces the same line.
+
+Keep your own display order. The bank example puts unconfirmed lines above confirmed lines.
+
+## Resume the feed
+
+```typescript
+import { Subscription } from "foldkit";
+import { defineMessageUnion } from "foldkit/message";
+
+const Message = defineMessageUnion({
+  ReceivedStatementLine: { commandId: Schema.String, line: StatementLine, cursor: Schema.Number },
+  CaughtUpStatement: { cursor: Schema.Number },
+  FailedReadStatement: { reason: Schema.String },
+});
+
+const subscriptions = Subscription.make<Model, typeof Message.Type, typeof CustomerApi.Client.Identifier>()(() => ({
+  statement: Bank.Statement.events({
+    key: (model: Model) => model.accountId,
+    cursor: (model) => model.statementCursor,
+    isEnabled: (model) => model.online,
+    onEntry: (entry): typeof Message.Type => Message.ReceivedStatementLine({
+      commandId: entry.envelope.commandId,
+      line: entry.event,
+      cursor: entry.envelope.seq,
+    }),
+    onCaughtUp: (cursor): typeof Message.Type => Message.CaughtUpStatement({ cursor }),
+    onFailure: (error): typeof Message.Type => Message.FailedReadStatement({ reason: error._tag }),
+    onDefect: (): typeof Message.Type => Message.FailedReadStatement({ reason: "Read defect" }),
+  }),
+}));
+```
+
+
+A restart reads the latest Model cursor and passes it as `after`. Cursor changes leave the stream alive. The adapter drops entries at or below the applied cursor. A filtered feed can skip sequence numbers, so the adapter does not count gaps.
+
+
+The adapter does not reduce entries into state. Use `watch` for the current View state. Use this event feed to confirm intents or build the app's display list.
+
+## Keep the offline queue
+
+Save unresolved intents in order. An offline click adds a queued line. When online, send the oldest queued intent first.
+
+A transport retry acts on `Unknown`, with the same `commandId`. If the reply was lost after commit, the aggregate returns its stored receipt. It does not apply the intent twice.
+
+If a retry remains unknown, stop the batch. Leave later intents queued, so a withdrawal cannot pass an earlier deposit. A `Denied` line shows its reason and a retry control. It does not block other intents. After authentication, retry that line with its original id. A `Rejected` result ends that intent.
+
+Persist queued and pending intents after each Model change. A `Denied` line is not saved, so a reload drops it. On reload, replay the statement feed to confirm writes the server applied before the previous page closed.
+
+## Bound this pattern
+
+This example confirms one bank line by `commandId`. It does not prove that every effect of an arbitrary command has reached every View. A command can emit no events or several events. A View can drop or transform them.
+
+For general completion, use the success receipt with `snapshot({ atLeast: receipt })`. Design re-prediction and reconciliation for the application's own rules. Do not infer completion from a count of output events.

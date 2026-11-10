@@ -1,7 +1,7 @@
+import { describe, expect, it } from "@alchemy.run/test";
 import { RuntimeContext } from "alchemy";
 import { APIError } from "better-auth/api";
 import { anonymous } from "better-auth/plugins/anonymous";
-import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -24,20 +24,13 @@ const serve = (
   fetch: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     unknown,
-    | RuntimeContext
-    | HttpServerRequest.HttpServerRequest
-    | import("effect/Scope").Scope
+    RuntimeContext | HttpServerRequest.HttpServerRequest | import("effect/Scope").Scope
   >,
   request: Request,
 ) =>
   fetch.pipe(
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(request),
-    ),
-    Effect.flatMap((response) =>
-      Effect.sync(() => HttpServerResponse.toWeb(response)),
-    ),
+    Effect.provideService(HttpServerRequest.HttpServerRequest, HttpServerRequest.fromWeb(request)),
+    Effect.flatMap((response) => Effect.sync(() => HttpServerResponse.toWeb(response))),
     Effect.orDie,
   );
 
@@ -169,9 +162,8 @@ describe("BetterAuth (memory)", { tags: ["unit", "local"] }, () => {
     hidden.append("set-cookie", "a=1; Path=/");
     hidden.append("set-cookie", "b=2; Path=/");
     hidden.set("x-hidden", "also");
-    (error as unknown as Record<symbol, unknown>)[
-      Symbol.for("better-call:api-error-headers")
-    ] = hidden;
+    (error as unknown as Record<symbol, unknown>)[Symbol.for("better-call:api-error-headers")] =
+      hidden;
 
     expect(isAPIErrorLike(error)).toBe(true);
     const merged = mergeAPIErrorHeaders(error);
@@ -181,10 +173,7 @@ describe("BetterAuth (memory)", { tags: ["unit", "local"] }, () => {
 
     const wrapped = BetterAuthApiError.fromAPIError(error);
     expect(wrapped.statusCode).toBe(401);
-    expect(wrapped.headers.getSetCookie()).toEqual([
-      "a=1; Path=/",
-      "b=2; Path=/",
-    ]);
+    expect(wrapped.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"]);
   });
 
   it("isAPIErrorLike rejects non-APIError values", () => {
