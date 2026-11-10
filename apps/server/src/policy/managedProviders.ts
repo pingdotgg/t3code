@@ -393,6 +393,8 @@ export function makeManagedProviders(
     const result: ServerSettings = {
       ...settings,
       providerInstances: providerInstances as ServerSettings["providerInstances"],
+      // An allow-list names agent drivers; text generators would send code to any other API.
+      ...(allowed === undefined ? {} : { textGenerators: {} }),
       sourceControlWriterModelSelection: allowedSelection(
         settings,
         settings.sourceControlWriterModelSelection,
