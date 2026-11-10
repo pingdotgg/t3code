@@ -1,6 +1,7 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -15,6 +16,8 @@ import {
   subscribeDeviceForeground,
 } from "./deviceHubApi";
 import { AndroidFoldError, readAndroidFold, type AndroidFoldState } from "./deviceFold";
+
+const isAndroidFoldError = Schema.is(AndroidFoldError);
 
 const AX_POLL_INTERVAL_MS = 2_000;
 const FOLD_RETRY_MS = 3_000;
@@ -40,11 +43,23 @@ export const deviceEventLogAtom = Atom.family((target: DeviceHubTarget) =>
   }).pipe(Atom.withLabel(`device-event-log:${target.deviceId}`)),
 );
 
+class DeviceAxTreeFetchError extends Schema.TaggedError<DeviceAxTreeFetchError>()(
+  "DeviceAxTreeFetchError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the device accessibility tree.";
+  }
+}
+
 // A failed poll keeps the last frames on screen; the next poll replaces them.
 export const deviceAxElementsAtom = Atom.family((target: DeviceHubTarget) =>
   Atom.make(
     Stream.fromEffectSchedule(
-      Effect.tryPromise((signal) => fetchDeviceAxTree(target, signal)).pipe(
+      Effect.tryPromise({
+        try: (signal) => fetchDeviceAxTree(target, signal),
+        catch: (cause) => new DeviceAxTreeFetchError({ cause }),
+      }).pipe(
         Effect.map((tree): ReadonlyArray<DeviceAxElement> | null => tree.elements),
         Effect.orElseSucceed(() => null),
       ),
@@ -89,7 +104,7 @@ export const androidFoldReadAtom = Atom.family(
     Atom.make((get) =>
       Effect.tryPromise({
         try: (signal) => readAndroidFold(input.access, input.deviceId, signal),
-        catch: (cause) => ({ expired: cause instanceof AndroidFoldError && cause.status === 401 }),
+        catch: (cause) => ({ expired: isAndroidFoldError(cause) && cause.status === 401 }),
       }).pipe(
         Effect.retry({
           while: (failure) => !failure.expired,

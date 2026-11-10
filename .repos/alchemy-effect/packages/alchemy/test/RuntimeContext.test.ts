@@ -1,32 +1,18 @@
-import {
-  packEnvValue,
-  packEnvValueKeepRedacted,
-  unpackEnvValue,
-} from "@/RuntimeContext.ts";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Redacted from "effect/Redacted";
+import { packEnvValue, packEnvValueKeepRedacted, unpackEnvValue } from "@/RuntimeContext.ts";
 
 describe("packEnvValue / unpackEnvValue", { tags: ["unit", "local"] }, () => {
   it("stores a plain string verbatim (no quote characters on the wire)", () => {
     // #1243: a queue name must reach the env binding bare so raw readers
     // (dashboard, MessageBatch.queue comparisons) see the real name.
     expect(packEnvValue("my-queue")).toBe("my-queue");
-    expect(packEnvValue("https://example.com/a?b=c")).toBe(
-      "https://example.com/a?b=c",
-    );
+    expect(packEnvValue("https://example.com/a?b=c")).toBe("https://example.com/a?b=c");
   });
 
   it("keeps ambiguous strings packed so the read side can't reinterpret them", () => {
     // These would JSON.parse into a different value if stored bare.
-    for (const s of [
-      "123",
-      "-4.5",
-      "null",
-      "true",
-      '"quoted"',
-      '{"a":1}',
-      "[1]",
-    ]) {
+    for (const s of ["123", "-4.5", "null", "true", '"quoted"', '{"a":1}', "[1]"]) {
       expect(packEnvValue(s)).toBe(JSON.stringify(s));
       expect(unpackEnvValue(packEnvValue(s))).toBe(s);
     }
@@ -57,9 +43,7 @@ describe("packEnvValue / unpackEnvValue", { tags: ["unit", "local"] }, () => {
   });
 
   it("round-trips Redacted through the marker", () => {
-    const out = unpackEnvValue<Redacted.Redacted<string>>(
-      packEnvValue(Redacted.make("s3cret")),
-    );
+    const out = unpackEnvValue<Redacted.Redacted<string>>(packEnvValue(Redacted.make("s3cret")));
     expect(Redacted.isRedacted(out)).toBe(true);
     expect(Redacted.value(out!)).toBe("s3cret");
   });
