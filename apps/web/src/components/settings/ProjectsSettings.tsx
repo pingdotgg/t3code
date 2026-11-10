@@ -82,7 +82,7 @@ const SKELETON_LINES = (
 function AddProjectButton({ primary = false }: { primary?: boolean }) {
   return (
     <Button
-      size="sm"
+      size="standard"
       variant={primary ? "default" : "secondary"}
       onClick={() => openCommandPalette({ open: "add-project" })}
     >

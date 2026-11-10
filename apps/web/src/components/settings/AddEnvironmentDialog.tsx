@@ -31,6 +31,7 @@ import {
 import {
   Dialog,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -476,15 +477,6 @@ export function AddEnvironmentDialog({
       ) : null}
       {renderRemoteFields()}
       {error ? <p className="text-meta text-destructive">{error}</p> : null}
-      <Button
-        variant="secondary"
-        className="w-full"
-        disabled={isAddingSavedBackend}
-        onClick={() => void handleAddSavedBackend()}
-      >
-        <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
-      </Button>
     </div>
   );
   const renderSshFields = () => (
@@ -597,15 +589,6 @@ export function AddEnvironmentDialog({
             <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>
           </Alert>
         ) : null}
-        <Button
-          variant="secondary"
-          className="w-full"
-          disabled={isAddingSavedBackend}
-          onClick={() => void handleAddSavedBackend()}
-        >
-          <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
-        </Button>
       </div>
     </div>
   );
@@ -617,7 +600,7 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="secondary" aria-label="Add environment">
+                <Button size="standard" variant="secondary" aria-label="Add environment">
                   <PlusIcon className="size-3" />
                   <span>Add environment</span>
                 </Button>
@@ -630,7 +613,7 @@ export function AddEnvironmentDialog({
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add environment"}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
@@ -640,7 +623,7 @@ export function AddEnvironmentDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className={cn("grid gap-3", desktopBridge && "sm:grid-cols-2")}>
               {renderConnectionModeCard({
                 mode: "remote",
                 title: "Remote link",
@@ -660,6 +643,24 @@ export function AddEnvironmentDialog({
               {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
             </AnimatedHeight>
           </div>
+          <DialogFooter variant="bare" className="-mx-5 -mb-4">
+            <Button
+              size="standard"
+              variant="secondary"
+              disabled={isAddingSavedBackend}
+              onClick={() => handleOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="standard"
+              disabled={isAddingSavedBackend}
+              onClick={() => void handleAddSavedBackend()}
+            >
+              <PlusIcon className="size-3.5" />
+              {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+            </Button>
+          </DialogFooter>
         </DialogPanel>
       </DialogPopup>
     </Dialog>
