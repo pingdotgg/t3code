@@ -1,8 +1,8 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
 import { BackendApi } from "./BackendApi.ts";
 import { env } from "./Env.ts";
 

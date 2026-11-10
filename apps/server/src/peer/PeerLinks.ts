@@ -5,15 +5,17 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
+  type ExecutionEnvironmentDescriptor,
   MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
-  type PeerLinkStatus,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,17 +23,25 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .annotateMerge(EnvironmentHttpApi.annotations);
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
@@ -41,6 +51,23 @@ const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
  */
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+
+/** Node's TLS verification code in a failed request's cause chain, if any. */
+export const certificateErrorCode = (error: unknown) => {
+  let current = error;
+  for (let depth = 0; depth < 6 && Predicate.isObject(current); depth++) {
+    if (
+      Predicate.hasProperty(current, "code") &&
+      typeof current.code === "string" &&
+      /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)|INVALID_(CA|PURPOSE)|PATH_LENGTH_EXCEEDED|HOSTNAME_MISMATCH/.test(
+        current.code,
+      )
+    )
+      return current.code;
+    current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+  }
+  return undefined;
+};
 
 /** A usable link: where to reach the peer and the token to send there. */
 export interface ResolvedPeerLink {
@@ -162,7 +189,8 @@ const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapab
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -172,7 +200,7 @@ const make = Effect.gen(function* () {
   );
 
   /** A fresh name for one link's token; the row records it. */
-  const newSecretName = crypto.randomBytes(16).pipe(
+  const newSecretName = random.randomBytes(16).pipe(
     Effect.map((bytes) => `peer-link-${Hex.encode(bytes)}`),
     Effect.orDie,
   );
@@ -184,17 +212,41 @@ const make = Effect.gen(function* () {
   );
 
   const clientFor = (origin: string) =>
-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin }).pipe(
+    HttpApiClient.make(PeerHttpApi, { baseUrl: origin }).pipe(
       Effect.provideService(HttpClient.HttpClient, peerHttpClient),
     );
 
-  /** The environment answering at `origin`, or nothing when it does not answer as T3 Code. */
+  /**
+   * The environment answering at `origin`, or nothing when it does not answer
+   * as T3 Code. A certificate this machine rejects fails instead, since
+   * the peer may well be there.
+   */
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
-      Effect.option,
+      Effect.asSome,
+      Effect.catch((error) => {
+        const code = certificateErrorCode(error);
+        return code === undefined
+          ? Effect.succeed(Option.none<ExecutionEnvironmentDescriptor>())
+          : Effect.fail(
+              new PeerLinkError({
+                reason: "unreachable",
+                message: `${origin} presented a certificate this machine rejected (${code}).`,
+              }),
+            );
+      }),
     );
+
+  /** Whether `url` answers as `environmentId`, counting an untrusted certificate as no. */
+  const answersAs = Effect.fn("PeerLinks.answersAs")(function* (
+    url: string,
+    environmentId: EnvironmentId,
+  ) {
+    const found = yield* describe(url).pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.filter(found, (peer) => peer.environmentId === environmentId);
+  });
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
@@ -213,12 +265,13 @@ const make = Effect.gen(function* () {
 
   const readRows = sql<PeerLinkRow>`
     SELECT * FROM peer_environment_links ORDER BY label, environment_id
-  `.pipe(Effect.catch(failStorage));
+  `.pipe(NodeSqliteClient.readOnly, Effect.catch(failStorage));
 
   const readRow = (environmentId: EnvironmentId) =>
     sql<PeerLinkRow>`
       SELECT * FROM peer_environment_links WHERE environment_id = ${environmentId}
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.catch(failStorage),
       Effect.map((rows) => Option.fromNullishOr(rows[0])),
     );
@@ -248,11 +301,11 @@ const make = Effect.gen(function* () {
             ),
           ),
         );
-      const verifier = Base64Url.encode(yield* crypto.randomBytes(32).pipe(Effect.orDie));
+      const verifier = Base64Url.encode(yield* random.randomBytes(32));
       const challenge = Base64Url.encode(
-        yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)).pipe(Effect.orDie),
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)).pipe(Effect.orDie),
       );
-      const state = Base64Url.encode(yield* crypto.randomBytes(16).pipe(Effect.orDie));
+      const state = Base64Url.encode(yield* random.randomBytes(16));
       const resource = `${origin}/mcp`;
       const decided = yield* client.mcpOAuth
         .decision({
@@ -263,7 +316,7 @@ const make = Effect.gen(function* () {
               redirect_uri: LINK_REDIRECT_URI,
               code_challenge: challenge,
               code_challenge_method: "S256",
-              state,
+              state: Redacted.make(state),
               resource,
             },
             decision: { _tag: "pairing-code", access: input.access, code: input.pairingCode },
@@ -297,10 +350,10 @@ const make = Effect.gen(function* () {
         .token({
           payload: {
             grant_type: "authorization_code",
-            code,
+            code: Redacted.make(code),
             redirect_uri: LINK_REDIRECT_URI,
             client_id: registered.client_id,
-            code_verifier: verifier,
+            code_verifier: Redacted.make(verifier),
             resource,
           },
         })
@@ -485,29 +538,40 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none()),
     );
 
-  const statusOf = (link: PeerLink, now: DateTime.Utc) =>
-    DateTime.isLessThanOrEqualTo(link.expiresAt, now)
-      ? Effect.succeed<PeerLinkStatus>("expired")
-      : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
-            Effect.map(
-              (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
-            ),
-          ),
-        ).pipe(
-          Effect.map((answered): PeerLinkStatus =>
-            Option.isSome(answered) ? "reachable" : "unreachable",
-          ),
-        );
+  /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
+  const withLabel = (link: PeerLink, label: string) =>
+    label === link.label
+      ? Effect.succeed(link)
+      : sql`
+          UPDATE peer_environment_links SET label = ${label}
+          WHERE environment_id = ${link.environmentId}
+        `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
+
+  const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
+    link: PeerLink,
+    now: DateTime.Utc,
+  ): Effect.fn.Return<PeerLinkSummary> {
+    if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
+    let label = link.label;
+    const answered = yield* Effect.findFirst(link.urls, (url) =>
+      answersAs(url, link.environmentId).pipe(
+        Effect.map((found) => {
+          if (Option.isNone(found)) return false;
+          label = found.value.label;
+          return true;
+        }),
+      ),
+    );
+    if (Option.isNone(answered)) return { ...link, status: "unreachable" };
+    return { ...(yield* withLabel(link, label)), status: "reachable" };
+  });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
     const links = yield* Effect.forEach(yield* readRows, toLink);
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(
-      links,
-      (link) => statusOf(link, now).pipe(Effect.map((status) => ({ ...link, status }))),
-      { concurrency: "unbounded" },
-    );
+    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
+      concurrency: "unbounded",
+    });
   });
 
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
@@ -559,11 +623,13 @@ const make = Effect.gen(function* () {
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
       let fenced = true;
+      let label = link.label;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        describe(candidate).pipe(
+        answersAs(candidate, environmentId).pipe(
           Effect.map((found) => {
-            if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
+            if (Option.isNone(found)) return false;
             fenced = linkLimitsHold(found.value);
+            label = found.value.label;
             return true;
           }),
         ),
@@ -582,7 +648,11 @@ const make = Effect.gen(function* () {
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
-      return { link, url: url.value, token: new TextDecoder().decode(stored.value) };
+      return {
+        link: yield* withLabel(link, label),
+        url: url.value,
+        token: new TextDecoder().decode(stored.value),
+      };
     },
   );
 

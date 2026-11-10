@@ -6,8 +6,10 @@ import {
   ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
+  EnvironmentId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
@@ -238,7 +240,7 @@ export const AuthAccessTokenResult = Schema.Struct({
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
 export const AuthWebSocketTicketResult = Schema.Struct({
-  ticket: TrimmedNonEmptyString,
+  ticket: Schema.RedactedFromValue(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
@@ -254,11 +256,69 @@ export type AuthWebSocketTicketUse = typeof AuthWebSocketTicketUse.Type;
 
 export const AuthWebSocketTicketParams = Schema.Struct({ use: AuthWebSocketTicketUse });
 
+export const AuthMcpClientAccess = Schema.Literals([
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
+/** The scopes an agent session gets for an access level, and a pairing code must carry. */
+export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
+  access === "read-only"
+    ? [AuthOrchestrationReadScope]
+    : access === "full-access"
+      ? [
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthSettingsWriteScope,
+          AuthSourceControlWriteScope,
+        ]
+      : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+
+/** The random part of a one-time pairing code: this many characters from this alphabet. */
+export const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const PAIRING_CODE_LENGTH = 12;
+
+const MCP_APPROVAL_CODE_PREFIXES = {
+  "read-only": "READ",
+  "approval-required": "SUPERVISED",
+  "auto-accept-edits": "EDITS",
+  auto: "AUTO",
+  "full-access": "FULL",
+} as const satisfies Record<AuthMcpClientAccess, string>;
+
+const MCP_APPROVAL_CODE_PATTERN = new RegExp(
+  `^(${Object.values(MCP_APPROVAL_CODE_PREFIXES).join("|")})-([${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}})$`,
+  "i",
+);
+
+/** A pairing code that approves one agent sign-in at `access`, such as `AUTO-Q8RZ3NWD5KTC`. */
+export const mcpApprovalCode = (access: AuthMcpClientAccess, token: string): string =>
+  `${MCP_APPROVAL_CODE_PREFIXES[access]}-${token}`;
+
+/** The level a code approves and the code as issued, or undefined for any other code. */
+export function parseMcpApprovalCode(
+  code: string,
+): { readonly access: AuthMcpClientAccess; readonly code: string } | undefined {
+  const match = MCP_APPROVAL_CODE_PATTERN.exec(code.trim());
+  if (match === null) return undefined;
+  const prefix = match[1]!.toUpperCase();
+  const access = AuthMcpClientAccess.literals.find(
+    (level) => MCP_APPROVAL_CODE_PREFIXES[level] === prefix,
+  );
+  return access && { access, code: mcpApprovalCode(access, match[2]!.toUpperCase()) };
+}
+
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
+  /** Set when the code approves one agent sign-in at this level. Older servers omit it. */
+  access: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
@@ -386,6 +446,8 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
+  /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
+  access: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
@@ -398,28 +460,6 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
-
-export const AuthMcpClientAccess = Schema.Literals([
-  "read-only",
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-]);
-export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
-
-/** The scopes an agent session gets for an access level, and a pairing code must carry. */
-export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
-  access === "read-only"
-    ? [AuthOrchestrationReadScope]
-    : access === "full-access"
-      ? [
-          AuthOrchestrationReadScope,
-          AuthOrchestrationOperateScope,
-          AuthSettingsWriteScope,
-          AuthSourceControlWriteScope,
-        ]
-      : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
@@ -490,7 +530,7 @@ export const AuthMcpAuthorizationRequest = Schema.Struct({
   redirect_uri: Schema.optionalKey(Schema.String),
   code_challenge: Schema.optionalKey(Schema.String),
   code_challenge_method: Schema.optionalKey(Schema.String),
-  state: Schema.optionalKey(Schema.String),
+  state: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
@@ -504,6 +544,14 @@ export const AuthMcpApprovalDetails = Schema.Struct({
   csrfToken: Schema.optionalKey(Schema.String),
   /** Only scopes held by this session qualify; others need a pairing code. Absent with `csrfToken`. */
   oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+  /** Set when the page is on this environment's T3 Connect address, so its owner can approve there. */
+  connectSignIn: Schema.optionalKey(
+    Schema.Struct({ environmentId: EnvironmentId, hostedAppUrl: Schema.String }),
+  ),
+  /** A managed policy's runtime-mode ceiling; the page loads without the server's config. */
+  runtimeModeCeiling: Schema.optionalKey(
+    Schema.Struct({ organization: Schema.String, maxRuntimeMode: RuntimeMode }),
+  ),
 });
 export type AuthMcpApprovalDetails = typeof AuthMcpApprovalDetails.Type;
 
@@ -539,10 +587,10 @@ export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalErro
 
 export const AuthMcpTokenRequest = Schema.Struct({
   grant_type: Schema.optionalKey(Schema.String),
-  code: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   redirect_uri: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
-  code_verifier: Schema.optionalKey(Schema.String),
+  code_verifier: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;
