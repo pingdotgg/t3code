@@ -246,26 +246,24 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
         (event) => event.providerTurn.status === "running",
       );
       yield* harness.offerTurnEvent("turn.started", {});
-      yield* harness.offerTurnEvent("part.delta", {
-        messageId: "msg_a",
-        partId: "p1",
-        field: "text",
+      // The CLI's real stream: model.streaming deltas keyed by assistantMessageId.
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_a",
         delta: "Hello",
+        kind: "text_delta",
+        done: false,
       });
-      yield* harness.offerTurnEvent("part.delta", {
-        messageId: "msg_a",
-        partId: "p1",
-        field: "text",
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_a",
         delta: " world",
+        kind: "text_delta",
+        done: false,
       });
-      yield* harness.offerTurnEvent("part.upserted", {
-        part: {
-          partId: "p1",
-          sessionId: "sess_1",
-          messageId: "msg_a",
-          type: "text",
-          text: "Hello world",
-        },
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_a",
+        delta: "",
+        kind: "text_delta",
+        done: true,
       });
       yield* harness.offerTurnEvent("turn.completed", {
         response: "Hello world",

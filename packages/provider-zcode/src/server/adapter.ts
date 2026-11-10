@@ -1233,6 +1233,38 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             yield* completeStreamItem(turn, item, text);
             return;
           }
+          case "model.streaming": {
+            // The CLI's real text/reasoning stream: {assistantMessageId, delta, kind, done}.
+            if (turn === null) return;
+            const messageId = zcodeRecordString(payload, "assistantMessageId");
+            const delta = zcodeRecordString(payload, "delta");
+            if (messageId === undefined || delta === undefined) return;
+            const kind = zcodeRecordString(payload, "kind") ?? "text_delta";
+            if (kind !== "text_delta" && kind !== "reasoning_delta") return;
+            const item = yield* streamItemFor(
+              turn,
+              kind === "text_delta" ? "assistant_message" : "reasoning",
+              messageId,
+              messageId,
+            );
+            item.text += delta;
+            yield* emit({
+              type: "command_output.delta",
+              driver: ZCODE_PROVIDER,
+              threadId: turn.turnInput.threadId,
+              itemId: idAllocator.derive.turnItemFromProviderItem({
+                driver: ZCODE_PROVIDER,
+                nativeItemId: item.nativeItemId,
+              }),
+              chunk: delta,
+            });
+            if (payload["done"] === true) {
+              yield* completeStreamItem(turn, item);
+              return;
+            }
+            yield* scheduleStreamFlush(turn, item);
+            return;
+          }
           case "tool.updated": {
             if (turn === null) return;
             // Subagent-attributed calls belong to child sessions; projecting them as parent
@@ -1373,6 +1405,26 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                   tokenUsage: { usedTokens: tokenCount, updatedAt: DateTime.formatIso(updatedAt) },
                 };
               }
+              // The completed payload carries the authoritative full response; make sure an
+              // assistant message exists even when the stream produced no mapped items.
+              const response = zcodeRecordString(payload, "response");
+              if (response !== undefined && response.length > 0) {
+                const textItems = Array.from(turn.streamItems.entries()).filter(
+                  ([, item]) => item.kind === "assistant_message",
+                );
+                const last = textItems.at(-1);
+                if (last === undefined) {
+                  const item = yield* streamItemFor(
+                    turn,
+                    "assistant_message",
+                    `final:${turn.providerTurn.id}`,
+                    "final",
+                  );
+                  yield* completeStreamItem(turn, item, response);
+                } else {
+                  yield* completeStreamItem(turn, last[1], response);
+                }
+              }
               yield* finalizeTurn(state);
               return;
             }
@@ -1405,7 +1457,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
           }
           case "turn.steerQueued":
           case "turn.steerDrained":
-          case "model.streaming":
           case "session.created":
           case "session.resumed":
           case "session.updated":
