@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +30,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -209,6 +211,9 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
   agentId = "claude-acp",
+  wrapRuntime: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"] = (runtime) => runtime,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -254,7 +259,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime(runtimeInput);
+      return replayRuntime(runtimeInput).pipe(Effect.map(wrapRuntime));
     },
   };
   const adapter = yield* makeAcpRegistryAdapterV2(adapterOptions).pipe(
@@ -1943,6 +1948,96 @@ describe("AcpRegistryAdapterV2", () => {
           (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
         ),
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // Devin 3000.11.234 marks session, project, global and bypass grants all as allow_always.
+  it.effect.each([
+    {
+      label: "picks Devin's session option wherever it is listed",
+      optionIds: ["allow_once", "allow_always", "switch_bypass", "allow_session", "reject_once"],
+      selected: "allow_session",
+    },
+    {
+      label: "allows once when Devin offers no session option",
+      optionIds: ["allow_once", "allow_always", "allow_always_global", "reject_once"],
+      selected: "allow_once",
+    },
+  ])("Always allow this session $label", ({ optionIds, selected }) =>
+    Effect.gen(function* () {
+      const params = {
+        sessionId: CLAUDE_ROOT_SESSION,
+        title: "Run curl?",
+        subject: {
+          type: "tool_call",
+          toolCall: {
+            toolCallId: "curl",
+            title: "curl -sI https://example.com",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: "curl -sI https://example.com" },
+          },
+        },
+        options: optionIds.map((optionId) => ({
+          optionId,
+          name: optionId,
+          kind: optionId.startsWith("reject")
+            ? "reject_once"
+            : optionId === "allow_once"
+              ? "allow_once"
+              : "allow_always",
+        })),
+      };
+      const answered = yield* Deferred.make<EffectAcpSchema.RequestPermissionResponse>();
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...claudeFrames.prompt(1),
+          {
+            type: "emit_inbound",
+            frame: { kind: "request", method: "session/request_permission", params },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: "<any>",
+            },
+          },
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+        (runtime) => ({
+          ...runtime,
+          handleRequestPermission: (handler) =>
+            runtime.handleRequestPermission((request, context) =>
+              handler(request, context).pipe(
+                Effect.tap((response) => Deferred.succeed(answered, response)),
+              ),
+            ),
+        }),
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const seen = yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      const request = seen.at(-1)!;
+      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "acceptForSession",
+      });
+      assert.deepEqual((yield* Deferred.await(answered)).outcome, {
+        outcome: "selected",
+        optionId: selected,
+      });
+      assert.equal((yield* session.terminal).status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
