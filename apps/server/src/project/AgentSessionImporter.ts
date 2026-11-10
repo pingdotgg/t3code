@@ -177,6 +177,34 @@ const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
+  // Deleting a project soft-deletes its imported threads but keeps their import records.
+  const restoreDeletedImport = Effect.fn("AgentSessionImporter.restoreDeletedImport")(function* (
+    thread: OrchestrationV2AppThread,
+    projectId: ProjectId,
+  ) {
+    if (
+      thread.deletedAt === null ||
+      thread.projectId === projectId ||
+      thread.historyOrigin !== "v1_import"
+    ) {
+      return thread;
+    }
+    const now = yield* DateTime.now;
+    const restored = { ...thread, projectId, deletedAt: null, updatedAt: now };
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId: thread.id }),
+          type: "thread.metadata-updated",
+          threadId: thread.id,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: restored,
+        },
+      ],
+    });
+    return restored;
+  });
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -247,6 +275,25 @@ const make = Effect.gen(function* () {
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
         if (outcome._tag === "AlreadyImported") {
+          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
+          if (Option.isSome(existing)) {
+            const restored = yield* restoreDeletedImport(
+              existing.value.thread,
+              input.projectId,
+            ).pipe(
+              Effect.as(true),
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not restore an imported agent session", {
+                  threadId,
+                  cause,
+                }).pipe(Effect.as(false)),
+              ),
+            );
+            if (!restored) {
+              skippedCount += 1;
+              return;
+            }
+          }
           importedThreadIds.add(threadId);
           importedCount += 1;
           return;
@@ -292,14 +339,18 @@ const make = Effect.gen(function* () {
           );
           const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
           if (Option.isSome(existing)) {
-            if (existing.value.thread.projectId !== input.projectId) {
+            const existingThread = yield* restoreDeletedImport(
+              existing.value.thread,
+              input.projectId,
+            );
+            if (existingThread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
                 expectedProjectId: input.projectId,
-                actualProjectId: existing.value.thread.projectId,
+                actualProjectId: existingThread.projectId,
               });
             }
-            if (existing.value.thread.historyOrigin !== "v1_import") {
+            if (existingThread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
             yield* persistRuntime;
