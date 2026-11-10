@@ -253,9 +253,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     });
 
   const respondTo = (record: PiRpcRecord): PiRpcRecord | null => {
+    // Tests ack prompts by hand unless the fake's streaming state is set.
     if (
-      typeof record["id"] !== "string" &&
-      !(record["type"] === "prompt" && (isStreaming !== null || isCompacting))
+      record["type"] === "prompt" && !String(record["message"]).startsWith(serviceTierCommand)
+        ? isStreaming === null && !isCompacting
+        : typeof record["id"] !== "string"
     )
       return null;
     const base = {
@@ -5198,6 +5200,30 @@ describe("PiAdapterV2", () => {
       });
       const skill = yield* takeEvent((event) => event.type === "user_message.delivered");
       assert.deepInclude(skill, { messageId: "message:thread-pi-test:skill" as never });
+
+      // A command awaiting a dialog acks after a later steer, so acks follow request ids, not send order.
+      yield* steer("message:thread-pi-test:dialog", "/confirm");
+      const dialogPrompt = yield* fake.takeRequest("prompt");
+      yield* steer("message:thread-pi-test:waiting", "Then say MANGO");
+      const waitingPrompt = yield* fake.takeRequest("prompt");
+      const ackFor = (request: PiRpcRecord, disposition: string) =>
+        fake.emit({
+          type: "response",
+          id: request["id"],
+          command: "prompt",
+          success: true,
+          data: { disposition },
+        });
+      yield* ackFor(waitingPrompt, "queued");
+      yield* ackFor(dialogPrompt, "handled");
+      const dialog = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(dialog, { messageId: "message:thread-pi-test:dialog" as never });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "Then say MANGO" }] },
+      });
+      const waiting = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(waiting, { messageId: "message:thread-pi-test:waiting" as never });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

@@ -596,8 +596,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let contextWindow: number | null = null;
       const modelContextWindows = new Map<string, number>();
       let modelsDiscovered = false;
-      // Prompt ACKs lack IDs; retain session send order and ownership so late ACKs cannot affect new turns.
-      const pendingPromptResponses: Array<PiPromptSend> = [];
+      // Pi acks prompts out of order (an extension command can await a dialog), so each send carries an id.
+      const pendingPromptResponses: Array<PiPromptSend & { readonly ackId: string }> = [];
+      let nextPromptAckId = 1;
       const pendingCompactResponses: Array<{
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
         readonly kind: "turn_start" | "steer";
@@ -615,8 +616,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           heldPrompts.push(prompt);
           return;
         }
-        yield* connection.send(prompt.record);
-        pendingPromptResponses.push(prompt);
+        const ackId = `t3-prompt-${nextPromptAckId++}`;
+        yield* connection.send({ ...prompt.record, id: ackId });
+        pendingPromptResponses.push({ ...prompt, ackId });
       });
       // A just-released prompt has not started its run yet, so a settle probe
       // racing it would see Pi idle. Its ack re-arms the probe instead.
@@ -2230,9 +2232,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
-            // Only id-less prompts own ACK slots; a late reply to an id-bearing request must not take one.
-            if (command === "prompt" && typeof event["id"] === "string") return;
-            const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
+            const ackIndex =
+              command !== "prompt"
+                ? -1
+                : typeof event["id"] === "string"
+                  ? pendingPromptResponses.findIndex((pending) => pending.ackId === event["id"])
+                  : 0;
+            // A reply to another request (e.g. a timed-out one) must not take a prompt's ack.
+            if (command === "prompt" && ackIndex === -1) return;
+            const [pendingPrompt] =
+              ackIndex === -1 ? [] : pendingPromptResponses.splice(ackIndex, 1);
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (
