@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Line, sleep, TermChrome, useSpinner } from "./_terminal";
 
 /* ────────────────────────────────────────────────────────────
@@ -64,9 +58,7 @@ function bootLine(label: string, detail: string) {
   return mkLine(
     <>
       <span style={{ color: "var(--alc-success)" }}>✓ </span>
-      <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-        {label}
-      </span>
+      <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{label}</span>
       <span style={{ color: "var(--alc-code-comment)" }}>{` (${detail})`}</span>
       <span style={{ color: "var(--alc-success)" }}> created</span>
     </>,
@@ -77,16 +69,10 @@ const READY_LINES: LogLine[] = [
   mkLine(
     <>
       <span style={{ color: "var(--alc-code-comment)" }}> → </span>
-      <span style={{ color: "var(--alc-accent-bright)" }}>
-        http://localhost:1337
-      </span>
+      <span style={{ color: "var(--alc-accent-bright)" }}>http://localhost:1337</span>
     </>,
   ),
-  mkLine(
-    <span style={{ color: "var(--alc-code-comment)" }}>
-      Watching for changes…
-    </span>,
-  ),
+  mkLine(<span style={{ color: "var(--alc-code-comment)" }}>Watching for changes…</span>),
 ];
 
 function editLine(file: string) {
@@ -113,9 +99,7 @@ function requestLine() {
       <span
         style={{ color: "var(--alc-code-comment)" }}
       >{`[${new Date().toLocaleTimeString().slice(0, 8)}] `}</span>
-      <span style={{ color: "var(--alc-fg-invert)" }}>
-        GET /object/hello.txt
-      </span>
+      <span style={{ color: "var(--alc-fg-invert)" }}>GET /object/hello.txt</span>
       <span style={{ color: "var(--alc-success)" }}> 200</span>
     </>,
   );
@@ -124,12 +108,8 @@ function requestLine() {
 const DIFF_LINE = mkLine(
   <>
     <span style={{ color: "var(--alc-success)" }}>+ </span>
-    <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-      Queue
-    </span>
-    <span
-      style={{ color: "var(--alc-code-comment)" }}
-    >{` (Cloudflare.Queues.Queue)`}</span>
+    <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>Queue</span>
+    <span style={{ color: "var(--alc-code-comment)" }}>{` (Cloudflare.Queues.Queue)`}</span>
     <span style={{ color: "var(--alc-success)" }}> created</span>
   </>,
 );
@@ -186,9 +166,7 @@ function isReloading(phase: Phase) {
 }
 
 function isBooting(phase: Phase) {
-  return (
-    phase === "boot-photos" || phase === "boot-sessions" || phase === "boot-api"
-  );
+  return phase === "boot-photos" || phase === "boot-sessions" || phase === "boot-api";
 }
 
 function PhotoTile({ label }: { label: string }) {
@@ -255,25 +233,15 @@ function BrowserChrome({
     // Simulated browser chrome — decoration, kept out of search snippets.
     <div className="bhr-browser" style={style} data-nosnippet="">
       <div className="bhr-browser__header">
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-danger)" }}
-        />
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-warn)" }}
-        />
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-accent-bright)" }}
-        />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-accent-bright)" }} />
         <div className="bhr-browser__nav" aria-hidden>
           <span className="bhr-browser__navbtn">‹</span>
           <span className="bhr-browser__navbtn">›</span>
           <span
             className={
-              "bhr-browser__navbtn bhr-browser__reload" +
-              (reloading ? " is-spinning" : "")
+              "bhr-browser__navbtn bhr-browser__reload" + (reloading ? " is-spinning" : "")
             }
           >
             ↻
@@ -313,8 +281,7 @@ export default function BrowserHotReload() {
     cancelRef.current = false;
     const aborted = () => cancelRef.current;
 
-    const push = (...newLines: LogLine[]) =>
-      setLines((ls) => [...ls, ...newLines].slice(-14));
+    const push = (...newLines: LogLine[]) => setLines((ls) => [...ls, ...newLines].slice(-14));
 
     const reset = () => {
       setLines([PROMPT_LINE]);
@@ -332,8 +299,7 @@ export default function BrowserHotReload() {
 
           // Show the spinner during clearly "busy" steps so the
           // browser progress bar and the terminal feel coupled.
-          const showSpinner =
-            isBooting(next) || next === "reload-api" || next === "wire-queue";
+          const showSpinner = isBooting(next) || next === "reload-api" || next === "wire-queue";
           setBusy(showSpinner);
           await sleep(ms);
           setBusy(false);
@@ -378,7 +344,7 @@ export default function BrowserHotReload() {
       }
     };
 
-    run();
+    void run();
     return () => {
       cancelRef.current = true;
     };
@@ -422,9 +388,7 @@ export default function BrowserHotReload() {
           ))}
           {busy && (
             <Line>
-              <span style={{ color: "var(--alc-code-comment)" }}>
-                {spinner}{" "}
-              </span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{spinner} </span>
             </Line>
           )}
         </TermChrome>
