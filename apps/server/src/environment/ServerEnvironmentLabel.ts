@@ -150,6 +150,17 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   return normalizeLabel(result.value.stdout);
 });
 
+/**
+ * WSL keeps the Windows hostname, so a Windows host and its WSL backend would otherwise share one
+ * name in T3 Connect and every client that lists environments.
+ */
+function resolveWslLabel(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv): string | null {
+  if (platform !== "linux") return null;
+  const distro = normalizeLabel(environment.WSL_DISTRO_NAME);
+  if (distro) return `WSL (${distro})`;
+  return normalizeLabel(environment.WSL_INTEROP) ? "WSL" : null;
+}
+
 const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* () {
   const platform = yield* HostProcess.Platform;
   if (platform === "darwin") {
@@ -182,6 +193,11 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const wslLabel = resolveWslLabel(yield* HostProcess.Platform, yield* HostProcess.Environment);
+  if (wslLabel) {
+    return wslLabel;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
