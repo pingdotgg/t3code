@@ -2524,6 +2524,36 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("keeps an active thread's fresh unchanged worktree until its inactivity window", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const { service, fs, worktree, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: 15,
+          worktreeUnchanged: true,
+        });
+        setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: worktree,
+            status: "completed",
+            createdAt: at(-60 * 60 * 1_000),
+            updatedAt: at(-2 * 60 * 1_000),
+            latestRunCompletedAt: at(-2 * 60 * 1_000),
+          }),
+        ]);
+        yield* fs.makeDirectory(`${worktree}/dist`);
+        yield* fs.writeFileString(`${worktree}/dist/run-output.log`, "hours of results\n");
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/dist/run-output.log`)).toBe(
+          "hours of results\n",
+        );
+      }),
+    ),
+  );
   it.live(
     "discovers trunk without a remote HEAD or tracking ref and removes an integrated worktree",
     () =>
