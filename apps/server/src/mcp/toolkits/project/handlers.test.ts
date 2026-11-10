@@ -50,7 +50,7 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
-  readonly webOrigin?: string;
+  readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
 }) => {
@@ -89,7 +89,7 @@ const clientLaunchHarness = (input: {
         sessionId: "session-1",
         label: "Claude Code",
         access: input.runtimeModeCeiling,
-        webOrigin: input.webOrigin,
+        hostedAppUrl: input.hostedAppUrl,
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -187,18 +187,18 @@ it.effect(
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
-          readonly webOrigin?: string;
+          readonly hostedAppUrl?: string;
           readonly refusedByCeiling?: true;
         },
       ) {
-        const { targeted, overrideModel, webOrigin, refusedByCeiling, ...input } = params;
+        const { targeted, overrideModel, hostedAppUrl, refusedByCeiling, ...input } = params;
         const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
           defaultRuntimeMode,
           launched,
           ...(overrideModel === undefined ? {} : { overrideModel }),
-          ...(webOrigin === undefined ? {} : { webOrigin }),
+          ...(hostedAppUrl === undefined ? {} : { hostedAppUrl }),
           ...(refusedByCeiling === undefined ? {} : { refusedByCeiling }),
         });
         const toolkit = yield* ProjectToolkit.pipe(
@@ -221,18 +221,18 @@ it.effect(
       expect(belowCeiling.result).toMatchObject({
         projectId: belowCeiling.projectId,
         modelSelection: belowCeiling.modelSelection,
-        link: `<t3-thread://v2/environment/${belowCeiling.launched[0]?.threadId}>`,
+        link: `[Fix](t3-thread://v2/environment/${belowCeiling.launched[0]?.threadId})`,
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",
-        webOrigin: "https://box.example.ts.net",
+        hostedAppUrl: "https://t3.example.com",
       });
       expect(aboveCeiling.launched[0]?.runtimeMode).toBe("auto-accept-edits");
       expect(aboveCeiling.result).toMatchObject({
-        link: `https://box.example.ts.net/environment/${encodeURIComponent(aboveCeiling.launched[0]?.threadId ?? "")}`,
+        link: `https://t3.example.com/threads/environment/${encodeURIComponent(aboveCeiling.launched[0]?.threadId ?? "")}`,
       });
 
       const requested = yield* launchWith("full-access", "approval-required", {
@@ -662,5 +662,33 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("an update the project refuses tells the agent why", () =>
+  Effect.gen(function* () {
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const detail = "Project monograms must contain at most two characters.";
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        update: (input) =>
+          Effect.fail(new Project.ProjectInvalidError({ projectId: input.projectId, detail })),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_update", {
+        projectId: harness.projectId,
+        projectIcon: { kind: "monogram", text: "ABC", color: "blue" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
   }),
 );

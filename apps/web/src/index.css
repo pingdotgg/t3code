@@ -1848,21 +1848,21 @@ code {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
+/* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */
+:where(:not(iframe))::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
 }
 
-::-webkit-scrollbar-track {
+:where(:not(iframe))::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
+:where(:not(iframe))::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+:where(:not(iframe))::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
 
@@ -2138,7 +2138,7 @@ code {
 }
 
 .chat-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chat-markdown pre {
@@ -2271,6 +2271,15 @@ code {
   max-width: none;
 }
 
+/* Keep overflow discoverable when the edge fade falls between columns. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
@@ -2311,12 +2320,14 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel and match highlights read these. */
-.diff-render-surface {
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
+   The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
-  --diffs-search-panel-accent: var(--primary);
-  --diffs-search-panel-font: var(--font-sans);
+  --diffs-search-panel-modified: var(--primary);
+  --diffs-header-font-fallback: var(--font-sans);
+  --diffs-search-panel-inset-top: 40px;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -2447,14 +2458,18 @@ code {
   padding: 0.05em 0.25em;
 }
 
+/* Markdown delimiters shown, as editable text, around styled text with the caret in it. */
 .composer-rich-marker {
   color: var(--muted-foreground);
   opacity: 0.75;
   font-weight: 400;
   font-style: normal;
   text-decoration: none;
-  user-select: none;
-  pointer-events: none;
+}
+
+/* Delimiters of source restored by undo or redo, once the caret leaves it. */
+.composer-rich-marker-hidden {
+  display: none;
 }
 
 /* Selected chips (node selection from arrowing into or clicking a chip). */
@@ -2565,8 +2580,12 @@ code {
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible.
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
 [data-workspace-area]:focus-visible {
+  outline: none;
+}
+[data-workspace-keyboard-focus]:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

@@ -8,7 +8,7 @@ description: Run Better Auth in a local Bun server with a persistent SQLite file
 ## Install
 
 ```sh
-bun add "@effect/platform-bun@4.0.0-rc.115" @alchemy.run/better-auth better-auth@^1.7.5 kysely
+bun add @effect/platform-bun @alchemy.run/better-auth better-auth@^1.7.5 kysely
 ```
 
 Bun supplies the driver, while `kysely` supports the SQL adapter and schema migration. A standard Node.js Lambda cannot load `bun:sqlite`.
