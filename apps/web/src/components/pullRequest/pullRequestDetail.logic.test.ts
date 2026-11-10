@@ -55,7 +55,7 @@ import {
   classifyPullRequestChecks,
   describePullRequestChecks,
 } from "./pullRequestDetail.logic";
-import { summarizePullRequestChecks } from "./pullRequestPresentation";
+import { pullRequestChecksState, summarizePullRequestChecks } from "./pullRequestPresentation";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -1515,14 +1515,20 @@ describe("pull request checks summaries", () => {
     url: null,
   });
 
-  it("count skipped and neutral checks as settled, matching the passing icon", () => {
+  it("read skipped and neutral checks the way the icon beside them does", () => {
+    const skippedOnly = [check("skipped"), check("skipped"), check("skipped")];
+    expect(classifyPullRequestChecks(skippedOnly)).toBe("passing");
+    expect(describePullRequestChecks(skippedOnly)).toBe("All checks passed");
+    expect(pullRequestChecksState(skippedOnly)).toBeNull();
+    expect(summarizePullRequestChecks(skippedOnly)).toBe("0 of 3 passing");
+
     for (const checks of [
-      [check("skipped"), check("skipped"), check("skipped")],
       [check("success"), check("success"), check("neutral")],
       [check("success"), check("skipped"), check("neutral")],
     ]) {
       expect(classifyPullRequestChecks(checks)).toBe("passing");
       expect(describePullRequestChecks(checks)).toBe("All checks passed");
+      expect(pullRequestChecksState(checks)).toBe("passing");
       expect(summarizePullRequestChecks(checks)).toBe("All checks passed");
     }
   });
