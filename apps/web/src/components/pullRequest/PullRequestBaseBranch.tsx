@@ -133,7 +133,11 @@ export function PullRequestBaseBranch({
         iconClassName={iconClassName}
         className="max-w-[40%]"
       >
-        {label}
+        <span
+          className={cn("flex min-w-0 items-center gap-1", compact && "@max-sm/pr-header:hidden")}
+        >
+          {label}
+        </span>
       </PullRequestBaseFreshnessWarning>
     );
   }

@@ -148,7 +148,8 @@ function BackgroundActivityAdvancedDialog({
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full sm:w-40"
                   aria-label="Shared background policy"
                 >
@@ -385,7 +386,8 @@ export function BackgroundActivitySettingsRow() {
             }}
           >
             <SelectTrigger
-              size="sm"
+              variant="well"
+              size="compact"
               className="w-full sm:w-40"
               aria-label="Background activity profile"
             >

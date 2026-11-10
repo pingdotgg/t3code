@@ -1,6 +1,8 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
+import { useId } from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
@@ -56,6 +58,8 @@ function MenuPopup({
   width?: "default" | "content" | "wide";
   spacing?: "default" | "relaxed";
 }) {
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -86,6 +90,8 @@ function MenuPopup({
           )}
           data-slot="menu-popup"
           {...props}
+          id={popupId}
+          finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
         >
           {/* Items stay concentric with the popup: its radius minus the 1px rim and padding. */}
           <div className="max-h-(--available-height) flex w-full flex-col overflow-y-auto p-1 [--popup-item-radius:calc(var(--radius-card)-5px)]">
@@ -105,7 +111,7 @@ function MenuSearchInput({
 }: Omit<InputProps, "className" | "size" | "unstyled" | "nativeInput"> & { busy?: boolean }) {
   return (
     <div className="min-w-0 shrink-0 px-2 pt-1.5 pb-1">
-      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+      <div className="relative -translate-y-px border-b surface-search-separator pb-1.5 transition-colors focus-within:border-ring">
         {busy ? (
           <Spinner
             aria-hidden="true"
@@ -314,7 +320,7 @@ function MenuGroupLabel({
   return (
     <MenuPrimitive.GroupLabel
       className={cn(
-        "px-2 py-1.5 text-meta text-dim-foreground data-inset:ps-9 sm:data-inset:ps-8",
+        "px-2 py-1.5 text-meta text-muted-foreground data-inset:ps-9 sm:data-inset:ps-8",
         className,
       )}
       data-inset={inset}

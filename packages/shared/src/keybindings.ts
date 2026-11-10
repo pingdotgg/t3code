@@ -80,6 +80,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+w", command: "tab.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  // The browser keeps mod+l for its address bar while it has focus.
+  { key: "mod+l", command: "pullRequests.toggle", when: "!terminalFocus && !previewFocus" },
   // Layout panes: cmd+\ opens a new pane to the right, alt+cmd+shift+D below.
   { key: "mod+\\", command: "layout.splitRight", when: "!terminalFocus" },
   { key: "mod+alt+shift+d", command: "layout.splitDown", when: "!terminalFocus" },

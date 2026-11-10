@@ -521,6 +521,10 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
+  readonly countArchivedThreadMessages: () => Effect.Effect<
+    ReadonlyMap<ThreadId, number>,
+    ProjectionStoreV2Error
+  >;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
@@ -7266,6 +7270,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    const countArchivedThreadMessages = Effect.fn("ProjectionStore.countArchivedThreadMessages")(
+      function* () {
+        const rows = yield* sql<{ readonly thread_id: string; readonly count: number }>`
+          SELECT message.thread_id AS thread_id, COUNT(*) AS count
+          FROM orchestration_v2_projection_messages AS message
+          INNER JOIN orchestration_v2_projection_threads AS thread
+            ON thread.thread_id = message.thread_id
+          WHERE thread.archived_at IS NOT NULL
+            AND thread.deleted_at IS NULL
+            AND message.streaming = 0
+            AND message.role IN ('user', 'assistant')
+          GROUP BY message.thread_id
+        `;
+        return new Map(rows.map((row) => [ThreadId.make(row.thread_id), Number(row.count)]));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -7543,6 +7565,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
+      countArchivedThreadMessages: readOnReader(countArchivedThreadMessages),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),

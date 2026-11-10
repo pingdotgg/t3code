@@ -24,6 +24,7 @@ import {
   type LayoutTabDestination,
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
+import { notePaneDrop } from "../motion/paneDrop";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 export type LayoutDragSource =
@@ -199,7 +200,9 @@ function layoutDropDestination(
   layout: LayoutState,
   target: LayoutDropTarget,
 ): LayoutTabDestination | null {
-  if (target.kind === "side") return { kind: "split", paneId: target.paneId, side: target.side };
+  if (target.kind === "side") {
+    return { kind: "split", paneId: target.paneId, side: target.side, exact: true };
+  }
   if (target.kind === "into")
     return {
       kind: "pane",
@@ -385,7 +388,11 @@ export function dropLayoutDrag(): boolean {
   const current = dragState;
   setDragState(null);
   if (!current?.target) return false;
-  return commitLayoutDrop(current.source, current.target);
+  const before = useLayoutStore.getState().layout;
+  notePaneDrop(true);
+  const committed = commitLayoutDrop(current.source, current.target);
+  if (!committed || useLayoutStore.getState().layout === before) notePaneDrop(false);
+  return committed;
 }
 
 export function cancelLayoutDrag(): void {
@@ -452,9 +459,14 @@ export function withOpenThreadToTheSideItem<T extends string>(
  * the focused pane: its chat opens (or moves) beside it, side by side.
  */
 export function openThreadToTheSide(threadRef: ScopedThreadRef): void {
-  const paneId = sideAnchorPaneId(useLayoutStore.getState().layout, threadRef);
+  const store = useLayoutStore.getState();
+  const paneId = sideAnchorPaneId(store.layout, threadRef);
   if (paneId === null) return;
-  commitLayoutDrop({ kind: "thread", threadRef }, { kind: "side", paneId, side: "right" });
+  store.placeContent(
+    { kind: "chat", target: { kind: "server", threadRef } },
+    { kind: "split", paneId, side: "right" },
+  );
+  saveLayoutNow();
 }
 
 /**
