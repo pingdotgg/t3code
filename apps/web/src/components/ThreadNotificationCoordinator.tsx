@@ -85,12 +85,17 @@ export function startThreadNotifications(
   // Toast ids by thread key, so hiding a thread can close its open toasts.
   const openToasts = new Map<string, Array<ToastId>>();
   const recentToasts: Array<{ toastId: ToastId; open: () => void }> = [];
+  const graceTimers = new Set<ReturnType<typeof setTimeout>>();
   const dropRecentToast = (toastId: ToastId) => {
     const index = recentToasts.findIndex((entry) => entry.toastId === toastId);
     if (index !== -1) recentToasts.splice(index, 1);
   };
   const forgetToast = (key: string, toastId: ToastId) => {
-    setTimeout(() => dropRecentToast(toastId), OPEN_NOTIFICATION_GRACE_MS);
+    const timer = setTimeout(() => {
+      graceTimers.delete(timer);
+      dropRecentToast(toastId);
+    }, OPEN_NOTIFICATION_GRACE_MS);
+    graceTimers.add(timer);
     const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
     if (remaining.length === 0) openToasts.delete(key);
     else openToasts.set(key, remaining);
@@ -446,6 +451,7 @@ export function startThreadNotifications(
 
   return () => {
     unregisterCommands();
+    for (const timer of graceTimers) clearTimeout(timer);
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
     for (const unsubscribe of unsubscribeHidden) unsubscribe();
