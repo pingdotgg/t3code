@@ -69,6 +69,12 @@ describe("add project shared logic", () => {
     expect(normalizePastedCloneUrl("https://gitlab.com/team/platform/src/branch/repo.git")).toBe(
       "https://gitlab.com/team/platform/src/branch/repo.git",
     );
+    expect(
+      normalizePastedCloneUrl("https://gitlab.example.com/team/platform/src/branch/repo.git"),
+    ).toBe("https://gitlab.example.com/team/platform/src/branch/repo.git");
+    expect(
+      normalizePastedCloneUrl("https://git.example.com/team/platform/src/branch/repo.git"),
+    ).toBe("https://git.example.com/team/platform/src/branch/repo.git");
   });
 
   it.each([

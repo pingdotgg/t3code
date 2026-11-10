@@ -740,14 +740,11 @@ export function makeSourceControlDefinitionRegistry(
     repositoryUrlFromPageUrl: (value) => {
       const url = httpUrl(value);
       if (url === null) return null;
-      // Another host's any-hostname pattern can misread a public host's path, such as a GitLab
-      // group named `src`, so a public host's URLs are read only by that host.
-      const owner = findByPublicDomain(url.hostname);
-      for (const definition of owner ? [owner] : claimOrder) {
-        const repositoryUrl = definition.repositoryUrlFromPageUrl?.(url);
-        if (repositoryUrl != null) return repositoryUrl;
-      }
-      return null;
+      // Page routes can also be valid repository paths on another provider.
+      const owner =
+        findByPublicDomain(url.hostname) ??
+        recognitionOrder.find((definition) => recognizeRemoteWith(definition, value) !== null);
+      return owner?.repositoryUrlFromPageUrl?.(url) ?? null;
     },
     findByChangeRequestUrl: (url) => parseChangeRequestUrl(url)?.definition,
     hostLabelForChangeRequestUrl: (url) =>
