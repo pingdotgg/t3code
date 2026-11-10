@@ -237,7 +237,10 @@ export function createNewThreadHandler(router: AnyRouter) {
     const draftOpenedMeanwhile = () => {
       if (options?.prompt !== undefined || hasExplicitWorkspaceOption) return null;
       if (readProject(projectRef) === null) return null;
-      const routeTarget = getCurrentRouteTarget();
+      // The router moves its location to a destination before committing the destination's matches.
+      const routeTarget = resolveThreadRouteTarget(
+        router.getMatchedRoutes(router.state.location.pathname).routeParams,
+      );
       if (routeTarget?.kind !== "draft") return null;
       const session = getDraftSession(routeTarget.draftId);
       if (
