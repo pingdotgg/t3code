@@ -11,7 +11,7 @@ import {
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
 import { readLocalApi } from "./localApi";
-import { revealInDesktopShell, useRemoteOpenState } from "./remoteOpen";
+import { revealInDesktopShell, useRemoteOpenResolution } from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -90,7 +90,7 @@ function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const remoteOpen = useRemoteOpenState(environmentId);
+  const remoteOpen = useRemoteOpenResolution(environmentId);
 
   const availableEditors = serverConfig?.availableEditors ?? [];
   const capabilities: FileContextMenuCapabilities = {
@@ -123,7 +123,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
 
     if (
       reveal &&
-      remoteOpen.mode === "local-exec" &&
+      remoteOpen.isResolved &&
+      remoteOpen.state.mode === "local-exec" &&
       (await revealInDesktopShell(environmentId, absolutePath))
     ) {
       return;
