@@ -32,21 +32,6 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
-## Triage filing cases
-
-`cases/triage.ndjson` loads the current `.github/triage/PLAYBOOK.md` through a
-prior tool result. The authenticated READ case requires a GraphQL shell call
-and final reporting of the fixture issue URL and label. The unauthenticated
-control requires an auth check and a prefilled browser URL. Both start after
-explicit approval of the complete synthetic report.
-
-Run `--case triage-authenticated-read-template,triage-unauthenticated-browser-control
---samples 3`. Compare with the old playbook using the same model, shell model
-and effort. For a baseline, a temporary `--cases` file can point `resultFile`
-at a file extracted with `git show <baseline>:.github/triage/PLAYBOOK.md`.
-These cases check routing and reporting with simulated tools; they do not
-validate the mutation payload or prove live GitHub creation or labeling.
-
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
