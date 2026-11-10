@@ -58,6 +58,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
     readError: null,
     isNotFile: false,
     isFile: true,
+    isBinary: false,
     refresh: vi.fn(),
   }),
   getOptimisticProjectFileQueryData: () => state.optimistic,
@@ -126,6 +127,18 @@ function markdownPreview(truncated: boolean) {
 }
 
 describe("rendered Markdown task saves", () => {
+  it("opens Markdown source until a rendered preview is requested", async () => {
+    using _settings = setup();
+    localStorage.removeItem("t3code.renderMarkdown");
+    await using screen = await render(
+      <div className="flex h-150 w-240">{markdownPreview(false)}</div>,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Show preview", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
   it("keeps a truncated read read-only without queuing a replacement", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(true));

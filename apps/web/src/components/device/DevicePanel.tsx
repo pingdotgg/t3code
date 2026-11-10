@@ -1,14 +1,28 @@
-import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
-import { DeviceHostUpdates } from "./DeviceHostUpdates";
+import { DeviceHostUpdates, hasDeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
+  DeviceHostSummary,
   DevicePlatform,
   DeviceServiceState,
   DeviceSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { useAtomMount } from "@effect/atom-react";
-import { type ReactNode, useState } from "react";
+import { Schema } from "effect";
+import {
+  ArrowUpRight,
+  CloudIcon,
+  Info,
+  Monitor,
+  Play,
+  Power,
+  RotateCw,
+  Server,
+  Smartphone,
+  Tablet,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import { useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import {
@@ -16,8 +30,31 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "~/rightPanelStore";
+import { isThreadlessSurfacesRef } from "~/threadlessSurfaces";
+import { useLayoutStore } from "~/layout/layoutStore";
+import { findThreadChat } from "~/layout/surfaceSync";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList } from "~/components/ui/discovery-list";
+import { LabeledSection } from "~/components/ui/labeled-section";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
 import { Dialog } from "~/components/ui/dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { WizardPopup } from "~/components/ui/wizard";
@@ -48,6 +85,9 @@ const platformLabel = (platform: DevicePlatform) =>
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
+const FLOAT_OVER_CHAT_STORAGE_KEY = "t3code:devices:float-over-chat";
+const DISMISSED_AVAILABILITY_STORAGE_KEY = "t3code:devices:dismissed-availability";
+
 export function DevicePanel(props: {
   readonly mode: PreviewPanelMode;
   readonly threadRef: ScopedThreadRef;
@@ -60,16 +100,40 @@ export function DevicePanel(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
+  const shutdown = useAtomCommand(deviceEnvironment.shutdown);
   // The panel stays mounted across thread switches, so an in-flight open or
   // power-off is tagged with the thread it belongs to and only shown there.
   const scope = `${environmentId}\u0000${threadId}`;
   const [operation, setOperation] = useState<{
     readonly scope: string;
     readonly pending: DeviceSummary | null;
+    readonly poweringOffKey: string | null;
     readonly error: string | null;
   } | null>(null);
   const pendingDevice = operation?.scope === scope ? operation.pending : null;
   const operationError = operation?.scope === scope ? operation.error : null;
+  const poweringOffKey = operation?.scope === scope ? operation.poweringOffKey : null;
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+  // Persistent: when on, a device opened from this list floats over chat
+  // instead of taking the panel. The workspace's own Float action still works.
+  // Its mini player shows over the thread's chat: with no chat tab open (or no
+  // thread), the device opens in its tab instead.
+  const chatShown = useLayoutStore(
+    (layoutState) => findThreadChat(layoutState.layout, props.threadRef) !== null,
+  );
+  const canFloat = !isThreadlessSurfacesRef(props.threadRef) && chatShown;
+  const [floatOverChat, setFloatOverChat] = useLocalStorage(
+    FLOAT_OVER_CHAT_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  // Holds the text of the last dismissed info alert, so a change in what the
+  // host can run brings the alert back.
+  const [dismissedAvailability, setDismissedAvailability] = useLocalStorage(
+    DISMISSED_AVAILABILITY_STORAGE_KEY,
+    "",
+    Schema.String,
+  );
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
 
   const hostDisabled = state.hostStatus === "disabled";
@@ -97,15 +161,21 @@ export function DevicePanel(props: {
     ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
-  const grouped = groupDevices(state);
+  const selectedHost =
+    state.hosts.find((host) => host.id === selectedHostId) ??
+    state.hosts.find((host) => state.hostStatuses[host.id]?.status === "ready") ??
+    state.hosts[0] ??
+    null;
+  const selectedHostKey = selectedHost?.id ?? null;
+  const grouped = groupDevices(state, selectedHostKey);
 
-  const startOperation = (pending: DeviceSummary | null) => {
-    const started = { scope, pending, error: null };
+  const startOperation = (pending: DeviceSummary | null, poweringOffKey: string | null = null) => {
+    const started = { scope, pending, poweringOffKey, error: null };
     setOperation(started);
     // Returning to the same thread can start a newer operation before this one settles.
     return (error: string | null) =>
       setOperation((current) =>
-        current === started ? { ...started, pending: null, error } : current,
+        current === started ? { ...started, pending: null, poweringOffKey: null, error } : current,
       );
   };
 
@@ -122,19 +192,37 @@ export function DevicePanel(props: {
         platform: device.platform,
       },
     });
-    if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
-    else {
-      // The server opened the device for the starting thread, so its tab opens there.
-      useRightPanelStore.getState().openDevice(props.threadRef, {
+    if (result._tag === "Failure") {
+      settleOperation(formatEnvironmentQueryError(result.cause));
+    } else {
+      const target = {
         hostId: result.value.hostId,
         deviceId: result.value.deviceId,
         platform: device.platform,
         name: device.name,
-      });
+      };
+      if (floatOverChat && canFloat) {
+        usePreviewMiniPlayerStore.getState().open(props.threadRef, { kind: "device", ...target });
+        useRightPanelStore.getState().close(props.threadRef);
+      } else {
+        useRightPanelStore.getState().openDevice(props.threadRef, target);
+      }
       settleOperation(null);
     }
   };
 
+  const powerOffDevice = (device: DeviceSummary) => {
+    const key = deviceKey(device);
+    const settleOperation = startOperation(null, key);
+    void shutdown({
+      environmentId,
+      input: { hostId: device.hostId, deviceId: device.id, platform: device.platform },
+    }).then((result) => {
+      settleOperation(result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null);
+    });
+  };
+
+  // Its mini player shows over a chat, so a threadless device has nowhere to float.
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
@@ -178,7 +266,6 @@ export function DevicePanel(props: {
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
-  const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
   // Without a first snapshot a failed subscription never settles on its own.
   const loadError = loaded ? null : stateError;
   const diagnostics = state.hosts.flatMap((host) => {
@@ -195,11 +282,19 @@ export function DevicePanel(props: {
         ]
       : [];
   });
-  const unavailablePlatforms = state.hosts.flatMap((host) =>
-    host.platforms
-      .filter((platform) => !platform.available)
-      .map((platform) => ({ ...platform, hostId: host.id, hostLabel: host.label })),
-  );
+  const availability = selectedHost
+    ? describeHostAvailability(
+        selectedHost,
+        state.devices.some(
+          (device) => device.hostId === selectedHost.id && device.platform === "android",
+        ),
+        state.agentAccessEnabled,
+        isAndroidDiscoveryUncertain(state),
+      )
+    : null;
+  const availabilityKey = availability
+    ? [availability.title, ...availability.details].join("\n")
+    : "";
 
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
     return (
@@ -216,16 +311,27 @@ export function DevicePanel(props: {
     );
   }
 
+  const showsWorkspace = activeDevice !== undefined && activeSession !== undefined;
+  const showsLoading = !showsWorkspace && (pendingDevice !== null || hostBusy || !loaded);
+  const hasNoticeAbove =
+    diagnostics.length > 0 ||
+    hasDeviceHostUpdates(state) ||
+    bootingDevices.length > 0 ||
+    operationError !== null;
+  // The device list scrolls up under a pane's tab row (--surface-top-inset). The live screen,
+  // the loading view and any notice above them keep below it.
+  const listReachesUnderHeader = !showsWorkspace && !showsLoading && !hasNoticeAbove;
+
   return (
     <PreviewPanelShell mode={props.mode}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           className={cn(
             "shrink-0 bg-background",
-            loading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
+            showsLoading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
           )}
         >
-          <div hidden={!!activeDevice}>
+          <div hidden={showsWorkspace}>
             {diagnostics.map((diagnostic) => (
               <DeviceDiscoveryWarning
                 key={`${environmentId}\u0000${diagnostic.hostId}`}
@@ -244,11 +350,32 @@ export function DevicePanel(props: {
             </div>
           ) : null}
           {operationError ? (
-            <DeviceNotice onDismiss={() => setOperation(null)}>{operationError}</DeviceNotice>
+            <div
+              role="alert"
+              className="flex items-start gap-2 border-b bg-error/5 px-3 py-2 text-xs text-error-foreground"
+            >
+              <p
+                tabIndex={0}
+                className="max-h-32 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words"
+              >
+                {operationError}
+              </p>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Dismiss device error"
+                onClick={() => setOperation(null)}
+              >
+                <X className="size-3" />
+              </Button>
+            </div>
           ) : null}
         </div>
-        <div className="@container relative flex min-h-0 flex-1">
-          {activeDevice && activeSession ? (
+        <div
+          className="@container relative flex min-h-0 flex-1"
+          data-surface-reaches-under-header={listReachesUnderHeader ? "" : undefined}
+        >
+          {showsWorkspace ? (
             <DeviceWorkspace
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
@@ -259,11 +386,11 @@ export function DevicePanel(props: {
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
               visible={props.visible}
-              onFloat={floatActive}
+              onFloat={canFloat ? floatActive : undefined}
               onClose={() => closeActive(false)}
               onPowerOff={() => closeActive(true)}
             />
-          ) : loading ? (
+          ) : showsLoading ? (
             <DeviceLoadingView
               name={pendingDevice?.name ?? "Devices"}
               description={
@@ -299,102 +426,133 @@ export function DevicePanel(props: {
               ) : null}
             </DeviceLoadingView>
           ) : (
-            <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
-              <div
-                className={cn(
-                  "mx-auto flex w-full max-w-xl flex-col gap-6",
-                  grouped.length === 0 && "my-auto items-center text-center",
-                )}
-              >
-                {grouped.length === 0 ? (
-                  <>
-                    <Smartphone className="size-6 opacity-60" />
-                    <p
-                      className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
-                      tabIndex={state.hostStatus === "failed" ? 0 : undefined}
+            <div className="scrollbar-gutter-both flex size-full scroll-pt-[var(--surface-top-inset,0px)] flex-col overflow-y-auto px-4 py-3.5 pt-under-header-3.5 text-sm text-muted-foreground">
+              <div className="mx-auto flex w-full max-w-xl flex-col gap-3.5">
+                <div className="flex items-center gap-2">
+                  {selectedHost ? (
+                    <Select
+                      value={selectedHost.id}
+                      items={Object.fromEntries(state.hosts.map((host) => [host.id, host.label]))}
+                      onValueChange={(value) => {
+                        if (typeof value === "string") setSelectedHostId(value);
+                      }}
                     >
-                      {state.hostStatus === "failed"
-                        ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                        : "No simulators or emulators were found on this environment."}
-                    </p>
-                  </>
+                      <SelectTrigger aria-label="Device host" className="w-auto max-w-60">
+                        {selectedHost.kind === "eas" || selectedHost.kind === "simlock" ? (
+                          <CloudIcon />
+                        ) : selectedHost.kind === "ssh" ? (
+                          <Server />
+                        ) : (
+                          <Monitor />
+                        )}
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {state.hosts.map((host) => (
+                          <SelectItem key={host.id} value={host.id}>
+                            {host.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  ) : null}
+                  <div className="flex-1" />
+                  <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                    Float over chat
+                    <Switch
+                      size="sm"
+                      checked={floatOverChat}
+                      onCheckedChange={(checked) => setFloatOverChat(checked)}
+                    />
+                  </label>
+                </div>
+                {grouped.length === 0 ? (
+                  <Empty size="compact" role="status" className="min-h-0">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        {state.hostStatus === "failed" ? <TriangleAlert /> : <Smartphone />}
+                      </EmptyMedia>
+                      <EmptyTitle>
+                        {state.hostStatus === "failed"
+                          ? "Device hub didn't start"
+                          : "No devices found"}
+                      </EmptyTitle>
+                      <EmptyDescription
+                        className="max-h-32 w-full overflow-y-auto whitespace-pre-line break-words"
+                        tabIndex={state.hostStatus === "failed" ? 0 : undefined}
+                      >
+                        {state.hostStatus === "failed"
+                          ? (state.hostStatusDetail ?? "The device hub failed to start.")
+                          : "No simulators or emulators were found on this environment."}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    {loaded && !hostBusy ? (
+                      <EmptyContent>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void list({ environmentId, input: {} })}
+                        >
+                          <RotateCw />
+                          Refresh devices
+                        </Button>
+                      </EmptyContent>
+                    ) : null}
+                  </Empty>
                 ) : null}
-                {hostReady && grouped.length > 0 ? (
-                  <div className="w-full space-y-6 text-left">
-                    {grouped.map((group) => (
-                      <section key={group.platform} className="space-y-3">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Smartphone className="size-4 shrink-0" />
-                          <h3 className="font-medium">{platformLabel(group.platform)}</h3>
-                        </div>
+                {hostReady && grouped.length > 0
+                  ? grouped.map((group) => (
+                      <LabeledSection key={group.platform} label={platformLabel(group.platform)}>
                         <DiscoveryList>
                           {group.devices.map((device) => (
-                            <div
+                            <DeviceRow
                               key={deviceKey(device)}
-                              className="flex items-center gap-3 px-3 py-3"
-                            >
-                              <span className="grid size-8 shrink-0 place-items-center rounded-control surface-raised">
-                                <Smartphone className="size-4" />
-                              </span>
-                              <div className="flex min-w-0 flex-1 flex-col">
-                                <span className="truncate text-sm font-medium text-foreground">
-                                  {device.name}
-                                </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  <Tooltip>
-                                    <TooltipTrigger render={<span tabIndex={0} />}>
-                                      {device.version}
-                                    </TooltipTrigger>
-                                    <TooltipPopup>
-                                      <span className="grid gap-1">
-                                        <span>
-                                          {
-                                            state.hosts.find((host) => host.id === device.hostId)
-                                              ?.label
-                                          }
-                                        </span>
-                                        <span>{device.booted ? "Running" : "Stopped"}</span>
-                                      </span>
-                                    </TooltipPopup>
-                                  </Tooltip>
-                                </span>
-                              </div>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                disabled={pendingDeviceKey !== null}
-                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
-                                onClick={() => void selectDevice(deviceKey(device))}
-                              >
-                                {pendingDeviceKey === deviceKey(device) ? (
-                                  <Spinner size="xs" />
-                                ) : device.booted ? (
-                                  <ArrowUpRight />
-                                ) : (
-                                  <Play />
-                                )}
-                                {device.booted ? "Open" : "Start"}
-                              </Button>
-                            </div>
+                              device={device}
+                              simlock={selectedHost?.kind === "simlock"}
+                              pending={
+                                pendingDeviceKey === deviceKey(device) ||
+                                poweringOffKey === deviceKey(device)
+                              }
+                              disabled={pendingDeviceKey !== null || poweringOffKey !== null}
+                              onOpen={() => void selectDevice(deviceKey(device))}
+                              onPowerOff={() => powerOffDevice(device)}
+                            />
                           ))}
                         </DiscoveryList>
-                      </section>
-                    ))}
-                  </div>
-                ) : null}
+                      </LabeledSection>
+                    ))
+                  : null}
                 {hostReady &&
-                !isAndroidDiscoveryUncertain(state) &&
-                !state.devices.some((device) => device.platform === "android") &&
-                !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
-                  <p className="max-w-sm text-xs">
-                    No Android virtual devices found. Create one in Android Studio's Device Manager,
-                    then refresh.
-                  </p>
+                availability &&
+                !(availability.available && dismissedAvailability === availabilityKey) ? (
+                  <Alert
+                    role="status"
+                    variant={availability.available ? "info" : "warning"}
+                    controlAlignment="first-line"
+                  >
+                    {availability.available ? <Info /> : <TriangleAlert />}
+                    <AlertTitle>{availability.title}</AlertTitle>
+                    {availability.details.length > 0 ? (
+                      <AlertDescription>{availability.details.join(" ")}</AlertDescription>
+                    ) : null}
+                    {availability.available ? (
+                      <AlertAction>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label="Dismiss device availability"
+                          onClick={() => setDismissedAvailability(availabilityKey)}
+                        >
+                          <X />
+                        </Button>
+                      </AlertAction>
+                    ) : null}
+                  </Alert>
                 ) : null}
-                {loaded && !hostBusy ? (
+                {loaded && !hostBusy && grouped.length > 0 ? (
                   <Button
-                    className={grouped.length > 0 ? "self-start" : "self-center"}
-                    variant={grouped.length > 0 ? "ghost" : "secondary"}
+                    className="self-start"
+                    variant="ghost"
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
@@ -410,27 +568,89 @@ export function DevicePanel(props: {
   );
 }
 
-function DeviceNotice(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
+/**
+ * One device: the name opens (or starts) it like the whole row did before, the
+ * chip says whether it runs, and the button boots or powers it off.
+ */
+function DeviceRow(props: {
+  readonly device: DeviceSummary;
+  readonly simlock: boolean;
+  readonly pending: boolean;
+  readonly disabled: boolean;
+  readonly onOpen: () => void;
+  readonly onPowerOff: () => void;
+}) {
+  const { device } = props;
+  const DeviceIcon = /ipad|tablet/i.test(device.name) ? Tablet : Smartphone;
   return (
-    <div
-      role="alert"
-      className="flex items-start gap-2 border-b bg-error/5 px-3 py-2 text-xs text-error-foreground"
-    >
-      <CircleAlert className="mt-1 size-3.5 shrink-0" />
-      <div
-        className="max-h-32 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words"
-        tabIndex={0}
-      >
-        {props.children}
-      </div>
+    <div className="flex items-center gap-3 px-3.5 py-2.5">
       <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Dismiss device error"
-        onClick={props.onDismiss}
+        type="button"
+        variant="bare"
+        size="sm-multiline"
+        disabled={props.disabled}
+        aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+        onClick={props.onOpen}
+        className="-ms-2.5 min-w-0 flex-1 justify-start text-left"
       >
-        <X />
+        <span className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="grid size-8 shrink-0 place-items-center rounded-control surface-raised text-foreground">
+            <DeviceIcon className="size-3.75" />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-label text-foreground">{device.name}</span>
+            <span className="truncate text-caption text-dim-foreground">{device.version}</span>
+          </span>
+        </span>
       </Button>
+      <Badge variant={device.booted ? "success" : "secondary"}>
+        {device.physical
+          ? "Connected"
+          : device.booted
+            ? "Running"
+            : props.simlock
+              ? "Available"
+              : "Shut down"}
+      </Badge>
+      {props.pending ? (
+        <Spinner size="xs" />
+      ) : device.physical ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          disabled={props.disabled}
+          aria-label={`Open ${device.name}`}
+          onClick={props.onOpen}
+        >
+          <ArrowUpRight />
+          Open
+        </Button>
+      ) : device.booted ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          disabled={props.disabled}
+          aria-label={`${props.simlock ? "Return to pool" : "Power off"} ${device.name}`}
+          onClick={props.onPowerOff}
+        >
+          <Power />
+          {props.simlock ? "Return to pool" : "Power off"}
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          disabled={props.disabled}
+          aria-label={`${props.simlock ? "Lease" : "Boot"} ${device.name}`}
+          onClick={props.onOpen}
+        >
+          <Play />
+          {props.simlock ? "Lease" : "Boot"}
+        </Button>
+      )}
     </div>
   );
 }
@@ -452,22 +672,17 @@ function DeviceDiscoveryWarning(props: {
     platform === "ios" ? "iOS" : "Android",
   );
   return (
-    <div
-      role="status"
-      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-meta text-muted-foreground"
-    >
-      <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
-        <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
-        <span className="min-w-0">
-          {platforms.length > 0
-            ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
-            : `Device discovery on ${props.label} reported a warning.`}
-        </span>
-      </span>
-      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+    <Alert variant="warning" controlAlignment="first-line" role="status">
+      <TriangleAlert />
+      <AlertTitle>
+        {platforms.length > 0
+          ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
+          : `Device discovery on ${props.label} reported a warning.`}
+      </AlertTitle>
+      <AlertAction>
         {platforms.length > 0 ? (
           <Button
-            size="micro"
+            size="xs"
             variant="ghost"
             disabled={retrying}
             aria-label={`Retry device discovery on ${props.label}`}
@@ -482,7 +697,7 @@ function DeviceDiscoveryWarning(props: {
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger
             aria-label={`Details for ${props.label}`}
-            render={<Button size="micro" variant="ghost" />}
+            render={<Button size="xs" variant="ghost" />}
           >
             Details
           </PopoverTrigger>
@@ -493,7 +708,7 @@ function DeviceDiscoveryWarning(props: {
           </PopoverPopup>
         </Popover>
         <Button
-          size="icon-micro"
+          size="icon-xs"
           variant="ghost"
           aria-label={`Dismiss device warning for ${props.label}`}
           onClick={() => {
@@ -503,16 +718,82 @@ function DeviceDiscoveryWarning(props: {
         >
           <X />
         </Button>
-      </span>
-    </div>
+      </AlertAction>
+    </Alert>
   );
 }
 
-function groupDevices(state: DeviceServiceState) {
+const platformToolLabel = (platform: DevicePlatform) =>
+  platform === "ios" ? "Xcode and iOS Simulator" : "The Android SDK and Emulator";
+
+/** The availability alert under the list: what this host can run and why not. */
+function describeHostAvailability(
+  host: DeviceHostSummary,
+  hasAndroidDevices: boolean,
+  agentAccessEnabled: boolean,
+  androidDiscoveryUncertain: boolean,
+) {
+  const ios = host.platforms.find((platform) => platform.platform === "ios");
+  const android = host.platforms.find((platform) => platform.platform === "android");
+  const available = host.platforms.filter((platform) => platform.available);
+  if (host.kind === "simlock") {
+    return {
+      available: available.length > 0,
+      title: `${host.label} leases devices from a Simlock pool.`,
+      details: [
+        "Returning a device to the pool wipes it.",
+        ...new Set(
+          host.platforms.flatMap((platform) =>
+            !platform.available && platform.reason ? [platform.reason] : [],
+          ),
+        ),
+      ],
+    };
+  }
+  const details: string[] = [];
+  const first = available[0];
+  const cloudDevices = available
+    .map(({ platform }) => (platform === "ios" ? "iOS Simulators" : "Android emulators"))
+    .join(" and ");
+  const title = first
+    ? host.kind === "eas"
+      ? `${host.label} starts ${cloudDevices} in the cloud with EAS Simulator.`
+      : `${platformToolLabel(first.platform)} are available.`
+    : host.kind === "eas"
+      ? "EAS Simulator is unavailable on this host."
+      : "No simulator or emulator tools are available on this host.";
+  if (host.kind !== "eas" && ios?.available && android?.available) {
+    details.push(`${platformToolLabel("android")} are available too.`);
+  }
+  for (const platform of host.platforms) {
+    if (platform.available) continue;
+    details.push(
+      platform.reason ?? `${platform.platform === "ios" ? "iOS" : "Android"} is unavailable.`,
+    );
+  }
+  if (
+    host.kind !== "eas" &&
+    !androidDiscoveryUncertain &&
+    android?.available !== false &&
+    !hasAndroidDevices
+  ) {
+    details.push(
+      "No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.",
+    );
+  }
+  if (agentAccessEnabled && available.length > 0) {
+    details.push("Agents can boot a device when they need one.");
+  }
+  return { available: available.length > 0, title, details };
+}
+
+function groupDevices(state: DeviceServiceState, hostId: string | null) {
   const groups: Array<{ platform: DevicePlatform; devices: DeviceSummary[] }> = [];
   for (const platform of ["ios", "android"] as const) {
     const devices = state.devices
-      .filter((device) => device.platform === platform)
+      .filter(
+        (device) => device.platform === platform && (hostId === null || device.hostId === hostId),
+      )
       .toSorted((a, b) => Number(b.booted) - Number(a.booted) || a.name.localeCompare(b.name));
     if (devices.length > 0) groups.push({ platform, devices });
   }

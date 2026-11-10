@@ -55,10 +55,15 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
+import { forgetThreadSettledByUser, markThreadSettledByUser } from "../layout/settledByUser";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
+import { discardThreadSurfaces } from "../components/ThreadSurfaceTab";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { closeLayoutThread } from "../layout/layoutActions";
+import { findLayoutChatForThread } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -392,6 +397,8 @@ export function useThreadActions() {
     }
 
     const requestingRouteHref = router.state.location.href;
+    const hadLayoutChat =
+      findLayoutChatForThread(useLayoutStore.getState().layout, threadRef) !== null;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -406,6 +413,7 @@ export function useThreadActions() {
       return archiveResult;
     }
     expireThreadUndos(threadRef, LIST_PLACEMENT_UNDO_KINDS);
+    closeLayoutThread(threadRef);
     const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
@@ -419,7 +427,11 @@ export function useThreadActions() {
       failureTitle: "Failed to undo archive",
     });
 
-    if (shouldNavigateToDraft && router.state.location.href === requestingRouteHref) {
+    if (
+      !hadLayoutChat &&
+      shouldNavigateToDraft &&
+      router.state.location.href === requestingRouteHref
+    ) {
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -445,6 +457,7 @@ export function useThreadActions() {
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success") {
+        closeLayoutThread(target);
         expireThreadUndos(target, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
         refreshArchivedThreadsForEnvironment(target.environmentId);
         clearDeletedThreadPanelState(target);
@@ -528,7 +541,7 @@ export function useThreadActions() {
             "",
             "Delete the worktree too?",
           ].join("\n"),
-          { variant: "destructive" },
+          { variant: "destructive", confirmLabel: "Delete worktree" },
         ),
       );
       if (confirmationResult._tag === "Failure") {
@@ -545,6 +558,8 @@ export function useThreadActions() {
     }
 
     const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
+    const hadLayoutChat =
+      findLayoutChatForThread(useLayoutStore.getState().layout, threadRef) !== null;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToFallback =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -563,6 +578,7 @@ export function useThreadActions() {
     if (deleteResult._tag === "Failure") {
       return deleteResult;
     }
+    closeLayoutThread(threadRef);
     expireThreadUndos(threadRef, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     releaseComposerDraftUploads(threadRef);
@@ -571,10 +587,12 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
+    // Its surface tabs go with it: browsers and terminals end, the tabs close.
+    discardThreadSurfaces(threadRef);
     clearTerminalUiState(threadRef);
     clearDeletedThreadPanelState(threadRef);
 
-    if (shouldNavigateToFallback) {
+    if (!hadLayoutChat && shouldNavigateToFallback) {
       const fallbackThread = fallbackThreadId
         ? readThreadShell(scopeThreadRef(threadRef.environmentId, fallbackThreadId))
         : null;
@@ -663,6 +681,7 @@ export function useThreadActions() {
       );
     }
     ThreadUndo.invalidate("settle", scopedThreadKey(target));
+    forgetThreadSettledByUser(scopedThreadKey(target));
     // reason "user" pins active until real activity, suppressing auto-settle.
     return unsettleThreadMutation({
       environmentId: target.environmentId,
@@ -772,6 +791,8 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
+    markThreadSettledByUser(scopedThreadKey(target));
+    closeLayoutThread(target);
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(target), wokeAt);
     }
@@ -888,6 +909,7 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
+    closeLayoutThread(target);
     showThreadUndoNotice({
       action: "Snoozed",
       claim: action,
@@ -928,15 +950,14 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? knownTitle ?? "this thread";
+      const knownName = resolved?.thread.title ?? knownTitle;
+      const title = knownName ? `"${knownName}"` : "this thread";
       const confirmationResult = await settlePromise(() =>
-        localApi.dialogs.confirm(
-          [
-            `Delete thread "${title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-          { variant: "destructive" },
-        ),
+        localApi.dialogs.confirm(`This deletes ${title} and its chat history.`, {
+          variant: "destructive",
+          title: "Delete thread?",
+          confirmLabel: "Delete thread",
+        }),
       );
       if (confirmationResult._tag === "Failure") {
         return confirmationResult;

@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as SharedKeybindings from "@t3tools/shared/keybindings";
+import { evaluateWhenNode } from "@t3tools/shared/keybindingMatching";
 import { KeybindingsConfigError, MAX_KEYBINDINGS_COUNT } from "@t3tools/contracts";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
@@ -338,7 +339,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
+      assert.isFalse(
+        persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+      );
       assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
 
       assert.isTrue(
@@ -352,6 +355,81 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       ),
     );
   });
+
+  it.effect("replaces retired defaults received from an older server", () =>
+    Effect.sync(() => {
+      const bindings = SharedKeybindings.mergeWithDefaultKeybindings(
+        SharedKeybindings.compileResolvedKeybindingsConfig([
+          ...SharedKeybindings.RETIRED_DEFAULT_KEYBINDINGS,
+          { key: "alt+w", command: "rightPanel.close", when: "!terminalFocus" },
+        ]),
+      );
+      for (const [key, shiftKey, context, command] of [
+        ["d", false, {}, "diff.toggle"],
+        ["\\", false, {}, "layout.splitRight"],
+        ["t", false, { rightPanelOpen: true }, "tab.new"],
+        ["w", false, {}, "tab.close"],
+        ["l", false, { previewFocus: true }, "preview.focusUrl"],
+        ["l", true, { assistantSelection: true }, "chat.citeSelection"],
+        ["l", true, {}, "composer.previousWorktree"],
+      ] as const) {
+        assert.equal(
+          bindings.findLast(
+            (binding) =>
+              SharedKeybindings.matchesKeybindingShortcut(
+                { key, shiftKey, metaKey: true, ctrlKey: false, altKey: false },
+                binding.shortcut,
+                "MacIntel",
+              ) &&
+              (!binding.whenAst || evaluateWhenNode(binding.whenAst, context)),
+          )?.command,
+          command,
+        );
+      }
+      assert.deepInclude(
+        bindings,
+        SharedKeybindings.compileResolvedKeybindingRule({
+          key: "alt+w",
+          command: "rightPanel.close",
+          when: "!terminalFocus",
+        }),
+      );
+    }),
+  );
+
+  it.effect("drops a retired default so its replacement takes the key", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
+        { key: "mod+shift+d", command: "layout.splitRight" },
+        { key: "mod+w", command: "rightPanel.close", when: "(!terminalFocus)" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(
+        persisted.some((entry) => entry.command === "layout.splitRight" && entry.key === "mod+d"),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "layout.splitRight" && entry.key === "mod+shift+d",
+        ),
+      );
+      assert.isTrue(
+        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+d"),
+      );
+      assert.deepInclude(persisted, {
+        key: "mod+w",
+        command: "rightPanel.close",
+        when: "(!terminalFocus)",
+      });
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
 
   it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {

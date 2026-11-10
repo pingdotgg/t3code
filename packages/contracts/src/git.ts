@@ -88,6 +88,8 @@ export const VcsRef = Schema.Struct({
   upstreamRef: Schema.optional(TrimmedNonEmptyStringSchema),
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
+  /** Unix seconds of the ref's last commit, for the picker's age column. */
+  lastCommitAt: Schema.optional(NonNegativeInt),
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsRef = typeof VcsRef.Type;
@@ -216,6 +218,16 @@ const VcsStatusChangeRequest = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+/** How a working-tree file differs from HEAD; the files tree labels rows with it. */
+export const VcsWorkingTreeFileStatus = Schema.Literals([
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "untracked",
+]);
+export type VcsWorkingTreeFileStatus = typeof VcsWorkingTreeFileStatus.Type;
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -232,6 +244,8 @@ const VcsStatusLocalShape = {
         path: GitFilePath,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Optional for compatibility with older servers. */
+        status: Schema.optional(VcsWorkingTreeFileStatus),
       }),
     ),
     insertions: NonNegativeInt,

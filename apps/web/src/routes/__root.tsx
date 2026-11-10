@@ -19,9 +19,10 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { WelcomeWizardCoordinator } from "../components/onboarding/WelcomeWizardCoordinator";
+import { ClientSettingsRecoveryGate } from "../components/ClientSettingsRecoveryGate";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
-import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
@@ -31,6 +32,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -47,6 +49,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useUiStateStore } from "../uiStateStore";
+import { wasLayoutSavedBeforeLoad } from "../layout/layoutStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
@@ -146,9 +149,6 @@ function RootRouteBranch() {
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
   // A sync IPC read; the setting only changes across a relaunch.
   const [localEnvironmentDisabled] = useState(isLocalEnvironmentDisabled);
-  // Once true, stays true: a visit to /welcome means the bootstrap already chose a route.
-  const [returningFromWelcome, setReturningFromWelcome] = useState(pathname === "/welcome");
-  if (pathname === "/welcome" && !returningFromWelcome) setReturningFromWelcome(true);
   const hostedPromptLinkLanding = useHostedPromptLinkLanding(
     authGateState.status === "hosted-static",
   );
@@ -159,23 +159,8 @@ function RootRouteBranch() {
     return <Outlet />;
   }
 
-  // Handle links before onboarding redirects lose them.
   if (hostedPromptLinkLanding !== null) {
     return hostedPromptLinkLanding;
-  }
-
-  if (pathname === "/welcome") {
-    return (
-      <>
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
-        <CommandPalette>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
-        </CommandPalette>
-      </>
-    );
   }
 
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
@@ -191,36 +176,31 @@ function RootRouteBranch() {
   );
 
   return (
-    <>
+    <ClientSettingsRecoveryGate>
+      {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+      {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
+        <DesktopWebLinkCoordinator />
+      ) : null}
+      {isElectron ? <RunningThreadKeepAlive /> : null}
+      <RelayClientInstallDialog />
+      <ConnectOnboardingDialog />
+      <SshPasswordPromptDialog />
+      <SnapShotCoordinator />
+      <ReopenClosedViewShortcut />
+      <ConfirmDialogHost />
+      <CustomSnoozeDialogHost />
+      <GuestShareDialogHost />
+      <ProjectCloneToastCoordinator />
+      <ProviderUpdateLaunchNotification />
+      <AddProjectToMachineDialogHost />
+      {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
+      {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+      {appShell}
+      <WelcomeWizardCoordinator />
       <ChatGptWelcomeCoordinator />
-      <FirstRunGate
-        enabled={primaryEnvironmentAuthenticated}
-        hostedStatic={authGateState.status === "hosted-static"}
-      >
-        {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-        {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
-          <DesktopWebLinkCoordinator />
-        ) : null}
-        {isElectron ? <RunningThreadKeepAlive /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
-        <SnapShotCoordinator />
-        <ReopenClosedViewShortcut />
-        <ConfirmDialogHost />
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
-        <ProjectCloneToastCoordinator />
-        <AddProjectToMachineDialogHost />
-        {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
-        {primaryEnvironmentAuthenticated ? (
-          <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
-        ) : null}
-        {appShell}
-        {/* Keep the theme editor above the router so drafts survive navigation. */}
-        <ThemeEditorHost />
-      </FirstRunGate>
-    </>
+      {/* Keep the theme editor above the router so drafts survive navigation. */}
+      <ThemeEditorHost />
+    </ClientSettingsRecoveryGate>
   );
 }
 
@@ -232,7 +212,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const report = errorReport(error, pathname);
 
   return (
-    <StandalonePage>
+    <StandalonePage tone="error">
       <StandalonePageHeader title="Something went wrong." description={message} />
 
       <div className="mt-5 flex flex-wrap gap-2">
@@ -313,11 +293,7 @@ function errorReport(error: unknown, pathname: string): string {
   return lines.join("\n");
 }
 
-function EventRouter({
-  skipInitialBootstrapNavigation,
-}: {
-  readonly skipInitialBootstrapNavigation: boolean;
-}) {
+function EventRouter() {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -325,7 +301,6 @@ function EventRouter({
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
-  const skipInitialBootstrapNavigationRef = useRef(skipInitialBootstrapNavigation);
 
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
@@ -349,12 +324,9 @@ function EventRouter({
         );
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
-      if (readPathname() !== "/") {
-        return;
-      }
-      if (skipInitialBootstrapNavigationRef.current) {
-        skipInitialBootstrapNavigationRef.current = false;
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+      // A first run opens the starter thread; after that the saved layout
+      // decides, so a user who closed everything sees the launcher.
+      if (readPathname() !== "/" || wasLayoutSavedBeforeLoad()) {
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {

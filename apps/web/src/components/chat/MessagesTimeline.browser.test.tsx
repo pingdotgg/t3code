@@ -272,6 +272,39 @@ it("keeps collapsed approval shortcuts and disabled cancel actions inert", async
 });
 
 describe("MessagesTimeline work rows", () => {
+  it("does not rerender settled resource rows when the active answer streams", async () => {
+    const runId = RunId.make("streaming-run");
+    const resource: Entry = {
+      kind: "html-render",
+      id: "settled-resource",
+      createdAt: CREATED_AT,
+      runId: null,
+      htmlRender: { attachmentId: "visual", title: "Settled visual", height: 80 },
+    };
+    const renderHtmlRender = vi.fn(() => <span>Settled visual</span>);
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      renderHtmlRender,
+    };
+    const entries = (text: string) => [
+      resource,
+      message("Continue", { runId }),
+      message(text, { role: "assistant", runId, streaming: true }, "answer"),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries("First chunk")} />,
+    );
+    await expect.element(screen.getByText("First chunk", { exact: true })).toBeVisible();
+    renderHtmlRender.mockClear();
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={entries("Second chunk")} />,
+    );
+    await expect.element(screen.getByText("Second chunk", { exact: true })).toBeVisible();
+    expect(renderHtmlRender).not.toHaveBeenCalled();
+  });
+
   it("keeps the worked-for heading in place when expanded at the bottom", async () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
@@ -1023,6 +1056,7 @@ describe("MessagesTimeline citations", () => {
       attemptOrdinal: ordinal,
       rootNodeId: `node-${id}` as never,
       status,
+      startedAt: null,
       completedAt: null,
     });
     const superseded = attempt("attempt-1", 1, "superseded");

@@ -5,6 +5,7 @@ import {
 import { FileDiffIcon, FileMinusIcon, FilePlusIcon, ShieldIcon } from "lucide-react";
 import { memo, use, useState } from "react";
 import { type PendingApproval } from "../../session-logic";
+import { formatWorkspaceRelativeDetail, formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { cn } from "../../lib/utils";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -26,7 +27,9 @@ function ApprovalFileDiff({ file }: { file: NonNullable<PendingApproval["files"]
   const diff = file.diff || (item?.type === "file_change" ? item.diffStr : undefined);
   return (
     <div>
-      <div className="text-dim-foreground">{file.path}</div>
+      <div className="text-dim-foreground">
+        {formatWorkspaceRelativePath(file.path, ctx.workspaceRoot)}
+      </div>
       {diff ? (
         <pre>
           <ApprovalDiffLines diff={diff} />
@@ -94,8 +97,12 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
 }) {
   const [diffRequestId, setDiffRequestId] = useState<PendingApproval["requestId"] | null>(null);
   const diffOpen = diffRequestId === approval.requestId;
-  const { onRespondToApproval } = use(TimelineRowCtx);
+  const { onRespondToApproval, workspaceRoot } = use(TimelineRowCtx);
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
+  const detail =
+    approval.requestKind === "file-change"
+      ? formatWorkspaceRelativeDetail(approval.detail, workspaceRoot)
+      : approval.detail;
   const canRespond = approval.responseCapability === "live";
   const files = approval.requestKind === "file-change" ? (approval.files ?? []) : [];
   const diffFiles = files.filter((file, index) =>
@@ -119,14 +126,17 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         />
       }
       label={
-        <code
+        <div
           aria-label={presentation.detailLabel}
-          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-meta leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className={cn(
+            "block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap text-meta leading-5 text-muted-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            approval.requestKind === "command" && "font-mono text-foreground",
+          )}
           data-approval-detail="complete"
           tabIndex={0}
         >
-          {approval.detail || presentation.label}
-        </code>
+          {detail || presentation.label}
+        </div>
       }
     >
       <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-meta">
@@ -158,13 +168,15 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
                   <FileDiffIcon aria-hidden className="size-[13px] shrink-0 text-info-foreground" />
                 )}
                 <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 truncate" />}>
-                    {file.path}
+                  <TooltipTrigger
+                    render={<span className="min-w-0 truncate text-muted-foreground" />}
+                  >
+                    {formatWorkspaceRelativePath(file.path, workspaceRoot)}
                   </TooltipTrigger>
                   <TooltipPopup>{file.path}</TooltipPopup>
                 </Tooltip>
                 {file.additions !== undefined || file.deletions !== undefined ? (
-                  <span className="shrink-0 font-mono text-caption tabular-nums">
+                  <span className="shrink-0 text-meta tabular-nums">
                     <span className="text-success-foreground">+{file.additions ?? 0}</span>{" "}
                     <span className="text-error-foreground">−{file.deletions ?? 0}</span>
                   </span>

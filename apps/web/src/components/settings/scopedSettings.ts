@@ -381,7 +381,7 @@ export function listProjectOverrides(
 export function planProjectOverridesClear(
   environments: readonly ScopedSettingsEnvironment[],
   entries: readonly ProjectOverrideEntry[],
-  keys: readonly ProjectScopedServerSettingKey[],
+  keys: readonly (keyof ProjectSettingsOverrides)[],
 ) {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
@@ -389,6 +389,17 @@ export function planProjectOverridesClear(
     const environment = byId.get(environmentId);
     if (!environment?.serverConfig || environment.connection.phase !== "connected") continue;
     const settings = environment.serverConfig.settings;
+    const current = settings.projectSettingsOverrides[projectId];
+    const remaining = { ...current };
+    for (const key of keys) delete remaining[key];
+    const next =
+      Object.keys(remaining).length === 0
+        ? null
+        : {
+            ...remaining,
+            // The server preserves omitted provider overrides when replacing an entry.
+            ...(keys.includes("providerInstances") ? { providerInstances: {} } : {}),
+          };
     const existing = writes.get(environmentId);
     writes.set(environmentId, {
       environmentId,
@@ -397,7 +408,7 @@ export function planProjectOverridesClear(
       patch: {
         projectSettingsOverrides: {
           ...existing?.patch.projectSettingsOverrides,
-          [projectId]: clearProjectSettingsOverrides(settings, projectId, keys),
+          [projectId]: next,
         },
       },
     });
@@ -501,4 +512,53 @@ export async function persistScopedSettingsPatch(
     savedEnvironments,
     savedEnvironmentCount: savedEnvironments.length,
   };
+}
+
+/**
+ * Settings the scope picker's "Reset overrides" clears. Project actions live
+ * in `defaultProjectScripts` too, but they are project content managed on the
+ * Projects page, not a setting that shadows an environment value.
+ */
+export const RESETTABLE_PROJECT_OVERRIDE_KEYS = [
+  ...PROJECT_SCOPED_SERVER_SETTING_KEYS.filter((key) => key !== "defaultProjectScripts"),
+  "providerInstances",
+] as const;
+
+interface ProjectOverrideGroup {
+  readonly projectKey: string;
+  readonly memberProjects: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+  }[];
+}
+
+/**
+ * Per logical project, how many settings its checkouts override on the given
+ * environments, plus the entries a bulk reset clears.
+ */
+export function summarizeProjectOverrides(
+  groups: readonly ProjectOverrideGroup[],
+  environments: readonly ScopedSettingsEnvironment[],
+) {
+  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
+  const countByProjectKey = new Map<string, number>();
+  const entries: ProjectOverrideEntry[] = [];
+  for (const group of groups) {
+    const keys = new Set<string>();
+    for (const member of group.memberProjects) {
+      const override = byId.get(member.environmentId)?.serverConfig?.settings
+        .projectSettingsOverrides[member.id];
+      if (!override) continue;
+      const overridden = RESETTABLE_PROJECT_OVERRIDE_KEYS.filter(
+        (key) =>
+          override[key] !== undefined &&
+          (key !== "providerInstances" || Object.keys(override.providerInstances ?? {}).length > 0),
+      );
+      if (overridden.length === 0) continue;
+      entries.push({ environmentId: member.environmentId, projectId: member.id });
+      for (const key of overridden) keys.add(key);
+    }
+    if (keys.size > 0) countByProjectKey.set(group.projectKey, keys.size);
+  }
+  return { countByProjectKey, entries };
 }

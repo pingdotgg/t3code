@@ -11,10 +11,54 @@ index 358fcd7..e3c7de6 100644
       * Maintains visibility of content.
       * - size (default: true) stabilizes during size/layout changes while scrolling.
 diff --git a/react.js b/react.js
-index 5155454..7992d68 100644
+index 5155454..ddb57ab 100644
 --- a/react.js
 +++ b/react.js
-@@ -6290,7 +6290,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -3489,6 +3489,16 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Client rects include ancestor transforms (a zoomed-out overview scales the
++// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  const layoutWidth = element.offsetWidth;
++  if (!layoutWidth || !rect.width) return rect;
++  const scale = rect.width / layoutWidth;
++  if (Math.abs(scale - 1) < 0.05) return rect;
++  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5646,7 +5656,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
+       const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -6214,7 +6224,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6227,7 +6237,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6290,13 +6300,13 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        size: layout
      });
    };
@@ -23,7 +67,14 @@ index 5155454..7992d68 100644
    if (shouldDeferWebShrinkLayoutUpdate) {
      scheduleWebShrinkMeasurement(state, () => {
        var _a4;
-@@ -9133,6 +9133,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        const rect = element == null ? void 0 : measureLayoutRect(element);
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -9133,6 +9143,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      getFixedItemSize,
      getItemType,
      horizontal,
@@ -31,7 +82,7 @@ index 5155454..7992d68 100644
      rtl,
      estimatedHeaderSize,
      initialScrollAtEnd = false,
-@@ -9431,6 +9432,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -9431,6 +9442,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      hasExternalScroll,
      hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
      horizontal: !!horizontal,
@@ -40,10 +91,54 @@ index 5155454..7992d68 100644
      keyExtractor: useWrapIfItem(keyExtractor),
      maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/react.mjs b/react.mjs
-index ce08abe..c1f0b6f 100644
+index ce08abe..35d89ab 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -6269,7 +6269,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -3468,6 +3468,16 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Client rects include ancestor transforms (a zoomed-out overview scales the
++// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  const layoutWidth = element.offsetWidth;
++  if (!layoutWidth || !rect.width) return rect;
++  const scale = rect.width / layoutWidth;
++  if (Math.abs(scale - 1) < 0.05) return rect;
++  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5625,7 +5635,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
+       const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -6193,7 +6203,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6206,7 +6216,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6269,13 +6279,13 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        size: layout
      });
    };
@@ -52,7 +147,14 @@ index ce08abe..c1f0b6f 100644
    if (shouldDeferWebShrinkLayoutUpdate) {
      scheduleWebShrinkMeasurement(state, () => {
        var _a4;
-@@ -9112,6 +9112,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        const rect = element == null ? void 0 : measureLayoutRect(element);
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -9112,6 +9122,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      getFixedItemSize,
      getItemType,
      horizontal,
@@ -60,7 +162,7 @@ index ce08abe..c1f0b6f 100644
      rtl,
      estimatedHeaderSize,
      initialScrollAtEnd = false,
-@@ -9410,6 +9411,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -9410,6 +9421,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      hasExternalScroll,
      hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
      horizontal: !!horizontal,

@@ -1,5 +1,8 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
 const rowTravel = (height: number) => Math.min(height, 40);
+const EXIT_FADE_END = 0.4;
+const ENTRY_FADE_START = 0.6;
+const MAX_SLIDE_ROWS = 1.5;
 // Fades clone removed rows and animate clones and entries; intervening layout reads force reflows.
 const MAX_FADED_ROWS_PER_UPDATE = 40;
 
@@ -9,6 +12,33 @@ function progress(animation: Animation) {
   return animation.playState === "finished"
     ? 1
     : (animation.effect?.getComputedTiming().progress ?? 0);
+}
+
+function entryOpacity(animation: Animation) {
+  return Math.max(0, (progress(animation) - ENTRY_FADE_START) / (1 - ENTRY_FADE_START));
+}
+
+function crossingRows(order: readonly HTMLElement[], previousIndex: Map<HTMLElement, number>) {
+  const retained = order.filter((node) => previousIndex.has(node));
+  const tails: number[] = [];
+  const previous: number[] = [];
+  for (const [index, node] of retained.entries()) {
+    const value = previousIndex.get(node)!;
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (previousIndex.get(retained[tails[middle]!]!)! < value) low = middle + 1;
+      else high = middle;
+    }
+    previous[index] = low > 0 ? tails[low - 1]! : -1;
+    tails[low] = index;
+  }
+  const ordered = new Set<HTMLElement>();
+  for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]!) {
+    ordered.add(retained[index]!);
+  }
+  return new Set(retained.filter((node) => !ordered.has(node)));
 }
 
 /** Position the list so all direct children's offsetTop share an origin. */
@@ -69,10 +99,10 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     });
     parent.append(clone);
     const entry = entering.get(node);
-    const entryProgress = entry ? progress(entry.animation) : 1;
     const animation = clone.animate(
       [
-        { opacity: entryProgress, transform: "translateY(0px)" },
+        { opacity: entry ? entryOpacity(entry.animation) : 1, transform: "translateY(0px)" },
+        { opacity: 0, offset: EXIT_FADE_END },
         { opacity: 0, transform: `translateY(${travel}px)` },
       ],
       motionTiming,
@@ -117,7 +147,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     );
   };
 
-  return {
+  let frame = 0;
+  let frameAnimates = false;
+  const view = parent.ownerDocument.defaultView;
+
+  const api = {
+    /** Read every row's position and animate rows that moved. Reads layout. */
     update(animate: boolean) {
       if (disposed) return;
       const next = new Map(
@@ -142,14 +177,28 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           if (!positions.has(node) && position.height > 0) fadeCount++;
         }
       }
+      const nextOrder = [...next.keys()];
+      const oldOrder = positions === null ? [] : [...positions.keys()];
+      const crossing = crossingRows(nextOrder, new Map(oldOrder.map((n, i) => [n, i] as const)));
+      for (const [node, position] of next) {
+        const previousTop = positions?.get(node)?.top;
+        if (
+          previousTop !== undefined &&
+          position.height > 0 &&
+          Math.abs(previousTop + remainingOffset(node) - position.top) >
+            position.height * MAX_SLIDE_ROWS
+        ) {
+          crossing.add(node);
+        }
+      }
+      fadeCount += crossing.size * 2;
       const shouldAnimate =
         animate &&
         positions !== null &&
         !reducedMotion?.matches &&
         fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
       const movedDelta = new Map<HTMLElement, number>();
-      const nextOrder = [...next.keys()];
-      const oldOrder = positions === null ? [] : [...positions.keys()];
+      const stays = (node: HTMLElement) => next.has(node) && !crossing.has(node);
       const ridingDelta = (
         order: readonly HTMLElement[],
         index: number,
@@ -167,12 +216,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       else {
         for (const [node, position] of next) {
           const previousTop = positions!.get(node)?.top;
-          if (previousTop === undefined || previousTop === position.top) continue;
+          if (previousTop === undefined || previousTop === position.top || crossing.has(node)) {
+            continue;
+          }
           movedDelta.set(node, previousTop + remainingOffset(node) - position.top);
         }
         for (const [node, position] of positions!) {
-          if (next.has(node)) continue;
-          const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), (n) => next.has(n));
+          if (stays(node)) continue;
+          const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), stays);
           fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta);
         }
       }
@@ -189,13 +240,21 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         for (const [index, node] of nextOrder.entries()) {
           const position = next.get(node)!;
           const previousTop = positions!.get(node)?.top;
-          if (previousTop === undefined) {
+          if (previousTop === undefined || crossing.has(node)) {
+            cancel(node);
+            entering.get(node)?.animation.cancel();
+            entering.delete(node);
             if (position.height > 0) {
-              const delta = ridingDelta(nextOrder, index, (n) => positions!.has(n));
+              const delta = ridingDelta(
+                nextOrder,
+                index,
+                (n) => positions!.has(n) && !crossing.has(n),
+              );
               const travel = delta === undefined ? -rowTravel(position.height) : delta;
               const animation = node.animate(
                 [
                   { opacity: 0, transform: `translateY(${travel}px)` },
+                  { opacity: 0, offset: ENTRY_FADE_START },
                   { opacity: 1, transform: "translateY(0px)" },
                 ],
                 motionTiming,
@@ -228,6 +287,19 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       }
       positions = next;
     },
+    /** `update` in the next frame, before it paints, so a commit's own layout
+     * pass is the one read instead of a forced one mid-commit. A chat
+     * mounting in the same commit made that forced layout expensive. Calls
+     * before the frame coalesce; the last one decides whether rows animate. */
+    scheduleUpdate(animate: boolean) {
+      if (disposed || !view) return;
+      frameAnimates = animate;
+      if (frame !== 0) return;
+      frame = view.requestAnimationFrame(() => {
+        frame = 0;
+        api.update(frameAnimates);
+      });
+    },
     release() {
       suspend();
       const origin = parent.getBoundingClientRect().top;
@@ -240,7 +312,9 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     suspend,
     dispose() {
       suspend();
+      if (frame !== 0) view?.cancelAnimationFrame(frame);
       disposed = true;
     },
   };
+  return api;
 }
