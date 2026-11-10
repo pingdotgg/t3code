@@ -99,19 +99,20 @@ function renderFeed(
   act(() => root.render(<Feed />));
 
   // Native applies each target offset before the next keyboard event.
-  const transition = (height: number) => {
-    native.input.value =
-      focused === INPUT_TAG
-        ? {
-            target: INPUT_TAG,
-            parentScrollViewTarget: FEED_TAG,
-            layout: { absoluteY: inputTop + restOffset - native.scroll.value, height: 40 },
-          }
-        : {
-            target: COMPOSER_TAG,
-            parentScrollViewTarget: -1,
-            layout: { absoluteY: 600, height: 40 },
-          };
+  const transition = (height: number, refreshInput = true) => {
+    if (refreshInput)
+      native.input.value =
+        focused === INPUT_TAG
+          ? {
+              target: INPUT_TAG,
+              parentScrollViewTarget: FEED_TAG,
+              layout: { absoluteY: inputTop + restOffset - native.scroll.value, height: 40 },
+            }
+          : {
+              target: COMPOSER_TAG,
+              parentScrollViewTarget: -1,
+              layout: { absoluteY: 600, height: 40 },
+            };
     const event = { height, duration: 250, progress: height > 0 ? 1 : 0, target: focused };
     native.handler?.onStart(event);
     native.scroll.value = contentOffsetY?.value ?? Number.NaN;
@@ -123,6 +124,8 @@ function renderFeed(
       focused = target;
       return transition(300);
     },
+    // Native refreshes the focused input's layout on focus and edits, not on scroll.
+    resize: (height: number) => transition(height, false),
     hide: () => transition(0),
     setFrozen: (frozen: boolean) => {
       freeze.value = frozen;
@@ -181,6 +184,12 @@ it("lifts for the composer and returns to the end after a feed input moved the f
   using feed = renderFeed(1322, 40);
 
   expect([feed.open(), feed.open(COMPOSER_TAG), feed.hide()]).toEqual([1282, 1622, 1322]);
+});
+
+it("keeps a lifted feed input in view when the keyboard resizes before native re-measures it", () => {
+  using feed = renderFeed(500, 500);
+
+  expect([feed.open(), feed.resize(340), feed.hide()]).toEqual([742, 782, 500]);
 });
 
 it("keeps the feed where it rests after the keyboard closed while frozen", () => {
