@@ -26,6 +26,7 @@ import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
+  ANDROID_DELIVERY_JOB_TTL_MS,
   alertForActivityRows,
   attentionTransitionRows,
   hiddenEnvironmentIds,
@@ -44,7 +45,6 @@ export const FcmDeliveryJob = Schema.Struct({
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
-const JOB_TTL_MS = 5 * 60_000;
 const decodePreferences = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferences),
 );
@@ -191,7 +191,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new FcmDeliveryError({ operation: "decode-job", cause })),
       );
       const now = yield* DateTime.now;
-      if (now.epochMilliseconds - job.queuedAt > JOB_TTL_MS) return;
+      if (now.epochMilliseconds - job.queuedAt > ANDROID_DELIVERY_JOB_TTL_MS) return;
       const targets = yield* devices.listTargets({ userId: job.userId });
       const target = targets.find(
         (device) =>
@@ -203,16 +203,6 @@ const make = Effect.gen(function* () {
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
       const currentHiddenEnvironmentIds = hiddenEnvironmentIds(preferences.value);
-      // Jobs queued before their environment's re-enable reached the device are replay history.
-      const environmentRevealedAt: Record<string, number> = {};
-      for (const [environmentId, at] of Object.entries(target.environment_revealed_at ?? {})) {
-        if (now.epochMilliseconds - at <= JOB_TTL_MS) environmentRevealedAt[environmentId] = at;
-      }
-      for (const environmentId of target.last_hidden_environment_ids ?? []) {
-        if (!currentHiddenEnvironmentIds.includes(environmentId)) {
-          environmentRevealedAt[environmentId] = now.epochMilliseconds;
-        }
-      }
 
       // Re-read at consumption to honor current links, tokens, preferences, and thread states.
       const states = preferences.value.liveActivitiesEnabled
@@ -293,7 +283,8 @@ const make = Effect.gen(function* () {
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
-          job.queuedAt > (environmentRevealedAt[state.environmentId] ?? -Infinity) &&
+          // Jobs queued before the environment was re-enabled are history, like the replay baseline.
+          job.queuedAt > (target.environment_revealed_at?.[state.environmentId] ?? -Infinity) &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
@@ -355,7 +346,6 @@ const make = Effect.gen(function* () {
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
           hiddenEnvironmentIds: currentHiddenEnvironmentIds,
-          environmentRevealedAt,
           deliveredAt: DateTime.formatIso(now),
         });
       }

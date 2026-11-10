@@ -1,7 +1,11 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import type {
+  RelayAgentActivityState,
+  RelayAgentAwarenessPreferences,
+} from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
@@ -15,7 +19,9 @@ import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import { makeTestRelayDb } from "../persistence/testDatabase.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
+import * as Devices from "./Devices.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
@@ -86,7 +92,7 @@ const config = {
   managedEndpointNamespace: undefined,
 } satisfies RelayConfiguration.RelayConfiguration["Service"];
 
-function harness() {
+function harness(persisted?: LiveActivities.LiveActivities["Service"]) {
   const sent: Array<Parameters<FcmClient.FcmClient["Service"]["send"]>[0]> = [];
   const queued: FcmDeliveries.FcmDeliveryJob[] = [];
   const marked: Array<Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]> = [];
@@ -120,21 +126,36 @@ function harness() {
               }),
         ),
     }),
-    Layer.succeed(LiveActivities.LiveActivities, {
-      register: () => Effect.void,
-      listTargets: () => Effect.sync(() => [current.target]),
-      listIdleArmedTargets: () => Effect.succeed([]),
-      markDelivery: (input) =>
-        Effect.sync(() => {
-          marked.push(input);
-          current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
-          current.target.last_hidden_environment_ids = input.hiddenEnvironmentIds;
-          current.target.environment_revealed_at =
-            input.environmentRevealedAt ?? current.target.environment_revealed_at;
-        }),
+    Layer.succeed(
+      LiveActivities.LiveActivities,
+      persisted
+        ? {
+            ...persisted,
+            markDelivery: (input) =>
+              persisted.markDelivery(input).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    marked.push(input);
+                  }),
+                ),
+              ),
+          }
+        : {
+            register: () => Effect.void,
+            listTargets: () => Effect.sync(() => [current.target]),
+            listIdleArmedTargets: () => Effect.succeed([]),
+            markDelivery: (input) =>
+              Effect.sync(() => {
+                marked.push(input);
+                current.target.last_aggregate_json = input.aggregate
+                  ? encodeJson(input.aggregate)
+                  : null;
+                current.target.last_hidden_environment_ids = input.hiddenEnvironmentIds;
+              }),
 
-      invalidateDeliveryToken: () => Effect.void,
-    }),
+            invalidateDeliveryToken: () => Effect.void,
+          },
+    ),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
       upsert: () => Effect.void,
       remove: () => Effect.void,
@@ -212,6 +233,54 @@ function harness() {
       queuedAt: 0,
     } satisfies FcmDeliveries.FcmDeliveryJob,
   };
+}
+
+// The phone's preferences and delivery baseline live in the production device store.
+function withRegisteredDevice<A, E>(
+  body: (input: {
+    readonly h: ReturnType<typeof harness>;
+    readonly register: (
+      preferences: RelayAgentAwarenessPreferences,
+    ) => ReturnType<Devices.Devices["Service"]["register"]>;
+    readonly target: Effect.Effect<
+      LiveActivities.TargetRow,
+      Effect.Error<ReturnType<LiveActivities.LiveActivities["Service"]["listTargets"]>>
+    >;
+  }) => Effect.Effect<A, E, FcmDeliveries.FcmDeliveries>,
+) {
+  return Effect.gen(function* () {
+    const db = yield* makeTestRelayDb;
+    return yield* Effect.gen(function* () {
+      const devices = yield* Devices.Devices;
+      const liveActivities = yield* LiveActivities.LiveActivities;
+      const h = harness(liveActivities);
+      return yield* body({
+        h,
+        register: (preferences) =>
+          devices.register({
+            userId: target.user_id,
+            registration: {
+              deviceId: target.device_id,
+              label: "Pixel",
+              platform: "android",
+              androidApiLevel: 35,
+              bundleId: target.bundle_id!,
+              pushToken: target.push_token!,
+              preferences,
+            },
+          }),
+        target: liveActivities
+          .listTargets({ userId: target.user_id })
+          .pipe(Effect.map(([row]) => row!)),
+      }).pipe(Effect.provide(h.layer));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(Devices.layer, LiveActivities.layer).pipe(
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, db)),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
 }
 
 describe("Android delivery routing", () => {
@@ -359,135 +428,186 @@ describe("Android delivery routing", () => {
     },
   );
 
-  it.effect("keeps a device-disabled environment off the phone until a silent re-enable", () => {
-    const h = harness();
-    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
-    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
-    h.current.state = { ...state, phase: "waiting_for_approval" };
-    h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
-    const otherJob = { ...h.job, state: h.current.otherStates[0]! };
-    h.current.target.preferences_json = encodeJson({
-      ...preferences,
-      disabledEnvironmentIds: [other.environmentId],
-    });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      yield* delivery.process(otherJob);
-      expect(h.sent.filter((message) => message.alert).map((message) => message.data)).toEqual([
-        expect.objectContaining({ alert_title: "Fix notifications" }),
-      ]);
-      expect(h.marked.at(-1)?.aggregate?.activities).toMatchObject([
-        { environmentId: state.environmentId },
-      ]);
+  it.effect("keeps a device-disabled environment off the phone until a silent re-enable", () =>
+    withRegisteredDevice(({ h, register, target }) =>
+      Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+        const alerts = () => h.sent.filter((message) => message.alert);
+        h.current.otherStates = [other];
+        yield* register(preferences);
+        yield* delivery.process({ ...h.job, state: null, replay: true });
+        h.current.state = { ...state, phase: "waiting_for_approval" };
+        h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
+        const otherJob = { ...h.job, state: h.current.otherStates[0]! };
+        yield* TestClock.adjust("1 second");
+        yield* register({ ...preferences, disabledEnvironmentIds: [other.environmentId] });
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        yield* delivery.process(otherJob);
+        expect(alerts().map((message) => message.data)).toEqual([
+          expect.objectContaining({ alert_title: "Fix notifications" }),
+        ]);
+        expect(h.marked.at(-1)?.aggregate?.activities).toMatchObject([
+          { environmentId: state.environmentId },
+        ]);
 
-      h.current.target.preferences_json = encodeJson(preferences);
-      yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
-      // Another event can reach the phone before the re-enable replay does.
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      yield* delivery.process(h.queued[0]);
-      yield* delivery.process(otherJob);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
-      expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+        yield* TestClock.adjust("1 second");
+        yield* register(preferences);
+        yield* delivery.enqueue({ target: yield* target, state: null, replay: true });
+        // Another event can reach the phone before the re-enable replay does.
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        yield* delivery.process(h.queued[0]);
+        yield* delivery.process(otherJob);
+        expect(alerts()).toHaveLength(1);
+        expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
 
-      h.current.target.preferences_json = encodeJson({
-        ...preferences,
-        disabledEnvironmentIds: [state.environmentId, other.environmentId],
-      });
-      yield* delivery.process({ ...h.job, state: null, replay: true });
-      expect(h.marked.at(-1)?.aggregate).toBeNull();
-      h.current.target.preferences_json = encodeJson(preferences);
-      yield* delivery.process(otherJob);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+        const hideBoth = [state.environmentId, other.environmentId];
+        yield* TestClock.adjust("1 second");
+        yield* register({ ...preferences, disabledEnvironmentIds: hideBoth });
+        yield* delivery.process({ ...h.job, state: null, replay: true });
+        expect(h.marked.at(-1)?.aggregate).toBeNull();
+        yield* TestClock.adjust("1 second");
+        yield* register(preferences);
+        yield* delivery.process(otherJob);
+        expect(alerts()).toHaveLength(1);
 
-      h.current.target.preferences_json = encodeJson({
-        ...preferences,
-        liveActivitiesEnabled: false,
-        disabledEnvironmentIds: [state.environmentId, other.environmentId],
-      });
-      yield* delivery.process({ ...h.job, state: null, replay: true });
-      h.current.target.preferences_json = encodeJson({
-        ...preferences,
-        liveActivitiesEnabled: false,
-      });
-      yield* delivery.process(otherJob);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
-      yield* TestClock.adjust("1 second");
-      h.current.otherStates = [{ ...other, phase: "completed" }];
-      yield* delivery.process({ ...otherJob, state: h.current.otherStates[0]!, queuedAt: 1_000 });
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
-    }).pipe(Effect.provide(h.layer));
-  });
+        const cardsOff = { ...preferences, liveActivitiesEnabled: false };
+        yield* TestClock.adjust("1 second");
+        yield* register({ ...cardsOff, disabledEnvironmentIds: hideBoth });
+        yield* delivery.process({ ...h.job, state: null, replay: true });
+        yield* TestClock.adjust("1 second");
+        yield* register(cardsOff);
+        yield* delivery.process(otherJob);
+        expect(alerts()).toHaveLength(1);
+        yield* TestClock.adjust("1 second");
+        h.current.otherStates = [{ ...other, phase: "completed" }];
+        yield* delivery.enqueue({ target: yield* target, state: h.current.otherStates[0]! });
+        yield* delivery.process(h.queued[1]);
+        expect(alerts()).toHaveLength(2);
+      }),
+    ),
+  );
 
+  const cardsOff = { name: "with activity cards off", cards: false, notificationOnly: false };
+  const notificationOnly = {
+    name: "for a notification-only environment",
+    cards: true,
+    notificationOnly: true,
+  };
   it.effect.each([
     {
-      name: "with activity cards off, queued while hidden",
-      liveActivitiesEnabled: false,
-      notificationOnly: false,
-      queuedBeforeDisable: false,
+      ...cardsOff,
+      queued: "while hidden",
+      hiddenDelivery: true,
+      order: "replay stale pending new",
     },
     {
-      name: "for a notification-only environment, queued while hidden",
-      liveActivitiesEnabled: true,
-      notificationOnly: true,
-      queuedBeforeDisable: false,
+      ...notificationOnly,
+      queued: "while hidden",
+      hiddenDelivery: true,
+      order: "replay stale pending new",
     },
     {
-      name: "with activity cards off, queued before disable",
-      liveActivitiesEnabled: false,
-      notificationOnly: false,
-      queuedBeforeDisable: true,
+      ...cardsOff,
+      queued: "before disable",
+      hiddenDelivery: true,
+      order: "replay stale pending new",
     },
     {
-      name: "for a notification-only environment, queued before disable",
-      liveActivitiesEnabled: true,
-      notificationOnly: true,
-      queuedBeforeDisable: true,
+      ...notificationOnly,
+      queued: "before disable",
+      hiddenDelivery: true,
+      order: "replay stale new pending",
     },
-  ])("re-enabling stays silent $name when the replay is consumed first", (config) => {
-    const h = harness();
-    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
-    const pending = {
-      ...secondState,
-      environmentId: EnvironmentId.make("pending-env"),
-      phase: "waiting_for_approval",
-    } as const;
-    h.current.notificationOnlyEnvironments = [
-      pending.environmentId,
-      ...(config.notificationOnly ? [other.environmentId] : []),
-    ];
-    const visible = { ...preferences, liveActivitiesEnabled: config.liveActivitiesEnabled };
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }, pending];
-      h.current.target.preferences_json = encodeJson(visible);
-      if (config.queuedBeforeDisable) {
-        yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
-      }
-      h.current.target.preferences_json = encodeJson({
-        ...visible,
-        disabledEnvironmentIds: [other.environmentId],
-      });
-      yield* delivery.process({ ...h.job, state: null, replay: true });
-      if (!config.queuedBeforeDisable) {
-        yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
-      }
-      h.current.target.preferences_json = encodeJson(visible);
-      yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
-      yield* delivery.process(h.queued[1]);
-      yield* delivery.process(h.queued[0]);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(0);
-      // An environment that stayed enabled keeps its equally old pending alert.
-      yield* delivery.process({ ...h.job, state: pending });
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+    {
+      ...cardsOff,
+      queued: "before disable",
+      hiddenDelivery: false,
+      order: "stale replay new pending",
+    },
+    {
+      ...notificationOnly,
+      queued: "before disable",
+      hiddenDelivery: false,
+      order: "stale new replay pending",
+    },
+    {
+      ...cardsOff,
+      queued: "while hidden",
+      hiddenDelivery: false,
+      order: "new stale pending replay",
+    },
+    {
+      ...notificationOnly,
+      queued: "while hidden",
+      hiddenDelivery: false,
+      order: "new replay stale pending",
+    },
+  ] as const)(
+    "re-enabling $name silences an alert queued $queued (hidden delivery: $hiddenDelivery, order: $order)",
+    (config) =>
+      withRegisteredDevice(({ h, register, target }) =>
+        Effect.gen(function* () {
+          const delivery = yield* FcmDeliveries.FcmDeliveries;
+          const environmentId = EnvironmentId.make("other-env");
+          const stale = {
+            ...secondState,
+            environmentId,
+            threadTitle: "Stale approval",
+            phase: "waiting_for_approval",
+          } as const;
+          const fresh = { ...stale, threadId: ThreadId.make("new-thread"), threadTitle: "New" };
+          const pending = {
+            ...stale,
+            environmentId: EnvironmentId.make("pending-env"),
+            threadTitle: "Pending approval",
+          };
+          h.current.state = null;
+          h.current.otherStates = [stale, pending];
+          h.current.notificationOnlyEnvironments = [
+            pending.environmentId,
+            ...(config.notificationOnly ? [environmentId] : []),
+          ];
+          const jobs = new Map<string, FcmDeliveries.FcmDeliveryJob>();
+          const enqueue = (name: string, state: RelayAgentActivityState | null) =>
+            Effect.gen(function* () {
+              yield* delivery.enqueue({
+                target: yield* target,
+                state,
+                ...(state ? {} : { replay: true }),
+              });
+              jobs.set(name, h.queued.at(-1)!);
+            });
+          const visible = { ...preferences, liveActivitiesEnabled: config.cards };
 
-      yield* TestClock.adjust("1 second");
-      h.current.otherStates = [{ ...other, phase: "completed" }];
-      yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
-      yield* delivery.process(h.queued[2]);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
-    }).pipe(Effect.provide(h.layer));
-  });
+          yield* register(visible);
+          yield* enqueue("pending", pending);
+          if (config.queued === "before disable") yield* enqueue("stale", stale);
+          yield* TestClock.adjust("1 second");
+          yield* register({ ...visible, disabledEnvironmentIds: [environmentId] });
+          if (config.hiddenDelivery)
+            yield* delivery.process({ ...h.job, state: null, replay: true });
+          if (config.queued === "while hidden") yield* enqueue("stale", stale);
+          yield* TestClock.adjust("1 second");
+          yield* register(visible);
+          yield* enqueue("replay", null);
+          // A new event after the re-enable alerts even if the re-enable replay is still queued.
+          yield* TestClock.adjust("1 second");
+          h.current.otherStates = [stale, fresh, pending];
+          yield* enqueue("new", fresh);
+
+          const order = config.order.split(" ");
+          for (const name of order) yield* delivery.process(jobs.get(name)!);
+          expect(
+            h.sent.filter((message) => message.alert).map((message) => message.data.alert_title),
+          ).toEqual(
+            order
+              .filter((name) => name === "pending" || name === "new")
+              .map((name) => (name === "new" ? fresh : pending).threadTitle),
+          );
+        }),
+      ),
+  );
 
   it("gives a group a stable retry identity independent of row order", () => {
     const other = {

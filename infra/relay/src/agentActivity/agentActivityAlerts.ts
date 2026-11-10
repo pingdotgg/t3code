@@ -47,6 +47,9 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
+// Android delivery jobs older than this are dropped unsent.
+export const ANDROID_DELIVERY_JOB_TTL_MS = 5 * 60_000;
+
 export function environmentEnabledOnDevice(
   preferences: RelayAgentAwarenessPreferences | null,
   environmentId: string,

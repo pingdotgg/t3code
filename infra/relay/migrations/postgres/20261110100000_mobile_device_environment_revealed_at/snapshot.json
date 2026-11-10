@@ -7,13 +7,13 @@
   "footprints": [
     {
       "statementType": "add_column",
-      "statementTarget": ["column", "public", "relay_live_activities", "environment_revealed_at"],
+      "statementTarget": ["column", "public", "relay_mobile_devices", "environment_revealed_at"],
       "writes": [
-        "s|col|public.relay_live_activities.environment_revealed_at",
-        "n|col|public.relay_live_activities.environment_revealed_at",
-        "e|col|public.relay_live_activities.environment_revealed_at"
+        "s|col|public.relay_mobile_devices.environment_revealed_at",
+        "n|col|public.relay_mobile_devices.environment_revealed_at",
+        "e|col|public.relay_mobile_devices.environment_revealed_at"
       ],
-      "reads": ["n|tbl|public.relay_live_activities", "n|sch|public"]
+      "reads": ["n|tbl|public.relay_mobile_devices", "n|sch|public"]
     }
   ],
   "deltas": [
@@ -21,7 +21,7 @@
       "op": "create",
       "row": {
         "schema": "public",
-        "table": "relay_live_activities",
+        "table": "relay_mobile_devices",
         "name": "environment_revealed_at",
         "type": "jsonb",
         "typeSchema": null,

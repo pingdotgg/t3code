@@ -12,6 +12,7 @@ import { sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
+import { ANDROID_DELIVERY_JOB_TTL_MS } from "./agentActivityAlerts.ts";
 
 export class DeviceRegistrationPersistenceError extends Schema.TaggedError<DeviceRegistrationPersistenceError>()(
   "DeviceRegistrationPersistenceError",
@@ -78,7 +79,8 @@ const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({
         "relay.mobile.device_id": input.registration.deviceId,
       });
-      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      const now = yield* DateTime.now;
+      const updatedAt = DateTime.formatIso(now);
       const registration = input.registration;
 
       // Alchemy's lazy drizzle proxies become Effects only at yield*; Effect.all sends raw proxies into a spinning fiber.
@@ -155,6 +157,28 @@ const make = Effect.gen(function* () {
                 ${relayMobileDevices.pushToStartToken}
               )`,
             preferencesJson: registration.preferences,
+            // The conflict row still holds the previous preferences, so this is atomic with the write.
+            environmentRevealedAt: sql`nullif(
+                coalesce((
+                  select jsonb_object_agg(kept.key, kept.value)
+                  from jsonb_each(
+                    coalesce(${relayMobileDevices.environmentRevealedAt}, '{}'::jsonb)
+                  ) as kept
+                  where (kept.value)::bigint >= ${now.epochMilliseconds - ANDROID_DELIVERY_JOB_TTL_MS}
+                ), '{}'::jsonb)
+                || coalesce((
+                  select jsonb_object_agg(revealed.id, ${now.epochMilliseconds}::bigint)
+                  from jsonb_array_elements_text(coalesce(
+                    ${relayMobileDevices.preferencesJson} -> 'disabledEnvironmentIds',
+                    '[]'::jsonb
+                  )) as revealed(id)
+                  where not coalesce(
+                    excluded.preferences_json -> 'disabledEnvironmentIds',
+                    '[]'::jsonb
+                  ) @> jsonb_build_array(revealed.id)
+                ), '{}'::jsonb),
+                '{}'::jsonb
+              )`,
             updatedAt,
           },
         })
