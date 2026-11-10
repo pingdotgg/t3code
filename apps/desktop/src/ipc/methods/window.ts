@@ -492,6 +492,56 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const htmlFullscreenStates = new WeakMap<
+  Electron.BrowserWindow,
+  { owned: boolean; leaving: boolean }
+>();
+
+const htmlFullscreenState = (window: Electron.BrowserWindow) => {
+  const existing = htmlFullscreenStates.get(window);
+  if (existing !== undefined) return existing;
+  const state = { owned: false, leaving: false };
+  window.on("leave-full-screen", () => {
+    // Leaving OS fullscreen any other way, such as F11, hands the window back to the user.
+    if (!state.leaving) state.owned = false;
+    state.leaving = false;
+  });
+  htmlFullscreenStates.set(window, state);
+  return state;
+};
+
+// The main window keeps HTML fullscreen inside itself so preview guests stay in their webview,
+// so the app's own fullscreen elements, such as chat videos, take the screen here.
+export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.syncHtmlFullscreen")(function* (fullscreen, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const window = main.value;
+    const state = htmlFullscreenState(window);
+    if (fullscreen) {
+      // macOS reports fullscreen until its exit animation ends, and Electron queues the re-entry.
+      if (state.owned || (window.isFullScreen() && !state.leaving)) return;
+      state.owned = true;
+      window.setFullScreen(true);
+    } else if (state.owned) {
+      state.owned = false;
+      state.leaving = window.isFullScreen();
+      window.setFullScreen(false);
+    }
+  }),
+});
+
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
