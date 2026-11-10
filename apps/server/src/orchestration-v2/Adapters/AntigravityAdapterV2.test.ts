@@ -1265,7 +1265,7 @@ describe("AntigravityAdapterV2 stop", () => {
       const event = Option.getOrUndefined(yield* Fiber.join(terminal));
       assert.equal(event?.type === "turn.terminal" ? event.status : undefined, "interrupted");
       const toolPid = Number(yield* fileSystem.readFileString(toolPidFile));
-      const toolAlive = yield* Effect.sync(() => {
+      const toolSignalable = Effect.sync(() => {
         try {
           process.kill(toolPid, 0);
           return true;
@@ -1273,6 +1273,14 @@ describe("AntigravityAdapterV2 stop", () => {
           return false;
         }
       });
+      // A killed tool can stay an unreaped zombie on Linux, which still accepts signal 0.
+      // Without /proc, the signal probe alone decides.
+      const toolAlive =
+        (yield* toolSignalable) &&
+        (yield* fileSystem.readFileString(`/proc/${toolPid}/stat`).pipe(
+          Effect.map((stat) => stat.charAt(stat.lastIndexOf(")") + 2) !== "Z"),
+          Effect.catch(() => toolSignalable),
+        ));
       if (toolAlive) yield* Effect.sync(() => process.kill(toolPid));
       assert.isFalse(toolAlive, "Stop must end the tools the agent started");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
