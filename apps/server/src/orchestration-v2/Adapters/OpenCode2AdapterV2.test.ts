@@ -3216,11 +3216,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(first))?.status, "completed");
       const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      const next = yield* Effect.exit(runtime.startTurn(turnInput(thread)));
-      assert.isTrue(
-        Exit.isSuccess(next),
-        `after session.moved to ${moved}, the next turn must register T3 MCP there; it re-added it in ${WORK}, where the moved session cannot see it`,
-      );
+      yield* runtime.startTurn(secondTurn(thread));
       assert.equal((yield* Fiber.join(second))?.status, "completed");
     }).pipe(Effect.scoped),
   );
