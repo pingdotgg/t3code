@@ -553,7 +553,7 @@ const makeLaptop = (
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
   /** Runs as each follow attempt here starts, on its follower's fiber. */
-  beforeFollow: Effect.Effect<void> = Effect.void,
+  beforeFollow: Effect.Effect<void, Orchestrator.OrchestratorV2Error> = Effect.void,
   /** Runs before each read of a thread's records here, as the follower makes them. */
   beforeRead: Effect.Effect<void, Orchestrator.OrchestratorV2Error> = Effect.void,
 ) =>
@@ -1673,6 +1673,9 @@ const steppedRetries = Effect.gen(function* () {
   return { failed, retry, schedule };
 });
 
+/** Internal detail in a follower's defect, which no task result may carry. */
+const defectDetail = "defect-detail-4f1c9e";
+
 /**
  * Fails each follow attempt here with a defect, `times` times. Returns, once
  * the first has, whether its follower retried rather than ending.
@@ -1684,7 +1687,9 @@ const defectiveFollows = (times: number) =>
     const beforeFollow = Effect.withFiber((fiber) => Deferred.succeed(follower, fiber)).pipe(
       Effect.andThen(Ref.getAndUpdate(defects, (count) => count + 1)),
       Effect.flatMap((count) =>
-        count < times ? Effect.die(new Error("A follow attempt hit a bug.")) : Effect.void,
+        count < times
+          ? Effect.die(new Error(`A follow attempt hit a bug: ${defectDetail}`))
+          : Effect.void,
       ),
     );
     const retriedOrEnded = (retries: Effect.Success<typeof steppedRetries>) =>
@@ -1704,7 +1709,7 @@ const defectiveFollows = (times: number) =>
       if ((yield* Ref.getAndUpdate(failedRecords, (count) => count - 1)) <= 0) return;
       return yield* Effect.die(new Error("Recording it hit a bug."));
     });
-    return { beforeFollow, beforeRead, retriedOrEnded };
+    return { attempts: defects, beforeFollow, beforeRead, retriedOrEnded };
   });
 
 it.effect("a follower that hits a defect retries instead of dropping the task", () =>
@@ -1772,8 +1777,10 @@ it.effect("a follower that keeps hitting defects fails the task and wakes the pa
       );
 
       const task = yield* taskResult(a, delegated.taskId);
+      expect(yield* Ref.get(defects.attempts)).toBe(3);
       expect(task?.status).toBe("failed");
       expect(task?.result).toContain(delegated.remoteChild.threadId);
+      expect(task?.result).not.toContain(defectDetail);
       const offered = yield* SubscriptionRef.changes(offers).pipe(
         Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
         Stream.runHead,
@@ -1781,6 +1788,67 @@ it.effect("a follower that keeps hitting defects fails the task and wakes the pa
       expect(Option.isSome(offered)).toBe(true);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each(["a still-running wait", "a failed attempt"] as const)(
+  "defects separated by %s do not add up to giving up",
+  (between) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const retries = yield* steppedRetries;
+        const attempts = yield* Ref.make(0);
+        const defect = Effect.die(new Error("A follow attempt hit a bug."));
+        const script = [
+          defect,
+          between === "a still-running wait"
+            ? Effect.void
+            : Effect.fail(
+                new Orchestrator.OrchestratorProjectionError({ threadId: parentThreadId }),
+              ),
+          defect,
+          between === "a still-running wait"
+            ? Effect.void
+            : Effect.fail(
+                new Orchestrator.OrchestratorProjectionError({ threadId: parentThreadId }),
+              ),
+          defect,
+        ];
+        // Past the script, the run there has ended, so the next attempt completes the task.
+        const beforeFollow = Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
+          Effect.flatMap(
+            (count) =>
+              script[count] ??
+              Ref.set(thread.reply, "All green.").pipe(
+                Effect.andThen(Ref.set(thread.status, "completed")),
+              ),
+          ),
+        );
+        // Each wait there answers at once that its run is still running.
+        yield* Deferred.succeed(thread.finished, undefined);
+        const a = yield* makeLaptop(database, offers, undefined, beforeFollow).pipe(
+          Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+        );
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        yield* Queue.take(retries.failed).pipe(
+          Effect.andThen(Queue.offer(retries.retry, undefined)),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+
+        const delegated = yield* delegateToBox(a);
+        expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+          status: "completed",
+          result: "All green.",
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 /** Waits until the task here records that the `stopCount`th Stop after its result reached there. */

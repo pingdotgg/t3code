@@ -552,12 +552,12 @@ const make = Effect.gen(function* () {
         Effect.retry({ schedule: followRetry, while: () => defects < FOLLOW_MAX_DEFECTS }),
         Effect.catch(
           Effect.fn("RemoteDelegation.followGaveUp")(
-            function* (error) {
+            function* () {
               const { task } = yield* readTask(parentThreadId, taskId);
               const remote = task?.remoteChild;
               // A task with its result keeps it; completing it again would owe another stop there.
               if (remote === undefined || task?.result !== null) return;
-              const result = `Following the thread ${remote.threadId} in ${remote.label} failed, so it may still run there (task_cancel stops it): ${error.message}`;
+              const result = `Following the thread ${remote.threadId} in ${remote.label} failed repeatedly, so it may still run there (task_cancel stops it).`;
               yield* complete(parentThreadId, taskId, "failed", result, undefined);
             },
             failOnDefect,
@@ -827,11 +827,11 @@ const make = Effect.gen(function* () {
   return RemoteDelegation.of({ delegate, cancel, start });
 });
 
-/** A defect as a failure, so a retry covers it. */
+/** A defect, logged, as a failure, so a retry covers it. */
 const failOnDefect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.catchDefect(effect, (defect) =>
-    Effect.fail(
-      new Cause.UnknownError(defect, defect instanceof Error ? defect.message : String(defect)),
+    Effect.logWarning("A remote task's follower hit a defect", Cause.die(defect)).pipe(
+      Effect.andThen(Effect.fail(new Cause.UnknownError(defect, "A follower hit a defect."))),
     ),
   );
 
