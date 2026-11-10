@@ -11,6 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { parseRateTable, priceUsage } from "../../usage/usagePricing.ts";
+
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
@@ -159,6 +161,72 @@ describe("readAntigravityUsage", () => {
         records(result).map((record) => record.model),
         ["gemini-3-pro", "claude-opus-4-6"],
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prices Antigravity effort and routing variants at their base model", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "variants.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(9, protoNumber(2, 10))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            1,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            2,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1132), ...protoNumber(2, 12)])),
+          ]);
+          // A model-less step that only learns its model by merging with a named generation.
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            5,
+            new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            3,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoText(19, "Gemini 3.8 Flash High"),
+                ...protoBytes(4, [...protoNumber(2, 100), ...protoText(11, "response")]),
+              ]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result).map((record) => [record.model, record.rateModel]),
+        [
+          ["gemini-3.7-flash-control", "gemini-3.7-flash"],
+          ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+          ["gemini-3-flash-agent", "gemini-3-flash-preview"],
+          ["gemini-3.8-flash-high", "gemini-3.8-flash"],
+        ],
+      );
+      const table = parseRateTable({
+        "gemini-3.7-flash": { input_cost_per_token: 0.75e-6, output_cost_per_token: 3.75e-6 },
+        "gemini-3.8-flash": { input_cost_per_token: 0.75e-6, output_cost_per_token: 3.75e-6 },
+        "gemini-3-flash-preview": { input_cost_per_token: 0.5e-6, output_cost_per_token: 3e-6 },
+      });
+      const priced = records(result).map((record) => priceUsage(table, record));
+      assert.deepStrictEqual(
+        priced.map(({ costSource }) => costSource),
+        Array(4).fill("modelPriced"),
+      );
+      for (const [index, expected] of [7.5e-6, 8.25e-6, 6e-6, 75e-6].entries()) {
+        assert.closeTo(priced[index]!.costUsd, expected, 1e-12);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
