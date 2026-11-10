@@ -83,6 +83,7 @@ import {
   isOrchestrationV2SupersededInterrupt,
 } from "@t3tools/shared/orchestrationV2Timeline";
 import {
+  backgroundWorkHoldsCompletion,
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -528,6 +529,8 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** An active run, or a background roster that holds its thread's completion, on any thread. */
+  readonly hasLiveAgentWork: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
@@ -7625,6 +7628,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    const hasLiveAgentWork = Effect.fn("ProjectionStore.hasLiveAgentWork")(function* () {
+      // Mirrors isActiveRun; ProjectionStore.test.ts fails if the two lists drift.
+      const activeRuns = yield* sql`
+        SELECT 1 FROM orchestration_v2_projection_runs
+        WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+        LIMIT 1
+      `;
+      if (activeRuns.length > 0) return true;
+      const rosters = yield* sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_provider_threads
+        WHERE CASE WHEN json_valid(payload_json)
+          THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+          ELSE 0 END
+      `;
+      for (const row of rosters) {
+        const providerThread = yield* decodeProviderThreadPayload(row.payload_json);
+        if (backgroundWorkHoldsCompletion(providerThread.pendingBackgroundTasks ?? [])) return true;
+      }
+      return false;
+    }, Effect.mapError(shellSnapshotReadError));
+
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -7901,6 +7925,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
+      hasLiveAgentWork: readOnReader(hasLiveAgentWork),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),

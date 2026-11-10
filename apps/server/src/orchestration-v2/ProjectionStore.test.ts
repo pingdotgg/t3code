@@ -11,7 +11,9 @@ import {
   CheckpointScopeId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderThread,
+  OrchestrationV2RunStatus,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -46,6 +48,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { isActiveRun } from "./CommandPolicy.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   buildBoundedThreadProjection,
@@ -9479,3 +9482,102 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect("reports live agent work for active runs and holding background rosters only", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:live-work");
+    const runId = RunId.make("run:live-work");
+    assert.isFalse(yield* store.hasLiveAgentWork());
+
+    const run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("message:live-work"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed" as const,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    yield* store.apply({
+      id: EventId.make("event:live-work:run-created"),
+      type: "run.created",
+      threadId,
+      runId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: run,
+    });
+    for (const status of [...OrchestrationV2RunStatus.literals, "completed" as const]) {
+      const updated = { ...run, status };
+      yield* store.apply({
+        id: EventId.make(`event:live-work:run:${status}`),
+        type: "run.updated",
+        threadId,
+        runId,
+        driver,
+        occurredAt: now,
+        payload: updated,
+      });
+      assert.equal(yield* store.hasLiveAgentWork(), isActiveRun(updated), status);
+    }
+
+    const rosters: ReadonlyArray<
+      readonly [string, ReadonlyArray<OrchestrationV2PendingBackgroundTask>, boolean]
+    > = [
+      ["subagent", [{ taskId: "a", kind: "subagent" }], true],
+      ["background task", [{ taskId: "b", kind: "background_task" }], true],
+      ["dev server", [{ taskId: "c", kind: "command" }], false],
+      ["watcher", [{ taskId: "d", kind: "monitor" }], false],
+      ["awaited command", [{ taskId: "e", kind: "command", awaited: true }], true],
+      [
+        "dev server beside a subagent",
+        [
+          { taskId: "f", kind: "command" },
+          { taskId: "g", kind: "subagent" },
+        ],
+        true,
+      ],
+      ["cleared", [], false],
+    ];
+    for (const [name, pendingBackgroundTasks, expected] of rosters) {
+      yield* store.apply({
+        id: EventId.make(`event:live-work:roster:${name}`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:live-work"),
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          pendingBackgroundTasks,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      assert.equal(yield* store.hasLiveAgentWork(), expected, name);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
