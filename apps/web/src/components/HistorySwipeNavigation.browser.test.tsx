@@ -58,4 +58,18 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  it.each([
+    ["a macOS trackpad swipe navigates", -120, 360, true],
+    ["a macOS horizontal mouse wheel notch keeps the thread", -200, 240, false],
+    ["a Linux horizontal mouse wheel notch keeps the thread", -120, 120, false],
+  ])("%s", async (_name, deltaX, wheelDeltaX, navigates) => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    const target = screen.container.appendChild(document.createElement("div"));
+    for (const init of [{ deltaX, wheelDeltaX }, { deltaX: 0 }]) {
+      target.dispatchEvent(new WheelEvent("wheel", { ...init, bubbles: true }));
+    }
+    expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
+  });
 });

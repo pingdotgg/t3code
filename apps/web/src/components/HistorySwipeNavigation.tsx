@@ -8,6 +8,7 @@ const SWIPE_TRIGGER_DISTANCE = 120;
 // Movement needed before the gesture picks an axis; first events are often diagonal.
 const SWIPE_AXIS_LOCK_DISTANCE = 8;
 const MOMENTUM_SAMPLE_SIZE = 5;
+const WHEEL_NOTCH_DELTA = 120;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
 type SwipeGesture =
@@ -35,6 +36,20 @@ function readMainContentBounds(): SwipeBounds {
   if (!main) return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
   const { left, top, width, height } = main.getBoundingClientRect();
   return { left, top, width, height };
+}
+
+// Electron cannot tell a wheel from a trackpad, but Chromium's legacy wheelDelta counts wheel
+// notches in multiples of 120, while macOS trackpads report it as -3x the pixel delta.
+function isMouseWheelNotch(event: WheelEvent): boolean {
+  const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
+    wheelDeltaX?: number;
+    wheelDeltaY?: number;
+  };
+  if (wheelDeltaX === 0 && wheelDeltaY === 0) return false;
+  if (wheelDeltaX % WHEEL_NOTCH_DELTA !== 0 || wheelDeltaY % WHEEL_NOTCH_DELTA !== 0) return false;
+  return (
+    Math.abs(wheelDeltaX + 3 * event.deltaX) >= 1 || Math.abs(wheelDeltaY + 3 * event.deltaY) >= 1
+  );
 }
 
 // `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.
@@ -116,7 +131,9 @@ export function HistorySwipeNavigation() {
     const onWheel = (event: WheelEvent) => {
       if (gesture === null) {
         gesture =
-          event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
+          event.ctrlKey ||
+          event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL ||
+          isMouseWheelNotch(event)
             ? { kind: "ignored" }
             : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }
