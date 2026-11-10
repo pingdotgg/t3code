@@ -446,6 +446,9 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   },
 );
 
+const listUserShells = (env: NodeJS.ProcessEnv): ReadonlyArray<string> =>
+  [env.SHELL?.trim(), readUserLoginShell()].filter((shell): shell is string => Boolean(shell));
+
 const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
@@ -456,7 +459,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   > {
     const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
-    const userShells = [config.env.SHELL?.trim(), readUserLoginShell()];
+    const userShells = listUserShells(config.env);
 
     let answeredBy: string | undefined;
     for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
@@ -557,7 +560,10 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
 
     const prepared = Option.isSome(trimNonEmpty(shellEnvironment.PATH));
-    return { prepared, fromUserShell: prepared && userShells.includes(answeredBy) };
+    return {
+      prepared,
+      fromUserShell: prepared && answeredBy !== undefined && userShells.includes(answeredBy),
+    };
   },
 );
 
@@ -674,16 +680,20 @@ export const make = Effect.gen(function* () {
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
+  // A fallback shell's PATH can miss folders the user's own shell adds, so keep asking that shell.
+  const awaitsUserShell = listUserShells(inherited).length > 0;
+  const settled = ({ prepared, fromUserShell }: ShellDiscovery) =>
+    fromUserShell || (prepared && !awaitsUserShell);
   const refresh = probe(STARTUP_PROBE).pipe(
     Effect.onExit((exit) => Deferred.done(discovered, exit)),
-    Effect.flatMap(({ prepared }) =>
-      prepared
+    Effect.flatMap((discovery) =>
+      settled(discovery)
         ? Effect.void
         : Effect.sleep(DISCOVERY_RETRY_DELAY).pipe(
             Effect.andThen(
               probe(RETRY_PROBE).pipe(
                 Effect.repeat({
-                  until: (retried) => retried.prepared,
+                  until: settled,
                   schedule: Schedule.spaced(DISCOVERY_RETRY_DELAY),
                   times: DISCOVERY_RETRIES - 1,
                 }),

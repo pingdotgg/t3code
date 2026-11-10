@@ -677,6 +677,55 @@ describe("DesktopShellEnvironment", () => {
       }),
   );
 
+  it.effect("retries the user's shell when only the fallback shell answered", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/usr/bin/fish", PATH: "/usr/bin" };
+      const commands: string[] = [];
+      let fishReady = false;
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          if (command.command !== "/usr/bin/fish") return envOutput({ PATH: "/usr/bin" });
+          return fishReady
+            ? envOutput({ PATH: "/fish/bin:/usr/bin" })
+            : { output: "", exitCode: 7 };
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            assert.equal(env.PATH, "/usr/bin");
+
+            fishReady = true;
+            yield* TestClock.adjust("30 seconds");
+            assert.equal(env.PATH, "/fish/bin:/usr/bin");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/usr/bin/fish", "/bin/bash", "/usr/bin/fish"]);
+
+      // With no user shell to wait for, the fallback's answer is final.
+      commands.length = 0;
+      yield* runShellEnvironment({
+        env: { PATH: "/usr/bin" },
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag === "StandardCommand") commands.push(command.command);
+          return envOutput({ PATH: "/usr/bin" });
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            yield* TestClock.adjust("5 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/bin/bash"]);
+    }),
+  );
+
   it.effect("gives background retries time for a locked or slow shell, then publishes", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
