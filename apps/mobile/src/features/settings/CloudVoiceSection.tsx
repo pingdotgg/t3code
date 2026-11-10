@@ -26,6 +26,7 @@ import { ScrollView, TextInput, View } from "react-native";
 import { Sheet } from "../../components/ui/Sheet";
 import * as Dialog from "../../components/ui/Dialog";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -277,12 +278,16 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
               <ListChoiceRow
                 label={label}
                 leading={
-                  <ProviderIcon
-                    provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
-                    }
-                    size={20}
-                  />
+                  provider === "deepgram" ? (
+                    <SymbolView name="mic" size={20} tintColorClassName="accent-icon" />
+                  ) : (
+                    <ProviderIcon
+                      provider={
+                        provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      }
+                      size={20}
+                    />
+                  )
                 }
                 selected={isActive}
                 disabled={saved === undefined || (!saved && !canManage) || saving}

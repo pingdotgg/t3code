@@ -49,7 +49,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      deepgram: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -156,6 +161,56 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const wav = Buffer.from(body.input_audio.data, "base64");
     expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
     expect(wav.readInt16LE(46)).toBe(16384);
+  }),
+);
+
+it.effect("sends Deepgram raw WAV with its token and reads the first transcript", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ results: { channels: [{ alternatives: [{ transcript: "hello" }] }] } }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const transcribe = (speechLanguage: string) =>
+      service
+        .transcribe("deepgram", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage,
+          speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    yield* service.setKey("deepgram", Redacted.make("dg-key"));
+    expect((yield* service.configured).deepgram).toBe(true);
+    expect(yield* transcribe("ru")).toBe("hello");
+    const [url, init] = upstream.mock.calls[0]!;
+    const sent = new URL(String(url));
+    expect(sent.origin + sent.pathname).toBe("https://api.deepgram.com/v1/listen");
+    expect(sent.searchParams.get("model")).toBe("nova-3");
+    expect(sent.searchParams.get("language")).toBe("ru");
+    expect(sent.searchParams.getAll("keyterm")).toEqual(["T3 Code"]);
+    expect(init?.redirect).toBe("error");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("authorization")).toBe("Token dg-key");
+    expect(headers.get("content-type")).toBe("audio/wav");
+    const wav = Buffer.from(yield* Effect.promise(() => new Response(init?.body).arrayBuffer()));
+    expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(wav.readInt16LE(46)).toBe(16384);
+    yield* transcribe("auto");
+    expect(new URL(String(upstream.mock.calls[1]![0])).searchParams.get("language")).toBe("multi");
+    upstream.mockResolvedValueOnce(new Response(null, { status: 402 }));
+    expect(yield* Effect.flip(transcribe("en"))).toMatchObject({
+      provider: "deepgram",
+      reason: "rejected-key",
+    });
+    upstream.mockResolvedValueOnce(Response.json({ results: { channels: [] } }));
+    expect(yield* Effect.flip(transcribe("en"))).toMatchObject({ reason: "unavailable" });
   }),
 );
 

@@ -31,12 +31,22 @@ const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
+  deepgram: { url: "https://api.deepgram.com/v1/listen", model: "nova-3" },
 };
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
+const DeepgramResult = Schema.Struct({
+  results: Schema.Struct({
+    channels: Schema.NonEmptyArray(
+      Schema.Struct({
+        alternatives: Schema.NonEmptyArray(Schema.Struct({ transcript: Schema.String })),
+      }),
+    ),
+  }),
+});
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
@@ -101,6 +111,18 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+function deepgramUrl(language: string, options: SpeechTranscriptionOptions) {
+  const url = new URL(endpoints.deepgram.url);
+  url.searchParams.set("model", endpoints.deepgram.model);
+  url.searchParams.set("smart_format", "true");
+  // `multi` transcribes speech that switches languages, such as English terms in other speech.
+  url.searchParams.set("language", language === "auto" ? "multi" : language);
+  for (const { term } of options.speechCustomWords) url.searchParams.append("keyterm", term);
+  if (!options.speechRemoveFillerWords || options.speechCorrectionWord)
+    url.searchParams.set("filler_words", "true");
+  return url;
+}
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -130,10 +152,11 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, deepgram }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        deepgram: Boolean(deepgram),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -208,12 +231,18 @@ export const layer = Layer.effect(
         );
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
-        const request = HttpClientRequest.post(endpoints[provider].url).pipe(
-          HttpClientRequest.bearerToken(Redacted.make(key)),
-          provider === "openrouter"
-            ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
-        );
+        const request =
+          provider === "deepgram"
+            ? HttpClientRequest.post(deepgramUrl(language, options)).pipe(
+                HttpClientRequest.setHeader("authorization", `Token ${key}`),
+                HttpClientRequest.bodyUint8Array(new Uint8Array(audio), "audio/wav"),
+              )
+            : HttpClientRequest.post(endpoints[provider].url).pipe(
+                HttpClientRequest.bearerToken(Redacted.make(key)),
+                provider === "openrouter"
+                  ? openRouterBody(model!, audio, language)
+                  : audioBody(provider, audio, language, options),
+              );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
         const current = (yield* credentials)[provider];
@@ -235,9 +264,14 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
-        const { text } = yield* HttpClientResponse.schemaBodyJson(
-          EnvironmentSpeechTranscriptionResult,
-        )(response).pipe(Effect.mapError(unavailable));
+        const text =
+          provider === "deepgram"
+            ? (yield* HttpClientResponse.schemaBodyJson(DeepgramResult)(response).pipe(
+                Effect.mapError(unavailable),
+              )).results.channels[0].alternatives[0].transcript
+            : (yield* HttpClientResponse.schemaBodyJson(EnvironmentSpeechTranscriptionResult)(
+                response,
+              ).pipe(Effect.mapError(unavailable))).text;
         const corrected = applySpeechAliases(text, options.speechCustomWords);
         return (
           options.speechRemoveFillerWords
