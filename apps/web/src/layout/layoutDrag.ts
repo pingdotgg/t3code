@@ -172,7 +172,9 @@ function layoutDropDestination(
   layout: LayoutState,
   target: LayoutDropTarget,
 ): LayoutTabDestination | null {
-  if (target.kind === "side") return { kind: "split", paneId: target.paneId, side: target.side };
+  if (target.kind === "side") {
+    return { kind: "split", paneId: target.paneId, side: target.side, exact: true };
+  }
   if (target.kind === "into")
     return {
       kind: "pane",
@@ -421,9 +423,14 @@ export function withOpenThreadToTheSideItem<T extends string>(
  * the focused pane: its chat opens (or moves) beside it, side by side.
  */
 export function openThreadToTheSide(threadRef: ScopedThreadRef): void {
-  const paneId = sideAnchorPaneId(useLayoutStore.getState().layout, threadRef);
+  const store = useLayoutStore.getState();
+  const paneId = sideAnchorPaneId(store.layout, threadRef);
   if (paneId === null) return;
-  commitLayoutDrop({ kind: "thread", threadRef }, { kind: "side", paneId, side: "right" });
+  store.placeContent(
+    { kind: "chat", target: { kind: "server", threadRef } },
+    { kind: "split", paneId, side: "right" },
+  );
+  saveLayoutNow();
 }
 
 /**
