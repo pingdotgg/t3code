@@ -1113,6 +1113,14 @@ it.effect("archiving a parent takes its delegated children out of active listing
       active.threads.map((thread) => thread.id),
       childThreadId,
     );
+
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent"),
+      threadId: parentThreadId,
+    });
+
+    assert.include(yield* orchestrator.listActiveSubagentThreadIds(), childThreadId);
   }).pipe(Effect.provide(layerTest)),
 );
 
