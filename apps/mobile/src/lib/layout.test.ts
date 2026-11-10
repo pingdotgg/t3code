@@ -344,6 +344,21 @@ describe("deriveWorkspacePaneLayout", () => {
       primarySidebarSuppressedByAuxiliary: false,
       auxiliaryPaneVisible: true,
     });
+    expect(
+      deriveWorkspacePaneLayout({
+        layout: deriveLayout({ width: 680, height: 900 }),
+        viewportWidth: 608,
+        inspectorSizing: "android",
+        inspectorWindow: { width: 680, leadingWidth: 72, hinge: null },
+        primarySidebarPreferredVisible: false,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth: 320,
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: false,
+      auxiliaryPaneVisible: true,
+      auxiliaryPaneWidth: 320,
+    });
   });
 });
 

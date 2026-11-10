@@ -314,22 +314,15 @@ export function deriveFileInspectorPaneLayout(input: {
     const defaultWidth = window
       ? window.width - (window.hinge?.x ?? window.width / 2) - gap
       : Math.max(0, viewportWidth - 4) / 2;
+    const width = constrainAuxiliaryPaneWidth({
+      preferredWidth: input.preferredWidth ?? defaultWidth,
+      availableWidth: viewportWidth - gap,
+      inspectorSizing: "android",
+      inspectorWindow: window,
+    });
     const supported =
-      input.layout.usesSplitView &&
-      defaultWidth >= 320 &&
-      viewportWidth - gap - defaultWidth >= 280;
-    return {
-      supported,
-      gap: supported ? gap : 0,
-      width: supported
-        ? constrainAuxiliaryPaneWidth({
-            preferredWidth: input.preferredWidth ?? defaultWidth,
-            availableWidth: viewportWidth - gap,
-            inspectorSizing: "android",
-            inspectorWindow: window,
-          })
-        : null,
-    };
+      input.layout.usesSplitView && width >= 320 && viewportWidth - gap - width >= 280;
+    return { supported, gap: supported ? gap : 0, width: supported ? width : null };
   }
   if (input.inspectorSizing === "android") {
     const supported =
