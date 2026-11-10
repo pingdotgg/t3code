@@ -2,6 +2,8 @@
 // The SDK owns process shutdown; native deadlines cover initialize before an Effect resource exists.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museCanonicalPath needs the native one.
 import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a one-off probe outside any spawner service.
+import * as NodeChildProcess from "node:child_process";
 
 import {
   spawnMspConnection,
@@ -221,6 +223,15 @@ export async function createMuseSdkHost(
   }
 }
 
+// BusyBox env has no -C; checked against `/` so the probe itself cannot hang on a mount.
+let envChdirSupport: Promise<boolean> | undefined;
+const supportsEnvChdir = () =>
+  (envChdirSupport ??= new Promise((resolve) =>
+    NodeChildProcess.execFile("/usr/bin/env", ["-C", "/", "--", "/bin/sh", "-c", ":"], (error) =>
+      resolve(error === null),
+    ),
+  ));
+
 /** Cancellation waits for native shutdown before callers release startup resources. */
 export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(function* (
   options: Omit<MuseSdkHostOptions, "signal">,
@@ -235,7 +246,8 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   const hostOptions: Omit<MuseSdkHostOptions, "signal"> =
     (yield* HostProcess.Platform) === "linux" &&
     native.command !== "-" &&
-    !native.command.includes("=")
+    !native.command.includes("=") &&
+    (yield* Effect.promise(supportsEnvChdir))
       ? {
           ...childEntered,
           launch: {
