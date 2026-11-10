@@ -2401,7 +2401,7 @@ const make = Effect.gen(function* () {
       },
     ),
     listPipelines: Effect.fn("OrchestratorMcpService.listPipelines")(function* (scope) {
-      yield* loadCaller(scope);
+      yield* loadCaller(scope, []);
       const { pipelines: all } = yield* pipelines.list().pipe(Effect.mapError(pipelineFailure));
       return {
         pipelines: all.map((pipeline) => ({
@@ -2420,11 +2420,11 @@ const make = Effect.gen(function* () {
       };
     }),
     getPipeline: Effect.fn("OrchestratorMcpService.getPipeline")(function* (scope, input) {
-      yield* loadCaller(scope);
+      yield* loadCaller(scope, []);
       return pipelineView(yield* resolvePipeline(input.pipeline));
     }),
     savePipeline: Effect.fn("OrchestratorMcpService.savePipeline")(function* (scope, input) {
-      const { parent, limits } = yield* loadCaller(scope);
+      const { parent, limits } = yield* loadCaller(scope, []);
       yield* assertPipelineWithinLimits(
         limits,
         [],
@@ -2724,7 +2724,7 @@ const make = Effect.gen(function* () {
       return pipelineView(pipeline);
     }),
     deletePipeline: Effect.fn("OrchestratorMcpService.deletePipeline")(function* (scope, input) {
-      const { limits } = yield* loadCaller(scope);
+      const { limits } = yield* loadCaller(scope, []);
       yield* assertPipelineWithinLimits(
         limits,
         [],
@@ -2735,7 +2735,7 @@ const make = Effect.gen(function* () {
       return { pipelineId: existing.id, deleted: true };
     }),
     startPipeline: Effect.fn("OrchestratorMcpService.startPipeline")(function* (scope, input) {
-      const { parent, limits } = yield* loadCaller(scope);
+      const { parent, limits } = yield* loadCaller(scope, ["runs"]);
       yield* assertPipelineWithinLimits(limits, []);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -2785,13 +2785,13 @@ const make = Effect.gen(function* () {
       return pipelineRunSummary(scope.environmentId, run);
     }),
     pipelineStatus: Effect.fn("OrchestratorMcpService.pipelineStatus")(function* (scope, input) {
-      yield* loadCaller(scope);
+      yield* loadCaller(scope, []);
       const run = yield* pipelines.getRun(input.runId).pipe(Effect.mapError(pipelineFailure));
       return pipelineRunSummary(scope.environmentId, run);
     }),
     continuePipeline: Effect.fn("OrchestratorMcpService.continuePipeline")(
       function* (scope, input) {
-        const { parent, limits } = yield* loadCaller(scope);
+        const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* pipelines
           .getRun(input.runId)
           .pipe(Effect.mapError(pipelineFailure));
@@ -2820,7 +2820,7 @@ const make = Effect.gen(function* () {
       },
     ),
     cancelPipeline: Effect.fn("OrchestratorMcpService.cancelPipeline")(function* (scope, input) {
-      const { parent } = yield* loadCaller(scope);
+      const { parent } = yield* loadCaller(scope, ["runs"]);
       const existing = yield* pipelines.getRun(input.runId).pipe(Effect.mapError(pipelineFailure));
       yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
       const { run } = yield* pipelines
@@ -2830,7 +2830,7 @@ const make = Effect.gen(function* () {
     }),
     rerunPipelineStep: Effect.fn("OrchestratorMcpService.rerunPipelineStep")(
       function* (scope, input) {
-        const { parent, limits } = yield* loadCaller(scope);
+        const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* pipelines
           .getRun(input.runId)
           .pipe(Effect.mapError(pipelineFailure));
@@ -2845,7 +2845,7 @@ const make = Effect.gen(function* () {
     ),
     revisePipelineStep: Effect.fn("OrchestratorMcpService.revisePipelineStep")(
       function* (scope, input) {
-        const { parent, limits } = yield* loadCaller(scope);
+        const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* pipelines
           .getRun(input.runId)
           .pipe(Effect.mapError(pipelineFailure));
