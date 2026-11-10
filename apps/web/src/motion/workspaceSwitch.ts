@@ -244,6 +244,12 @@ function directionOf(previous: LayoutState, next: LayoutState, fromId: string, t
   return a >= 0 && b >= 0 && b < a ? -1 : 1;
 }
 
+function vacatedBy(previous: LayoutState, next: LayoutState, id: string): boolean {
+  const columns = (layout: LayoutState) =>
+    layout.workspaces.find((workspace) => workspace.id === id)?.columns.length ?? 0;
+  return columns(previous) > 0 && columns(next) === 0;
+}
+
 /** Focus moved to another workspace by anything but a swipe: spring there. */
 function onFocusedWorkspaceChange(previous: LayoutState, next: LayoutState): void {
   if (!host || !ready || committing || host.blocked()) return;
@@ -263,6 +269,10 @@ function onFocusedWorkspaceChange(previous: LayoutState, next: LayoutState): voi
   const current = ensureStack(fromId);
   const from = rowOf(fromId) ?? current.rows[0]!;
   const target = placeRow(toId, from, directionOf(previous, next, fromId, toId));
+  if (vacatedBy(previous, next, fromId)) {
+    const placed = ensureStack(fromId);
+    setStack({ ...placed, rows: placed.rows.filter((row) => row.id !== fromId) });
+  }
   springTo(target.offset);
 }
 
