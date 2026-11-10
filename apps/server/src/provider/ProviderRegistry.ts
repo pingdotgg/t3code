@@ -740,16 +740,22 @@ export const layer = Layer.effect(
           ),
         );
       });
+      // Instances can share the replaced service, so none may invalidate before it restarts.
+      const selectedInstance = instances.find(
+        (instance) => instance.instanceId === selectedInstanceId,
+      );
+      if (selectedInstance?.afterUpdate !== undefined) {
+        yield* selectedInstance.afterUpdate.pipe(
+          Effect.catchCause((cause) => recoverInstanceFailure(selectedInstance.instanceId, cause)),
+        );
+      }
       // Accounts can share an installation, but discovery must use each
       // instance's own executable, environment, and credentials.
       yield* Effect.forEach(
-        instances,
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
         (instance) =>
           Effect.gen(function* () {
             yield* instance.invalidateCaches ?? Effect.void;
-            if (instance.instanceId === selectedInstanceId) {
-              yield* instance.afterUpdate ?? Effect.void;
-            }
             const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
             yield* Effect.forEach(
               latestProviderVersionCacheKeys(maintenance),

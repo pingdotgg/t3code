@@ -1493,6 +1493,7 @@ it.layer(
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
         const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
+        const updateEvents = yield* Ref.make<ReadonlyArray<string>>([]);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -1537,11 +1538,19 @@ it.layer(
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              invalidateCaches: Ref.update(invalidations, (count) => count + 1),
+              invalidateCaches: Ref.update(invalidations, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Ref.update(updateEvents, (events) => [...events, `invalidate:${name}`]),
+                ),
+              ),
               afterUpdate: Ref.update(maintenanceReads, (reads) => [
                 ...reads,
                 "afterUpdate" as const,
-              ]),
+              ]).pipe(
+                Effect.andThen(
+                  Ref.update(updateEvents, (events) => [...events, `afterUpdate:${name}`]),
+                ),
+              ),
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
@@ -1631,12 +1640,15 @@ it.layer(
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
 
           yield* first.takeMaintenanceReads;
+          yield* Ref.set(updateEvents, []);
           yield* registry.refreshAfterUpdate(first.instance.driverKind, first.instance.instanceId);
           assert.deepStrictEqual((yield* first.takeMaintenanceReads).slice(0, 2), [
             "afterUpdate",
             true,
           ]);
           assert.notInclude(yield* second.takeMaintenanceReads, "afterUpdate");
+          // Instances sharing the replaced service must not cache its old version.
+          assert.strictEqual((yield* Ref.get(updateEvents))[0], "afterUpdate:codex_first");
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(
