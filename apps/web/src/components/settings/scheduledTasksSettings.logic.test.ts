@@ -172,6 +172,16 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("fixed-time scheduled tasks", () => {
+  it("pads a stored single-digit hour so the time input shows it", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "9:05" },
+    });
+    expect(draft.timeOfDay).toBe("09:05");
+  });
+});
+
 describe("scheduled task destination", () => {
   it("restores the saved thread when the project changes back", () => {
     const task = {
