@@ -5,6 +5,7 @@
 // end-to-end against zcode 3.17.2 (PROTOCOL-NOTES.md); the desktop host performs the same
 // exchanges.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -59,8 +60,15 @@ export const resolveZcodeCredentialSecret = (
 ): string => {
   const configured = environment.ZCODE_CREDENTIAL_SECRET?.trim();
   if (configured !== undefined && configured.length > 0) return configured;
-  const username = environment.USER ?? environment.USERNAME ?? "unknown";
-  const home = environment.HOME ?? "";
+  // The CLI binds the fallback to os.userInfo().username — env USER/USERNAME may be absent in
+  // server processes and must not silently derive a different key.
+  let username = "unknown";
+  try {
+    username = NodeOS.userInfo().username;
+  } catch {
+    username = environment.USER ?? environment.USERNAME ?? "unknown";
+  }
+  const home = environment.HOME ?? NodeOS.homedir();
   return `zcode-credential-fallback:${platform}:${home}:${username}`;
 };
 
@@ -244,6 +252,85 @@ export const zcodeAccountConfigPushFromLadder = Effect.fn("ZcodeRequestAuth.buil
     };
   },
 );
+
+/**
+ * Entitled individual-coding-plan models for the model picker: enumerated from the injected
+ * catalog plus the entitlement ladder, so a catalog refresh by the CLI adds models without an
+ * adapter change. Reasoning levels come from the catalog's modelRules (modelMatch regexes,
+ * matched case-insensitively against the model id).
+ */
+export interface ZcodeEntitledModel {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly reasoningLevels: ReadonlyArray<string>;
+}
+
+export const zcodeEntitledModels = Effect.fn("ZcodeRequestAuth.entitledModels")(function* (
+  fileSystem: FileSystem.FileSystem,
+  input: {
+    readonly builtinPath: string;
+    readonly builtinCatalog: unknown;
+    readonly environment: NodeJS.ProcessEnv;
+  },
+): Effect.fn.Return<ReadonlyArray<ZcodeEntitledModel>, never, never> {
+  const rules = zcodeBuiltinAccountRules(input.builtinCatalog);
+  const root = zcodeDataRoot(input.environment);
+  if (rules.length === 0 || root === undefined) return [];
+  const store = yield* readDecryptedCredentialStore(
+    fileSystem,
+    `${root}/.zcode/v2/credentials.json`,
+    input.environment,
+    yield* HostProcess.Platform,
+  );
+  const families = yield* readOAuthSelectedFamilies(
+    fileSystem,
+    `${root}/.zcode/v2/setting.json`,
+    store,
+  );
+  const modelRules = zcodeRecordArray(
+    zcodeRecordField(zcodeRecordField(input.builtinCatalog, "config"), "modelConfigRules"),
+    "modelRules",
+  );
+  const levelsFor = (modelId: string): ReadonlyArray<string> => {
+    // Later matching rules compose over earlier ones (the runtime's advertised levels are the
+    // last match: Flash hits glm-5.* then glm-5\.3, landing on [low, high, max]).
+    let levels: ReadonlyArray<string> = [];
+    for (const rule of modelRules ?? []) {
+      const match = zcodeRecordString(rule, "modelMatch");
+      if (match === undefined) continue;
+      let regex: RegExp;
+      try {
+        regex = new RegExp(match, "i");
+      } catch {
+        continue;
+      }
+      if (!regex.test(modelId)) continue;
+      const specs = zcodeRecordField(zcodeRecordField(rule, "config"), "optionSpecs");
+      const reasoning = zcodeRecordField(Predicate.isObject(specs) ? specs : {}, "reasoningLevel");
+      const values = zcodeRecordArray(reasoning, "values")?.filter(
+        (value): value is string => typeof value === "string",
+      );
+      if (values !== undefined && values.length > 0) levels = values;
+    }
+    return levels;
+  };
+  const out: Array<ZcodeEntitledModel> = [];
+  for (const rule of rules) {
+    const providerId = zcodeRecordString(rule, "providerId");
+    const access = zcodeRuleAccess(rule);
+    if (
+      providerId === undefined ||
+      zcodeRecordString(access, "mode") !== "individual-coding-plan" ||
+      !families.has(zcodeRecordString(access, "accountType") ?? "")
+    ) {
+      continue;
+    }
+    for (const modelId of zcodeBuiltinModelIds(rule)) {
+      out.push({ providerId, modelId, reasoningLevels: levelsFor(modelId) });
+    }
+  }
+  return out;
+});
 
 /** `account:<family>-individual-coding-plan` → the plan family the auth exchange needs. */
 export const zcodeFamilyFromProviderId = (providerId: string | undefined): string | undefined => {

@@ -1,8 +1,14 @@
-import { type CustomModelSetting, type ServerProviderModel } from "@t3tools/contracts";
+import {
+  type CustomModelSetting,
+  type ModelCapabilities,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import type { ZcodeSettings } from "../settings.ts";
-import { resolveZcodeLaunchCommand } from "./zcodeRuntime.ts";
+import { resolveZcodeCatalogFiles, resolveZcodeLaunchCommand } from "./zcodeRuntime.ts";
+import { zcodeEntitledModels } from "./zcodeRequestAuth.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -42,26 +48,71 @@ const decodeDoctorOutput = Schema.decodeUnknownOption(
   ),
 );
 
-const ZCODE_FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = [
-  { slug: "default", name: "ZCode default", isCustom: false, capabilities: {} },
-  {
-    slug: "account:zai-individual-coding-plan/GLM-5.3",
-    name: "GLM-5.3",
-    isCustom: false,
-    capabilities: {},
-  },
-  {
-    slug: "account:zai-individual-coding-plan/GLM-5.3-Flash",
-    name: "GLM-5.3 Flash",
-    isCustom: false,
-    capabilities: {},
-  },
-];
+/**
+ * "default" defers to the model the signed-in ZCode CLI resolves on its own; the rest of the
+ * picker is enumerated from the CLI's injected catalog + entitlement ladder at probe time, so
+ * models the plan adds later appear without an adapter change.
+ */
+const ZCODE_DEFAULT_MODEL: ServerProviderModel = {
+  slug: "default",
+  name: "ZCode default",
+  isCustom: false,
+  isDefault: true,
+  capabilities: {},
+};
+
+function zcodeReasoningCapabilities(levels: ReadonlyArray<string>): ModelCapabilities {
+  if (levels.length === 0) return {};
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningLevel",
+        label: "Reasoning",
+        type: "select",
+        role: "reasoning",
+        options: levels.map((level) => ({
+          id: level,
+          label: level.charAt(0).toUpperCase() + level.slice(1),
+        })),
+      },
+    ],
+  });
+}
+
+const zcodeEntitledPickerModels = Effect.fn("ZcodeProviderStatus.entitledModels")(function* (
+  fileSystem: FileSystem.FileSystem,
+  environment: NodeJS.ProcessEnv,
+) {
+  const catalogFiles = yield* resolveZcodeCatalogFiles(fileSystem, environment);
+  if (catalogFiles.builtinCatalog === undefined || catalogFiles.builtinPath === undefined) {
+    return [];
+  }
+  const entitled = yield* zcodeEntitledModels(fileSystem, {
+    builtinPath: catalogFiles.builtinPath,
+    builtinCatalog: catalogFiles.builtinCatalog,
+    environment,
+  });
+  return entitled.map((model): ServerProviderModel => {
+    const capabilities = zcodeReasoningCapabilities(model.reasoningLevels);
+    return {
+      slug: `${model.providerId}/${model.modelId}`,
+      name: model.modelId,
+      subProvider: model.providerId,
+      isCustom: false,
+      capabilities: Object.keys(capabilities).length === 0 ? {} : capabilities,
+    };
+  });
+});
 
 function zcodeModelsFromSettings(
   customModels: ReadonlyArray<CustomModelSetting> | undefined,
+  entitledModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(ZCODE_FALLBACK_MODELS, customModels ?? [], {});
+  return providerModelsFromSettings(
+    [ZCODE_DEFAULT_MODEL, ...entitledModels],
+    customModels ?? [],
+    {},
+  );
 }
 
 const runZcodeDoctor = Effect.fn("ZcodeProviderStatus.runDoctor")(function* (
@@ -289,11 +340,17 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
     fileSystem,
     resolveZcodeCredentialsPath(environment),
   );
+  // Enumerate the picker from the CLI's own catalog + entitlement ladder; fall back to the
+  // default-only list when the catalog files are absent (fresh installs before first login).
+  const entitledModels = yield* zcodeEntitledPickerModels(fileSystem, environment).pipe(
+    Effect.orElseSucceed(() => [] as ReadonlyArray<ServerProviderModel>),
+  );
+  const models = zcodeModelsFromSettings(zcodeSettings.customModels, entitledModels);
   return buildServerProvider({
     presentation: ZCODE_PRESENTATION,
     enabled: zcodeSettings.enabled,
     checkedAt,
-    models: fallbackModels,
+    models,
     probe: {
       installed: true,
       version,

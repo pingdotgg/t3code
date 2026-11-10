@@ -27,28 +27,22 @@ describe("resolveZcodeCredentialSecret", () => {
       resolveZcodeCredentialSecret({ ZCODE_CREDENTIAL_SECRET: " custom-secret " }, "linux"),
       "custom-secret",
     );
-    assert.equal(
-      resolveZcodeCredentialSecret(
-        { ZCODE_CREDENTIAL_SECRET: "   ", USER: "jame", HOME: "/home/dev" },
-        "linux",
-      ),
-      "zcode-credential-fallback:linux:/home/dev:jame",
+    const blankOverride = resolveZcodeCredentialSecret(
+      { ZCODE_CREDENTIAL_SECRET: "   ", HOME: "/home/dev" },
+      "linux",
     );
+    assert.match(blankOverride, /^zcode-credential-fallback:linux:\/home\/dev:/);
   });
 
-  it("derives the CLI's machine-bound fallback from USER then USERNAME and HOME", () => {
-    assert.equal(
-      resolveZcodeCredentialSecret({ USER: "jame", HOME: "/home/dev" }, "darwin"),
-      "zcode-credential-fallback:darwin:/home/dev:jame",
+  it("derives the CLI's machine-bound fallback with the HOME from the environment", () => {
+    // Username comes from os.userInfo() where resolvable (env names never win); on runtimes
+    // where it throws, the env fallback speaks. Only the stable parts are asserted here.
+    const secret = resolveZcodeCredentialSecret(
+      { USER: "someoneElse", HOME: "/home/dev" },
+      "darwin",
     );
-    assert.equal(
-      resolveZcodeCredentialSecret({ USERNAME: "jdoe", HOME: "/home/dev" }, "win32"),
-      "zcode-credential-fallback:win32:/home/dev:jdoe",
-    );
-    assert.equal(
-      resolveZcodeCredentialSecret({}, "linux"),
-      "zcode-credential-fallback:linux::unknown",
-    );
+    assert.match(secret, /^zcode-credential-fallback:darwin:\/home\/dev:/);
+    assert.match(resolveZcodeCredentialSecret({}, "linux"), /^zcode-credential-fallback:linux:/);
   });
 });
 

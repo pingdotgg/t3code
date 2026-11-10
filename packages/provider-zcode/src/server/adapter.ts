@@ -1974,15 +1974,22 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             };
             const modelSelection = zcodeModelSelectionFromSlug(turnInput.modelSelection.model);
             if (modelSelection !== undefined) {
-              // The registry requires a reasoning level whenever the model advertises one; the
-              // CLI's own default fills the gap for T3 selections that carry none.
+              // Level priority: the user's Effort pick (the "reasoningLevel" descriptor lands in
+              // model selections) beats the slug suffix beats the CLI-advertised default.
+              const pickedLevel = turnInput.modelSelection.options?.find(
+                (selection) => selection.id === "reasoningLevel" || selection.id === "effort",
+              )?.value;
               const advertised = availableModels.find(
                 (entry) =>
                   entry.providerId === modelSelection.providerId &&
                   entry.modelId === modelSelection.modelId,
               );
               const reasoningLevel =
-                modelSelection.options?.reasoningLevel ?? advertised?.defaultReasoningLevel;
+                (typeof pickedLevel === "string" && pickedLevel.length > 0
+                  ? pickedLevel
+                  : undefined) ??
+                modelSelection.options?.reasoningLevel ??
+                advertised?.defaultReasoningLevel;
               sendParams["modelSelection"] = {
                 ...modelSelection,
                 ...(reasoningLevel === undefined ? {} : { options: { reasoningLevel } }),
