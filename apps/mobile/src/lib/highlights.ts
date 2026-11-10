@@ -1,4 +1,5 @@
-import { requireOptionalNativeModule } from "expo";
+import type { T3Highlights } from "@t3tools/mobile-highlights-native";
+import { NitroModules } from "react-native-nitro-modules";
 
 import { highlightLanguageId } from "./highlightLanguage";
 import { HIGHLIGHTS_THEME_STYLES } from "./highlights.generated";
@@ -20,9 +21,9 @@ const MAX_HIGHLIGHTED_LINE_LENGTH = 1_000;
 
 // @pierre/highlights compiled to native code (modules/t3-highlights). Missing
 // from binaries built before it shipped, where code renders as plain text.
-const nativeHighlights = requireOptionalNativeModule<{
-  tokenize(source: string, language: number): ArrayBuffer | null;
-}>("T3Highlights");
+const nativeHighlights = NitroModules.hasHybridObject("T3Highlights")
+  ? NitroModules.createHybridObject<T3Highlights>("T3Highlights")
+  : undefined;
 
 export interface TokenizedCode {
   /** Retained UTF-16 source, compact native records, and line indexes. */
