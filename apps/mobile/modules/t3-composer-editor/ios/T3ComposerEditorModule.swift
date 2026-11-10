@@ -61,6 +61,9 @@ public class T3ComposerEditorModule: Module {
       Prop("clipboardFragment") { (view: T3ComposerEditorView, fragment: String) in
         view.setClipboardFragment(fragment)
       }
+      Prop("filePasteEnabled") { (view: T3ComposerEditorView, enabled: Bool) in
+        view.setFilePasteEnabled(enabled)
+      }
       Prop("placeholder") { (view: T3ComposerEditorView, placeholder: String) in
         view.setPlaceholder(placeholder)
       }
@@ -117,6 +120,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerBlur",
         "onComposerSubmit",
         "onComposerPasteImages",
+        "onComposerPasteFiles",
         "onComposerContextPress",
         "onComposerPasteContext",
         "onComposerPasteText",
@@ -134,6 +138,9 @@ public class T3ComposerEditorModule: Module {
       }
       AsyncFunction("readState") { (view: T3ComposerEditorView) -> [String: Any] in
         view.readState()
+      }
+      AsyncFunction("readPastedFiles") { (view: T3ComposerEditorView, id: String, promise: Promise) in
+        view.readPastedFiles(id, promise: promise)
       }
     }
   }

@@ -37,7 +37,11 @@ import {
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
 import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
-import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
+import type {
+  ComposerEditorProps,
+  ComposerEditorSelection,
+  ComposerFilePaste,
+} from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
@@ -71,6 +75,7 @@ type NativePasteTextEvent = NativeSyntheticEvent<{
 }>;
 
 interface NativeComposerEditorRef {
+  readPastedFiles: (id: string) => Promise<ComposerFilePaste>;
   focus: () => Promise<void>;
   blur: () => Promise<void>;
   setSelection: (start: number, end: number) => Promise<void>;
@@ -105,6 +110,10 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  readonly filePasteEnabled: boolean;
+  readonly onComposerPasteFiles?: (
+    event: NativeSyntheticEvent<{ readonly id: string; readonly resetGeneration: number }>,
+  ) => void;
   readonly onComposerContextPress?: (
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
   ) => void;
@@ -388,6 +397,18 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+      filePasteEnabled={props.onPasteFiles !== undefined}
+      onComposerPasteFiles={(event) => {
+        if (
+          props.readOnly ||
+          props.editable === false ||
+          !props.onPasteFiles ||
+          event.nativeEvent.resetGeneration < readResetGeneration()
+        )
+          return;
+        const paste = nativeRef.current?.readPastedFiles(event.nativeEvent.id);
+        if (paste) props.onPasteFiles(paste);
+      }}
       onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
       onComposerPasteContext={(event) => {
         const paste = event.nativeEvent;

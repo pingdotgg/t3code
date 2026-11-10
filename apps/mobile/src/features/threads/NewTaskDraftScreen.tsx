@@ -554,6 +554,7 @@ export function NewTaskDraftScreen(props: {
     onPickDraftMedia: handlePickMedia,
     onPickDraftFiles: handlePickFiles,
     onNativePasteImages: handleNativePasteImages,
+    onNativePasteFiles: handleNativePasteFiles,
     onNativePasteText: handleNativePasteText,
   } = useComposerAttachmentActions({
     draftKey: flow.draftKey,
@@ -1015,6 +1016,7 @@ export function NewTaskDraftScreen(props: {
         onPickDraftMedia={handlePickMedia}
         onPickDraftFiles={handlePickFiles}
         onNativePasteImages={handleNativePasteImages}
+        onNativePasteFiles={handleNativePasteFiles}
         onNativePasteText={handleNativePasteText}
         onRemoveDraftImage={flow.removeAttachment}
         onStopThread={() => {}}

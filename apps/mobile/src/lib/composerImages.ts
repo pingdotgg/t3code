@@ -11,7 +11,7 @@ import {
   type PastedTextAttachmentSource,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
-import type { DocumentPickerResult } from "expo-document-picker";
+import type { DocumentPickerAsset, DocumentPickerResult } from "expo-document-picker";
 import { estimateBase64ByteSize } from "./base64";
 import {
   COMPOSER_ATTACHMENT_DIRECTORY,
@@ -285,13 +285,25 @@ export async function pickComposerFiles(input: {
     return { files: [], error: null };
   }
 
+  return importComposerFiles({ ...input, files: result.assets });
+}
+
+export async function importComposerFiles(input: {
+  readonly files: ReadonlyArray<Pick<DocumentPickerAsset, "uri" | "name" | "mimeType" | "size">>;
+  readonly existingCount: number;
+  readonly maxBytes?: number;
+}): Promise<{
+  readonly files: ReadonlyArray<DraftComposerAttachment>;
+  readonly error: string | null;
+}> {
+  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   const maxBytes = clampFileAttachmentUploadBytes(
     input.maxBytes ?? PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   );
   const attachments: DraftComposerAttachment[] = [];
   let error: string | null = null;
   let exceededAttachmentLimit = false;
-  for (const file of result.assets) {
+  for (const file of input.files) {
     if (attachments.length >= remainingSlots) {
       exceededAttachmentLimit = true;
       break;
@@ -566,6 +578,23 @@ function isOwnedPastedImageUri(uri: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+export async function removePastedComposerFiles(
+  files: ReadonlyArray<{ readonly uri: string }>,
+): Promise<void> {
+  const { File } = await import("expo-file-system");
+  for (const { uri } of files) {
+    try {
+      const url = new URL(uri);
+      if (url.protocol !== "file:" || url.pathname.split("/").at(-2) !== "t3-composer-paste-files")
+        continue;
+      const file = new File(uri);
+      if (file.exists) file.delete();
+    } catch (error) {
+      console.warn("Failed to remove temporary pasted file", error);
+    }
   }
 }
 

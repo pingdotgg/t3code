@@ -77,6 +77,8 @@ private final class ComposerTextView: UITextView {
   ])
 
   var onPasteImages: (([String]) -> Void)?
+  var onPasteFiles: (([NSItemProvider]) -> Void)?
+  var filePasteEnabled = false
   var onPasteContext: (([String: String]) -> Void)?
   var onPasteText: ((String, NSRange) -> Void)?
   var clipboardFragment = ""
@@ -186,6 +188,9 @@ private final class ComposerTextView: UITextView {
     }
     if action == #selector(paste(_:)) {
       let pasteboard = UIPasteboard.general
+      if filePasteEnabled && T3ComposerPasteFiles.containsFiles(pasteboard.itemProviders) {
+        return true
+      }
       if pasteboard.hasImages ||
         pasteboard.itemProviders.contains(where: {
           $0.canLoadObject(ofClass: UIImage.self)
@@ -198,6 +203,7 @@ private final class ComposerTextView: UITextView {
 
   override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
     guard isEditable, !isReadOnly else { return false }
+    if filePasteEnabled && T3ComposerPasteFiles.containsFiles(itemProviders) { return true }
     // UIKit checks canPaste before forwarding a drag to UITextDropDelegate.
     if !itemProviders.isEmpty,
        itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
@@ -208,6 +214,10 @@ private final class ComposerTextView: UITextView {
 
   override func paste(itemProviders: [NSItemProvider]) {
     guard isEditable, !isReadOnly else { return }
+    if filePasteEnabled && T3ComposerPasteFiles.containsFiles(itemProviders) {
+      onPasteFiles?(itemProviders)
+      return
+    }
     if !itemProviders.isEmpty,
        itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
       loadImages(from: itemProviders)
@@ -224,6 +234,10 @@ private final class ComposerTextView: UITextView {
     let context = T3ComposerClipboard.read()
     if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") {
       onPasteContext?(context)
+      return
+    }
+    if filePasteEnabled && T3ComposerPasteFiles.containsFiles(pasteboard.itemProviders) {
+      onPasteFiles?(pasteboard.itemProviders)
       return
     }
     let imageProviders = pasteboard.itemProviders.filter {
@@ -471,6 +485,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var lastPasteEventCount = 0
   private var hasControlledDocument = false
   private var resetGeneration = 0
+  private var pastedFileProviders: [String: [NSItemProvider]] = [:]
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
@@ -487,6 +502,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   let onComposerBlur = EventDispatcher()
   let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
+  let onComposerPasteFiles = EventDispatcher()
   let onComposerContextPress = EventDispatcher()
   let onComposerPasteContext = EventDispatcher()
   let onComposerPasteText = EventDispatcher()
@@ -516,6 +532,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
+    }
+    textView.onPasteFiles = { [weak self] providers in
+      guard let self else { return }
+      let id = UUID().uuidString
+      self.pastedFileProviders[id] = providers
+      self.onComposerPasteFiles(["id": id, "resetGeneration": self.resetGeneration])
     }
     textView.onPasteContext = { [weak self] context in
       guard let self else { return }
@@ -678,6 +700,20 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.clipboardFragment = fragment
   }
 
+  func setFilePasteEnabled(_ enabled: Bool) {
+    textView.filePasteEnabled = enabled
+  }
+
+  func readPastedFiles(_ id: String, promise: Promise) {
+    let providers = pastedFileProviders.removeValue(forKey: id) ?? []
+    T3ComposerPasteFiles.load(providers) { files, failed in
+      promise.resolve([
+        "files": files,
+        "error": failed ? "Some clipboard files could not be read. Try Choose Files instead." as Any : NSNull(),
+      ])
+    }
+  }
+
   public override func didMoveToWindow() {
     super.didMoveToWindow()
     guard window != nil, shouldAutoFocus, !didAutoFocus else {
@@ -700,6 +736,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     if isReset {
+      pastedFileProviders.removeAll()
       resetGeneration = document.resetGeneration
       // JS drops a paste from before the reset by generation, so the flush must not wait for it.
       lastPasteEventCount = 0

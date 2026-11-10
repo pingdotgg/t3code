@@ -3,11 +3,13 @@ import { useRef } from "react";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type ServerConfig } from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName } from "@t3tools/client-runtime/text-paste";
-import type { ComposerTextPaste } from "../components/ComposerEditor";
+import type { ComposerTextPaste, ComposerFilePaste } from "../native/T3ComposerEditor.types";
 import {
   convertPastedImagesToAttachments,
   createPastedTextComposerAttachment,
   pickComposerFiles,
+  importComposerFiles,
+  removePastedComposerFiles,
   pickComposerMedia,
   removePersistedComposerAttachmentFile,
   type DraftComposerAttachment,
@@ -95,6 +97,41 @@ export function useComposerAttachmentActions(props: {
       );
     });
   };
+  const onNativePasteFiles = async (pendingPaste: Promise<ComposerFilePaste>) => {
+    const key = props.draftKey;
+    const insertion = key ? captureComposerDraftInsertion(key) : null;
+    const operation = key ? startComposerDraftOperation(key) : null;
+    await pendingPaste
+      .then(async (paste) => {
+        await (async () => {
+          if (!key || !insertion || !operation || props.locked || operation.signal.aborted) return;
+          const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
+          if (maxBytes === undefined) {
+            Dialog.alert("Could not attach file", "This server does not support file attachments.");
+            return;
+          }
+          const result = await importComposerFiles({
+            files: paste.files,
+            existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
+            maxBytes,
+          });
+          report(
+            "Could not paste files",
+            result.error ?? paste.error,
+            await append(key, operation.signal, result.files, insertion),
+          );
+        })().finally(() => removePastedComposerFiles(paste.files));
+      })
+      .catch((error) => {
+        if (!operation?.signal.aborted) {
+          Dialog.alert(
+            "Could not paste files",
+            error instanceof Error ? error.message : "Try again.",
+          );
+        }
+      })
+      .finally(() => operation?.finish());
+  };
   const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
     const key = props.draftKey;
     if (!key || props.locked || !uris.length) return;
@@ -145,5 +182,11 @@ export function useComposerAttachmentActions(props: {
       }
     });
   };
-  return { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText };
+  return {
+    onPickDraftMedia,
+    onPickDraftFiles,
+    onNativePasteImages,
+    onNativePasteFiles,
+    onNativePasteText,
+  };
 }

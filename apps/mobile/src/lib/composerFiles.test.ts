@@ -92,6 +92,8 @@ import {
   persistComposerAttachmentFile,
   isComposerImageAttachment,
   pickComposerFiles,
+  importComposerFiles,
+  removePastedComposerFiles,
   pickComposerImages,
   pickComposerMedia,
   removePersistedComposerAttachmentFile,
@@ -653,37 +655,38 @@ describe("composer file attachments", () => {
     });
   });
 
-  it("copies picked files into app-owned storage without loading their contents", async () => {
-    mocks.pickFile.mockResolvedValue({
-      canceled: false,
-      assets: [
-        {
-          uri: "file:///downloads/report.pdf",
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          size: 42,
-        },
-      ],
-    });
-
-    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
-      files: [
-        {
-          id: "attachment-id",
-          type: "file",
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 42,
-          fileUri: "file:///documents/t3-composer-attachments/attachment-id-report.pdf",
-        },
-      ],
-      error: null,
-    });
-    expect(mocks.copy).toHaveBeenCalledWith(
-      "file:///downloads/report.pdf",
-      "file:///documents/t3-composer-attachments/attachment-id-report.pdf",
-    );
-  });
+  it.each([
+    ["report.pdf", "application/pdf"],
+    ["archive.zip", "application/zip"],
+    ["notes.txt", "text/plain"],
+    ["recording.m4a", "audio/mp4"],
+  ])(
+    "imports %s from the picker or clipboard without loading its contents",
+    async (name, mimeType) => {
+      const file = { uri: `file:///tmp/t3-composer-paste-files/${name}`, name, mimeType, size: 42 };
+      mocks.pickFile.mockResolvedValue({ canceled: false, assets: [file] });
+      const expected = {
+        files: [
+          {
+            id: "attachment-id",
+            type: "file",
+            name,
+            mimeType,
+            sizeBytes: 42,
+            fileUri: `file:///documents/t3-composer-attachments/attachment-id-${name}`,
+          },
+        ],
+        error: null,
+      };
+      await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual(expected);
+      await expect(importComposerFiles({ files: [file], existingCount: 0 })).resolves.toEqual(
+        expected,
+      );
+      expect(mocks.readBase64).not.toHaveBeenCalled();
+      await removePastedComposerFiles([file, { uri: "file:///downloads/original.pdf" }]);
+      expect(mocks.delete.mock.calls).toEqual([[file.uri]]);
+    },
+  );
 
   it("preserves Android picker metadata instead of using the content URI document id", async () => {
     const uri = "content://com.android.providers.media.documents/document/video%3A18";
@@ -902,29 +905,36 @@ describe("composer file attachments", () => {
     });
   });
 
-  it("uses the remaining slot for the first valid file after an oversized selection", async () => {
-    mocks.pickFile.mockResolvedValue({
-      canceled: false,
-      assets: [
-        {
-          uri: "file:///downloads/huge.zip",
-          name: "huge.zip",
-          mimeType: "application/zip",
-          size: 2 * 1024 * 1024,
-        },
-        {
-          uri: "file:///downloads/report.pdf",
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          size: 42,
-        },
-      ],
-    });
+  it.each(["picker", "clipboard"])(
+    "%s uses the remaining slot after an oversized file",
+    async (source) => {
+      mocks.pickFile.mockResolvedValue({
+        canceled: false,
+        assets: [
+          {
+            uri: "file:///downloads/huge.zip",
+            name: "huge.zip",
+            mimeType: "application/zip",
+            size: 2 * 1024 * 1024,
+          },
+          {
+            uri: "file:///downloads/report.pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            size: 42,
+          },
+        ],
+      });
 
-    const result = await pickComposerFiles({ existingCount: 99, maxBytes: 1024 * 1024 });
+      const input = { existingCount: 99, maxBytes: 1024 * 1024 };
+      const result =
+        source === "picker"
+          ? await pickComposerFiles(input)
+          : await importComposerFiles({ ...input, files: (await mocks.pickFile()).assets });
 
-    expect(result.files.map((file) => file.name)).toEqual(["report.pdf"]);
-  });
+      expect(result.files.map((file) => file.name)).toEqual(["report.pdf"]);
+    },
+  );
 
   it("removes the partial destination file when a copy fails midway", async () => {
     mocks.copy.mockImplementation(() => {

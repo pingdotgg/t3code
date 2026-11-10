@@ -1,6 +1,7 @@
 import type { SelectableMarkdownModel } from "./SelectableMarkdownText.types";
 import type { OrchestrationMessageContext, ServerProviderSkill } from "@t3tools/contracts";
 import type { Ref } from "react";
+import type { DocumentPickerAsset } from "expo-document-picker";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
@@ -17,6 +18,11 @@ export type ComposerTextPaste = {
   readonly eventCount: number;
   readonly text: string;
   readonly selection: ComposerEditorSelection;
+};
+
+export type ComposerFilePaste = {
+  readonly files: ReadonlyArray<Pick<DocumentPickerAsset, "uri" | "name" | "mimeType" | "size">>;
+  readonly error: string | null;
 };
 
 export interface ComposerEditorHandle {
@@ -69,6 +75,7 @@ export interface ComposerEditorProps {
   readonly readResetGeneration?: () => number;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
+  readonly onPasteFiles?: (paste: Promise<ComposerFilePaste>) => void;
   readonly onContextPress?: (reference: {
     readonly source: string;
     readonly start: number;

@@ -1,7 +1,7 @@
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
+import type { ComposerTextPaste, ComposerFilePaste } from "../../native/T3ComposerEditor.types";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
@@ -240,6 +240,7 @@ export interface ThreadComposerProps {
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteFiles: (paste: Promise<ComposerFilePaste>) => Promise<void>;
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
@@ -971,6 +972,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     if (isSubmissionLocked) return;
                     pendingNativeImagePasteCountRef.current += 1;
                     void props.onNativePasteImages(uris).finally(() => {
+                      pendingNativeImagePasteCountRef.current -= 1;
+                    });
+                  }}
+                  onPasteFiles={(paste) => {
+                    pendingNativeImagePasteCountRef.current += 1;
+                    void props.onNativePasteFiles(paste).finally(() => {
                       pendingNativeImagePasteCountRef.current -= 1;
                     });
                   }}
