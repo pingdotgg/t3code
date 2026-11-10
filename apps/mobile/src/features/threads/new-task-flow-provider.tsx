@@ -607,8 +607,9 @@ export function NewTaskFlowProvider(
     if (latestSwitchRef.current !== request) return false;
     latestSwitchRef.current = null;
     setSwitchingToEnvironmentId(null);
-    // A project picked while this waited stands.
-    if (readFlow().projectKey !== projectKey) return false;
+    // A project picked or a send started while this waited stands.
+    const flowNow = readFlow();
+    if (flowNow.projectKey !== projectKey || flowNow.submitting) return false;
     if (result._tag === "Success") {
       if (triage?._tag === "Success" && draftKey !== null && readFlow().draftKey === draftKey) {
         // Read now, so text typed while the machine prepared the session is kept.
