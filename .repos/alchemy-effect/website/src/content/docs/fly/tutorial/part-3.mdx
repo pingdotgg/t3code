@@ -6,7 +6,7 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Your Service from [Part 2](/fly/tutorial/part-2) is stateless.
 Writes to the Machine's root disk die with the Machine. In this
@@ -26,7 +26,7 @@ the Service's App and region:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -133,20 +133,7 @@ return HttpServerResponse.text("Hello from Fly!");
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
 

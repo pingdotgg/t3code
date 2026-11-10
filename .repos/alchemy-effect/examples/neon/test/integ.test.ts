@@ -1,14 +1,14 @@
+import { expect } from "bun:test";
+import * as Neon from "@alchemy.run/neon";
+import * as SQL from "@alchemy.run/sql/Postgres";
+import * as Test from "@alchemy.run/test/Bun";
 import * as SDK from "@distilled.cloud/neon";
 import * as Alchemy from "alchemy";
-import * as Neon from "alchemy/Neon";
-import * as SQL from "alchemy/SQL/Postgres";
-import * as Test from "alchemy/Test/Bun";
-import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
-import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import Api from "../src/Api.ts";
 import Events from "../src/Events.ts";
 import { resources } from "../src/resources.ts";
@@ -25,28 +25,24 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const { project, branch, uploads, publicAssets, api, events } =
-        yield* stack.deploy(
-          Effect.gen(function* () {
-            const backend = yield* resources;
-            const api = yield* Api;
-            const events = yield* Events;
-            return { ...backend, api, events };
-          }),
-        );
+      const { project, branch, uploads, publicAssets, api, events } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const backend = yield* resources;
+          const api = yield* Api;
+          const events = yield* Events;
+          return { ...backend, api, events };
+        }),
+      );
       const scope = {
         project_id: project.projectId,
         branch_id: branch.branchId,
       };
       const observed = yield* SDK.listProjectBranchBuckets(scope);
       expect(
-        observed.buckets.find((bucket) => bucket.name === uploads.bucketName)
-          ?.access_level,
+        observed.buckets.find((bucket) => bucket.name === uploads.bucketName)?.access_level,
       ).toBe("private");
       expect(
-        observed.buckets.find(
-          (bucket) => bucket.name === publicAssets.bucketName,
-        )?.access_level,
+        observed.buckets.find((bucket) => bucket.name === publicAssets.bucketName)?.access_level,
       ).toBe("public_read");
       const triggers = yield* SDK.listProjectBranchTriggers(scope);
       expect(
@@ -86,10 +82,7 @@ test.provider(
           headers: { authorization: "Bearer invalid.jwt.signature" },
         })).status,
       ).toBe(401);
-      expect(
-        (yield* http.post(`${apiUrl}/__alchemy/neon/bucket/ProcessUploads`))
-          .status,
-      ).toBe(403);
+      expect((yield* http.post(`${apiUrl}/__alchemy/neon/bucket/ProcessUploads`)).status).toBe(403);
 
       const sql = yield* SQL.Postgres({
         url: Redacted.make(branch.connectionUri),
@@ -105,9 +98,7 @@ test.provider(
         expiresIn: 120,
       });
       const put = yield* http.execute(
-        HttpClientRequest.put(signed).pipe(
-          HttpClientRequest.bodyText(body, "text/plain"),
-        ),
+        HttpClientRequest.put(signed).pipe(HttpClientRequest.bodyText(body, "text/plain")),
       );
       expect(put.status).toBe(200);
       const [processed] = yield* sql<{
@@ -123,8 +114,7 @@ test.provider(
       expect(processed?.status).toBe("ready");
       expect(Number(processed?.actual_bytes)).toBe(body.length);
       expect(
-        (yield* sql`SELECT invocation_id FROM upload_events WHERE object_key = ${key}`)
-          .length,
+        (yield* sql`SELECT invocation_id FROM upload_events WHERE object_key = ${key}`).length,
       ).toBeGreaterThan(0);
       const download = yield* files.presign(key, "GET", { expiresIn: 60 });
       const response = yield* http.get(download);

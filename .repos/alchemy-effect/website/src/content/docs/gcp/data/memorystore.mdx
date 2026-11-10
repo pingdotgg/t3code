@@ -1,0 +1,99 @@
+---
+title: Memorystore
+description: Create a Memorystore for Redis instance and reach it from Cloud Run over Direct VPC egress with the ReadWriteRedis binding.
+---
+
+Memorystore is managed Redis on a private IP. Cloud Run reaches it
+through your VPC, so the service needs VPC egress as well as the
+binding.
+
+## Create an instance
+
+```typescript
+// src/resources.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Cache = GCP.Redis.Instance("Cache", {
+  tier: "BASIC",
+  memorySizeGb: 1,
+  authEnabled: true,
+});
+```
+
+`BASIC` is a single node with no replica. Creating or deleting an
+instance takes several minutes.
+
+## Connect from Cloud Run
+
+Give the service an interface on the network with Direct VPC egress,
+then bind the instance:
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Cache } from "./resources.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    invokerIamDisabled: true,
+    template: {
+      vpcAccess: {
+        egress: "PRIVATE_RANGES_ONLY",
+        networkInterfaces: [{ network: "default", subnetwork: "default" }],
+      },
+    },
+  },
+  Effect.gen(function* () {
+    const redis = yield* GCP.Redis.ReadWriteRedis(Cache);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const visits = yield* redis.incr("visits");
+        return yield* HttpServerResponse.json({ visits });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Redis.ReadWriteRedisHttp)),
+) {}
+```
+
+`PRIVATE_RANGES_ONLY` sends traffic for private addresses, like the
+Redis IP, through the VPC. Everything else leaves the normal way.
+Without `vpcAccess`, every command times out.
+
+## Use the client
+
+`ReadWriteRedis` returns the same Redis client as the Fly and Upstash
+providers: `get`, `set`, `incr`, `expire`, `pipeline`, and the rest.
+
+```typescript
+const [, count, ttl] = yield* redis.pipeline([
+  ["SET", "rate:alice", "0", "EX", 60, "NX"],
+  ["INCR", "rate:alice"],
+  ["TTL", "rate:alice"],
+]);
+```
+
+`ReadRedis` and `WriteRedis` limit the service to read or write
+commands.
+
+## No IAM, no pasted IPs
+
+Redis authenticates with the instance's AUTH string, so the binding
+grants no IAM role. Alchemy reads the private IP, port, and AUTH
+string when it deploys the instance and hands them to the service.
+You never copy them around.
+
+## Example
+
+[`examples/gcp-memorystore-redis`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-memorystore-redis)
+is a fixed-window rate limiter on Memorystore.
+
+## Where next
+
+- [VPC & private networking](/gcp/networking/vpc) — Direct VPC egress
+  in more detail.
+- [Redis reference](/providers/gcp/redis#instance) — every prop.
