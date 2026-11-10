@@ -276,8 +276,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* service.drain;
         }).pipe(Effect.provide(dependencies));
 
-        // Each refresh is a GitHub request for the same branch and head.
-        expect(lookups.filter((lookup) => lookup.refresh)).toEqual([{ refresh: true }]);
+        // The startup sweep, then one refresh lookup for the whole turn-end batch.
+        expect(lookups).toEqual([{ refresh: false }, { refresh: true }]);
       }),
     ),
   );
