@@ -721,7 +721,10 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("keeps a live plan and limits when an overlapping probe completes late", () =>
+  it.effect.each([
+    { name: "an empty reading", hasUsage: true },
+    { name: "no reading", hasUsage: false },
+  ])("keeps a live plan and limits when an overlapping probe returns $name", ({ hasUsage }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
@@ -741,7 +744,9 @@ describe("makeManagedServerProvider", () => {
             return {
               ...refreshedSnapshot,
               auth: { status: "authenticated", label: "tier-1" },
-              usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] },
+              ...(hasUsage
+                ? { usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] } }
+                : {}),
             } satisfies ServerProvider;
           }),
         });
@@ -751,12 +756,14 @@ describe("makeManagedServerProvider", () => {
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:00:04.000Z",
           authLabel: "tier-2",
+          complete: true,
           windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
         });
         yield* Deferred.succeed(release, undefined);
         const refreshed = yield* Fiber.join(refresh);
         assert.strictEqual(refreshed.auth.label, "tier-2");
         assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 70);
+        assert.strictEqual(refreshed.usageLimits?.unavailable, undefined);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

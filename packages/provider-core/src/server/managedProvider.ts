@@ -161,6 +161,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
+    // A probe without usage must not erase a report published while its I/O was in flight.
+    const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
@@ -178,10 +180,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
-          : resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
-              probed: probedSnapshot.usageLimits,
-            });
+          : probedSnapshot.usageLimits === undefined &&
+              state.snapshot.usageLimits !== usageBeforeProbe
+            ? state.snapshot.usageLimits
+            : resolveUsageLimitsAfterProbe({
+                published: state.snapshot.usageLimits,
+                probed: probedSnapshot.usageLimits,
+              });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const usageAuthLabel =

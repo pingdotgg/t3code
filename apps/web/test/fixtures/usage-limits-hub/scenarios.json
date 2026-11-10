@@ -538,6 +538,7 @@
     },
     "g1": {
       "provider": "antigravity",
+      "project_id": "fixture-project",
       "email": "g1.antigravity.owner@example.com",
       "windows": [
         [60, 200],
@@ -570,6 +571,7 @@
     },
     "g1": {
       "provider": "antigravity",
+      "project_id": "fixture-project",
       "email": "g1.antigravity.owner@example.com",
       "windows": [
         [60, 200],
@@ -578,6 +580,7 @@
     },
     "g2": {
       "provider": "antigravity",
+      "project_id": "fixture-project",
       "email": "g2.antigravity.owner@example.com",
       "windows": [
         [60, 200],
@@ -587,6 +590,7 @@
     },
     "g3": {
       "provider": "antigravity",
+      "project_id": "fixture-project",
       "email": "g3.antigravity.owner@example.com",
       "windows": [
         [60, 200],

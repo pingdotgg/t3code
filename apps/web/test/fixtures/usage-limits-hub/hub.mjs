@@ -89,6 +89,7 @@ NodeHttp.createServer((request, response) => {
           auth_index: id,
           provider: account.provider,
           ...(account.email ? { email: account.email } : {}),
+          ...(account.project_id ? { project_id: account.project_id } : {}),
         })),
       });
     }
