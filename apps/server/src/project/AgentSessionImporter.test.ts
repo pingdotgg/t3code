@@ -170,12 +170,13 @@ const seedOwner = Effect.fn(function* (
 });
 
 const makeImporter = Effect.fn(function* (
-  candidates: ReadonlyArray<ReturnType<typeof candidate>>,
+  candidates: ReadonlyArray<AgentSessionScanner.AgentSessionRecentThread>,
   beforeTransaction: Effect.Effect<void> = Effect.void,
   settings: Layer.Layer<
     ServerSettings.ServerSettingsService,
     ServerSettingsError
   > = ServerSettings.layerTest(),
+  targetProjectId: ProjectId = projectId,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
@@ -223,7 +224,7 @@ const makeImporter = Effect.fn(function* (
           Layer.mock(ProjectService.ProjectService)({
             getById: () =>
               Effect.succeedSome({
-                id: projectId,
+                id: targetProjectId,
                 title: "Project",
                 workspaceRoot: "/workspace/project",
                 defaultModelSelection: null,
@@ -248,7 +249,10 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return {
+    run: importer.importRecentAgentThreads({ projectId: targetProjectId }),
+    published,
+  };
 });
 
 it.effect(
@@ -346,6 +350,54 @@ it.effect(
         });
       }
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-imports sessions whose imported threads were deleted with their project", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const unchanged = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "6f0c1a52-3f5e-4a43-9b8e-0c6a1f6d2a11",
+      "claudeAgent",
+    );
+    const changed = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7a1d2b63-4a6f-4b54-8c9f-1d7b2a7e3b22",
+      "claudeAgent",
+    );
+    yield* (yield* makeImporter([unchanged, changed])).run;
+    for (const source of [unchanged, changed]) {
+      const thread = yield* projections.getThread(importId(source));
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${thread.id}:deleted`),
+            type: "thread.deleted",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, deletedAt: now, updatedAt: now },
+          },
+        ],
+      });
+    }
+
+    const readdedProjectId = ProjectId.make("agent-session-import-readded-project");
+    const importer = yield* makeImporter(
+      [{ _tag: "AlreadyImported", source: unchanged.source }, changed],
+      Effect.void,
+      ServerSettings.layerTest(),
+      readdedProjectId,
+    );
+    yield* importer.run;
+    for (const source of [unchanged, changed]) {
+      const thread = yield* projections.getThread(importId(source));
+      expect({ projectId: thread.projectId, deletedAt: thread.deletedAt }).toEqual({
+        projectId: readdedProjectId,
+        deletedAt: null,
+      });
+    }
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 it.effect("rechecks ownership after the import reaches the commit transaction", () =>
