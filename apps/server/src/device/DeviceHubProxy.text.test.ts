@@ -82,10 +82,11 @@ it.effect("keeps a client text frame as text for the upstream hub", () =>
     client.binaryType = "arraybuffer";
     const echoed = Promise.withResolvers<void>();
     client.addEventListener("error", () => echoed.reject(new Error("Proxy failed")));
+    client.addEventListener("close", () => echoed.reject(new Error("Proxy closed early")));
     client.addEventListener("message", ({ data }) => {
       if (data instanceof ArrayBuffer && new Uint8Array(data)[0] === 0x83) {
         client.send('{"type":"reset-video","ack":false}');
-      } else {
+      } else if (typeof data === "string" && data.includes("reset-video")) {
         echoed.resolve();
       }
     });
