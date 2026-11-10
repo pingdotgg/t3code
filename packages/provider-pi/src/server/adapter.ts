@@ -58,6 +58,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
+  findReportedPiModel,
   makePiRpcConnection,
   resolvePiModelSlug,
   piRecordField as recordField,
@@ -2420,6 +2421,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.forkIn(scope),
       );
 
+      const discoverModels = Effect.fnUntraced(function* () {
+        const modelsData = yield* request({ type: "get_available_models" }).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const models = recordField(modelsData, "models");
+        if (Array.isArray(models)) {
+          for (const model of models) rememberModelContextWindow(model);
+          discoveredModels = models;
+        }
+      });
+
       const registerThread = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
@@ -2468,16 +2480,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const stateData = yield* request({ type: "get_state" });
-        if (discoveredModels === null) {
-          const modelsData = yield* request({ type: "get_available_models" }).pipe(
-            Effect.orElseSucceed(() => undefined),
-          );
-          const models = recordField(modelsData, "models");
-          if (Array.isArray(models)) {
-            for (const model of models) rememberModelContextWindow(model);
-            discoveredModels = models;
-          }
-        }
+        if (discoveredModels === null) yield* discoverModels();
         contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
         // Capture each baseline before applying selections so our own choices cannot become Pi defaults.
         if (baselineModel === null && appliedModel === null) {
@@ -2573,6 +2576,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             appliedThinking = baselineThinking;
           }
         } else if (modelSelection.model !== appliedModel) {
+          // Extensions and models.json edits can add providers after the first discovery.
+          if (findReportedPiModel(modelSelection.model, discoveredModels) === undefined) {
+            yield* discoverModels();
+          }
           const parsed = resolvePiModelSlug(modelSelection.model, discoveredModels);
           if (parsed === null) {
             return yield* protocolError(

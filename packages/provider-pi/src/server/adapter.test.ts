@@ -2278,10 +2278,7 @@ describe("PiAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const hub = "hub=https://hub.example:8318/v1";
-      fake.queueModels([
-        { provider: "openrouter", id: "openrouter/auto" },
-        { provider: hub, id: "claude-haiku-4-5" },
-      ]);
+      fake.queueModels([{ provider: "openrouter", id: "openrouter/auto" }]);
       const { runtime, takeEvent } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
@@ -2308,6 +2305,11 @@ describe("PiAdapterV2", () => {
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
 
+      // A provider registered after the session started, e.g. by an extension reload.
+      fake.queueModels([
+        { provider: "openrouter", id: "openrouter/auto" },
+        { provider: hub, id: "claude-haiku-4-5" },
+      ]);
       yield* startTurn(
         runtime,
         providerThread,
