@@ -3345,7 +3345,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             Effect.timeout(INVENTORY_TIMEOUT),
             Effect.orElseSucceed(() => undefined),
           )) !== "connected";
-        const added = yield* client.mcp
+        return yield* client.mcp
           .add({
             server: wanted.name,
             location: { directory: wanted.directory },
@@ -3357,38 +3357,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }),
           })
           .pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                state.mcp = wanted;
+                return connectedMcpStatus(wanted.name, wanted.directory);
+              }),
+            ),
             Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.as(true),
+            Effect.flatMap((status) =>
+              status === "connected"
+                ? Effect.succeed(joining ? ("joining" as const) : ("connected" as const))
+                : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
+                    status,
+                  }).pipe(Effect.as("unavailable" as const)),
+            ),
+            // An add that failed or timed out may still connect, and a server still connecting would
+            // join mid-turn, so either is withdrawn until the next turn.
             Effect.catchCause((cause) =>
-              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
-                Effect.as(false),
+              Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
+                Effect.andThen(removeMcp(wanted)),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    state.mcp = undefined;
+                  }),
+                ),
+                Effect.as("unavailable" as const),
               ),
             ),
           );
-        if (!added) return "unavailable" as const;
-        state.mcp = wanted;
-        return yield* connectedMcpStatus(wanted.name, wanted.directory).pipe(
-          Effect.timeout(INVENTORY_TIMEOUT),
-          Effect.flatMap((status) =>
-            status === "connected"
-              ? Effect.succeed(joining ? ("joining" as const) : ("connected" as const))
-              : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
-                  status,
-                }).pipe(Effect.as("unavailable" as const)),
-          ),
-          // A server still connecting would join mid-turn, so it is withdrawn until the next turn.
-          Effect.catchCause((cause) =>
-            Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
-              Effect.andThen(removeMcp(wanted)),
-              Effect.andThen(
-                Effect.sync(() => {
-                  state.mcp = undefined;
-                }),
-              ),
-              Effect.as("unavailable" as const),
-            ),
-          ),
-        );
       },
       (effect, _state, wanted) =>
         Effect.ensuring(

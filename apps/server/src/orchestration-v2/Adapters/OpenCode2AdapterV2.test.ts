@@ -3211,6 +3211,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...connected,
           add,
           reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+          // A failed add may still connect later, so it is withdrawn before the prompt.
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
           out("session.instructions.entry.put", {
             sessionID: SESSION,
             key: "t3-code",
@@ -3219,7 +3222,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           reply("session.instructions.entry.put", null),
           ...turn,
           // A server OpenCode cannot connect keeps the instructions without T3's tools.
-          ...connected,
           add,
           reply("mcp.add", null),
           out("mcp.list", { "location[directory]": WORK }),
@@ -3290,10 +3292,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const started = yield* runtime
         .startTurn(turnInput(thread))
         .pipe(Effect.provideService(Clock.Clock, { ...clock, sleep }), Effect.forkScoped);
-      // The add's own timeout is the first 5 s sleep; the connected wait's is the second.
-      yield* Queue.take(sleeps).pipe(
-        Effect.repeat({ until: (millis) => millis === 5000, times: 100 }),
-      );
+      // One 5 s timeout covers the add and the connected wait.
       yield* Queue.take(sleeps).pipe(
         Effect.repeat({ until: (millis) => millis === 5000, times: 100 }),
       );
