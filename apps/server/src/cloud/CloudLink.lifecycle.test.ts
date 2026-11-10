@@ -13,6 +13,7 @@ import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } fr
 import * as NetAddress from "effect/net/NetAddress";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -141,6 +142,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
     readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
+    readonly connector?: ManagedEndpointRuntime.ConnectorFacts;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -161,7 +163,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.provide(CloudLink.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))),
+        Effect.provide(
+          CloudLink.layer.pipe(
+            Layer.provide(EnvironmentKeys.layer),
+            Layer.provide(ManagedPolicy.layerTest()),
+          ),
+        ),
         Effect.provideService(
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
@@ -200,8 +207,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
               }),
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
+            restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: Effect.succeed(harness.connector ?? null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -1072,12 +1080,21 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
         "not_linked",
       );
+      // The address shows before any check passes.
+      expect(state.tunnelHostname).toBe("prod-abc.t3coderelay.com");
     }).pipe(
       provideReleaseHarness({
         store,
         applyConfigCalls: [],
         requests: [],
         latestReachability: Effect.succeedSome(notLinked),
+        connector: {
+          pid: 123,
+          readyConnections: 0,
+          hostname: "prod-abc.t3coderelay.com",
+          origin: null,
+          protocol: null,
+        },
       }),
     );
   });
