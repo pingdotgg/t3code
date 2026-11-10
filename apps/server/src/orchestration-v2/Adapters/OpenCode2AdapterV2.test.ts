@@ -3196,16 +3196,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           event("session.execution.succeeded", { sessionID: SESSION }),
         ];
-        // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
-        const { runtime, thread } = yield* resumed([
-          add,
-          reply("mcp.add", null),
+        const connected = [
           out("mcp.list", { "location[directory]": WORK }),
           reply("mcp.list", {
             location: { directory: WORK },
             data: [{ name: server, status: { status: "connected" } }],
           }),
+        ];
+        const { runtime, thread } = yield* resumed([
+          add,
+          reply("mcp.add", null),
+          ...connected,
           ...turn,
+          ...connected,
           add,
           reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
           out("session.instructions.entry.put", {
@@ -3216,6 +3219,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           reply("session.instructions.entry.put", null),
           ...turn,
           // A server OpenCode cannot connect keeps the instructions without T3's tools.
+          ...connected,
           add,
           reply("mcp.add", null),
           out("mcp.list", { "location[directory]": WORK }),
@@ -3357,7 +3361,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ).pipe(Effect.scoped),
   );
 
-  it.effect("lets OpenCode load T3 MCP tools only after this turn's add reconnected them", () =>
+  it.effect("lets OpenCode load T3 MCP tools only when this turn's add connected them", () =>
     watchingSettles((settles) =>
       Effect.gen(function* () {
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -3394,24 +3398,25 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           event("session.execution.succeeded", { sessionID: SESSION }),
         ];
-        // A first registration settles even when its status event trails the list reply. OpenCode
-        // 2.2.5 holds an add that replaces a connection until it reconnects, so the list already
-        // reads connected; an unchanged re-add keeps the connection and reports nothing.
+        // A reconnect's status event can trail the list reply, so the list already reads
+        // connected. An unchanged re-add keeps the connection; idle Location eviction drops it.
         const { runtime, thread } = yield* resumed([
           add,
           reply("mcp.add", null),
           ...connected,
           mcpStatusChanged(server),
           ...turn,
+          ...connected,
           add,
           reply("mcp.add", null),
           ...connected,
           ...turn,
+          out("mcp.list", { "location[directory]": WORK }),
+          reply("mcp.list", { location: { directory: WORK }, data: [] }),
           add,
-          mcpStatusChanged(server),
-          mcpStatusChanged(server),
           reply("mcp.add", null),
           ...connected,
+          mcpStatusChanged(server),
           ...turn,
           out("mcp.remove", { server, "location[directory]": WORK }),
           reply("mcp.remove", null),

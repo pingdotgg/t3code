@@ -3316,35 +3316,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
     );
 
-    // Each waiter is registered before the call it covers so a change landing mid-call is not lost.
-    const watchMcpStatus = (server: string) =>
-      Deferred.make<void>().pipe(
-        Effect.tap((changed) => Effect.sync(() => mcpStatusChanges.set(server, changed))),
-      );
+    const mcpStatusOf = (server: string, directory: string) =>
+      client.mcp
+        .list({ location: { directory } })
+        .pipe(
+          Effect.map((listed) => listed.data.find((each) => each.name === server)?.status.status),
+        );
 
-    const settledMcpStatus = Effect.fnUntraced(function* (
-      server: string,
-      directory: string,
-      changedSinceAdd: Deferred.Deferred<void>,
-    ) {
-      let changed = changedSinceAdd;
-      let reconnected = false;
+    // An add to a fresh Location returns while OpenCode is still connecting.
+    const connectedMcpStatus = Effect.fnUntraced(function* (server: string, directory: string) {
       for (;;) {
-        const listed = yield* client.mcp.list({ location: { directory } });
-        const status = listed.data.find((each) => each.name === server)?.status.status;
-        if (status !== "pending") {
-          return { status, reconnected: reconnected || (yield* Deferred.isDone(changed)) };
-        }
+        // Registered before the list so a change landing mid-call is not lost.
+        const changed = yield* Deferred.make<void>();
+        mcpStatusChanges.set(server, changed);
+        const status = yield* mcpStatusOf(server, directory);
+        if (status !== "pending") return status;
         yield* Deferred.await(changed);
-        reconnected = true;
-        changed = yield* watchMcpStatus(server);
       }
     });
 
     const addMcp = Effect.fnUntraced(
       function* (state: ThreadState, wanted: NonNullable<ThreadState["mcp"]>, endpoint: string) {
-        // An add that replaces a live connection reconnects before it returns.
-        const changedSinceAdd = yield* watchMcpStatus(wanted.name);
+        // Idle Location eviction drops the server without an event, and a reconnect's status
+        // event can trail the list reply, so only the state before the add tells them apart.
+        const joining =
+          state.mcp === undefined ||
+          (yield* mcpStatusOf(wanted.name, wanted.directory).pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.orElseSucceed(() => undefined),
+          )) !== "connected";
         const added = yield* client.mcp
           .add({
             server: wanted.name,
@@ -3366,17 +3366,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (!added) return "unavailable" as const;
-        // The status event can trail the list reply, so a first registration always settles.
-        const fresh = state.mcp === undefined;
         state.mcp = wanted;
-        // An add to a fresh Location returns while OpenCode is still connecting.
-        return yield* settledMcpStatus(wanted.name, wanted.directory, changedSinceAdd).pipe(
+        return yield* connectedMcpStatus(wanted.name, wanted.directory).pipe(
           Effect.timeout(INVENTORY_TIMEOUT),
-          Effect.flatMap(({ status, reconnected }) =>
+          Effect.flatMap((status) =>
             status === "connected"
-              ? Effect.succeed(
-                  fresh || reconnected ? ("reconnected" as const) : ("connected" as const),
-                )
+              ? Effect.succeed(joining ? ("joining" as const) : ("connected" as const))
               : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
                   status,
                 }).pipe(Effect.as("unavailable" as const)),
@@ -3424,7 +3419,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* removeMcp(state.mcp);
         state.mcp = undefined;
       }
-      // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
@@ -3432,7 +3426,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         mcpAvailable = mcp !== "unavailable";
         // Nothing reports OpenCode loading the tools, and tools that join mid-turn restart
         // Claude-backed turns.
-        if (mcp === "reconnected") yield* Effect.sleep(MCP_TOOLS_SETTLE);
+        if (mcp === "joining") yield* Effect.sleep(MCP_TOOLS_SETTLE);
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
