@@ -73,7 +73,12 @@ import {
   useHiddenThreadKeys,
   useAnyEnvironmentHiding,
 } from "../../state/entities";
-import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import {
+  useEnvironment,
+  useEnvironmentMachines,
+  useEnvironmentProviders,
+} from "../../state/environments";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
@@ -288,6 +293,13 @@ function RemoteSubagentRow(props: {
   });
   const running = status === "pending" || status === "running" || status === "waiting";
   const [timing] = projectedSubagentsToRuntime([props.agent]);
+  const machine = useEnvironmentMachines().get(remoteChild.environmentId) ?? "server";
+  const providerModel = props.provider?.models.find((model) => model.slug === props.agent.model);
+  const modelLabel = providerModel
+    ? getTriggerDisplayModelName(providerModel, props.provider?.driver)
+    : props.agent.model
+      ? formatModelSlugName(props.agent.model)
+      : null;
   const effort = props.agent.model
     ? formatSubagentEffort({
         modelSlug: props.agent.model,
@@ -344,13 +356,13 @@ function RemoteSubagentRow(props: {
               ) : null}
             </span>
             <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
-              <span className="min-w-0 truncate">on {remoteChild.label}</span>
-              {props.agent.model ? (
-                <span className="min-w-0 truncate">
-                  {props.provider?.models.find((model) => model.slug === props.agent.model)?.name ??
-                    formatModelSlugName(props.agent.model)}
-                </span>
-              ) : null}
+              {/* The machine it runs on; the tooltip names it. */}
+              <EnvironmentMachineIcon
+                kind={machine}
+                aria-label={`On ${remoteChild.label}`}
+                className="size-3 shrink-0"
+              />
+              {props.agent.model ? <span className="min-w-0 truncate">{modelLabel}</span> : null}
               {effort ? <span className="shrink-0">{effort}</span> : null}
               {failed ? null : (
                 <span className={THREAD_DETAILS_PANEL_META_CLASS}>
