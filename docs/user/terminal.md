@@ -20,8 +20,8 @@ Jump to latest in the context menu returns to the current output.
 On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
 Select Text shows the visible output, where you can copy text or tap a link.
 
-To work in a system terminal instead, choose Terminal from the Open in menu. It
-opens a new window in the project folder on the machine running T3 Code; from a
+To work in a system terminal instead, choose Terminal from the Open in menu,
+then click Open. It opens a new window in the project folder on the machine running T3 Code; from a
 file preview it opens in that file's folder. On macOS this is Terminal.app, on
 Windows it is PowerShell, and on Linux T3 Code uses the first terminal it finds,
 starting with your desktop's default.
