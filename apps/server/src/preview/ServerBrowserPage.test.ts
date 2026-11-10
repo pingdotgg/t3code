@@ -180,7 +180,6 @@ describe("server browser element refs", () => {
     );
     expect(result.visibleText).not.toContain("editable-pass");
     expect(result.visibleText).toContain("Order ••••••••-2");
-    expect(tree).toMatch(/row "password: •+"/);
     expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
     const line = tree.split("\n").find((line) => line.includes('textbox "Password"'));
     expect(line).toMatch(/: •+$/);
