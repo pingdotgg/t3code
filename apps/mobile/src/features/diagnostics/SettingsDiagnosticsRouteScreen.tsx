@@ -6,6 +6,7 @@ import * as Updates from "expo-updates";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { View } from "react-native";
@@ -34,9 +35,20 @@ type CrashLogState =
   | { readonly status: "unavailable" }
   | { readonly status: "ready"; readonly records: ReadonlyArray<StartupCrashRecord> };
 
+class CrashLogReadError extends Schema.TaggedError<CrashLogReadError>()("CrashLogReadError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Could not read the expo-updates log.";
+  }
+}
+
 // Not kept alive: each visit to the screen re-reads the log.
 const crashLogAtom = Atom.make(
-  Effect.tryPromise(() => Updates.readLogEntriesAsync(LOG_WINDOW_MS)).pipe(
+  Effect.tryPromise({
+    try: () => Updates.readLogEntriesAsync(LOG_WINDOW_MS),
+    catch: (cause) => new CrashLogReadError({ cause }),
+  }).pipe(
     Effect.map((entries): CrashLogState => ({
       status: "ready",
       records: parseStartupCrashRecords(entries),
