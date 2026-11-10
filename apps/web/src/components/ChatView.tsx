@@ -380,6 +380,7 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
+const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 
@@ -3576,6 +3577,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeThreadId={activeThreadId}
                                 activeThread={activeThread}
                                 activeThreadShell={activeThreadShell}
+                                activeThreadRuns={serverProjection?.runs ?? EMPTY_RUNS}
                                 promptHistoryEntries={timelineEntries}
                                 forceExpandedOnMobile={
                                   forceExpandedMobileComposer && isDraftHeroState
