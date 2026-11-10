@@ -1027,9 +1027,6 @@ export function ChatComposer(props: ChatComposerProps) {
     targetKey: string;
     position: ComposerPromptHistoryPosition;
   } | null>(null);
-  const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
-    null,
-  );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -1213,14 +1210,9 @@ export function ChatComposer(props: ChatComposerProps) {
     composerTrigger?.kind ?? null,
   ).flatMap((group) => group.items);
   const composerMenuOpen = Boolean(composerTrigger) && isComposerEditorFocused;
-  const composerMenuSearchKey = composerTrigger
-    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
-    : null;
   const activeComposerMenuItemId = resolveComposerMenuActiveItemId({
     items: composerMenuItems,
     highlightedItemId: composerHighlightedItemId,
-    currentSearchKey: composerMenuSearchKey,
-    highlightedSearchKey: composerHighlightedSearchKey,
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
@@ -1491,12 +1483,8 @@ export function ChatComposer(props: ChatComposerProps) {
   }, [composerTerminalContexts, composerTerminalContextsRef]);
 
   const resolvedHighlightedItemId = composerMenuOpen ? activeComposerMenuItemId : null;
-  const resolvedHighlightedSearchKey = composerMenuOpen ? composerMenuSearchKey : null;
   if (composerHighlightedItemId !== resolvedHighlightedItemId) {
     setComposerHighlightedItemId(resolvedHighlightedItemId);
-  }
-  if (composerHighlightedSearchKey !== resolvedHighlightedSearchKey) {
-    setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
   const lastSyncedPendingInputRef = useRef<{
@@ -1554,7 +1542,6 @@ export function ChatComposer(props: ChatComposerProps) {
   if (shownComposerSessionKey !== composerSessionKey) {
     setShownComposerSessionKey(composerSessionKey);
     setComposerHighlightedItemId(null);
-    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     const pendingAnswer = activePendingProgress?.customAnswer;
@@ -2149,7 +2136,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const onComposerMenuItemHighlighted = (itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
-    setComposerHighlightedSearchKey(composerMenuSearchKey);
   };
   const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
 
