@@ -53,7 +53,8 @@ export function SidebarThreadHeader({
   onClearSearch,
 }: SidebarThreadHeaderProps) {
   const inTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
-  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchFocusExpanded, setSearchExpanded] = useState(false);
+  const searchExpanded = inTitleBar && searchFocusExpanded;
   const onBackdrop = useSidebarStageBackdropVariant(useEnvironmentIdentificationMode()) !== null;
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
@@ -93,7 +94,13 @@ export function SidebarThreadHeader({
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Escape" && searchExpanded && searchQuery === "") {
+            if (
+              event.key === "Escape" &&
+              !event.nativeEvent.isComposing &&
+              event.keyCode !== 229 &&
+              searchExpanded &&
+              searchQuery === ""
+            ) {
               event.currentTarget.blur();
             }
             onSearchKeyDown(event);
@@ -122,6 +129,7 @@ export function SidebarThreadHeader({
             variant="ghost-muted"
             className="shrink-0"
             aria-label="Clear thread search"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               onClearSearch();
               searchInputRef.current?.focus();

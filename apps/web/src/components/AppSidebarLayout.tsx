@@ -384,7 +384,8 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
           ? "left-[calc(var(--sidebar-width)-var(--workspace-titlebar-control-size)-0.5rem)]"
           : "left-[var(--workspace-controls-left)] ml-px",
         isMobile && mobileSheetMounted && "hidden",
-        "[[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&]:hidden",
+        isSidebarVisible &&
+          "[[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&]:hidden",
       )}
       data-sidebar-control=""
     >
