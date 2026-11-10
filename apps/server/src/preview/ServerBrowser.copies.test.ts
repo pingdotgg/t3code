@@ -156,6 +156,10 @@ describe("server browser page copies", () => {
               else event.clipboardData.clearData();
             }
             if (document.body.dataset.clear === "remove") event.clipboardData.items.remove(0);
+            const unrelated = new DataTransfer();
+            unrelated.setData("text/plain", "unrelated transfer");
+            unrelated.items.clear();
+            unrelated.items.add("unrelated item", "text/plain");
             event.stopImmediatePropagation();
           }, ${capture});
         }

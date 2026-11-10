@@ -535,13 +535,23 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
   }
   const transfer = globalThis.DataTransfer?.prototype;
   const getData = transfer?.getData;
+  let copying = null;
+  for (const type of ["copy", "cut"]) {
+    addEventListener(type, (event) => {
+      if (event.isTrusted) copying = event;
+    }, true);
+  }
+  const reportData = (data) => {
+    if (copying?.eventPhase && copying.clipboardData === data)
+      report("${CLIPBOARD_DATA_EVENT}", Reflect.apply(getData, data, ["text/plain"]));
+  };
   for (const method of ["setData", "clearData"]) {
     const changeData = transfer?.[method];
     if (typeof changeData !== "function" || typeof getData !== "function") continue;
     transfer[method] = new Proxy(changeData, {
       apply(target, self, args) {
         const result = Reflect.apply(target, self, args);
-        report("${CLIPBOARD_DATA_EVENT}", Reflect.apply(getData, self, ["text/plain"]));
+        reportData(self);
         return result;
       },
     });
@@ -568,7 +578,7 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
       apply(target, self, args) {
         const result = Reflect.apply(target, self, args);
         const owner = owners.get(self);
-        if (owner) report("${CLIPBOARD_DATA_EVENT}", Reflect.apply(getData, owner, ["text/plain"]));
+        if (owner) reportData(owner);
         return result;
       },
     });
