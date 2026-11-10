@@ -2,6 +2,7 @@ import {
   MessageId,
   NodeId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -64,6 +65,26 @@ function makeRow(
       updatedAt: NOW,
     },
   };
+}
+
+function makeTurnStart(
+  index: number,
+  createdBy: "user" | "agent",
+): OrchestrationV2ProjectedTurnItem {
+  const row = makeRow(index);
+  return {
+    ...row,
+    item: {
+      ...row.item,
+      type: "user_message",
+      createdBy,
+      creationSource: "provider",
+      inputIntent: "turn_start",
+      messageId: MessageId.make(`prompt-${index}`),
+      text: `Prompt ${index}`,
+      attachments: [],
+    },
+  } as OrchestrationV2ProjectedTurnItem;
 }
 
 function interruptItem(
@@ -450,6 +471,65 @@ describe("threadHistoryPaging", () => {
     }
   });
 
+  it.each([
+    {
+      name: "item ceiling",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 3, maxEncodedBytes: 1_000 },
+      admitted: 3,
+      measured: 3,
+    },
+    {
+      name: "user turn ceiling",
+      items: [makeRow(0), makeTurnStart(1, "user"), makeRow(2)],
+      policy: { maxUserTurns: 1, maxItems: 100, maxEncodedBytes: 1_000 },
+      admitted: 2,
+      measured: 2,
+    },
+    {
+      name: "raw turn ceiling",
+      items: [
+        makeTurnStart(0, "user"),
+        ...Array.from({ length: 151 }, (_, index) => makeTurnStart(index + 1, "agent")),
+      ],
+      policy: { maxUserTurns: 10, maxItems: 1_000, maxEncodedBytes: 1_000_000 },
+      admitted: 150,
+      measured: 150,
+    },
+    {
+      name: "byte budget, which still admits an exact fit",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 20 },
+      admitted: 2,
+      measured: 3,
+    },
+    {
+      name: "byte budget, which still admits an oversized first row",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 5 },
+      admitted: 1,
+      measured: 2,
+    },
+  ])("measures only the rows needed to stop at the $name", (testCase) => {
+    const measured: OrchestrationV2ProjectedTurnItem[] = [];
+    const page = selectRecentTimelineWindow({
+      items: testCase.items,
+      snapshotSequence: 1,
+      policy: testCase.policy,
+      rowEncodedBytes: (row) => {
+        measured.push(row);
+        return 10;
+      },
+    });
+
+    expect(page.items.map((row) => row.sourceItemId)).toEqual(
+      testCase.items.slice(-testCase.admitted).map((row) => row.sourceItemId),
+    );
+    expect(measured).toHaveLength(testCase.measured);
+    expect(page.hasMoreHistory).toBe(true);
+    expect(decodeThreadHistoryCursor(page.nextCursor!).si).toBe(page.items[0]?.sourceItemId);
+  });
+
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
     const items = Array.from({ length: 5 }, (_, index) => makeRow(index));
     const cursor = encodeThreadHistoryCursor({
@@ -738,6 +818,69 @@ describe("threadHistoryPaging", () => {
     ).toBe(2_097_152);
   });
 
+  it.each([40_000, 80_000])(
+    "reserves pending question cards before visible history: %s bytes",
+    (questionBytes) => {
+      const rows = Array.from({ length: 20 }, (_, index) =>
+        makeRow(index + 1, { outputBytes: 1_500 }),
+      );
+      const requestId = RuntimeRequestId.make("pending-question");
+      const card: OrchestrationV2TurnItem = {
+        id: TurnItemId.make("pending-question-card"),
+        type: "user_input_request",
+        threadId: THREAD,
+        runId: null,
+        nodeId: NODE,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        requestId,
+        responseMode: "message",
+        questions: [
+          { id: "scope", header: "Scope", question: "q".repeat(questionBytes), options: [] },
+        ],
+        startedAt: NOW,
+        completedAt: NOW,
+        updatedAt: NOW,
+      };
+      const projection = {
+        ...makeProjection(rows),
+        turnItems: [card, ...rows.map((row) => row.item)],
+        runtimeRequests: [
+          {
+            id: requestId,
+            nodeId: NODE,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: NOW,
+            resolvedAt: null,
+          },
+        ],
+      };
+      const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxEncodedBytes: 64_000 };
+
+      const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 9, policy });
+
+      expect(bounded.projection.turnItems).toContain(card);
+      expect(bounded.projection.visibleTurnItems.length).toBeGreaterThan(0);
+      expect(bounded.hasMoreHistory).toBe(true);
+      if (questionBytes < policy.maxEncodedBytes) {
+        expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeLessThanOrEqual(
+          policy.maxEncodedBytes,
+        );
+      } else {
+        expect(bounded.projection.visibleTurnItems).toHaveLength(1);
+      }
+    },
+  );
+
   it("preserves oversized actionable state", () => {
     const projection = makeProjection([makeRow(0)]);
     const actionable = {
@@ -761,39 +904,46 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
   });
 
-  it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
-    const items = Array.from({ length: 3 }, (_, turn) => {
-      const first = makeRow(turn * 5);
-      const prompt = {
-        ...first,
-        item: {
-          ...first.item,
-          type: "user_message" as const,
-          createdBy: "agent" as const,
-          creationSource: "provider" as const,
-          inputIntent: "turn_start" as const,
-          messageId: MessageId.make(`agent-prompt-${turn}`),
-          text: `Step ${turn}`,
-          attachments: [],
-        },
-      } as OrchestrationV2ProjectedTurnItem;
-      return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
-    }).flat();
-    const files = Array.from(
-      { length: 15_000 },
-      (_, index) =>
-        `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
-    );
-    const projection = {
-      ...makeProjection(items),
-      checkpoints: [{ id: "checkpoint-1", files }],
-    } as unknown as ReturnType<typeof makeProjection>;
+  it.each([false, true])(
+    "keeps agent-only turns visible when checkpoint file lists fill the byte budget (stored interrupt request: %s)",
+    (withInterruptRequest) => {
+      const items = Array.from({ length: 3 }, (_, turn) => {
+        const first = makeRow(turn * 5);
+        const prompt = {
+          ...first,
+          item: {
+            ...first.item,
+            type: "user_message" as const,
+            createdBy: "agent" as const,
+            creationSource: "provider" as const,
+            inputIntent: "turn_start" as const,
+            messageId: MessageId.make(`agent-prompt-${turn}`),
+            text: `Step ${turn}`,
+            attachments: [],
+          },
+        } as OrchestrationV2ProjectedTurnItem;
+        return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
+      }).flat();
+      const files = Array.from(
+        { length: 15_000 },
+        (_, index) =>
+          `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
+      );
+      const base = makeProjection(items);
+      const projection = {
+        ...base,
+        turnItems: withInterruptRequest
+          ? [interruptItem("old-interrupt-req", "run_interrupt_request", 0), ...base.turnItems]
+          : base.turnItems,
+        checkpoints: [{ id: "checkpoint-1", files }],
+      } as unknown as ReturnType<typeof makeProjection>;
 
-    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
+      const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
 
-    expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
-    expect(bounded.hasMoreHistory).toBe(false);
-  });
+      expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
+      expect(bounded.hasMoreHistory).toBe(false);
+    },
+  );
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
     const detail = "Implement the historical plan exactly.\n".repeat(1_000);

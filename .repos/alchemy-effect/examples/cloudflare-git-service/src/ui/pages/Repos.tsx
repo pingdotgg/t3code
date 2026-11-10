@@ -49,9 +49,7 @@ const RepoRow = ({ repo }: { repo: Repo }) => (
       {/* No size here: the list renders from the registry's denormalized
           columns, which don't carry object stats (that would re-create the
           one-DO-wake-per-row N+1 the list was built to avoid). */}
-      <p className="mt-1.5 text-xs text-fg-muted">
-        created {timeAgo(repo.createdAt)}
-      </p>
+      <p className="mt-1.5 text-xs text-fg-muted">created {timeAgo(repo.createdAt)}</p>
     </div>
   </li>
 );
@@ -60,13 +58,12 @@ const RepoRow = ({ repo }: { repo: Repo }) => (
 const CreatedPanel = ({ created }: { created: RepoCreated }) => (
   <div className="mb-4 space-y-3 rounded-md border border-success/40 bg-success/5 p-4 text-sm">
     <p className="font-medium text-success">
-      Repository {created.repo.owner}/{created.repo.name} created. Push with one
-      of your API keys as the password (Settings → API keys).
+      Repository {created.repo.owner}/{created.repo.name} created. Push with one of your API keys as
+      the password (Settings → API keys).
     </p>
     <div className="flex items-center gap-2">
       <code className="grow overflow-x-auto rounded bg-canvas-subtle px-2 py-1 font-mono text-xs">
-        git remote add origin{" "}
-        {created.remote.replace("://", "://x:YOUR_API_KEY@")}
+        git remote add origin {created.remote.replace("://", "://x:YOUR_API_KEY@")}
       </code>
       <CopyButton
         text={`git remote add origin ${created.remote.replace("://", "://x:YOUR_API_KEY@")}`}
@@ -123,11 +120,7 @@ const NewRepoForm = ({
         <span className="self-center text-fg-muted">/</span>
         <Input value={name} onChange={setName} placeholder="name" mono />
       </div>
-      <Input
-        value={description}
-        onChange={setDescription}
-        placeholder="Description (optional)"
-      />
+      <Input value={description} onChange={setDescription} placeholder="Description (optional)" />
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -144,13 +137,7 @@ const NewRepoForm = ({
   );
 };
 
-export const ReposPage = ({
-  connection,
-  user,
-}: {
-  connection: Connection;
-  user: User | null;
-}) => {
+export const ReposPage = ({ connection, user }: { connection: Connection; user: User | null }) => {
   const [repos, setRepos] = useState<Repo[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -163,9 +150,7 @@ export const ReposPage = ({
         limit: 50,
         ...(nextCursor ? { cursor: nextCursor } : {}),
       });
-      setRepos((existing) =>
-        nextCursor ? [...(existing ?? []), ...page.items] : page.items,
-      );
+      setRepos((existing) => (nextCursor ? [...(existing ?? []), ...page.items] : page.items));
       setCursor(page.hasMore ? page.nextCursor : null);
     } catch (cause) {
       setError(cause);
