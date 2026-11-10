@@ -31,9 +31,24 @@ import {
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHitStripWidth,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
+
+describe("resolveTimelineMinimapHitStripWidth", () => {
+  it.each([
+    { viewport: 1280, content: 768, expected: 40 },
+    { viewport: 768, content: 672, expected: 16 },
+    { viewport: 768, content: 704, expected: 0 },
+    { viewport: 768, content: 720, expected: 0 },
+  ])(
+    "keeps the minimap inside the gutter at $viewport/$content",
+    ({ viewport, content, expected }) => {
+      expect(resolveTimelineMinimapHitStripWidth(viewport, content)).toBe(expected);
+    },
+  );
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {
