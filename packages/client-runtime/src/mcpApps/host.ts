@@ -398,7 +398,8 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       const json = stringifyJson(data);
       if (json === undefined || encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
         if (isId(data.id) && typeof data.method === "string") {
-          fail(data.id, -32600, "Message too large.");
+          if (json === undefined) fail(data.id, -32602, "Params must be JSON.");
+          else fail(data.id, -32600, "Message too large.");
         }
         return;
       }

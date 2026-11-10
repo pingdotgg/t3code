@@ -269,7 +269,7 @@ describe("makeMcpAppHost", () => {
       params: { name: "poll", arguments: { since: 1n } },
     });
     expect(sent.map((message) => (message.error as { code: number }).code)).toEqual([
-      -32602, -32601, -32602, -32600,
+      -32602, -32601, -32602, -32602,
     ]);
   });
 
