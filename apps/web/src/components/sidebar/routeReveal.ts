@@ -9,6 +9,7 @@ import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 export interface SidebarRouteReveal {
   observedKey: string | null;
   pendingKey: string | null;
+  quietKey?: string | null;
 }
 
 export function pendingSidebarRouteReveal(
@@ -19,12 +20,24 @@ export function pendingSidebarRouteReveal(
   if (reveal.observedKey !== routeKey) {
     reveal.observedKey = routeKey;
     reveal.pendingKey = routeKey;
+    reveal.quietKey = null;
   }
   return reveal.pendingKey;
 }
 
+export function observeSidebarDraftPromotion(
+  reveal: SidebarRouteReveal,
+  routeKey: string | null,
+): void {
+  if (routeKey === null || reveal.observedKey === routeKey) return;
+  reveal.observedKey = routeKey;
+  reveal.pendingKey = null;
+  reveal.quietKey = routeKey;
+}
+
 export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
   reveal.pendingKey = null;
+  reveal.quietKey = null;
 }
 
 const scrollRowIntoView = (row: HTMLElement) => row.scrollIntoView({ block: "nearest" });
