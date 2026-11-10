@@ -15,9 +15,9 @@
  *                       server without a redeploy
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 
 const root = path.resolve(import.meta.dirname, "..");
 // Isolated stage so this suite never fights integ.test.ts (same stack
@@ -30,8 +30,7 @@ const cli = new DevCli({ root, stage: STAGE });
 const pagePath = path.join(root, "src", "pages", "index.tsx");
 const pageSource = fs.readFileSync(pagePath, "utf8");
 const MARKER = "This page is rendered by the server on every request.";
-const MARKER_V2 =
-  "This page is rendered by the server on every request. [dev-v2]";
+const MARKER_V2 = "This page is rendered by the server on every request. [dev-v2]";
 
 afterAll(async () => {
   // Always leave the repo tree clean, even on a mid-reload failure.
