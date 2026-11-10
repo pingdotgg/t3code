@@ -41,7 +41,10 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { buildMessageContext, isResponseContextRecord } from "../../lib/composerContextRecords";
-import { removeInlineContextReference } from "../../lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  removeInlineContextReference,
+} from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -241,7 +244,11 @@ export function useQueuedRunEdit(input: {
       (message) => message.id === request.messageId,
     )?.context;
     // A reply shows above the composer while its message is edited, not as a chip in the text.
-    const reply = context?.records.find(isResponseContextRecord);
+    // Only the reply the text still points at: a removed or replaced one stays behind as a record.
+    const referenced = new Set(collectInlineContextIds(sentText));
+    const reply = context?.records
+      .filter(isResponseContextRecord)
+      .find((record) => referenced.has(record.contextId));
     const text = reply ? removeInlineContextReference(sentText, reply.contextId).prompt : sentText;
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);

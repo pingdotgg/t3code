@@ -209,10 +209,11 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
-    // A reply only makes sense in the thread that holds the response.
+    // A reply only makes sense in the thread that holds the response, and one already pending wins.
     const stashedReply = entry.records?.find(isResponseContextRecord);
     if (
       stashedReply &&
+      !getComposerDraft(composerDraftTarget)?.replyTo &&
       typeof composerDraftTarget !== "string" &&
       stashedReply.citation.threadId === composerDraftTarget.threadId &&
       stashedReply.citation.environmentId === composerDraftTarget.environmentId
