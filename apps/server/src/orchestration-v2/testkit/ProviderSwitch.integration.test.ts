@@ -114,6 +114,7 @@ function makeTestAdapter(input: {
   readonly failure?: ReturnType<typeof makeProviderFailure>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
+  readonly cancelledRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
   readonly subagentOnlyBackgroundWork?: boolean;
@@ -295,7 +296,9 @@ function makeTestAdapter(input: {
                 ? "failed"
                 : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
                   ? "interrupted"
-                  : "completed";
+                  : input.cancelledRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "cancelled"
+                    : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -1587,6 +1590,8 @@ describe("orchestration v2 provider switching", () => {
         ["failed", true, true, true],
         ["interrupted", false, true, false],
         ["interrupted", true, false, true],
+        ["cancelled", false, false, false],
+        ["cancelled", true, true, true],
       ] as const
     ).map(
       ([status, queued, returning, native]) =>
@@ -1608,6 +1613,7 @@ describe("orchestration v2 provider switching", () => {
         const targetSelection = returning ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
         const originalPrompt = "Keep the release marker violet and preserve the existing API.";
         const partialResponse = "I checked the API and found the release configuration.";
+        const cancelledPrompt = "Discard this queued request before it starts.";
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
           (
             [
@@ -1631,6 +1637,7 @@ describe("orchestration v2 provider switching", () => {
                     interruptedRunOrdinals: new Set(
                       status === "interrupted" ? [sourceOrdinal] : [],
                     ),
+                    cancelledRunOrdinals: new Set(status === "cancelled" ? [sourceOrdinal] : []),
                     holdRunOrdinal: sourceOrdinal,
                     holdFirstTurn: started,
                     releaseFirstTurn: release,
@@ -1644,7 +1651,7 @@ describe("orchestration v2 provider switching", () => {
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           const waitForRun = (
             ordinal: number,
-            expectedStatus: "completed" | "failed" | "interrupted",
+            expectedStatus: "completed" | "failed" | "interrupted" | "cancelled",
           ) =>
             orchestrator.streamStoredEvents.pipe(
               Stream.filter(
@@ -1695,6 +1702,15 @@ describe("orchestration v2 provider switching", () => {
           }
           yield* dispatch("source", originalPrompt, sourceSelection);
           yield* Deferred.await(started);
+          yield* dispatch("cancelled", cancelledPrompt, sourceSelection, true);
+          const cancelledRun = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+          yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make("command:handoff:cancel-queued"),
+            threadId,
+            runId: cancelledRun.id,
+          });
+          assert.isNull(cancelledRun.startedAt);
           if (queued) {
             yield* dispatch("target", "Continue", targetSelection, true);
             assert.equal(
@@ -1707,7 +1723,7 @@ describe("orchestration v2 provider switching", () => {
           if (!queued) {
             yield* dispatch("target", "Continue", targetSelection);
           }
-          yield* waitForRun(sourceOrdinal + 1, "completed");
+          yield* waitForRun(sourceOrdinal + 2, "completed");
           const projection = yield* orchestrator.getThreadProjection(threadId);
           const targetRun = projection.runs.at(-1)!;
           const handoff = projection.contextHandoffs.find(
@@ -1728,6 +1744,7 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, originalPrompt);
           assert.include(deliveredHistory, partialResponse);
           assert.include(deliveredHistory, `run-status=${status}`);
+          assert.notInclude(deliveredHistory, cancelledPrompt);
           if (native) {
             assert.equal(delivered.text, "Continue");
             assert.notInclude(deliveredHistory, '"text":"Continue"');
@@ -1740,7 +1757,7 @@ describe("orchestration v2 provider switching", () => {
           }
           assert.notInclude(deliveredHistory, "Earlier successful request.");
           yield* dispatch("back", "Finish the remaining work", sourceSelection);
-          yield* waitForRun(sourceOrdinal + 2, "completed");
+          yield* waitForRun(sourceOrdinal + 3, "completed");
           const back = (yield* Ref.get(capturedTurns)).at(-1)!;
           assert.notInclude(back.text, originalPrompt);
           assert.notInclude(back.text, partialResponse);
