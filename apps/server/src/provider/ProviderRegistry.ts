@@ -661,7 +661,7 @@ export const layer = Layer.effect(
             syncLiveSourcesAndContinue.pipe(
               Effect.andThen(Ref.get(liveSubsRef)),
               Effect.flatMap((instances) =>
-                Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
+                Effect.forEach(instances.values(), ({ instance }) => refreshOneSource(instance), {
                   concurrency: "unbounded",
                   discard: true,
                 }),
@@ -685,7 +685,9 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
+      const instance = (yield* Ref.get(liveSubsRef)).get(
+        defaultInstanceIdForDriver(provider),
+      )?.instance;
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
@@ -696,7 +698,7 @@ export const layer = Layer.effect(
       instanceId: ProviderInstanceId,
     ) {
       yield* syncLiveSourcesAndContinue;
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId)?.instance;
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
