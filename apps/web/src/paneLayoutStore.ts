@@ -49,6 +49,9 @@ interface PaneLayoutStoreState extends PaneLayout {
 // Above the store: persist hydrates synchronously while the store is created.
 const isEnvironmentId = Schema.is(EnvironmentId);
 const isThreadId = Schema.is(ThreadId);
+// A lone row or column is exactly 1; the sum check below rejects 1 anywhere else.
+const isFraction = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1;
 
 let paneIdCounter = 0;
 function newPaneId(): string {
@@ -142,10 +145,6 @@ export function sanitizePersistedLayout(value: unknown): PaneLayout {
     typeof focusedIndex === "number" && Number.isInteger(focusedIndex) ? focusedIndex : 0;
   return { panes: clean, focusedIndex: Math.max(0, Math.min(focus, clean.length - 1)) };
 }
-
-// A lone row or column is exactly 1; the sum check below rejects 1 anywhere else.
-const isFraction = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1;
 
 /** Keep saved divider positions only if they still describe the grid for `count` panes. */
 export function sanitizePersistedSizes(value: unknown, count: number): PaneSizes | null {
