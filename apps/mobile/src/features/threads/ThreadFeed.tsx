@@ -170,7 +170,7 @@ import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useBarInset } from "../../components/ui/useBarInset";
+import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import {
@@ -181,7 +181,6 @@ import {
 import { cn } from "../../lib/cn";
 import {
   deriveCenteredContentHorizontalPadding,
-  deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
@@ -333,7 +332,6 @@ export interface ThreadFeedProps {
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
   readonly fitShortFeedToViewport?: boolean;
-  readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly contentMaxWidth?: number;
@@ -2568,14 +2566,24 @@ function useThreadFeedPresentation(
 }
 
 type DisclosureLayout = {
+  /** Each row's top relative to the anchor row's top, before the toggle. */
   positions: ReadonlyMap<string, number>;
   anchorIndex: number;
+  /** Distance from the anchor's top to the end of the content, before the toggle. */
+  anchorToEnd: number;
   list: LegendListRef;
   playing: boolean;
 };
 const DISCLOSURE_DETAIL_DELAY_MS = 135;
 const DISCLOSURE_DETAIL_FADE_MS = 70;
 const unsubscribeNothing = () => {};
+
+function feedContentEnd(state: ReturnType<LegendListRef["getState"]>): number | undefined {
+  const last = state.data.length - 1;
+  if (last < 0) return undefined;
+  const position = state.positionAtIndex(last);
+  return position === undefined ? undefined : position + state.sizeAtIndex(last);
+}
 
 function DisclosureRow(props: {
   itemKey: string;
@@ -2587,18 +2595,35 @@ function DisclosureRow(props: {
   const previous = layout?.positions.get(itemKey);
   const subscribe = useCallback(
     (notify: () => void) => {
-      if (!layout || layout.playing || previous === undefined || previous <= 0)
-        return unsubscribeNothing;
-      return layout.list.getState().listenToPosition(itemKey, notify);
+      if (!layout || layout.playing || previous === undefined) return unsubscribeNothing;
+      const state = layout.list.getState();
+      const stops = [
+        state.listenToPosition(itemKey, notify),
+        state.listen("totalSize", notify),
+        state.listen("isAtEnd", notify),
+        state.listen("isFollowingEnd", notify),
+      ];
+      return () => {
+        for (const stop of stops) stop();
+      };
     },
     [itemKey, layout, previous],
   );
+  // Rows hold their old screen spot relative to whatever stays still: the content end
+  // while the feed sits at the bottom (end follow, or a collapse that clamps the scroll),
+  // otherwise the anchored disclosure row.
   const getOffset = () => {
-    if (!layout || layout.playing || previous === undefined || previous <= 0) return 0;
+    if (!layout || layout.playing || previous === undefined) return 0;
     const state = layout.list.getState();
     const position = state.positionAtIndex(props.index);
+    if (position === undefined) return 0;
+    if (state.isFollowingEnd || state.isAtEnd) {
+      const end = feedContentEnd(state);
+      return end === undefined ? 0 : previous - layout.anchorToEnd - (position - end);
+    }
+    if (previous <= 0) return 0;
     const anchor = state.positionAtIndex(layout.anchorIndex);
-    return position === undefined || anchor === undefined ? 0 : previous - (position - anchor);
+    return anchor === undefined ? 0 : previous - (position - anchor);
   };
   const offset = useSyncExternalStore(subscribe, getOffset, getOffset);
   const entering = !!layout && previous === undefined;
@@ -2746,15 +2771,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const markdownContentWidth = Math.max(0, contentWidth - ASSISTANT_ROW_HORIZONTAL_PADDING * 2);
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const barInset = useBarInset();
-  const topContentInset = props.contentTopInset ?? barInset;
+  const columnTopInset = useContentTopInset();
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
-  const initialContentInset = deriveThreadFeedInitialContentInset({
-    platform: Platform.OS,
-    usesNativeAutomaticInsets,
-    bottomContentInset,
-  });
+  // Without the native contentInset, a list-header spacer clears the bar the column lays content under.
+  const topContentInset = usesNativeAutomaticInsets ? 0 : columnTopInset;
   const anchorTopInset = usesNativeAutomaticInsets ? barInset : topContentInset;
 
   const theme = useUniwindTheme();
@@ -3179,7 +3201,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (state) onIsAtEndChange?.(state.isAtEnd);
   };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
+    reportHeaderMaterialVisibility(
+      event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
+    );
     handleMetricsChange();
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the list's end state to report it to the parent
@@ -3386,6 +3410,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         const motion = {
           positions,
           anchorIndex,
+          anchorToEnd: (feedContentEnd(state) ?? anchor) - anchor,
           list,
           playing: false,
         };
@@ -3621,13 +3646,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      {/* While the pane tracks a sliding sidebar, rows keep its settled width and re-wrap once. */}
-      <View
-        className="flex-1"
-        style={settledPaneWidth !== null ? { width: settledPaneWidth } : undefined}
-        onLayout={handleViewportLayout}
-      >
-        <View className="flex-1">
+      <View className="flex-1" onLayout={handleViewportLayout}>
+        {/* In a split, rows only re-wrap in the render that hands the list its new width. A native
+            column resize would re-wrap them first, and the list would place the taller or shorter
+            rows at their old offsets until their measurements came back. */}
+        <View
+          className="flex-1"
+          style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
+        >
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={attachList}
@@ -3642,7 +3668,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
             keyboardOffset={props.keyboardOffset}
-            contentInset={usesNativeAutomaticInsets ? { top: anchorTopInset } : initialContentInset}
+            {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
             maintainVisibleContentPosition
@@ -3669,6 +3695,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             drawDistance={500}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
+            // Android scrolls a tapped selectable message into view when it takes focus, which reads
+            // as a user scroll and drops end following before the keyboard closes.
+            scrollsChildToFocus={false}
             keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
             // Seed the initial viewport before native onLayout.
             {...(viewportHeight > 0 && viewportWidth > 0
