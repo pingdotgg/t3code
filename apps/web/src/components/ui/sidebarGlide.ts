@@ -197,7 +197,7 @@ function play(snapshot: Snapshot, startTime: CSSNumberish | null): Plan | null {
       const rigid = Math.abs(moved.left - moved.right) < 0.5;
       const paint = paintOf(element, computed);
       const block =
-        computed.display === "table" || (paint !== null && paint !== computed && outlines(paint));
+        computed.display === "table" || (paint !== null && paint !== computed && framed(paint));
       const flows = rigid || (!paint && !scrolls(element, computed));
       const together = inner.every((child) => child !== null && Math.abs(child - moved.left) < 0.5);
       if (block || (flows && together)) shift = moved.left;
@@ -257,8 +257,9 @@ function play(snapshot: Snapshot, startTime: CSSNumberish | null): Plan | null {
     const scroller = scrolls(element, computed);
     const contained = containsPaint(computed);
     const paint = scroller ? null : paintOf(element, computed);
-    if (scrolled && paint) {
-      translate(element, computed, hugsRight(element, end) ? right : left);
+    const flush = scrolled && paint !== null && hugsRight(element, end);
+    if (flush || (scrolled && paint && framed(paint))) {
+      translate(element, computed, flush ? right : left);
       return;
     }
     const anchored = paint !== null || scroller || contained;
@@ -337,6 +338,14 @@ function hugsRight(element: HTMLElement, end: Edges) {
       box.right - Number.parseFloat(style.borderRightWidth) - Number.parseFloat(style.paddingRight),
   };
   return Math.abs(end.right - inner.right) < 1 && Math.abs(end.left - inner.left) >= 1;
+}
+
+function framed(style: CSSStyleDeclaration) {
+  return (
+    style.boxShadow !== "none" ||
+    Number.parseFloat(style.borderLeftWidth) > 0 ||
+    Number.parseFloat(style.borderRightWidth) > 0
+  );
 }
 
 function opaque(color: string) {
