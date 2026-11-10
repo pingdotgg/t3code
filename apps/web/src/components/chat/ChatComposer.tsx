@@ -2628,30 +2628,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     const toastId = toastManager.add({ type: "loading", title: `Compressing "${folderName}"…` });
-    let zip: File;
-    let skipped: FolderCollection["skipped"];
-    try {
-      const collection = await collect();
-      skipped = collection.skipped;
-      zip = await buildFolderZip(collection, { maxZipBytes: fileStagingLimit });
-    } catch (error) {
-      toastManager.update(toastId, {
-        type: "error",
-        title: `Couldn't attach "${folderName}"`,
-        description: isFolderArchiveError(error) ? error.message : "The folder could not be read.",
-      });
-      return;
-    }
-    if (skipped.length === 0) {
-      toastManager.close(toastId);
-    } else {
-      toastManager.update(toastId, {
-        type: "info",
-        title: `Attached ${zip.name}`,
-        description: `Left out ${skipped.map(({ name }) => name).join(" and ")}.`,
-      });
-    }
-    await addComposerAttachments([zip]);
+    const targetKey = attachmentTargetKey;
+    pendingDraftWork.begin(targetKey);
+    const attach = async () => {
+      try {
+        const collection = await collect();
+        const skipped = collection.skipped;
+        const zip = await buildFolderZip(collection, { maxZipBytes: fileStagingLimit });
+        if (skipped.length === 0) {
+          toastManager.close(toastId);
+        } else {
+          toastManager.update(toastId, {
+            type: "info",
+            title: `Attached ${zip.name}`,
+            description: `Left out ${skipped.map(({ name }) => name).join(" and ")}.`,
+          });
+        }
+        await addComposerAttachments([zip]);
+      } catch (error) {
+        toastManager.update(toastId, {
+          type: "error",
+          title: `Couldn't attach "${folderName}"`,
+          description: isFolderArchiveError(error)
+            ? error.message
+            : "The folder could not be read.",
+        });
+      }
+    };
+    await attach().finally(() => pendingDraftWork.end(targetKey));
   };
   const addComposerFolders = (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => {
     const target = resolveFolderTarget();
