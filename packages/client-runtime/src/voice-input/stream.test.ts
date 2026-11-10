@@ -106,3 +106,29 @@ it("fails on disconnect and times out stalled inference", async () => {
     vi.useRealTimers();
   }
 });
+
+it("waits for a model load that outlasts the inference deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const socket = new TestSocket();
+    const onError = vi.fn();
+    const stream = openSpeechStream({
+      url: "wss://environment.test/ws/voice",
+      options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      signal: new AbortController().signal,
+      canSend: () => true,
+      onText: vi.fn(),
+      onError,
+      createSocket: () => socket as unknown as WebSocket,
+    });
+    socket.dispatchEvent(new Event("open"));
+    stream.feed(new Float32Array([0.1]));
+    await vi.advanceTimersByTimeAsync(121_000);
+    socket.receive({ type: "ready" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(socket.closed).toBe(false);
+    expect(socket.sent).toHaveLength(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
