@@ -42,6 +42,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
                               ],
                             },
                             mergeRequest: {
+                              userPermissions: { adminMergeRequest: true },
                               diffStatsSummary: { fileCount: 1 },
                               diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
                             },
@@ -112,7 +113,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
-      expect(readHosts).toEqual(Array(action === "merge" ? 11 : 10).fill(selectedHost));
+      expect(readHosts).toEqual(Array(action === "merge" ? 14 : 13).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
@@ -122,7 +123,13 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
 
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
-    expect(gitLabViewerPermissions({ viewerCanMerge: true })).toEqual({
+    expect(
+      gitLabViewerPermissions({
+        viewerCanMerge: true,
+        viewerCanDeleteBranch: true,
+        viewerCanEditLabels: true,
+      }),
+    ).toEqual({
       actions: [
         "merge",
         "ready",
@@ -132,11 +139,14 @@ describe("gitLabViewerPermissions", () => {
         "update-branch",
         "enable-auto-merge",
         "disable-auto-merge",
+        "delete-branch",
       ],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
+      labels: true,
       updateMethods: ["rebase"],
     });
   });
@@ -146,8 +156,10 @@ describe("gitLabViewerPermissions", () => {
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
+      labels: false,
     });
   });
 });
@@ -177,16 +189,23 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
-    "%s preserves merge request fields without fetching project settings",
+    "%s preserves merge request fields without fetching project settings or fork permissions",
     (operation) =>
       Effect.gen(function* () {
+        const detailInputs: Array<{ readonly maintainerEdits?: boolean }> = [];
         const provider = yield* make.pipe(
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-              getMergeRequestDetail: () => Effect.succeed(detail),
+              getMergeRequestDetail: (input) => {
+                detailInputs.push(input);
+                return Effect.succeed(detail);
+              },
+              getListStates: () => Effect.succeed(new Map()),
+
               listMergeRequestStats: () => Effect.succeed([]),
             }),
           ),
@@ -196,6 +215,7 @@ describe("getChangeRequest base freshness", () => {
         expect(
           yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 }),
         ).toEqual(detail);
+        expect(detailInputs.map((input) => input.maintainerEdits)).toEqual([false]);
       }),
   );
 
@@ -286,6 +306,7 @@ describe("getChangeRequest base freshness", () => {
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
             getMergeRequestDetail: () => Effect.succeed(detail),
             getProjectMergeCapabilities: () => Effect.die("linked threads skip merge settings"),
+            getListStates: () => Effect.succeed(new Map()),
             listMergeRequestStats: () =>
               Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
           }),
@@ -324,6 +345,7 @@ describe("merge request reads", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   const countingProvider = Effect.gen(function* () {
@@ -333,6 +355,7 @@ describe("merge request reads", () => {
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
           listMergeRequestStats: () => Effect.succeed([]),
+          getListStates: () => Effect.succeed(new Map()),
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
@@ -344,6 +367,7 @@ describe("merge request reads", () => {
               return { merge: true, squash: true, rebase: true };
             }),
           runMergeRequestAction: () => Effect.void,
+          setLabels: () => Effect.void,
         }),
       ),
     );
@@ -383,12 +407,23 @@ describe("merge request reads", () => {
     }),
   );
 
-  it.effect("reads a merge request again after a write to it", () =>
+  it.effect.each([
+    {
+      write: "runAction",
+      run: (provider: Effect.Success<typeof make>) =>
+        provider.runAction({ ...reference, action: "ready" }),
+    },
+    {
+      write: "setLabels",
+      run: (provider: Effect.Success<typeof make>) =>
+        provider.setLabels?.({ ...reference, labels: ["bug"], applied: true }) ?? Effect.void,
+    },
+  ])("reads a merge request again after $write", ({ run }) =>
     Effect.gen(function* () {
       const { provider, checks, calls } = yield* countingProvider;
 
       yield* provider.getChangeRequest(reference);
-      yield* provider.runAction({ ...reference, action: "ready" });
+      yield* run(provider);
       yield* checks(reference);
 
       expect(calls.detail).toBe(2);
@@ -476,11 +511,53 @@ describe("optional activity reads", () => {
     messageHeadline: "Keep this commit",
     committedDate: "2026-07-01T00:00:00Z",
   };
+  const webUrl = "https://git.acme.dev/acme/web/-/merge_requests/7";
+  const currentRefs = { baseSha: "base2", startSha: "start2", headSha: "head2" };
   const reads = {
+    getMergeRequestDetail: () =>
+      Effect.succeed({
+        number: 7,
+        title: "Merge request 7",
+        url: webUrl,
+        author: null,
+        headBranch: "feat/page",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: [],
+        labels: [],
+        body: "",
+        changedFiles: 1,
+        mergedAt: null,
+        closedAt: null,
+        reviewers: [],
+        checks: [],
+        viewerCanMerge: true,
+        reviewerIds: [],
+        reviewerUsers: [],
+        diffRefs: currentRefs,
+      }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
-    listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
-    listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+    listDiscussions: () =>
+      Effect.succeed({
+        threads: [],
+        diffRefsByThreadId: new Map(),
+        overviewFindingIds: [],
+        truncated: false,
+      }),
+    listReactions: () =>
+      Effect.succeed({
+        reactions: [],
+        reactionsByNoteId: new Map(),
+        editedAtByNoteId: new Map(),
+        botLogins: new Set<string>(),
+      }),
   };
   const context = {
     operation: "execute" as const,
@@ -527,7 +604,161 @@ describe("optional activity reads", () => {
       }),
   );
 
-  it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
+  it.effect("turns the first note of an open overview discussion into a review finding", () =>
+    Effect.gen(function* () {
+      const finding = { ...comment, id: "10", body: "Mention the flag in the README" };
+      const reply = { ...comment, id: "11", body: "Will do" };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listNotes: () =>
+              Effect.succeed({ comments: [comment, finding, reply], truncated: false }),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [],
+                diffRefsByThreadId: new Map(),
+                overviewFindingIds: ["10"],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const { comments } = yield* provider.getChangeRequestActivity(reference);
+
+      expect(comments.map((item) => [item.id, item.kind])).toEqual([
+        ["42", "issue-comment"],
+        ["10", "review-comment"],
+        ["11", "issue-comment"],
+      ]);
+    }),
+  );
+
+  it.effect("dates edited comments in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const editedAt = "2026-07-02T00:00:00Z";
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                diffRefsByThreadId: new Map(),
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map([[comment.id, editedAt]]),
+                botLogins: new Set<string>(),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.editedAt).toBe(editedAt);
+      expect(activity.reviewThreads[0]?.comments[0]?.editedAt).toBe(editedAt);
+    }),
+  );
+
+  it.effect("links comments and thread comments to their note on the merge request page", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                diffRefsByThreadId: new Map(),
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.url).toBe(`${webUrl}#note_42`);
+      expect(activity.reviewThreads[0]?.comments[0]?.url).toBe(`${webUrl}#note_42`);
+    }),
+  );
+
+  it.effect("marks a thread outdated once the merge request's diff moves past it", () =>
+    Effect.gen(function* () {
+      let detailReads = 0;
+      const thread = (id: string) => ({
+        id,
+        path: "src/a.ts",
+        line: 3,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      });
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            getMergeRequestDetail: () =>
+              Effect.map(reads.getMergeRequestDetail(), (detail) => ({
+                ...detail,
+                diffRefs: ++detailReads === 1 ? { ...currentRefs, headSha: "head1" } : currentRefs,
+              })),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [thread("current"), thread("moved"), thread("unplaced")],
+                diffRefsByThreadId: new Map([
+                  ["current", currentRefs],
+                  ["moved", { ...currentRefs, headSha: "head1" }],
+                ]),
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const checks = provider.getChangeRequestChecks;
+      if (!checks) throw new Error("missing getChangeRequestChecks");
+      yield* checks(reference);
+      const { reviewThreads } = yield* provider.getChangeRequestActivity(reference);
+      expect(reviewThreads.map(({ id, isOutdated }) => [id, isOutdated])).toEqual([
+        ["current", false],
+        ["moved", true],
+        ["unplaced", false],
+      ]);
+    }),
+  );
+
+  it.effect("keeps comments and commits when optional discussions, reactions and links fail", () =>
     Effect.gen(function* () {
       const provider = yield* make.pipe(
         Effect.provide(
@@ -543,6 +774,7 @@ describe("optional activity reads", () => {
                 }),
               ),
             listReactions: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
+            getMergeRequestDetail: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
           }),
         ),
       );
@@ -555,6 +787,249 @@ describe("optional activity reads", () => {
         reactions: [],
         commits: [commit],
       });
+    }),
+  );
+
+  it.effect("flags comments by bot authors as bots, in the conversation and in threads", () =>
+    Effect.gen(function* () {
+      const bot = { login: "project_1_bot_abc", name: "Review bot", avatarUrl: null };
+      const human = { login: "julius", name: null, avatarUrl: null };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listNotes: () =>
+              Effect.succeed({
+                comments: [
+                  { ...comment, author: bot },
+                  { ...comment, id: "43", author: human },
+                ],
+                truncated: false,
+              }),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [
+                      { id: "44", author: bot, body: "x", createdAt: comment.createdAt, url: null },
+                    ],
+                  },
+                ],
+                diffRefsByThreadId: new Map(),
+                overviewFindingIds: [],
+                truncated: false,
+              }),
+            listReactions: () =>
+              Effect.succeed({
+                reactions: [],
+                reactionsByNoteId: new Map(),
+                editedAtByNoteId: new Map(),
+                botLogins: new Set([bot.login.toUpperCase()]),
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+      expect(activity.comments.map((entry) => entry.author?.isBot)).toEqual([true, undefined]);
+      expect(activity.reviewThreads[0]?.comments[0]?.author?.isBot).toBe(true);
+    }),
+  );
+});
+
+describe("review decisions", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const item = {
+    number: 7,
+    title: "Merge request 7",
+    url: "https://gitlab.com/acme/web/-/merge_requests/7",
+    author: null,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    labels: [],
+  };
+  const detail = {
+    ...item,
+    body: "",
+    changedFiles: 1,
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    checks: [],
+    viewerCanMerge: true,
+    reviewerIds: [],
+    reviewerUsers: [],
+  };
+  const providerWith = (
+    getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],
+    overrides: Partial<GitLabPullRequestCli.GitLabPullRequestCli["Service"]> = {},
+  ) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          supportsGraphqlList: () => Effect.succeed(false),
+          listMergeRequests: () =>
+            Effect.succeed({
+              items: [item, { ...item, number: 8 }],
+              truncated: false,
+              cursorAdvance: 2,
+            }),
+          ...overrides,
+          getMergeRequestDetail: () => Effect.succeed(detail),
+          getListStates,
+          listMergeRequestStats: () =>
+            Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+        }),
+      ),
+    );
+  const listing = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "gitlab.com",
+    state: "open" as const,
+    involvement: "all" as const,
+    viewer: "julius",
+    limit: 2,
+  };
+
+  it.effect(
+    "puts GitLab's approval and pipeline state on listed and summarized merge requests",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* providerWith((input) => {
+          expect(input.host).toBe(reference.host);
+          return Effect.succeed(
+            new Map([
+              [7, { reviewDecision: "approved" as const, checksState: "failing" as const }],
+              [8, { reviewDecision: null, checksState: null }],
+            ]),
+          );
+        });
+        const listed = yield* provider.listChangeRequests(listing);
+        assert.isDefined(provider.getChangeRequestSummary);
+        const summary = yield* provider.getChangeRequestSummary(reference);
+
+        expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
+          "approved",
+          null,
+        ]);
+        expect(listed.items.map(({ checksState }) => checksState)).toEqual(["failing", null]);
+        expect(summary.reviewDecision).toBe("approved");
+        expect(summary.checksState).toBe("failing");
+        expect(summary.additions).toBe(40);
+        expect(summary.deletions).toBe(2);
+      }),
+  );
+
+  it.effect(
+    "lists through GraphQL where the host takes it, using the states that read carried",
+    () =>
+      Effect.gen(function* () {
+        const graphqlFlags: Array<boolean | undefined> = [];
+        let versionReads = 0;
+        const providerReading = (
+          supportsGraphqlList: Effect.Effect<
+            boolean,
+            GitLabPullRequestCli.GitLabPullRequestCliError
+          >,
+        ) =>
+          providerWith(() => Effect.die("a GraphQL page carries its own states"), {
+            supportsGraphqlList: () => {
+              versionReads += 1;
+              return supportsGraphqlList;
+            },
+            listMergeRequests: (input) => {
+              graphqlFlags.push(input.graphql);
+              return Effect.succeed({
+                items: [item],
+                truncated: true,
+                cursorAdvance: 1,
+                resumeAfter: "eyJpZCI6IjcifQ",
+                listStates: new Map([
+                  [7, { reviewDecision: "changes-requested" as const, checksState: null }],
+                ]),
+              });
+            },
+          });
+        const listedWith = (
+          supportsGraphqlList: Effect.Effect<
+            boolean,
+            GitLabPullRequestCli.GitLabPullRequestCliError
+          >,
+        ) =>
+          providerReading(supportsGraphqlList).pipe(
+            Effect.flatMap((provider) => provider.listChangeRequests(listing)),
+          );
+
+        const listed = yield* listedWith(Effect.succeed(true));
+        expect(listed).toMatchObject({ resumeAfter: "eyJpZCI6IjcifQ", truncated: true });
+        expect(listed).not.toHaveProperty("listStates");
+        expect(listed.items[0]?.reviewDecision).toBe("changes-requested");
+
+        // An unreadable version leaves the list on REST rather than failing it, and stays known.
+        const unreadable = yield* providerReading(
+          Effect.fail(
+            new GitLabPullRequestCli.GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: "/w",
+              operation: "supportsGraphqlList",
+              cause: null,
+            }),
+          ),
+        );
+        versionReads = 0;
+        yield* unreadable.listChangeRequests(listing);
+        yield* unreadable.listChangeRequests(listing);
+        expect(graphqlFlags).toEqual([true, false, false]);
+        expect(versionReads).toBe(1);
+      }),
+  );
+
+  it.effect.each([
+    {
+      failure: "a failed read",
+      error: new GitLabPullRequestCli.GitLabMergeRequestReadError({
+        command: "glab",
+        cwd: "/w",
+        operation: "getListStates",
+        cause: null,
+      }),
+    },
+    {
+      failure: "a rate limit",
+      error: new GitLabCli.GitLabCliRateLimitError({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      }),
+    },
+  ])("keeps rows and summaries with an unknown decision after $failure", ({ error }) =>
+    Effect.gen(function* () {
+      const provider = yield* providerWith(() => Effect.fail(error));
+      const listed = yield* provider.listChangeRequests(listing);
+      assert.isDefined(provider.getChangeRequestSummary);
+      const summary = yield* provider.getChangeRequestSummary(reference);
+
+      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(summary.reviewDecision).toBeUndefined();
     }),
   );
 });
