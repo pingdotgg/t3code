@@ -681,6 +681,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Swipe to navigate",
     to: "/settings/general",
     searchTerms: ["trackpad two finger horizontal back forward history gesture desktop"],
+    desktopOnly: true,
   },
   {
     id: "response-streaming",

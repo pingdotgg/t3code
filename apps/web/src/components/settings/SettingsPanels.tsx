@@ -1047,31 +1047,34 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
-        <SettingsRow
-          {...searchableSetting("history-swipe-navigation")}
-          description="Swipe two fingers sideways to go back or forward."
-          resetAction={
-            settings.historySwipeNavigation !== DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation ? (
-              <SettingResetButton
-                label="swipe to navigate"
-                onClick={() =>
-                  updateSettings({
-                    historySwipeNavigation: DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation,
-                  })
+        {isElectron ? (
+          <SettingsRow
+            {...searchableSetting("history-swipe-navigation")}
+            description="Swipe two fingers sideways to go back or forward."
+            resetAction={
+              settings.historySwipeNavigation !==
+              DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation ? (
+                <SettingResetButton
+                  label="swipe to navigate"
+                  onClick={() =>
+                    updateSettings({
+                      historySwipeNavigation: DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.historySwipeNavigation}
+                onCheckedChange={(checked) =>
+                  updateSettings({ historySwipeNavigation: Boolean(checked) })
                 }
+                aria-label="Swipe to navigate"
               />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.historySwipeNavigation}
-              onCheckedChange={(checked) =>
-                updateSettings({ historySwipeNavigation: Boolean(checked) })
-              }
-              aria-label="Swipe to navigate"
-            />
-          }
-        />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );
