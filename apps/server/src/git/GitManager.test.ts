@@ -5037,8 +5037,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.branch).toBe("feature/no-pull-ref");
       // PR threads share thread creation's in-project location.
-      expect(result.worktreePath).toBe(
-        NodePath.join(NodeFS.realpathSync(repoDir), ".claude", "worktrees", "feature-no-pull-ref"),
+      expect(NodePath.dirname(result.worktreePath as string)).toBe(
+        NodePath.join(NodeFS.realpathSync(repoDir), ".claude", "worktrees"),
+      );
+      expect(NodePath.basename(result.worktreePath as string)).toMatch(
+        /^feature-no-pull-ref-[0-9a-f]{16}$/,
       );
       const worktreeHead = (yield* runGit(result.worktreePath as string, [
         "rev-parse",

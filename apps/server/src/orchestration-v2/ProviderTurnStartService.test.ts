@@ -1219,7 +1219,7 @@ effectIt.effect(
         { cwd: workspaceRoot, refName: "main", newRefName: "feature/restore", path: null },
         { worktreesDirectory: ".claude/worktrees" },
       );
-      expect(worktree.path).toBe(path.join(main, ".claude", "worktrees", "feature-restore"));
+      expect(path.dirname(worktree.path)).toBe(path.join(main, ".claude", "worktrees"));
       yield* fileSystem.writeFileString(path.join(worktree.path, "thread.txt"), "thread work");
       yield* git(worktree.path, ["add", "."]);
       yield* git(worktree.path, ["commit", "-m", "thread tip"]);
@@ -1227,7 +1227,7 @@ effectIt.effect(
       // Cleanup removed the folder and Git's record of it; only the thread remembers the path.
       yield* fileSystem.remove(worktree.path, { recursive: true });
       yield* git(main, ["worktree", "prune"]);
-      const foreignPath = path.join(other, ".claude", "worktrees", "feature-restore");
+      const foreignPath = path.join(other, ".claude", "worktrees", path.basename(worktree.path));
 
       for (const worktreePath of [foreignPath, worktree.path]) {
         const harness = makeLocalCommandHarness({

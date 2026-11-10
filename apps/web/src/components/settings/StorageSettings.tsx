@@ -97,7 +97,7 @@ export function WorktreesDirectoryRow() {
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
       description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. A relative folder such as .claude/worktrees is created inside each repository's main checkout. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+        "Folder for new worktrees, like D:\\worktrees or ~/worktrees. Relative folders like .claude/worktrees go in each repository's main checkout. Existing worktrees stay put. Empty uses the T3 home folder."
       }
       status={
         errorMessage ? (
