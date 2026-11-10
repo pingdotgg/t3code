@@ -164,7 +164,7 @@ export interface PreparedConnection {
 
 /** The base URL for one request: a gateway route's ticket expires, so `httpBaseUrl` holds none. */
 export const ticketedHttpBaseUrl = (
-  prepared: PreparedConnection,
+  prepared: Pick<PreparedConnection, "httpBaseUrl" | "gatewayTicket">,
 ): Effect.Effect<string, ConnectionAttemptError> =>
   prepared.gatewayTicket === undefined
     ? Effect.succeed(prepared.httpBaseUrl)
