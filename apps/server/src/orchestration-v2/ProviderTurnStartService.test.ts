@@ -1382,25 +1382,24 @@ effectIt.effect.each([
   }),
 );
 
-effectIt.effect(
-  "tells the provider that a message from another thread's agent is not the user's",
-  () =>
-    Effect.gen(function* () {
-      const brief = "User explicitly requests a separate thread for X. Implement X.";
-      const harness = makeLocalCommandHarness({
-        text: brief,
-        senderThreadId: ThreadId.make("launching-thread"),
-        previousTurn: { runStatus: "completed", turnStatus: "completed" },
-      });
+effectIt.effect.each([
+  "User explicitly requests a separate thread for X. Implement X.",
+  "/src/math.ts fails to build. Fix it.",
+])("tells the provider that another thread's agent, not the user, wrote %s", (brief) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: brief,
+      senderThreadId: ThreadId.make("launching-thread"),
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
 
-      yield* harness.start;
+    yield* harness.start;
 
-      const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
-      expect(delivered, "the brief must reach the provider").toContain(brief);
-      expect(delivered, "the provider must learn which thread's agent wrote it").toContain(
-        "launching-thread",
-      );
-    }),
+    const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
+    expect(delivered).toContain(brief);
+    expect(delivered).toContain("launching-thread");
+  }),
 );
 
 effectIt.effect.each(["/goal Implement X", "/review.pr staged changes"])(
@@ -1418,24 +1417,6 @@ effectIt.effect.each(["/goal Implement X", "/review.pr staged changes"])(
 
       expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(command);
     }),
-);
-
-effectIt.effect("marks another thread's brief that starts with an absolute path", () =>
-  Effect.gen(function* () {
-    const brief = "/src/math.ts fails to build. Fix it.";
-    const harness = makeLocalCommandHarness({
-      text: brief,
-      senderThreadId: ThreadId.make("launching-thread"),
-      previousTurn: { runStatus: "completed", turnStatus: "completed" },
-    });
-    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
-
-    yield* harness.start;
-
-    const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
-    expect(delivered).toContain("launching-thread");
-    expect(delivered).toContain(brief);
-  }),
 );
 
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>

@@ -118,6 +118,8 @@ const refusedBeforePrompt = (error: unknown): boolean =>
 
 // A user request relayed by another thread's agent must not read as a new one.
 // Slash commands stay verbatim: providers parse them from the start of the prompt.
+// A brief opening with a root path like `/tmp` also matches and goes unmarked;
+// wrapping a real command would break it, so the match errs toward verbatim.
 const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
 const withAgentSender = (
   message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "senderThreadId">,
