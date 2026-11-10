@@ -94,6 +94,8 @@ describe("pull request summary cache", () => {
     const older = summary({ updatedAt: "2026-09-11T00:00:00Z", observedAt: 999 });
     expect(newestPullRequestSummary(older, reopened)).toBe(reopened);
     expect(newestPullRequestSummary(reopened, older)).toBe(reopened);
+    const edited = summary({ title: "Accepted title" });
+    expect(newestPullRequestSummary(edited, summary())).toBe(edited);
   });
 
   it("reuses saved thread state while detail is stale and lets newer detail replace it", () => {

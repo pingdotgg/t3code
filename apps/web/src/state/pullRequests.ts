@@ -64,7 +64,7 @@ export function newestPullRequestSummary(
 ): PullRequestSummary | null {
   if (current === null) return observed;
   if (observed === null) return current;
-  return compareSummaries(current, observed) >= 0 ? observed : current;
+  return compareSummaries(current, observed) > 0 ? observed : current;
 }
 
 export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
