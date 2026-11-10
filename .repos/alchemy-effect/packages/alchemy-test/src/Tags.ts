@@ -1,17 +1,12 @@
 /** Augment this interface with `tags: "unit" | "e2e" | ...` to constrain tags. */
 export interface TestTags {}
 
-export type TestTag = TestTags extends { tags: infer T extends string }
-  ? T
-  : string;
+export type TestTag = TestTags extends { tags: infer T extends string } ? T : string;
 
 export type Tags = TestTag | ReadonlyArray<TestTag>;
 
 /** Merge inherited labels without changing runner options or execution mode. */
-export const mergeTags = (
-  inherited: ReadonlyArray<string>,
-  tags?: Tags,
-): ReadonlyArray<string> => {
+export const mergeTags = (inherited: ReadonlyArray<string>, tags?: Tags): ReadonlyArray<string> => {
   const own = typeof tags === "string" ? [tags] : (tags ?? []);
   for (const tag of own) {
     if (!tag || /[\s()&|!*]/.test(tag) || /^(and|or|not)$/i.test(tag)) {
@@ -31,9 +26,7 @@ export type TagsFilter = (
  * parentheses, and `*` wildcards. Repeated expressions are ANDed together.
  * Parse eagerly so malformed filters fail before any test file is imported.
  */
-export const compileTagsFilter = (
-  expressions: ReadonlyArray<string>,
-): TagsFilter => {
+export const compileTagsFilter = (expressions: ReadonlyArray<string>): TagsFilter => {
   const explicitlySelected = new Set<string>();
   const filters = expressions.map((expression): TagsFilter => {
     const tokens = expression.match(/&&|\|\||[()!&|]|[^\s()!&|]+/g) ?? [];
@@ -42,9 +35,7 @@ export const compileTagsFilter = (
     const fail = (): never => {
       throw new Error(
         `Invalid --tags ${JSON.stringify(expression)}: unexpected ${
-          tokens[position] === undefined
-            ? "end of expression"
-            : JSON.stringify(tokens[position])
+          tokens[position] === undefined ? "end of expression" : JSON.stringify(tokens[position])
         }`,
       );
     };
@@ -66,11 +57,7 @@ export const compileTagsFilter = (
         return inner;
       }
       const token = tokens[position];
-      if (
-        token === undefined ||
-        /^[()&|!]$/.test(token) ||
-        /^(and|or|&&|\|\|)$/i.test(token)
-      )
+      if (token === undefined || /^[()&|!]$/.test(token) || /^(and|or|&&|\|\|)$/i.test(token))
         return fail();
       position++;
       // A wildcard or a reference anywhere inside negation is not an opt-in.
