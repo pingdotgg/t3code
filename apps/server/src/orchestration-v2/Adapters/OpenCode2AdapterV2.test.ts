@@ -1,4 +1,5 @@
 import * as NodeURL from "node:url";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -2453,7 +2454,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // session.command returns 204 without an inbox id; the stream drops before session.inbox.enqueued provides it.
       const { runtime, thread } = yield* resumed([
         out("command.list", "<any>"),
-        reply("command.list", { location: { directory: WORK }, data: [{ name: "hello" }] }),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "git/hello" }] }),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
         reply("message.list", {
           data: [
@@ -2461,7 +2462,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
-        out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
+        out("session.command", { sessionID: SESSION, name: "git/hello", text: "WORLD" }),
         reply("session.command", null),
         { type: "runtime_exit", status: "success" } as const,
         out("event.subscribe"),
@@ -2498,7 +2499,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       yield* runtime.startTurn({
         ...turnInput(thread),
-        message: { ...turnInput(thread).message, text: "/hello WORLD" },
+        message: { ...turnInput(thread).message, text: "/git/hello WORLD" },
       });
       const collected = yield* Fiber.join(events);
       const texts = collected.flatMap((event) =>
@@ -2715,22 +2716,95 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps thread-scoped T3 waits as dynamic tools through their lifecycle", () =>
+  it.effect.each(["delegate_task", "html_preview", "mcp__acme__edit_document"])(
+    "keeps MCP %s as a dynamic tool through its lifecycle",
+    (toolName) =>
+      Effect.gen(function* () {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
+        const name = toolName.startsWith("mcp__") ? toolName : `t3-code-web_${toolName}`;
+        const input =
+          toolName !== "delegate_task"
+            ? { html: "<p>Preview</p>" }
+            : { task: "Review", mode: "wait" };
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.tool.input.started", { ...tool, name }),
+          event("session.tool.called", { ...tool, name, input, executed: true }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [
+                { type: "text", text: "Reviewed" },
+                ...(toolName !== "delegate_task"
+                  ? [{ type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" }]
+                  : []),
+              ],
+              metadata: {},
+              executed: true,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const items = (yield* Fiber.join(events)).flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((item) => item.type),
+          ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
+        );
+        assert.deepEqual(
+          items.map((item) => item.status),
+          ["running", "running", "completed"],
+        );
+        const last = items.at(-1);
+        assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
+        assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
+        assert.deepEqual(
+          toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
+          toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("stores a shell command that exits non-zero as failed", () =>
     Effect.gen(function* () {
-      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
-      const name = "t3-code-web_delegate_task";
-      const input = { task: "Review", mode: "wait" };
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-exit" };
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
-        event("session.tool.input.started", { ...tool, name }),
-        event("session.tool.called", { ...tool, name, input, executed: true }),
-        event("session.tool.success", {
-          ...tool,
-          content: [{ type: "text", text: "Reviewed" }],
-          metadata: {},
-          executed: true,
-        }),
+        event("session.tool.input.started", { ...tool, name: "shell" }),
+        event("session.tool.called", { ...tool, input: { command: "vp test" }, executed: false }),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_toolsuccess_call-exit",
+              created: 1,
+              type: "session.tool.success",
+              data: {
+                ...tool,
+                content: [{ type: "text", text: "1 failed\n" }],
+                metadata: { status: "completed", truncated: false, exit: 1 },
+                executed: false,
+              },
+              durable: { aggregateID: SESSION, seq: 1, version: 2 },
+            },
+          },
+        },
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2739,23 +2813,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.forkScoped,
       );
       yield* runtime.startTurn(turnInput(thread));
-      const items = (yield* Fiber.join(events)).flatMap((event) =>
-        event.type === "turn_item.updated" &&
-        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
-          ? [event.turnItem]
-          : [],
+      const collected = yield* Fiber.join(events);
+      const item = collected
+        .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+        .findLast((item) => item.nativeItemRef?.nativeId?.endsWith(tool.id));
+      assert.equal(item?.type, "command_execution");
+      assert.equal(item?.status, "failed");
+      assert.equal(item?.type === "command_execution" ? item.exitCode : null, 1);
+      assert.equal(
+        collected
+          .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
+          .findLast((node) => node.id === item?.nodeId)?.status,
+        "failed",
       );
-      assert.deepEqual(
-        items.map((item) => item.type),
-        ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
-      );
-      assert.deepEqual(
-        items.map((item) => item.status),
-        ["running", "running", "completed"],
-      );
-      const last = items.at(-1);
-      assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
-      assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
     }).pipe(Effect.scoped),
   );
 

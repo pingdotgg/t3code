@@ -1,12 +1,9 @@
 /** Application policy, shared by push, REST ref writes, and pull merges. */
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
 import { Session, Unauthorized } from "./auth.ts";
 
-export const checkRefChanges = (
-  repo: Git.RepoMetaData,
-  updates: ReadonlyArray<Git.RefUpdate>,
-) =>
+export const checkRefChanges = (repo: Git.RepoMetaData, updates: ReadonlyArray<Git.RefUpdate>) =>
   Effect.gen(function* () {
     const { user } = yield* Session;
     if (user === null) return yield* new Unauthorized();
@@ -17,10 +14,7 @@ export const checkRefChanges = (
           reason: "only the repository owner may change refs",
         });
       }
-      if (
-        update.ref === `refs/heads/${repo.defaultBranch}` &&
-        /^0+$/.test(update.newOid)
-      ) {
+      if (update.ref === `refs/heads/${repo.defaultBranch}` && /^0+$/.test(update.newOid)) {
         return yield* new Git.PushDenied({
           ref: update.ref,
           reason: "the default branch cannot be deleted",
