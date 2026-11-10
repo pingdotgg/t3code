@@ -8,6 +8,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  remarkPreserveListNumbers,
 } from "./markdownPipeline.ts";
 
 it.each([
@@ -346,3 +347,66 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
 });
+
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)("uses GitHub numbering by default (%s)", (_, plugins) => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(plugins)
+    .use(remarkRehype)
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const markdown = "3. A\n3. B\n\n8. C";
+  const tree = processor.runSync(processor.parse(markdown), markdown) as {
+    children: {
+      properties: { start?: number };
+      children: { tagName?: string; properties?: object }[];
+    }[];
+  };
+  const list = tree.children[0]!;
+  expect(list.properties.start).toBe(3);
+  expect(
+    list.children.filter((child) => child.tagName === "li").map((child) => child.properties),
+  ).toEqual([{}, {}, {}]);
+});
+
+it.each([
+  ["1. A\n2. B\n\n5. E", [1, 2, 5]],
+  ["1. <b>A</b>\n5. E", [1, 5]],
+  ["1. A\n1. B", [1, 1]],
+  ["9) A\n15) B\n0) C", [9, 15, 0]],
+  ["> 1. A\n> 7. B", [1, 7]],
+  ["1. A\n\n   3. nested\n   8. nested\n5. B", [1, 3, 8, 5]],
+  ["- A\n- B\n\n```\n1. literal\n5. literal\n```", []],
+] as const)(
+  "preserves source ordered-list numbers through sanitization: %s",
+  (markdown, expected) => {
+    for (const plugins of [
+      CHAT_MARKDOWN_REMARK_PLUGINS,
+      CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    ]) {
+      const processor = unified()
+        .use(remarkParse)
+        .use(plugins)
+        .use(remarkPreserveListNumbers)
+        .use(remarkRehype, { allowDangerousHtml: true })
+        .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+      interface RenderedNode {
+        tagName?: string;
+        properties?: { value?: unknown };
+        children?: RenderedNode[];
+      }
+      const tree = processor.runSync(processor.parse(markdown), markdown) as RenderedNode;
+      const values: number[] = [];
+      const visit = (node: RenderedNode) => {
+        if (node.tagName === "li" && node.properties?.value !== undefined) {
+          values.push(Number(node.properties.value));
+        }
+        node.children?.forEach(visit);
+      };
+      visit(tree);
+      expect(values).toEqual(expected);
+    }
+  },
+);

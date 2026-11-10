@@ -17,6 +17,7 @@ import {
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  remarkPreserveListNumbers,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -237,6 +238,7 @@ interface ChatMarkdownProps {
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
+  preserveListNumbers?: boolean;
   parseRawHtml?: boolean;
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
@@ -328,11 +330,16 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
+  largestValue: number,
 ): { "--list-gutter": string } | undefined {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
-  const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+  const markerWidth = Math.max(
+    String(firstNumber).length,
+    String(lastNumber).length,
+    String(largestValue).length,
+  );
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
@@ -1009,10 +1016,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   ol: function MarkdownOrderedList({ node, start, style, ...props }) {
-    const itemCount =
-      node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-        .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
+    let itemCount = 0;
+    let largestValue = 0;
+    for (const child of node?.children ?? []) {
+      if (child.type !== "element" || child.tagName !== "li") continue;
+      itemCount++;
+      const value = Number(child.properties.value);
+      if (Number.isFinite(value)) largestValue = Math.max(largestValue, value);
+    }
+    const gutterStyle = orderedListGutterStyle(itemCount, start, largestValue);
     return (
       <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
     );
@@ -1663,6 +1675,8 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
   mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
 } satisfies Record<string, PluggableList>;
 
+const SOURCE_LIST_NUMBER_PLUGINS: PluggableList = [remarkPreserveListNumbers];
+
 const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
 
 // One combined list per pair, so a stable extra list shares a renderer and its parse cache.
@@ -1730,6 +1744,7 @@ function ChatMarkdown({
   className,
   inline = false,
   lineBreaks = false,
+  preserveListNumbers = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
@@ -1753,7 +1768,7 @@ function ChatMarkdown({
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
+  const baseRemarkPlugins =
     CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
       componentState.mathEnabled
         ? lineBreaks
@@ -1763,6 +1778,9 @@ function ChatMarkdown({
           ? "breaks"
           : "plain"
     ];
+  const sharedRemarkPlugins = preserveListNumbers
+    ? withExtraPlugins(baseRemarkPlugins, SOURCE_LIST_NUMBER_PLUGINS)
+    : baseRemarkPlugins;
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing

@@ -199,6 +199,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
+    li: [...(defaultSchema.attributes?.li ?? []), "value"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
       "dataDarkSrc",
@@ -393,6 +394,28 @@ type MarkdownAstNode = {
   };
   children?: MarkdownAstNode[];
 };
+
+export function remarkPreserveListNumbers(): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    const visit = (node: Root | RootContent) => {
+      if (node.type === "list" && node.ordered) {
+        for (const item of node.children) {
+          const offset = item.position?.start.offset;
+          if (offset === undefined) continue;
+          const marker = /^(\d{1,9})[.)]/.exec(source.slice(offset, offset + 10));
+          if (!marker) continue;
+          item.data = {
+            ...item.data,
+            hProperties: { ...item.data?.hProperties, value: String(Number(marker[1])) },
+          };
+        }
+      }
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   return (tree, file) => {

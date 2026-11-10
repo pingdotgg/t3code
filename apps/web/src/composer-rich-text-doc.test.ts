@@ -484,6 +484,7 @@ describe("composer rich text document model", () => {
     "+ plus",
     "* star\n+ plus",
     "1. first\n2. second",
+    "1. A\n2. B\n\n5. E",
     "1) paren\n2) paren",
     "3. starts at three\n4. four",
     "01. zero padded\n02. two",
