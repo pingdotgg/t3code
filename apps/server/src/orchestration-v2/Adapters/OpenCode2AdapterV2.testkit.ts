@@ -78,6 +78,13 @@ const operationOf = (
     };
   }
   if (method === "GET" && path === "/api/skill") return { type: "skill.list", input: query };
+  const shell = /^\/api\/shell\/([^/]+)$/.exec(path);
+  if (method === "DELETE" && shell !== null) {
+    return { type: "shell.remove", input: { id: decodeURIComponent(shell[1] ?? ""), ...query } };
+  }
+  if (method === "GET" && shell !== null) {
+    return { type: "shell.get", input: { id: decodeURIComponent(shell[1] ?? ""), ...query } };
+  }
   if (session !== null) {
     const [, sessionID, rest = ""] = session;
     // The client sends absent optional fields as `null`; recordings omit them.

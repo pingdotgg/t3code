@@ -14,12 +14,14 @@ import {
   type OpenCodeEvent,
 } from "@opencode/client/effect";
 import { Mcp } from "@opencode/schema/mcp";
+import { Shell } from "@opencode/schema/shell";
 import {
   isOrchestrationV2WorkActive,
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
@@ -44,6 +46,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -307,12 +310,18 @@ interface ThreadState {
     string,
     {
       readonly inboxId: string;
-      readonly childId: string;
+      /** The child session or background shell that reported. */
+      readonly sourceId: string;
       readonly report: BackgroundWorkReport;
       readonly text: string;
     }
   >;
-  readonly stoppedChildren: Set<string>;
+  /** Running background shells by id; a shell stays at its launch directory when the session moves. */
+  readonly shells: Map<string, { readonly directory: string; command: string | undefined }>;
+  /** Shells whose end arrived before their launch result; OpenCode does not wait for the launch to return. */
+  readonly endedShells: Set<string>;
+  /** Child sessions and shells the user stopped; a wake their reports alone cause runs nothing. */
+  readonly stopped: Set<string>;
   readonly strandedSteers: Set<string>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
@@ -515,6 +524,16 @@ const reportOutcome = (state: string | undefined) =>
         ? ("cancelled" as const)
         : ("unknown" as const);
 
+const shellCommandOf = (input: Readonly<Record<string, unknown>> | undefined) =>
+  stringField(input, "command")?.trim();
+
+const isShellId = Schema.is(Shell.ID);
+// Any tool can report a shellID; only one OpenCode accepts back can be checked or removed.
+const launchedShell = (metadata: Readonly<Record<string, unknown>> | undefined) => {
+  const shellId = metadata?.["status"] === "running" ? metadata["shellID"] : undefined;
+  return isShellId(shellId) ? shellId : undefined;
+};
+
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
 
@@ -532,6 +551,7 @@ const claudeUsageLimit = (message: string | undefined) =>
     : undefined;
 
 const INTERRUPT_TIMEOUT = "10 seconds";
+const FOREGROUND_STOP_DELAY = "3 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
@@ -724,8 +744,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
+    /** Held events whose session had no state yet, so their shells were not counted on arrival. */
+    const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
     const strays = new Map<string, ThreadState>();
+    /** Sessions of discarded wakes by the caller that tracks their shells, kept after their interrupt. */
+    const adopted = new Map<string, ThreadState>();
     const busy = new Set<string>();
+    const idleWaiters = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -741,6 +766,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
       Queue.offer(events, event).pipe(Effect.asVoid);
     const ownerOf = (sessionId: string) => childOwners.get(sessionId) ?? threads.get(sessionId);
+    const markIdle = Effect.fnUntraced(function* (sessionId: string) {
+      busy.delete(sessionId);
+      const waiter = idleWaiters.get(sessionId);
+      idleWaiters.delete(sessionId);
+      if (waiter !== undefined) yield* Deferred.succeed(waiter, undefined);
+    });
+    // An execution's events precede its end, so once it ends everything it launched has been seen.
+    const awaitIdle = Effect.fnUntraced(function* (sessionId: string) {
+      if (!busy.has(sessionId)) return;
+      const waiter = idleWaiters.get(sessionId) ?? (yield* Deferred.make<void>());
+      if (!busy.has(sessionId)) return;
+      idleWaiters.set(sessionId, waiter);
+      yield* Deferred.await(waiter).pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore);
+    });
     const markUnsettled = (state: ThreadState) => {
       state.unsettled = true;
       state.unsettledStarted = busy.has(state.sessionId);
@@ -769,7 +808,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent,
       wakes: [],
       reports: new Map(),
-      stoppedChildren: new Set(),
+      shells: new Map(),
+      endedShells: new Set(),
+      stopped: new Set(),
       strandedSteers: new Set(),
       mcp: undefined,
       instructions: undefined,
@@ -828,7 +869,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const owesWork = (state: ThreadState) =>
       state.wakes.length > 0 ||
-      state.reports.size > 0 ||
+      [...state.reports.values()].some((entry) => !state.stopped.has(entry.sourceId)) ||
+      state.shells.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
       [...state.calls.values()].some((call) => call.background);
 
@@ -1257,27 +1299,46 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
-      const roster = runningCalls(state)
-        .filter((call) => call.background)
-        .map((call) => ({
-          taskId: call.nativeId,
-          kind: "subagent" as const,
-          ...(call.title?.trim() ? { description: call.title.trim() } : {}),
-          ...(call.child?.subagent === undefined
+      const background = runningCalls(state).filter((call) => call.background);
+      const subagents = background.map((call) => ({
+        taskId: call.nativeId,
+        kind: "subagent" as const,
+        ...(call.title?.trim() ? { description: call.title.trim() } : {}),
+        ...(call.child?.subagent === undefined
+          ? {}
+          : { childThreadId: call.child.subagent.appThread.id }),
+      }));
+      // Restart recovery reads a subagent before the shells naming it as their parent.
+      const shells = sessionsOf(state).flatMap((session) =>
+        [...session.shells].map(([taskId, shell]) => ({
+          taskId,
+          kind: "command" as const,
+          ...(shell.command === undefined
             ? {}
-            : { childThreadId: call.child.subagent.appThread.id }),
-        }));
+            : { command: shell.command, description: shell.command }),
+          ...(session.subagent !== undefined && background.includes(session.subagent.call)
+            ? { parentTaskId: session.subagent.call.nativeId }
+            : {}),
+        })),
+      );
+      const roster: ReadonlyArray<OrchestrationV2PendingBackgroundTask> = [...subagents, ...shells];
+      const childThreadOf = (task: OrchestrationV2PendingBackgroundTask) =>
+        task.kind === "subagent" ? task.childThreadId : undefined;
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
         state.publishedBackgroundWork === hasBackground(state) &&
         current.length === roster.length &&
-        current.every(
-          (task, index) =>
-            task.taskId === roster[index]?.taskId &&
-            task.description === roster[index]?.description &&
-            (task.kind === "subagent" ? task.childThreadId : undefined) ===
-              roster[index]?.childThreadId,
-        )
+        current.every((task, index) => {
+          const next = roster[index];
+          return (
+            next !== undefined &&
+            task.kind === next.kind &&
+            task.taskId === next.taskId &&
+            task.description === next.description &&
+            task.parentTaskId === next.parentTaskId &&
+            childThreadOf(task) === childThreadOf(next)
+          );
+        })
       ) {
         return;
       }
@@ -2101,6 +2162,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
           const output = textOf(event.data.content);
+          // A launch held with its wake arrived before its turn could name it.
+          const shell = state.shells.get(stringField(event.data.metadata, "shellID") ?? "");
+          if (shell !== undefined)
+            shell.command ??= shellCommandOf(turn.tools.get(event.data.id)?.input);
           yield* emitTool(state, turn, event.data.id, "completed", {
             output,
             files: event.data.content.flatMap((part) => (part.type === "file" ? [part] : [])),
@@ -2192,9 +2257,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const delivered = [...state.reports.values()];
       state.reports.clear();
       const stopped =
-        delivered.length > 0 &&
-        delivered.every((entry) => state.stoppedChildren.has(entry.childId));
-      for (const entry of delivered) state.stoppedChildren.delete(entry.childId);
+        delivered.length > 0 && delivered.every((entry) => state.stopped.has(entry.sourceId));
+      for (const entry of delivered) state.stopped.delete(entry.sourceId);
       if (stopped) {
         markUnsettled(state);
         yield* client.session
@@ -2249,7 +2313,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
-        childId,
+        sourceId: childId,
         text: payload.text,
         report: {
           kind: "subagent",
@@ -2258,7 +2322,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           outcome,
         },
       });
-      const status = state.stoppedChildren.has(childId)
+      const status = state.stopped.has(childId)
         ? "interrupted"
         : outcome === "failed"
           ? "failed"
@@ -2271,7 +2335,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const holderOf = (sessionId: string) => {
       const own = threads.get(sessionId);
       if (own !== undefined) return own.wakes.at(-1)?.running === true ? own : undefined;
-      const parent = announced.get(sessionId)?.parentID;
+      // A held subagent's own subagents have no state either; the nearest ancestor with state holds.
+      let parent = announced.get(sessionId)?.parentID;
+      while (parent !== undefined && !threads.has(parent)) parent = announced.get(parent)?.parentID;
       const holder = parent === undefined ? undefined : threads.get(parent);
       return holder !== undefined && holder.active === undefined && holder.wakes.length > 0
         ? holder
@@ -2295,6 +2361,89 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.heldEnd !== undefined && turn.steers.size === 0
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
+
+    const trackShellLaunch = (
+      state: ThreadState,
+      metadata: Readonly<Record<string, unknown>> | undefined,
+      input: Readonly<Record<string, unknown>> | undefined,
+    ) => {
+      const shellId = launchedShell(metadata);
+      if (shellId === undefined) return false;
+      if (state.endedShells.delete(shellId) || state.shells.has(shellId)) return false;
+      state.shells.set(shellId, { directory: state.directory, command: shellCommandOf(input) });
+      return true;
+    };
+
+    const trackShellEnd = (
+      state: ThreadState,
+      inboxId: string,
+      payload: {
+        readonly text: string;
+        readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+      },
+    ) => {
+      const shellId = stringField(payload.metadata, "shellID");
+      if (stringField(payload.metadata, "source") !== "shell" || shellId === undefined)
+        return false;
+      const shell = state.shells.get(shellId);
+      const ended = state.shells.delete(shellId);
+      if (!ended) state.endedShells.add(shellId);
+      // Removing a shell reports it to its session too, which wakes that session.
+      state.reports.set(inboxId, {
+        inboxId,
+        sourceId: shellId,
+        text: payload.text,
+        report: {
+          kind: "command",
+          label: shell?.command,
+          outcome: state.stopped.has(shellId)
+            ? "cancelled"
+            : reportOutcome(stringField(payload.metadata, "state")),
+        },
+      });
+      return ended;
+    };
+
+    // Counted on arrival, so Stop sees what a held wake started and a replay counts nothing twice.
+    const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
+      if (event.type === "session.tool.success") {
+        const input = state.active?.tools.get(event.data.id)?.input;
+        return trackShellLaunch(state, event.data.metadata, input);
+      }
+      if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
+        return trackShellEnd(state, event.data.inboxID, event.data.item.payload);
+      }
+      if (event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") {
+        state.reports.delete(event.data.inboxID);
+      }
+      return false;
+    };
+
+    // A discarded wake's sessions stay owned by its caller, which tracks the shells they launch.
+    const trackAdoptedShells = Effect.fnUntraced(function* (
+      event: OpenCode2Client.OpenCode2StreamEvent,
+    ) {
+      const caller = adopted.get(sessionOfEvent(event) ?? "");
+      if (event.type === "session.tool.success") {
+        if (caller !== undefined && trackShellLaunch(caller, event.data.metadata, undefined)) {
+          yield* syncRosterAncestors(caller);
+        }
+        return;
+      }
+      if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return;
+      const { metadata } = event.data.item.payload;
+      if (stringField(metadata, "source") !== "shell") return;
+      const shellId = stringField(metadata, "shellID") ?? "";
+      let released = false;
+      for (const state of threads.values()) {
+        if (!state.shells.delete(shellId)) continue;
+        released = true;
+        // The report wakes that session; Stop's stray pass ends what a removal started.
+        if (state.stopped.has(shellId)) strays.set(event.data.sessionID, state);
+        yield* syncRosterAncestors(state);
+      }
+      if (!released) caller?.endedShells.add(shellId);
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       const sessionId = sessionOfEvent(event);
@@ -2323,13 +2472,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           busy.add(sessionId);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
-          busy.delete(sessionId);
+          yield* markIdle(sessionId);
         }
       }
+      const tracked = threads.get(sessionId ?? "");
+      const shellsChanged = tracked !== undefined && trackShells(tracked, event);
       if (event.type === "session.created" && event.data.parentID !== undefined) {
         const strayCaller = strays.get(event.data.parentID);
         if (strayCaller !== undefined) {
           strays.set(event.data.sessionID, strayCaller);
+          adopted.set(event.data.sessionID, strayCaller);
           return;
         }
         const owner = ownerOf(event.data.parentID);
@@ -2344,15 +2496,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
         held.events.push(event);
+        if (tracked === undefined) untracked.add(event);
         if (
           sessionId === holder.sessionId &&
           (event.type === "unreadable.execution.ended" || executionEnd(event.type))
         ) {
           held.running = false;
         }
-        return;
+      } else {
+        if (tracked === undefined) yield* trackAdoptedShells(event);
+        yield* route(event, sessionId);
       }
-      return yield* route(event, sessionId);
+      if (shellsChanged) yield* syncRosterAncestors(tracked);
     });
 
     const route = Effect.fnUntraced(function* (
@@ -2489,7 +2644,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const call of runningCalls(state)) yield* settleCall(call, "failed");
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
         state.reports.clear();
+        state.shells.clear();
+        state.endedShells.clear();
       }
+      for (const state of threads.values()) yield* syncRoster(state);
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
     });
@@ -2560,6 +2718,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             tool.input = part.state.input as Record<string, unknown>;
           }
           if (part.state.status === "completed") {
+            // A launch lost with the stream still runs; reconcile verifies tracked shells after this.
+            trackShellLaunch(state, part.state.metadata, tool.input);
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
               files: part.state.content.flatMap((content) =>
@@ -2602,7 +2762,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const active = yield* client.session.active();
-      for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
+      for (const sessionId of busy) if (!(sessionId in active)) yield* markIdle(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
       }
@@ -2643,6 +2803,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         for (const session of sessions.toReversed()) yield* syncRoster(session);
       }
+      // A shell's end may have been lost with the stream, and backfill may re-add an ended one.
+      const tracked = [...threads.values()].filter((state) => state.shells.size > 0);
+      // Concurrent, so stalled checks cost one timeout, not one each, within RECONCILE_TIMEOUT.
+      yield* Effect.forEach(
+        tracked.flatMap((state) => [...state.shells].map(([id, shell]) => ({ state, id, shell }))),
+        ({ state, id, shell }) =>
+          client.shell
+            .get({ id: Shell.ID.make(id), location: { directory: shell.directory } })
+            .pipe(
+              Effect.map(({ data }) => data.status === "running"),
+              Effect.catchTags({
+                ShellNotFoundError: () => Effect.succeed(false),
+                LocationNotFoundError: () => Effect.succeed(false),
+              }),
+              Effect.timeout(ACTIVE_CHECK_TIMEOUT),
+              // Only prunes stale shells, so a failed check keeps the shell rather than the stream.
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not check an OpenCode background shell.", { cause }).pipe(
+                  Effect.as(true),
+                ),
+              ),
+              Effect.map((running) => {
+                if (!running) state.shells.delete(id);
+              }),
+            ),
+        { concurrency: "unbounded", discard: true },
+      );
+      for (const state of tracked) yield* syncRosterAncestors(state);
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
       for (const thread of new Set([...strays.values()].map(rootOf))) {
         yield* Effect.forkIn(stopStrays(thread), sessionScope);
@@ -3201,10 +3389,45 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
+      for (const event of wake.events) {
+        const sessionId = sessionOfEvent(event);
+        // A subagent's state exists only once its held call is replayed.
+        const state = untracked.has(event) ? threads.get(sessionId ?? "") : undefined;
+        if (state !== undefined) trackShells(state, event);
+        yield* route(event, sessionId, true);
+      }
     });
 
+    // Shells a held wake started in sessions it had not named yet; replay would count them.
+    const heldShells = (wakes: ReadonlyArray<Wake>) => {
+      const inputs = new Map<string, Readonly<Record<string, unknown>>>();
+      const running = new Map<string, string | undefined>();
+      // As in endedShells, an end can arrive before its launch result.
+      const ended = new Set<string>();
+      for (const event of wakes.flatMap((wake) => wake.events)) {
+        if (!untracked.has(event)) continue;
+        if (event.type === "session.tool.called") inputs.set(event.data.id, event.data.input);
+        if (event.type === "session.tool.success") {
+          const shellId = launchedShell(event.data.metadata);
+          if (shellId !== undefined && !ended.delete(shellId))
+            running.set(shellId, shellCommandOf(inputs.get(event.data.id)));
+        }
+        if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
+          const { metadata } = event.data.item.payload;
+          const shellId = stringField(metadata, "shellID") ?? "";
+          if (stringField(metadata, "source") === "shell" && !running.delete(shellId)) {
+            ended.add(shellId);
+          }
+        }
+      }
+      return running;
+    };
+
+    // Shells a dropped wake started keep running, so its caller tracks them until they end or are removed.
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
+      for (const [id, command] of heldShells(wakes)) {
+        if (!caller.shells.has(id)) caller.shells.set(id, { directory: caller.directory, command });
+      }
       const retired = new Set<string>();
       const retire = (childId: string) => {
         const info = announced.get(childId);
@@ -3212,8 +3435,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         announced.delete(childId);
         childOwners.delete(childId);
         strays.set(childId, caller);
+        adopted.set(childId, caller);
         retired.add(childId);
-        threads.get(info.parentID ?? "")?.stoppedChildren.add(childId);
+        threads.get(info.parentID ?? "")?.stopped.add(childId);
       };
       for (const wake of wakes) {
         wake.dropped = true;
@@ -3283,16 +3507,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
-      const calls = runningCalls(state).filter((call) => call.background);
-      const callers = sessionsOf(state);
-      // Ended subagent calls can run again to answer their own background reports.
-      const followUps = callers.filter(
-        (caller) =>
-          caller.subagent !== undefined &&
-          busy.has(caller.sessionId) &&
-          !isOrchestrationV2WorkActive(caller.subagent.call.status),
-      );
+    // The foreground stop runs before the final drain and succeeds with whether it interrupted a run,
+    // which can launch more work until it ends.
+    const stopBackground = Effect.fnUntraced(function* <E>(
+      state: ThreadState,
+      stopForeground: Effect.Effect<boolean, E>,
+    ) {
+      const backgroundCalls = () => runningCalls(state).filter((call) => call.background);
       // Child sessions are announced before call progress names them; use announcements to stop unnamed children.
       const announcedTo = (caller: ThreadState) =>
         [...announced.values()].flatMap((info) =>
@@ -3300,57 +3521,153 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       const childrenOf = (call: SubagentCall) =>
         call.child === undefined ? announcedTo(call.state) : [call.child.sessionId];
-      const children = new Map(
-        calls.flatMap((call) => childrenOf(call).map((childId) => [childId, call.state] as const)),
-      );
+      // Keyed by session, or by wake since each wake is its own execution of the thread's session.
+      const interrupted = new Set<string | Wake>();
+      const unstopped = (wakes: boolean) =>
+        [
+          ...backgroundCalls().flatMap((call) =>
+            childrenOf(call).map((sessionId) => ({
+              key: sessionId,
+              sessionId,
+              caller: call.state,
+            })),
+          ),
+          // Ended subagent calls can run again to answer their own background reports.
+          ...sessionsOf(state)
+            .filter(
+              (caller) =>
+                caller.subagent !== undefined &&
+                busy.has(caller.sessionId) &&
+                !isOrchestrationV2WorkActive(caller.subagent.call.status),
+            )
+            .map((caller) => ({
+              key: caller.sessionId,
+              sessionId: caller.sessionId,
+              caller: undefined,
+            })),
+          ...(wakes ? state.wakes : [])
+            .filter((wake) => wake.running)
+            .map((wake) => ({ key: wake, sessionId: state.sessionId, caller: undefined })),
+          // Subagents a held wake started have no call yet; their wake holds what they launch until they end.
+          ...(wakes ? state.wakes : []).flatMap((wake) =>
+            [...wake.children].map((sessionId) => ({
+              key: sessionId,
+              sessionId,
+              caller: undefined,
+            })),
+          ),
+        ].filter(({ key }) => !interrupted.has(key));
       const unreached = new Set<string>();
-      for (const [childId, caller] of children) {
-        caller.stoppedChildren.add(childId);
-        const reached = yield* client.session
-          .interrupt({ sessionID: Session.ID.make(childId) })
-          .pipe(
-            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
-            Effect.timeout(INTERRUPT_TIMEOUT),
-            Effect.tapCause((cause) =>
-              Effect.logWarning("Could not stop an OpenCode subagent.", cause),
-            ),
-            Effect.exit,
-            Effect.map(Exit.isSuccess),
-          );
-        if (!reached) unreached.add(childId);
-      }
-      for (const followUp of followUps) {
-        yield* client.session
-          .interrupt({ sessionID: Session.ID.make(followUp.sessionId) })
-          .pipe(
-            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
-            Effect.timeout(INTERRUPT_TIMEOUT),
-            Effect.ignore({ log: true }),
-          );
-      }
-      yield* lock.withPermit(
-        Effect.gen(function* () {
-          for (const call of calls) {
-            if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
-            yield* settleCall(call, "interrupted");
+      // Succeeds with the sessions it interrupted.
+      const stopSessions = Effect.fnUntraced(function* (wakes: boolean) {
+        const stopped = new Set<string>();
+        for (let sessions = unstopped(wakes); sessions.length > 0; sessions = unstopped(wakes)) {
+          for (const { key, sessionId, caller } of sessions) {
+            if (interrupted.has(key)) continue;
+            interrupted.add(key);
+            stopped.add(sessionId);
+            caller?.stopped.add(sessionId);
+            const reached = yield* client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(
+                Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+                Effect.timeout(INTERRUPT_TIMEOUT),
+                Effect.tapCause((cause) =>
+                  Effect.logWarning("Could not stop an OpenCode session.", cause),
+                ),
+                Effect.exit,
+                Effect.map(Exit.isSuccess),
+              );
+            if (!reached && caller !== undefined) unreached.add(sessionId);
           }
-          for (const caller of callers) {
-            for (const report of caller.reports.values()) {
-              caller.stoppedChildren.add(report.childId);
+        }
+        return stopped;
+      });
+      // An interrupted execution can launch work until it ends; its end means all of it has been seen.
+      const awaitEnds = (sessionIds: Iterable<string>) =>
+        Effect.forEach(sessionIds, awaitIdle, { concurrency: "unbounded", discard: true });
+      const attempted = new Set<string>();
+      const unremoved = () =>
+        sessionsOf(state)
+          .flatMap((caller) => [
+            ...[...caller.shells].map(([id, shell]) => ({
+              caller,
+              id,
+              directory: shell.directory,
+            })),
+            ...[...heldShells(caller.wakes).keys()].map((id) => ({
+              caller,
+              id,
+              directory: caller.directory,
+            })),
+          ])
+          .filter(({ id }) => !attempted.has(id));
+      const removed: Array<{ readonly caller: ThreadState; readonly id: string }> = [];
+      // Sessions still running can launch shells while a remove waits.
+      const removeShells = Effect.fnUntraced(function* () {
+        for (let shells = unremoved(); shells.length > 0; shells = unremoved()) {
+          // OpenCode reports and wakes the shell's session before the remove returns.
+          for (const { caller, id } of shells) {
+            attempted.add(id);
+            caller.stopped.add(id);
+          }
+          const reached = yield* Effect.filter(
+            shells,
+            ({ id, directory }) =>
+              client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
+                // OpenCode declares no not-found error for remove; only the directory can be gone.
+                Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
+                Effect.timeout(INTERRUPT_TIMEOUT),
+                Effect.tapCause((cause) =>
+                  Effect.logWarning("Could not stop an OpenCode background shell.", cause),
+                ),
+                Effect.exit,
+                Effect.map(Exit.isSuccess),
+              ),
+            { concurrency: "unbounded" },
+          );
+          removed.push(...reached);
+        }
+      });
+      // Wakes wait for the foreground stop, which may end the same execution of the thread's session.
+      const cleanup = yield* Effect.forkChild(Effect.andThen(removeShells(), stopSessions(false)));
+      // Cleanup normally goes first, but a stalled request must not hold the foreground stop past
+      // the caller's 15-second deadline.
+      yield* Fiber.await(cleanup).pipe(Effect.timeout(FOREGROUND_STOP_DELAY), Effect.ignore);
+      const foreground = yield* Effect.exit(stopForeground);
+      const stopped = yield* Fiber.join(cleanup);
+      if (Exit.isSuccess(foreground) && foreground.value) stopped.add(state.sessionId);
+      yield* awaitEnds(stopped);
+      // Checked under the lock, so no shell launched before Stop settles outlives it. A pass that does
+      // not settle found a shell or execution it had not stopped yet; both sets only grow, and stopped
+      // executions launch nothing after the end awaited here, so the loop ends.
+      for (let settled = false; !settled;) {
+        yield* removeShells();
+        yield* awaitEnds(yield* stopSessions(true));
+        settled = yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (unremoved().length > 0 || unstopped(true).length > 0) return false;
+            for (const call of backgroundCalls()) {
+              if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
+              yield* settleCall(call, "interrupted");
             }
-          }
-          const running = state.wakes.some((wake) => wake.running);
-          discardWakes(state, state.wakes.splice(0));
-          yield* syncRosterAncestors(state);
-          if (running) {
-            markUnsettled(state);
-            yield* client.session
-              .interrupt({ sessionID: Session.ID.make(state.sessionId) })
-              .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
-          }
-        }),
-      );
+            for (const caller of sessionsOf(state)) {
+              for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
+            }
+            // Interrupted above but not yet ended: its end must not finish the thread's next turn.
+            if (state.wakes.some((wake) => wake.running)) markUnsettled(state);
+            // Hands held shells to the thread first, so one whose remove failed stays tracked.
+            discardWakes(state, state.wakes.splice(0));
+            for (const { caller, id } of removed) caller.shells.delete(id);
+            for (const caller of new Set([state, ...removed.map(({ caller }) => caller)])) {
+              yield* syncRosterAncestors(caller);
+            }
+            return true;
+          }),
+        );
+      }
       yield* stopStrays(state);
+      yield* foreground;
     });
 
     const listSkills = (location: { readonly directory: string }) =>
@@ -3821,42 +4138,50 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const state = threads.get(sessionId);
           if (state === undefined) return;
           const turn = state.active;
+          const stopTurn = Effect.gen(function* () {
+            if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
+              return false;
+            }
+            turn.interrupted = true;
+            const reply = yield* client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(
+                Effect.timeoutOption(INTERRUPT_TIMEOUT),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    turn.interrupted = false;
+                  }),
+                ),
+              );
+            if (reply._tag === "None") {
+              markUnsettled(state);
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              return false;
+            }
+            // Stop between steer executions retracts pending steers and skips any run they already started.
+            if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
+              markUnsettled(state);
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              yield* cancelStrandedSteers(state);
+              return false;
+            }
+            if (!reply.value.interrupted && state.active === turn && turn.unsent) {
+              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+              return false;
+            }
+            if (!reply.value.interrupted && state.active === turn) {
+              turn.interrupted = false;
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: OPENCODE_PROVIDER,
+                detail: `OpenCode session ${sessionId} had nothing running to stop`,
+              });
+            }
+            return reply.value.interrupted;
+          });
           // User Stop must end background children and their report execution; steering leaves them running.
-          if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
-          if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
-            return;
-          }
-          turn.interrupted = true;
-          const reply = yield* client.session
-            .interrupt({ sessionID: Session.ID.make(sessionId) })
-            .pipe(
-              Effect.timeoutOption(INTERRUPT_TIMEOUT),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  turn.interrupted = false;
-                }),
-              ),
-            );
-          if (reply._tag === "None") {
-            markUnsettled(state);
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-          }
-          // Stop between steer executions retracts pending steers and skips any run they already started.
-          if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
-            markUnsettled(state);
-            yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-            return yield* cancelStrandedSteers(state);
-          }
-          if (!reply.value.interrupted && state.active === turn && turn.unsent) {
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-          }
-          if (!reply.value.interrupted && state.active === turn) {
-            turn.interrupted = false;
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver: OPENCODE_PROVIDER,
-              detail: `OpenCode session ${sessionId} had nothing running to stop`,
-            });
-          }
+          return yield* interruptInput.requestRuntimeRestart === true
+            ? stopBackground(state, stopTurn)
+            : Effect.asVoid(stopTurn);
         },
         (effect, interruptInput) =>
           effect.pipe(
@@ -3889,6 +4214,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           childOwners.delete(child);
           threads.delete(child);
         }
+        for (const [child, caller] of adopted) if (rootOf(caller) === state) adopted.delete(child);
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(

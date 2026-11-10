@@ -903,6 +903,1006 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  const SHELL_COMMAND = "sleep 300; echo done";
+  const shellLaunched = (
+    sessionID: string,
+    shellID: string,
+  ): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID, assistantMessageID: "msg_assistant", id: `call-${shellID}` };
+    return [
+      event("session.tool.input.started", { ...tool, name: "shell" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "shell",
+        input: { command: SHELL_COMMAND, background: true },
+        executed: false,
+      }),
+      {
+        type: "emit_inbound",
+        frame: {
+          type: "sdk.event",
+          event: {
+            id: `evt_toolsuccess_${tool.id}`,
+            created: 1,
+            type: "session.tool.success",
+            data: {
+              ...tool,
+              content: [
+                { type: "text", text: `Command moved to the background (shell ID: ${shellID}).` },
+              ],
+              metadata: { status: "running", truncated: false, shellID },
+              executed: false,
+            },
+            durable: { aggregateID: sessionID, seq: 1, version: 2 },
+          },
+        },
+      },
+    ];
+  };
+  const backgroundShell = (shellID: string): ReadonlyArray<ProviderReplayEntry> => [
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+    event("session.execution.started", { sessionID: SESSION }),
+    ...shellLaunched(SESSION, shellID),
+  ];
+  const shellReport = (
+    sessionID: string,
+    shellID: string,
+    state: string,
+    text: string,
+    label?: string,
+  ) =>
+    event(
+      "session.inbox.enqueued",
+      {
+        inboxID: `msg_${state}_${shellID}`,
+        sessionID,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<shell id="${shellID}" state="${state}">${text}</shell>`,
+            metadata: { source: "shell", shellID, state },
+          },
+          delivery: "steer",
+        },
+      },
+      label,
+    );
+  const removeShell = (shellID: string) =>
+    out("shell.remove", { id: shellID, "location[directory]": WORK });
+  // OpenCode reports a removed shell to its session and wakes it before the remove returns.
+  const shellRemoved = (sessionID: string, shellID: string): ReadonlyArray<ProviderReplayEntry> => [
+    removeShell(shellID),
+    shellReport(sessionID, shellID, "error", "Shell.NotFoundError"),
+    event("session.execution.started", { sessionID }),
+    reply("shell.remove", null),
+    out("session.interrupt", { sessionID }),
+    reply("session.interrupt", { interrupted: true }),
+    event("session.execution.interrupted", { sessionID }),
+  ];
+  const drained = event("session.model.selected", {
+    sessionID: SESSION,
+    model: { providerID: "opencode", id: "big-pickle", variant: "drained" },
+  });
+
+  it.effect("lists a background shell still running after the turn as pending work", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const roster = (yield* Fiber.join(events))
+        .flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.id === thread.id
+            ? [event.providerThread.pendingBackgroundTasks]
+            : [],
+        )
+        .at(-1);
+      assert.deepEqual(roster ?? [], [
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a background shell tracked when its check fails after a reconnect", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("shell.get", { id: "sh_1", "location[directory]": WORK }),
+        reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      assert.isTrue(watch.state.pending);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("clears a background shell from the roster when the stream cannot reconnect", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" } as const,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["completed"]);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_1", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      yield* TestClock.adjust("1 minute");
+      yield* watch.until(() => watch.state.roster?.length === 0);
+      assert.isFalse(watch.state.pending);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a running background shell on a user Stop", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...shellRemoved(SESSION, "sh_1"),
+        drained,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["completed"]);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* Effect.raceFirst(
+        watch.until(() => watch.state.variant === "drained"),
+        Deferred.await(offered),
+      );
+      assert.isFalse(yield* Deferred.isDone(offered));
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves no work pending when Stop removes a shell during a turn", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const gate = makeProviderReplayGate(["wake"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundShell("sh_1"),
+          // The session is executing, so the report waits in its inbox and Stop ends the run first.
+          removeShell("sh_1"),
+          shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: SESSION }, "wake"),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("wake")));
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      gate.release("wake");
+      yield* Effect.raceFirst(
+        watch.until(() => watch.state.variant === "drained"),
+        Deferred.await(offered),
+      );
+      assert.isFalse(yield* Deferred.isDone(offered));
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell launched by a wake still waiting for its continuation", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...shellLaunched(SESSION, "sh_1"),
+        removeShell("sh_1"),
+        shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        drained,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      assert.deepEqual(watch.state.roster, [{ taskId: "sh_1", kind: "command" }]);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  const heldVariant = (variant: string, label?: string) =>
+    event(
+      "session.model.selected",
+      { sessionID: SESSION, model: { providerID: "opencode", id: "big-pickle", variant } },
+      label,
+    );
+  // The wake holds the call that would name the subagent, so its shell arrives for an unknown session.
+  const heldSubagentShell = (): ReadonlyArray<ProviderReplayEntry> => [
+    event("session.execution.started", { sessionID: SESSION }),
+    ...backgroundLaunch(CHILD).slice(3),
+    returnedRunning("call-background"),
+    event("session.execution.started", { sessionID: CHILD }),
+    ...shellLaunched(CHILD, "sh_child"),
+    event("session.execution.succeeded", { sessionID: SESSION }),
+    heldVariant("held"),
+  ];
+  const recordOffers = (offers: Array<ProviderContinuationRequests.ProviderContinuationRequest>) =>
+    Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+      offer: (request) =>
+        Effect.sync(() => {
+          offers.push(request);
+        }),
+      take: Effect.never,
+    });
+
+  it.effect("lists a subagent's shell from a held wake under the subagent once the wake runs", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["after"]);
+      const { runtime, thread } = yield* resumed(
+        [...heldSubagentShell(), heldVariant("after", "after")],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      assert.lengthOf(offers, 1);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      gate.release("after");
+      yield* watch.until(() => watch.state.variant === "after");
+      const [subagent, shell] = watch.state.roster ?? [];
+      assert.include(subagent, { kind: "subagent", taskId: "call-background" });
+      assert.deepEqual(shell, {
+        taskId: "sh_child",
+        kind: "command",
+        command: SHELL_COMMAND,
+        description: SHELL_COMMAND,
+        parentTaskId: "call-background",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a subagent's shell from a held wake that Stop discards", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: it only records that the remove's report was emitted.
+      const gate = makeProviderReplayGate(["removing"]);
+      gate.release("removing");
+      const { runtime, thread } = yield* resumed(
+        [
+          ...heldSubagentShell(),
+          removeShell("sh_child"),
+          shellReport(CHILD, "sh_child", "error", "Shell.NotFoundError", "removing"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          // Its wake is discarded once it ended; the stray pass interrupts what a removal restarted.
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isTrue(gate.hasReached("removing"));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.lengthOf(offers, 1);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  const GRANDCHILD = "ses_f1485c529ffeGGGGGGGGGGGGGG";
+  // The held subagent starts its own background subagent, whose shell arrives before either call is named.
+  const heldGrandchildShell = (): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: CHILD, assistantMessageID: "msg_child", id: "call-nested" };
+    return [
+      event("session.execution.started", { sessionID: SESSION }),
+      ...backgroundLaunch(CHILD).slice(3),
+      returnedRunning("call-background"),
+      event("session.execution.started", { sessionID: CHILD }),
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Nested", prompt: "sleep", background: true },
+        executed: false,
+      }),
+      event("session.created", { ...childCreated(GRANDCHILD), parentID: CHILD }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: GRANDCHILD, status: "running" },
+      }),
+      event("session.tool.success", {
+        ...tool,
+        content: [{ type: "text", text: "The subagent is working in the background." }],
+        metadata: { sessionID: GRANDCHILD, status: "running", truncated: false },
+        executed: false,
+      }),
+      event("session.execution.started", { sessionID: GRANDCHILD }),
+      ...shellLaunched(GRANDCHILD, "sh_grandchild"),
+      event("session.execution.succeeded", { sessionID: SESSION }),
+      heldVariant("held"),
+    ];
+  };
+
+  it.effect("lists a grandchild's shell from a held wake once the wake runs", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["after"]);
+      const { runtime, thread } = yield* resumed(
+        [...heldGrandchildShell(), heldVariant("after", "after")],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      gate.release("after");
+      yield* watch.until(() => watch.state.variant === "after");
+      const [, , shell] = watch.state.roster ?? [];
+      assert.deepEqual(shell, {
+        taskId: "sh_grandchild",
+        kind: "command",
+        command: SHELL_COMMAND,
+        description: SHELL_COMMAND,
+        parentTaskId: `${CHILD}:call-nested`,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a held subagent's shell tracked when a reconnect discards its wake", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...heldSubagentShell(),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", { [CHILD]: { type: "running" } }),
+        // A failed check keeps the shell, so this reply needs no full shell.
+        out("shell.get", { id: "sh_child", "location[directory]": WORK }),
+        reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      // The held wake keeps work pending until the reconnect discards it and lists what it kept.
+      yield* watch.until(() => watch.state.pending === false || watch.state.roster?.length === 1);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "tracks a shell a reconnect-discarded subagent launches after its kept shell ends",
+    () =>
+      Effect.gen(function* () {
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const { runtime, thread } = yield* resumed([
+          ...heldSubagentShell(),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [CHILD]: { type: "running" } }),
+          out("shell.get", { id: "sh_child", "location[directory]": WORK }),
+          reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          // The kept shell's report wakes the subagent, which launches another shell.
+          shellReport(CHILD, "sh_child", "completed", "DONE"),
+          event("session.execution.started", { sessionID: CHILD }),
+          ...shellLaunched(CHILD, "sh_followup"),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          drained,
+        ]).pipe(recordOffers(offers));
+        const watch = yield* watchCalls(runtime, thread);
+        yield* watch.until(() => watch.state.variant === "drained");
+        assert.deepEqual(watch.state.roster, [{ taskId: "sh_followup", kind: "command" }]);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps no held shell whose end arrived before its launch result", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const launch = shellLaunched(CHILD, "sh_child");
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...backgroundLaunch(CHILD).slice(3),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...launch.slice(0, -1),
+        shellReport(CHILD, "sh_child", "completed", "DONE"),
+        launch.at(-1)!,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        heldVariant("held"),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: false }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("retries a held subagent's shell whose remove failed on the next Stop", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: they only record which entries were emitted.
+      const gate = makeProviderReplayGate(["first", "second"]);
+      gate.release("first");
+      gate.release("second");
+      const { runtime, thread } = yield* resumed(
+        [
+          ...heldSubagentShell(),
+          removeShell("sh_child"),
+          reply("shell.remove", { status: 500, body: { name: "UnknownError", data: {} } }),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }, "first"),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          removeShell("sh_child"),
+          shellReport(CHILD, "sh_child", "error", "Shell.NotFoundError", "second"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      const stop = runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* stop;
+      assert.isTrue(gate.hasReached("first"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      yield* stop;
+      assert.isTrue(gate.hasReached("second"));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell a held subagent launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(CHILD, "sh_late");
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: it only records that the remove's report was emitted.
+      const gate = makeProviderReplayGate(["removing"]);
+      gate.release("removing");
+      const { runtime, thread } = yield* resumed(
+        [
+          event("session.execution.started", { sessionID: SESSION }),
+          ...backgroundLaunch(CHILD).slice(3),
+          returnedRunning("call-background"),
+          event("session.execution.started", { sessionID: CHILD }),
+          ...launch.slice(0, -1),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          heldVariant("held"),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          // The subagent's shell starts after the interrupt returns, before its execution ends.
+          launch.at(-1)!,
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          removeShell("sh_late"),
+          shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError", "removing"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isTrue(gate.hasReached("removing"));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("tracks a shell a held subagent launches while Stop's last pass interrupts it", () =>
+    Effect.gen(function* () {
+      const late = shellLaunched(CHILD, "sh_late");
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...backgroundLaunch(CHILD).slice(3),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...shellLaunched(CHILD, "sh_first"),
+        ...late.slice(0, -1),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        heldVariant("held"),
+        removeShell("sh_first"),
+        shellReport(CHILD, "sh_first", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        late.at(-1)!,
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        removeShell("sh_late"),
+        shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError"),
+        event("session.execution.started", { sessionID: CHILD }),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        // The removal woke the subagent again; it launches a shell before that execution ends.
+        ...shellLaunched(CHILD, "sh_escape"),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, [{ taskId: "sh_escape", kind: "command" }]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell launched while Stop removes another", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const gate = makeProviderReplayGate(["removed", "wake"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundShell("sh_1"),
+          removeShell("sh_1"),
+          shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+          // The running turn launches another shell before the first remove returns.
+          ...shellLaunched(SESSION, "sh_2"),
+          // Gates hold only events; this one holds the reply until the test saw the launch.
+          heldVariant("launched", "removed"),
+          reply("shell.remove", null),
+          removeShell("sh_2"),
+          shellReport(SESSION, "sh_2", "error", "Shell.NotFoundError"),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: SESSION }, "wake"),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      const stop = yield* runtime
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* watch.until(() =>
+        (watch.state.roster ?? []).some((task) => (task as { taskId: string }).taskId === "sh_2"),
+      );
+      gate.release("removed");
+      yield* Fiber.join(stop);
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("wake")));
+      gate.release("wake");
+      yield* Effect.raceFirst(
+        watch.until(() => watch.state.variant === "drained"),
+        Deferred.await(offered),
+      );
+      assert.isFalse(yield* Deferred.isDone(offered));
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell launched while Stop interrupts the turn", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        removeShell("sh_1"),
+        shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        // The turn launches another shell before the interrupt returns.
+        ...shellLaunched(SESSION, "sh_2"),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        removeShell("sh_2"),
+        shellReport(SESSION, "sh_2", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell a background subagent launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(CHILD, "sh_late");
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...launch.slice(0, -1),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        // The child's shell starts after the interrupt returns, before its execution ends.
+        launch.at(-1)!,
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        removeShell("sh_late"),
+        shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell a held wake launched while Stop interrupted it", () =>
+    Effect.gen(function* () {
+      const launch = shellLaunched(SESSION, "sh_late");
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...shellLaunched(SESSION, "sh_first"),
+        ...launch.slice(0, -1),
+        removeShell("sh_first"),
+        shellReport(SESSION, "sh_first", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        // The wake's shell starts after the interrupt returns, before its execution ends.
+        launch.at(-1)!,
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        removeShell("sh_late"),
+        shellReport(SESSION, "sh_late", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        drained,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a subagent launched while Stop removes a shell", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        removeShell("sh_1"),
+        shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+        // The turn launches a background subagent before the remove returns.
+        ...backgroundLaunch(CHILD).slice(3),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops the turn within the outer Stop deadline while a shell removal stalls", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        removeShell("sh_1"),
+        reply("shell.remove", "<hang>"),
+        heldVariant("removing"),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* watch.until(() => watch.state.variant === "removing");
+      // Short of the removal's own 10-second timeout, which on its own would use up the deadline.
+      yield* TestClock.adjust("3 seconds");
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("continues a wake that a stopped shell shares with a finished one", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const continued = yield* Deferred.make<void>();
+      const gate = makeProviderReplayGate(["ended"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundShell("sh_a"),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          removeShell("sh_a"),
+          reply("shell.remove", { status: 500, body: { name: "UnknownError", data: {} } }),
+          event("session.execution.started", { sessionID: SESSION }),
+          ...shellLaunched(SESSION, "sh_b"),
+          event("session.execution.succeeded", { sessionID: SESSION }, "ended"),
+          shellReport(SESSION, "sh_a", "completed", "A_DONE"),
+          shellReport(SESSION, "sh_b", "completed", "B_DONE"),
+          event("session.execution.started", { sessionID: SESSION }),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.suspend(() => {
+              offers.push(request);
+              return offers.length === 2 ? Deferred.succeed(continued, undefined) : Effect.void;
+            }).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => offers.length === 1 && watch.state.roster?.length === 2);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      // Replaying the held launch names the shell without counting it again.
+      yield* watch.until(() =>
+        (watch.state.roster ?? []).every((task) => (task as { description?: string }).description),
+      );
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_a", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+        { taskId: "sh_b", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      gate.release("ended");
+      yield* Deferred.await(continued);
+      assert.include(offers[1]?.detail ?? "", "B_DONE");
+      assert.deepEqual(watch.state.roster, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a finished subagent's background shell as a plain command a Stop removes", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...shellLaunched(CHILD, "sh_child"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...shellRemoved(CHILD, "sh_child"),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["completed"]);
+      yield* watch.until(() => watch.calls.get("Sleep")?.status === "completed");
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", command: SHELL_COMMAND, description: SHELL_COMMAND },
+      ]);
+      const childTurns = watch.childTurns.size;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(
+        () => watch.state.variant === "drained" || watch.childTurns.size > childTurns,
+      );
+      assert.equal(watch.childTurns.size, childTurns);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a subagent's background shell under the subagent that started it", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...shellLaunched(CHILD, "sh_child"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const roster = (yield* Fiber.join(events))
+        .flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.id === thread.id
+            ? [event.providerThread.pendingBackgroundTasks]
+            : [],
+        )
+        .at(-1);
+      const [subagent, shell] = roster ?? [];
+      assert.equal(subagent?.kind, "subagent");
+      assert.deepEqual(shell, {
+        taskId: "sh_child",
+        kind: "command",
+        command: SHELL_COMMAND,
+        description: SHELL_COMMAND,
+        parentTaskId: subagent?.taskId,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -1096,7 +2096,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         string,
         Record<string, { status: string; result: string | null }>
       >();
-      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      const state: {
+        roster: ReadonlyArray<unknown> | undefined;
+        pending: boolean | undefined;
+        variant: unknown;
+      } = { roster: undefined, pending: undefined, variant: undefined };
+      const terminals: Array<string> = [];
       let wake = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
@@ -1107,8 +2112,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 result: event.subagent.result,
               });
             }
+            if (event.type === "turn.terminal") terminals.push(event.status);
             if (event.type === "provider_thread.updated" && event.providerThread.id === thread.id) {
               state.roster = event.providerThread.pendingBackgroundTasks;
+              state.pending = event.pendingBackgroundWork;
+              state.variant =
+                event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
             }
             const id =
               event.type === "provider_turn.updated"
@@ -1139,7 +2148,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsAtChildTurnStart, childTurns, state, until };
+      return { calls, callsAtChildTurnStart, childTurns, state, terminals, until };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -4622,11 +5631,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.interrupt", { sessionID: CHILD_B }),
           reply("session.interrupt", { interrupted: true }),
           event("session.execution.interrupted", { sessionID: CHILD_B }),
-          out("session.interrupt", { sessionID: SPAWNED }),
-          reply("session.interrupt", {
-            status: 500,
-            body: { _tag: "UnknownError", message: "interrupt failed" },
-          }),
+          // Stop interrupts the held wake's subagent, then retries it as a stray.
+          ...[1, 2].flatMap(() => [
+            out("session.interrupt", { sessionID: SPAWNED }),
+            reply("session.interrupt", {
+              status: 500,
+              body: { _tag: "UnknownError", message: "interrupt failed" },
+            }),
+          ]),
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
           event("session.execution.started", { sessionID: SESSION }),
