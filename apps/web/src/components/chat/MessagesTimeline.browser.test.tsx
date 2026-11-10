@@ -573,8 +573,15 @@ describe("MessagesTimeline messages", () => {
     );
     viewport.scrollTop = viewport.scrollHeight;
     await vi.waitFor(() => expect(screen.button("Next turn")).toBeDisabled());
+    // Shrink the viewport while keeping the pre-resize scroll offset. Some CI
+    // layouts re-pin to the end during the height change; restoring the offset
+    // is what a non-sticky resize leaves behind without a scroll event.
+    const pinnedScrollTop = viewport.scrollTop;
     screen.container.style.height = "600px";
+    void screen.container.offsetHeight;
+    viewport.scrollTop = pinnedScrollTop;
     await vi.waitFor(() => {
+      expect(viewport.clientHeight).toBeLessThanOrEqual(600);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
         500,
       );
