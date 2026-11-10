@@ -6,7 +6,10 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useHardwareBack } from "../../lib/backHandler";
-import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
+import {
+  deriveMenuHorizontalPlacement,
+  deriveMenuVerticalPlacement,
+} from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
@@ -41,7 +44,7 @@ export type AndroidAnchoredMenuProps = {
 };
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
-  const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
+  const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [rootHeight, setRootHeight] = useState<number | null>(null);
@@ -110,16 +113,19 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           margin: SCREEN_MARGIN,
           hinge: windowHinge && { x: windowHinge.x - overlay.x, width: windowHinge.width },
         });
-  // This in-window menu preserves keyboard focus; subtract the IME area so its items remain tappable.
-  const usableBottom =
-    overlay === null ? 0 : overlay.height - (keyboardVisible ? keyboardHeight : 0);
-  const spaceBelow =
+  const verticalPlacement =
     local === null || overlay === null
-      ? 0
-      : usableBottom - (local.y + local.height) - ANCHOR_GAP - SCREEN_MARGIN;
-  const spaceAbove = local === null ? 0 : local.y - ANCHOR_GAP - SCREEN_MARGIN;
-  const opensDown = spaceBelow >= 280 || spaceBelow >= spaceAbove;
-  const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
+      ? null
+      : deriveMenuVerticalPlacement({
+          anchorY: local.y,
+          anchorHeight: local.height,
+          overlayHeight: overlay.height,
+          // This in-window menu preserves keyboard focus; subtract the IME area so its items remain tappable.
+          keyboardInset: keyboardVisible ? keyboardHeight : 0,
+          gap: ANCHOR_GAP,
+          margin: SCREEN_MARGIN,
+          minHeight: 2 * menuItemHeight + 14 * scale,
+        });
   const placeable = local !== null && rootHeight !== null;
 
   const onPressItem = (action: MenuAction) => {
@@ -185,12 +191,9 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                 className="absolute overflow-hidden bg-card-alt shadow-md"
                 style={{
                   left,
-                  maxHeight,
                   width: menuWidth,
                   borderRadius: 4 * scale,
-                  ...(opensDown
-                    ? { top: local.y + local.height + ANCHOR_GAP }
-                    : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
+                  ...verticalPlacement,
                 }}
               >
                 {/* Compose DropdownMenu takes focus; in-window editor menus preserve the keyboard. */}
