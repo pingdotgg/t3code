@@ -1072,19 +1072,14 @@ describe("DesktopBrowserHost", () => {
 
       yield* raw({ id: 1, method: "DOM.getDocument", sessionId: "t3-preview-page" });
       expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
-      // A person clicking through a viewer that streams the guest.
-      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
-      expect(yield* Queue.take(replies)).toBe(2);
-      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
-      yield* raw({ id: 4, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page-1" });
-      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
-      yield* raw({
-        id: 5,
-        method: "Input.dispatchMouseEvent",
-        params: { type: "mousePressed", x: 1, y: 1 },
-        sessionId: "t3-preview-page",
-      });
+      yield* raw({ id: 2, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page" });
       expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(true);
+      // A person clicking through a viewer that streams the guest, right after the agent.
+      yield* raw({ id: 3, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(3);
+      yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 5, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page-1" });
+      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
     }).pipe(Effect.scoped),
   );
 

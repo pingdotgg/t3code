@@ -324,12 +324,14 @@ export const make = Effect.gen(function* () {
             tab.screencasts.delete(owner);
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
-          if (
-            AGENT_INPUT_METHOD.test(method) &&
-            (owner === undefined || !streamingOwners.has(owner))
-          ) {
-            tab.agentUsed = true;
-            tab.agentInputAt = performance.now();
+          if (AGENT_INPUT_METHOD.test(method)) {
+            if (owner === undefined || !streamingOwners.has(owner)) {
+              tab.agentUsed = true;
+              tab.agentInputAt = performance.now();
+            } else {
+              // The viewer's press also hands focus back, so it must end the agent's window.
+              tab.agentInputAt = Number.NEGATIVE_INFINITY;
+            }
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
