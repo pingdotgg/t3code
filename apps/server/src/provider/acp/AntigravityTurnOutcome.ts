@@ -59,6 +59,15 @@ class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLo
 
 const sessionLogError = (cause: unknown) => new AntigravitySessionLogError({ cause });
 
+class AntigravitySessionQuarantineError extends Schema.TaggedError<AntigravitySessionQuarantineError>()(
+  "AntigravitySessionQuarantineError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not quarantine the Antigravity session database.";
+  }
+}
+
 const readSteps = <A>(file: string, read: (database: NodeSqlite.DatabaseSync) => A) =>
   Effect.try({
     try: () => {
@@ -257,9 +266,10 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     const failure = turnFailure(result.stopReason, step, now);
     if (failure?.code === "SESSION_CORRUPTED" && after !== undefined) {
       const timestamp = DateTime.toEpochMillis(now);
-      const quarantined = yield* Effect.tryPromise(() =>
-        quarantineAntigravitySessionDatabase(after.path, timestamp),
-      ).pipe(
+      const quarantined = yield* Effect.tryPromise({
+        try: () => quarantineAntigravitySessionDatabase(after.path, timestamp),
+        catch: (cause) => new AntigravitySessionQuarantineError({ cause }),
+      }).pipe(
         Effect.tap(() =>
           Effect.logWarning("Quarantined corrupted Antigravity session database", {
             path: after.path,
