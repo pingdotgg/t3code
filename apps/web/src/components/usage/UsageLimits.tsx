@@ -55,6 +55,12 @@ export function barColor(driver: ServerProvider["driver"]): string {
   return presentation?.color ?? "var(--foreground)";
 }
 
+// Lifts dark accents in dark mode so a black accent still shows on the bar track.
+export function usageAccentColor(accentColor: string | undefined): string | undefined {
+  const accent = normalizeProviderAccentColor(accentColor);
+  return accent ? `light-dark(${accent}, oklch(from ${accent} max(l, 0.6) c h))` : undefined;
+}
+
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
@@ -198,7 +204,7 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
-  const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  const color = usageAccentColor(accentColor) ?? barColor(driver);
   return (
     <div
       className={
