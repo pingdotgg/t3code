@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -144,7 +145,9 @@ describe("zcodeBuiltinCatalogPath", () => {
     );
     assert.equal(zcodeDataRoot({ HOME: "/home/dev" }), "/home/dev");
     assert.equal(zcodeDataRoot({ ZCODE_DATA_BASE_DIR: " /tmp/z ", HOME: "/home/dev" }), "/tmp/z");
-    assert.equal(zcodeDataRoot({}), undefined);
+    // Windows runs without HOME or ZCODE_DATA_BASE_DIR; the OS home keeps catalog discovery alive.
+    assert.equal(zcodeDataRoot({}), NodeOS.homedir());
+    assert.equal(zcodeDataRoot({ ZCODE_DATA_BASE_DIR: "   ", HOME: "" }), NodeOS.homedir());
   });
 });
 
@@ -200,6 +203,46 @@ describe("resolveZcodeLaunchCommand", () => {
       );
       assert.equal(command, "zcode");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prefers a colon-separated PATH hit over the desktop shim on POSIX", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode`, "#!/bin/sh\n");
+      const onPath = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.writeFileString(`${onPath}/zcode`, "#!/bin/sh\n");
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "zcode" },
+        { HOME: home, PATH: `${onPath}:/nonexistent` },
+        fileSystem,
+      );
+      assert.equal(command, "zcode");
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("splits PATH on ; on Windows so a PATH install beats the desktop shim", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode`, "#!/bin/sh\n");
+      const onPath = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.writeFileString(`${onPath}/zcode.exe`, "binary");
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "zcode" },
+        { HOME: home, PATH: `C:\\nonexistent;${onPath}` },
+        fileSystem,
+      );
+      assert.equal(command, "zcode");
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });
 
@@ -309,7 +352,7 @@ describe("zcodeAccountConfigPushFromLadder", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("returns undefined without a usable catalog or data root", () =>
+  it.effect("returns undefined without a usable catalog", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -319,12 +362,6 @@ describe("zcodeAccountConfigPushFromLadder", () => {
           environment: { HOME: "/home/dev" },
         });
         assert.equal(noRules, undefined);
-        const noRoot = yield* zcodeAccountConfigPushFromLadder(fs, {
-          builtinPath: "/tmp/builtin.json",
-          builtinCatalog: inlineCatalog,
-          environment: {},
-        });
-        assert.equal(noRoot, undefined);
         const apiOnly = yield* zcodeAccountConfigPushFromLadder(fs, {
           builtinPath: "/tmp/builtin.json",
           builtinCatalog: {

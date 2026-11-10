@@ -3,6 +3,7 @@
 // account config push that makes catalog models selectable, and T3 model slug mapping.
 // Everything protocol-shaped here mirrors the Phase 0 probe notes (PROTOCOL-NOTES.md).
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -50,8 +51,10 @@ export function zcodePlatformDir(platform: NodeJS.Platform, arch: string): strin
 }
 
 export function zcodeDataRoot(environment: NodeJS.ProcessEnv): string | undefined {
-  const root = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME;
-  return root === undefined || root.length === 0 ? undefined : root;
+  // Windows often runs without HOME, so os.homedir() (USERPROFILE there) keeps catalog
+  // discovery and the shim lookup alive.
+  const root = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME || NodeOS.homedir();
+  return root.length === 0 ? undefined : root;
 }
 
 export function zcodeBuiltinCatalogPath(input: {
@@ -202,8 +205,8 @@ export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCo
   if (explicit.length > 0 && explicit !== DEFAULT_ZCODE_BINARY) return explicit;
   const onPath = yield* zcodeOnPath(environment, fileSystem);
   if (onPath) return DEFAULT_ZCODE_BINARY;
-  const home = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME;
-  if (home === undefined || home === "") return DEFAULT_ZCODE_BINARY;
+  const home = zcodeDataRoot(environment);
+  if (home === undefined) return DEFAULT_ZCODE_BINARY;
   const desktopShim = `${home}/.zcode/server/bin/zcode`;
   const shimExists = yield* fileSystem.exists(desktopShim).pipe(Effect.orElseSucceed(() => false));
   return shimExists ? desktopShim : DEFAULT_ZCODE_BINARY;
@@ -216,7 +219,7 @@ const zcodeOnPath = Effect.fn("ZcodeRuntime.zcodeOnPath")(function* (
   const pathValue = environment.PATH ?? "";
   const platform = yield* HostProcess.Platform;
   const suffixes = platform === "win32" ? ["zcode.exe", "zcode.cmd"] : ["zcode"];
-  for (const dir of pathValue.split(":")) {
+  for (const dir of pathValue.split(platform === "win32" ? ";" : ":")) {
     if (dir === "") continue;
     for (const suffix of suffixes) {
       const found = yield* fileSystem
