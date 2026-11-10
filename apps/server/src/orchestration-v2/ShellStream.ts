@@ -428,6 +428,12 @@ export function shouldPublishShellApplicationEvent(
     // Replay and the live tail overlap; keep known IDs so late events stay filtered.
     return true;
   }
+  if (
+    event.type === "turn-item.updated" &&
+    (event.payload.type === "secret_request" || event.payload.type === "link_request")
+  ) {
+    return true;
+  }
   return !(
     subagentThreadIds.has(event.threadId) &&
     (event.type === "node.updated" ||
