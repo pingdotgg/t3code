@@ -55,6 +55,18 @@
         // splash's background is the sidebar role, the window color the
         // runtime paints around the inset pane.
         const BUILT_IN_THEME_PALETTES = {
+          "t3-code-classic": {
+            light: {
+              background: "#fafafa",
+              foreground: "#18181b",
+              accent: "#1b4ed8",
+            },
+            dark: {
+              background: "#000000",
+              foreground: "#f5f5f5",
+              accent: "#346bf1",
+            },
+          },
           "t3-chat": {
             light: {
               background: "oklch(0.928886 0.031178 322.592)",
@@ -123,6 +135,7 @@
           ]),
         );
         const RESERVED_THEME_IDS = [
+          "t3-code-classic",
           "system",
           "light",
           "dark",

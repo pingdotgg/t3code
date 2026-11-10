@@ -368,7 +368,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "theme",
     title: "Themes",
     to: "/settings/appearance",
-    searchTerms: ["appearance colors palette custom import export download"],
+    searchTerms: ["appearance colors palette custom import export download t3 code classic old"],
     targetId: "appearance",
   },
   {
