@@ -1788,8 +1788,8 @@ importers:
         specifier: 4.1.2
         version: 4.1.2
       smol-toml:
-        specifier: 1.8.0
-        version: 1.8.0
+        specifier: 1.9.1
+        version: 1.9.1
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2

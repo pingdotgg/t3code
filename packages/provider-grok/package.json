@@ -34,7 +34,7 @@
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
-    "smol-toml": "1.8.0"
+    "smol-toml": "1.9.1"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
