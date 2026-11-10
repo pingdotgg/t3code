@@ -7,7 +7,7 @@ const rootClassName =
   "surface-well data-checked:bg-none data-checked:shadow-none data-indeterminate:bg-none data-indeterminate:shadow-none relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-kbd outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring aria-invalid:surface-invalid data-disabled:opacity-64 sm:size-4";
 
 const indicatorClassName =
-  "-inset-px absolute flex border border-transparent items-center justify-center rounded-kbd text-primary-foreground in-aria-invalid:[box-shadow:inset_0_0_0_1px_var(--error),var(--lit-shadow)]! data-unchecked:hidden data-checked:surface-gloss-on data-indeterminate:surface-gloss-on in-[[data-slot=checkbox]:focus-visible]:outline-2 in-[[data-slot=checkbox]:focus-visible]:outline-solid in-[[data-slot=checkbox]:focus-visible]:-outline-offset-2 in-[[data-slot=checkbox]:focus-visible]:outline-inherit";
+  "-inset-px absolute flex items-center justify-center rounded-kbd text-primary-foreground in-aria-invalid:[box-shadow:inset_0_0_0_1px_var(--error),var(--lit-shadow)]! data-unchecked:hidden data-checked:surface-gloss-on data-indeterminate:surface-gloss-on in-[[data-slot=checkbox]:focus-visible]:outline-2 in-[[data-slot=checkbox]:focus-visible]:outline-solid in-[[data-slot=checkbox]:focus-visible]:-outline-offset-2 in-[[data-slot=checkbox]:focus-visible]:outline-inherit";
 
 function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
   return (
