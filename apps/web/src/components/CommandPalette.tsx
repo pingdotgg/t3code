@@ -1,3 +1,4 @@
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -82,6 +83,7 @@ import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
   useEffect,
+  useId,
   useReducer,
   useRef,
   useState,
@@ -318,6 +320,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
+      <ThreadContextDragGhost />
       <CommandDialog
         open={state.open}
         onOpenChange={(open, eventDetails) => {
@@ -2835,9 +2838,17 @@ function OpenCommandPaletteDialog(props: {
     await handleAddProject(pickedPath);
   };
 
+  const submitButtonId = useId();
+  const browseSubmitLabel =
+    isCloneDestinationStep && !canCloneProject
+      ? t("app.palette.cloneNeedsPermission")
+      : canCreateProject
+        ? `${submitActionLabel} (${addShortcutLabel})`
+        : t("app.palette.cannotAddDesc");
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={isCreatingNewProject ? t("app.palette.creating") : t("app.palette.create")}
         shortcutLabel={createShortcutLabel}
         ariaLabel={t("app.palette.createWithShortcut", { shortcut: createShortcutLabel })}
@@ -2849,6 +2860,7 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : addProjectCloneFlow?.step === "repository" ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={isRemoteProjectPending ? t("app.palette.working") : remoteProjectButtonLabel}
         shortcutLabel="Enter"
         ariaLabel={`${remoteProjectButtonLabel ?? t("app.palette.continue")} (Enter)`}
@@ -2860,20 +2872,15 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : isBrowsing ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={
           isCloneDestinationStep && isRemoteProjectPending
             ? t("app.palette.cloning")
             : submitActionLabel
         }
         shortcutLabel={addShortcutLabel}
-        ariaLabel={`${submitActionLabel} (${addShortcutLabel})`}
-        tooltip={
-          isCloneDestinationStep && !canCloneProject
-            ? t("app.palette.cloneNeedsPermission")
-            : canCreateProject
-              ? `${submitActionLabel} (${addShortcutLabel})`
-              : t("app.palette.cannotAddDesc")
-        }
+        ariaLabel={browseSubmitLabel}
+        tooltip={browseSubmitLabel}
         disabled={
           !canCreateProject ||
           !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
@@ -2941,6 +2948,7 @@ function OpenCommandPaletteDialog(props: {
                 })
               : undefined,
         placeholder: inputPlaceholder,
+        "aria-describedby": inputAccessory ? submitButtonId : undefined,
         ...(isSubmenu
           ? {
               startAddon: (

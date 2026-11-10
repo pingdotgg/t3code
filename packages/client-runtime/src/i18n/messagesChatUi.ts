@@ -234,6 +234,9 @@ export const enMessages = {
   "chat.user.steer": "Steer",
   "chat.user.promotedToSteer": "Originally queued, then promoted to steer the active turn",
   "chat.user.steered": "Steered the active turn",
+  "chat.user.steerWaiting": "Steer · waiting to be read",
+  "chat.user.steerWaitingDesc":
+    "Waiting for the agent to read this. It reads steers between steps, after a running command finishes.",
   "chat.user.editFromHere": "Edit from here",
   "chat.user.showLess": "Show less",
   "chat.user.showFull": "Show full message",
@@ -952,6 +955,9 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "chat.user.steer": "引导",
   "chat.user.promotedToSteer": "最初排队，之后被提升为引导当前这一轮",
   "chat.user.steered": "已引导当前这一轮",
+  "chat.user.steerWaiting": "引导 · 等待读取",
+  "chat.user.steerWaitingDesc":
+    "正在等待智能体读取。它会在步骤之间、正在运行的命令结束后读取引导消息。",
   "chat.user.editFromHere": "从这里开始编辑",
   "chat.user.showLess": "收起",
   "chat.user.showFull": "显示完整消息",

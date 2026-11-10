@@ -35,6 +35,7 @@ export function sourceControlHostIcon(
 
 /** The input's trailing submit button for the add-project, clone, and new-project flows. */
 export function CommandPaletteSubmitButton(props: {
+  readonly id: string;
   readonly label: ReactNode;
   readonly shortcutLabel: string;
   readonly ariaLabel: string;
@@ -47,9 +48,9 @@ export function CommandPaletteSubmitButton(props: {
       <TooltipTrigger
         render={
           <Button
+            id={props.id}
             variant="outline"
             size="xs"
-            tabIndex={-1}
             className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
             aria-label={props.ariaLabel}
             disabled={props.disabled}

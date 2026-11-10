@@ -304,7 +304,10 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
     <div className="group flex flex-col items-end gap-1" data-user-message-attribution="automation">
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
-        <UserMessageIntentMarker intent={row.message.inputIntent} />
+        <UserMessageIntentMarker
+          intent={row.message.inputIntent}
+          unread={row.projectedItem?.item.status === "pending"}
+        />
       ) : null}
       <div
         className={cn(
@@ -854,7 +857,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {(row.message.inputIntent === "steer" ||
         row.message.inputIntent === "promoted_queued_to_steer") &&
       !row.continuesSteer ? (
-        <UserMessageIntentMarker intent={row.message.inputIntent} />
+        <UserMessageIntentMarker
+          intent={row.message.inputIntent}
+          unread={row.projectedItem?.item.status === "pending"}
+        />
       ) : null}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
@@ -1059,8 +1065,10 @@ const ACTIONS_REVEAL_CLASS_NAME =
 
 function UserMessageIntentMarker({
   intent,
+  unread,
 }: {
   readonly intent: "steer" | "promoted_queued_to_steer";
+  readonly unread: boolean;
 }) {
   const t = useT();
   return (
@@ -1074,12 +1082,14 @@ function UserMessageIntentMarker({
         }
       >
         <Redo2Icon aria-hidden="true" className="size-3" />
-        {t("chat.user.steer")}
+        {unread ? t("chat.user.steerWaiting") : t("chat.user.steer")}
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {intent === "promoted_queued_to_steer"
-          ? t("chat.user.promotedToSteer")
-          : t("chat.user.steered")}
+        {unread
+          ? t("chat.user.steerWaitingDesc")
+          : intent === "promoted_queued_to_steer"
+            ? t("chat.user.promotedToSteer")
+            : t("chat.user.steered")}
       </TooltipPopup>
     </Tooltip>
   );

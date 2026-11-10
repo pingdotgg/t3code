@@ -1,3 +1,4 @@
+import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
   isAtomCommandInterrupted,
@@ -5,7 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
@@ -22,7 +23,7 @@ import {
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./MarkdownFileLink.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
-import { WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { translateNow } from "../media/translateNow";
 
 interface MarkdownFileLinkProps {
@@ -30,6 +31,7 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
+  isAppBundle?: boolean;
   workspaceRelativePath: string | null;
   panelPath: string | null;
   line?: number | undefined;
@@ -54,6 +56,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
+  isAppBundle = false,
   workspaceRelativePath,
   panelPath,
   line,
@@ -364,6 +367,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               onContextMenu={handleContextMenu}
             >
               <FileTagChipContent
+                icon={
+                  isAppBundle ? (
+                    <AppBundleIcon environmentId={environmentId} path={iconPath} theme={theme} />
+                  ) : undefined
+                }
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
@@ -383,6 +391,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               onContextMenu={handleContextMenu}
             >
               <FileTagChipContent
+                icon={
+                  isAppBundle ? (
+                    <AppBundleIcon environmentId={environmentId} path={iconPath} theme={theme} />
+                  ) : undefined
+                }
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
@@ -415,6 +428,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
+    previous.isAppBundle === next.isAppBundle &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
@@ -423,5 +437,28 @@ function areMarkdownFileLinkPropsEqual(
     previous.onReveal === next.onReveal &&
     previous.resolveCopyPaths === next.resolveCopyPaths &&
     previous.revealLabel === next.revealLabel
+  );
+}
+
+function AppBundleIcon(props: {
+  environmentId: EnvironmentId | null;
+  path: string;
+  theme: "light" | "dark";
+}) {
+  const asset = useAssetUrlState(props.environmentId, {
+    _tag: "native-app-icon",
+    app: { _tag: "app-path", path: props.path },
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (asset._tag !== "Success" || asset.url === failedUrl) {
+    return <WorkspaceEntryIcon {...props} />;
+  }
+  return (
+    <img
+      src={asset.url}
+      alt=""
+      className="size-4 shrink-0 object-contain"
+      onError={() => setFailedUrl(asset.url)}
+    />
   );
 }
