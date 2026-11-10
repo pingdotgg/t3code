@@ -544,6 +544,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed",
   "signed out",
   "signed out, fallback failed",
+  "not registered",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -613,13 +614,18 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         }),
       };
     });
+    // The registry lists only instances it built, not one whose secrets it could not read.
+    const registered =
+      primaryState === "not registered"
+        ? instances.filter((instance) => instance.instanceId !== primary)
+        : instances;
     const service = yield* TextGeneration.make.pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-            listInstances: Effect.succeed(instances),
+            listInstances: Effect.succeed(registered),
             getInstance: (id) =>
-              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+              Effect.succeed(registered.find((instance) => instance.instanceId === id)),
           }),
           ServerSettings.layerTest({
             providerInstances: {

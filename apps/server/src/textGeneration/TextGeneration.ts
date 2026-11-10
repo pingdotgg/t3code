@@ -104,10 +104,12 @@ export const make = Effect.gen(function* () {
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
-    // Only a failed probe counts: a pending one is also not installed yet.
+    // Only a failed probe counts: a pending one is also not installed yet. Without a snapshot the
+    // registry has no instance to run (its secrets are unreadable, say), so the request would fail.
     const unusable =
       textGeneratorCannotRun ||
-      (selected?.enabled === true &&
+      selected === undefined ||
+      (selected.enabled === true &&
         selected.status === "error" &&
         (!selected.installed || selected.auth.status === "unauthenticated"));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
