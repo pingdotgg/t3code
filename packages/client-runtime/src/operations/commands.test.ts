@@ -548,6 +548,7 @@ describe("V2 environment commands", () => {
     const queuedTaskId = NodeId.make("queued-follow-up-task");
     const laterTaskId = NodeId.make("later-follow-up-task");
     const queuedRunId = RunId.make("queued-follow-up-run");
+    const grandchildThreadId = ThreadId.make("grandchild-thread");
     const task = (id: NodeId, status: "running" | "pending") => ({
       id,
       threadId: v2ThreadId,
@@ -603,6 +604,24 @@ describe("V2 environment commands", () => {
         childRun(queuedRunId, 3, queued, queuedTaskId),
         childRun(RunId.make("later-follow-up-run"), 4, "queued", laterTaskId),
       ],
+      // Once promoted, the queued task's turn delegated a task of its own, beside the other's.
+      subagents:
+        queued === "queued"
+          ? []
+          : [
+              {
+                ...task(NodeId.make("other-grandchild-task"), "running"),
+                threadId: childThreadId,
+                runId: RunId.make("running-follow-up-run"),
+                childThreadId: ThreadId.make("other-grandchild-thread"),
+              },
+              {
+                ...task(NodeId.make("grandchild-task"), "running"),
+                threadId: childThreadId,
+                runId: queuedRunId,
+                childThreadId: grandchildThreadId,
+              },
+            ],
     });
     const childProjections = new Map([[childThreadId, childProjection("running", "queued")]]);
     const commands: OrchestrationV2Command[] = [];
@@ -638,8 +657,9 @@ describe("V2 environment commands", () => {
     return {
       childThreadId,
       queuedRunId,
+      grandchildThreadId,
       commands: commands.filter(
-        (command) => "threadId" in command && command.threadId === childThreadId,
+        (command) => "threadId" in command && command.threadId !== v2ThreadId,
       ),
     };
   });
@@ -674,6 +694,11 @@ describe("V2 environment commands", () => {
           threadId: stopped.childThreadId,
           runId: stopped.queuedRunId,
         },
+        {
+          type: "thread.stop",
+          commandId: expect.any(String),
+          threadId: stopped.grandchildThreadId,
+        },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),
   );
@@ -687,6 +712,11 @@ describe("V2 environment commands", () => {
           commandId: expect.any(String),
           threadId: stopped.childThreadId,
           runId: stopped.queuedRunId,
+        },
+        {
+          type: "thread.stop",
+          commandId: expect.any(String),
+          threadId: stopped.grandchildThreadId,
         },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),

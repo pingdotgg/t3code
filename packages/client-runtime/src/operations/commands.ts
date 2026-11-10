@@ -24,11 +24,13 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
+  type OrchestrationV2Run,
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
   delegatedTaskYieldsLiveRun,
   isOrchestrationV2RunActive,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -816,19 +818,46 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
           );
         const settled = { sequence: 0 };
         // By its id: a thread-wide stop could reach, or hold, another task's turn. A turn that
-        // ended before the interrupt landed needs nothing more.
-        const interruptOwnRun = (runId: RunId) =>
-          Effect.flatMap(allocateCommandId({}), (commandId) =>
-            dispatch({ type: "run.interrupt", commandId, threadId: childThreadId, runId }),
-          ).pipe(
-            Effect.catch((error) =>
-              Effect.flatMap(readRun(runId), (run) =>
-                run !== undefined && isOrchestrationV2RunActive(run.status)
-                  ? Effect.fail(error)
-                  : Effect.succeed(settled),
+        // ended before the interrupt landed needs nothing more, but the tasks it delegated
+        // still go, and only those.
+        const stopOwnRun = Effect.fn("EnvironmentCommands.stopOwnRun")(function* (
+          run: OrchestrationV2Run,
+        ) {
+          let result = settled;
+          if (isOrchestrationV2RunActive(run.status)) {
+            result = yield* dispatch({
+              type: "run.interrupt",
+              commandId: yield* allocateCommandId({}),
+              threadId: childThreadId,
+              runId: run.id,
+            }).pipe(
+              Effect.catch((error) =>
+                Effect.flatMap(readRun(run.id), (latest) =>
+                  latest !== undefined && isOrchestrationV2RunActive(latest.status)
+                    ? Effect.fail(error)
+                    : Effect.succeed(settled),
+                ),
               ),
-            ),
-          );
+            );
+          }
+          // A child thread's stop also stops the tasks it delegated, all the way down.
+          const { subagents } = yield* getProjection(childThreadId);
+          for (const task of subagents) {
+            if (
+              task.runId !== run.id ||
+              task.origin !== "app_owned" ||
+              task.childThreadId === null ||
+              !isOrchestrationV2WorkActive(task.status)
+            )
+              continue;
+            result = yield* dispatch({
+              type: "thread.stop",
+              commandId: yield* allocateCommandId({}),
+              threadId: task.childThreadId,
+            });
+          }
+          return result;
+        });
         let result = settled;
         for (const run of child.runs) {
           if (run.status !== "queued" || run.delegatedTaskId !== subagent.id) continue;
@@ -843,9 +872,9 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
               Effect.flatMap(readRun(run.id), (latest) =>
                 latest?.status === "queued"
                   ? Effect.fail(error)
-                  : latest !== undefined && isOrchestrationV2RunActive(latest.status)
-                    ? interruptOwnRun(run.id)
-                    : Effect.succeed(settled),
+                  : latest === undefined
+                    ? Effect.succeed(settled)
+                    : stopOwnRun(latest),
               ),
             ),
           );
