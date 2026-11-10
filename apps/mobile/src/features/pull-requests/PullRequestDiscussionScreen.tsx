@@ -150,7 +150,15 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
-      <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
+      <KeyboardAvoidingView
+        automaticOffset
+        behavior="height"
+        className="flex-1 bg-screen"
+        // Any touch, such as replying or loading replies, ends the wait to reposition the link.
+        onTouchStart={() => {
+          pendingTop.current = null;
+        }}
+      >
         <AppBar
           title="Discussion"
           subtitle={`#${params.number}`}
@@ -171,9 +179,6 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
             ref={scrollRef}
-            onScrollBeginDrag={() => {
-              pendingTop.current = null;
-            }}
             onContentSizeChange={() => {
               if (pendingTop.current === null) return;
               scrollRef.current?.scrollTo({ y: pendingTop.current, animated: false });
