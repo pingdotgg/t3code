@@ -1349,6 +1349,9 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+export const KeepAwakeMode = Schema.Literals(["off", "whileWorking", "always"]);
+export type KeepAwakeMode = typeof KeepAwakeMode.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1363,6 +1366,8 @@ export const ServerSettings = Schema.Struct({
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** macOS only, Labs beta: clone new worktrees from a cached checkout instead of writing every file. */
   fastWorktreeCheckout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Holds off idle system sleep on the server's machine; honored where capabilities.keepAwake is sent. */
+  keepAwake: KeepAwakeMode.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
   /** Server-maintained history keeps old worktrees eligible for cleanup and review diffs. */
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1818,6 +1823,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
+  keepAwake: Schema.optionalKey(KeepAwakeMode),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
