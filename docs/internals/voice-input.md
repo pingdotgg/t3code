@@ -35,8 +35,8 @@ test captures separately for local playback and sends nothing. The transport
 refuses redirects so credentials and audio cannot follow one to another host.
 
 Transcript cleanup requires its own grant, off by default.
-It sends text, never audio, to the text generation provider of the draft's
-own environment, because that is where the provider credentials live.
+It sends text, never audio, to the text generation model of the draft's
+own environment, because that is where its credentials live.
 
 A cloud destination binds both the forwarding environment and the named provider.
 It uses a separate, batch-only endpoint: changing a server key cannot upgrade

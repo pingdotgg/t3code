@@ -21,7 +21,7 @@ import { Keyboard, Pressable, ScrollView, TextInput, View } from "react-native";
 
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppBar } from "../../components/ui/AppBar";
-import { useContentTopInset } from "../../components/ui/useBarInset";
+import { useContentBottomInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -29,7 +29,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Progress } from "../../components/ui/Progress";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import * as Dialog from "../../components/ui/Dialog";
-import { FilePreviewModal } from "../../components/FilePreviewModal";
+import { FilePreviewModal } from "../../components/ui/FilePreviewModal";
 import {
   nativeViewerErrorMessage,
   shareGeneratedAttachment,
@@ -395,15 +395,16 @@ function ZipArchiveList(props: {
       return next;
     });
   const fileCount = archive.fileCount;
+  const bottomInset = useContentBottomInset();
   return (
     <View className="flex-1 bg-sheet">
       <LegendList
         renderScrollComponent={NativeScrollView}
-        contentInsetStartAdjustment={props.headerInset}
+        contentInset={{ top: props.headerInset, bottom: bottomInset }}
         className="flex-1"
         data={rows}
         keyExtractor={(row) => `${row.node.entry ? "f" : "d"}:${row.node.path}`}
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets
         estimatedItemSize={44}
         recycleItems

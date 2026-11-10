@@ -87,6 +87,7 @@ describe("resolveProviderCatalog", () => {
               current: Effect.succeed(manifest),
               refresh: Effect.die("Catalog reads must not refresh the manifest"),
               forceRefresh: Effect.die("Catalog reads must not refresh the manifest"),
+              refreshOnDemand: Effect.die("Catalog reads must not refresh the manifest"),
               refreshInBackground: Effect.die("Catalog reads must not refresh the manifest"),
             }),
           ),
@@ -330,6 +331,34 @@ describe("ModelManifest service", () => {
         layerService({
           prefix: "model-manifest-last-good-test",
           response: () => Response.json(responses[responseIndex]),
+        }),
+      ),
+    );
+  });
+
+  it.effect("refetches for an opened model picker after five minutes, not an hour", () => {
+    let fetches = 0;
+    return Effect.gen(function* () {
+      const service = yield* ModelManifest.make;
+      yield* service.refresh;
+      yield* TestClock.adjust("4 minutes");
+      yield* service.refreshOnDemand;
+      assert.strictEqual(fetches, 1);
+
+      yield* TestClock.adjust("1 minute");
+      yield* service.refresh;
+      assert.strictEqual(fetches, 1);
+      yield* service.refreshOnDemand;
+      assert.strictEqual(fetches, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-on-demand-test",
+          response: () => {
+            fetches += 1;
+            return Response.json(REMOTE_MANIFEST);
+          },
         }),
       ),
     );

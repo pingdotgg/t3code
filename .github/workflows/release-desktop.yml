@@ -210,6 +210,20 @@ jobs:
             native/hyprland-snap-shot/target/${{ inputs.rust_target }}/release/t3-hyprland-snap-shot
           key: linux-capture-helpers-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
 
+      # Every Linux build makes electron-builder fetch the AppImage runtime, FPM
+      # for the deb, and the 7-Zip that unpacks FPM from GitHub releases. It
+      # checks an archive found here against the SHA-256 pinned in those toolset
+      # files and downloads again on a mismatch, so only raw archives are cached.
+      - name: Cache Linux packaging tool archives
+        if: inputs.platform == 'linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/electron-builder/appimage@*/appimage-tools-runtime-*.tar.gz
+            ~/.cache/electron-builder/fpm@*/fpm-*.7z
+            ~/.cache/electron-builder/7zip@*/7zip-linux-*.tar.gz
+          key: electron-builder-linux-tools-${{ inputs.arch }}-${{ hashFiles('node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/linux.js', 'node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/7zip.js') }}
+
       - name: Ensure Rosetta for macOS x64 bytecode generation
         if: inputs.platform == 'mac' && inputs.arch == 'x64'
         shell: bash

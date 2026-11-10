@@ -1283,6 +1283,10 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: 8 },
     );
+    // The hostname arrives once cloudflared connects, before any check passes.
+    const connector = Option.isSome(endpointRuntimeConfig)
+      ? yield* endpointRuntime.inspectConnector
+      : null;
     // A not-linked check predates the stored tunnel config; the next check replaces it.
     const currentReachability = Option.filter(
       latestReachability,
@@ -1303,6 +1307,7 @@ const make = Effect.gen(function* () {
       holdWebhooksWhileOffline:
         Option.isSome(holdWebhooks) && bytesToString(holdWebhooks.value) === "true",
       ...(Option.isSome(currentReachability) ? { reachability: currentReachability.value } : {}),
+      ...(connector?.hostname ? { tunnelHostname: connector.hostname } : {}),
     } satisfies EnvironmentCloudLinkStateResult;
   });
 
