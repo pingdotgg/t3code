@@ -91,6 +91,8 @@ const group: SidebarProjectSnapshot = {
   allRemoteMembersAreDesktopLocal: false,
   allRemoteMembersAreWsl: false,
   remoteEnvironmentLabels: [server.label, laptop.label],
+  pinned: false,
+  archived: false,
 };
 const project = resolveSettingsScope({ project: group.projectKey }, [group], environments);
 const checkout = resolveSettingsScope(
