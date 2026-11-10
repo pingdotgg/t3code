@@ -678,12 +678,13 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               : snapshot.threads.filter((thread) => thread.id === threadId),
           ),
         ),
-      getThread: (threadId) => {
-        const thread = options.currentThreads?.find((candidate) => candidate.id === threadId);
-        return thread
-          ? Effect.succeed(thread)
-          : Effect.die(new Error(`Unexpected thread read: ${threadId}`));
-      },
+      getThread: (threadId) =>
+        Effect.suspend(() => {
+          const thread = options.currentThreads?.find((candidate) => candidate.id === threadId);
+          return thread
+            ? Effect.succeed(thread)
+            : Effect.die(new Error(`Unexpected thread read: ${threadId}`));
+        }),
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.fromPubSub(domainEvents),
@@ -705,15 +706,15 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
             }),
           ),
         ),
-      close: (input) =>
-        Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
-          Effect.andThen(options.onDeviceClose?.(input.hostId) ?? Effect.void),
-          Effect.andThen(
-            options.deviceCloseError && options.deviceCloseError.hostId === input.hostId
-              ? Effect.fail(options.deviceCloseError)
-              : Effect.void,
-          ),
-        ),
+      // onDeviceClose stands in for the lifecycle lock wait; `when` runs once the lock is held.
+      close: (input, closeOptions) =>
+        Effect.gen(function* () {
+          yield* options.onDeviceClose?.(input.hostId) ?? Effect.void;
+          if (closeOptions?.when && !(yield* closeOptions.when)) return;
+          yield* Ref.update(deviceCloses, (closes) => [...closes, input]);
+          const error = options.deviceCloseError;
+          if (error && error.hostId === input.hostId) return yield* error;
+        }),
     }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: (input) =>
@@ -1509,7 +1510,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("keeps the remaining devices of a thread re-engaged during an earlier release", () =>
+  it.effect("keeps the devices of a thread re-engaged while a release waits on the lock", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const firstStarted = yield* Deferred.make<void>();
@@ -1545,7 +1546,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* service.drain;
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
-            [{ threadId: settled.id, hostId: "slow-ssh", deviceId: "pixel" }],
+            [],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

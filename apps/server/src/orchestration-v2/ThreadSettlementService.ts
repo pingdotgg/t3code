@@ -598,28 +598,29 @@ export const make = Effect.gen(function* () {
       return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
-  // Per device: a thread without devices skips the lock a starting host holds, one unreachable
-  // host leaves no other device claimed, and a thread re-engaged meanwhile keeps the rest.
+  // Per device: a thread without devices skips the lock a starting host holds, and one
+  // unreachable host leaves no other device claimed. The settled check runs under that lock, so a
+  // thread re-engaged while a release waits keeps its devices.
   const releaseSettledThreadDevices = Effect.fn(
     "ThreadSettlementServiceV2.releaseSettledThreadDevices",
   )(
     function* (threadId: ThreadId) {
+      const stillSettled = projections
+        .getThread(threadId)
+        .pipe(Effect.map((thread) => thread.settledOverride === "settled"));
       yield* Effect.forEach(
         yield* devices.sessionsForThread(threadId),
         ({ hostId, deviceId }) =>
-          Effect.gen(function* () {
-            if ((yield* projections.getThread(threadId)).settledOverride !== "settled") return;
-            yield* devices.close({ threadId, hostId, deviceId }).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("releasing a settled thread's device failed", {
-                  threadId,
-                  hostId,
-                  deviceId,
-                  error,
-                }),
-              ),
-            );
-          }),
+          devices.close({ threadId, hostId, deviceId }, { when: stillSettled }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("releasing a settled thread's device failed", {
+                threadId,
+                hostId,
+                deviceId,
+                error,
+              }),
+            ),
+          ),
         { discard: true },
       );
     },

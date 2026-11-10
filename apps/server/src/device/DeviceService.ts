@@ -117,6 +117,11 @@ export interface DeviceReadiness extends DeviceHost.DeviceHostReady {
   readonly hostId: DeviceHostId;
 }
 
+export interface DeviceCloseOptions<E> {
+  /** Runs under the lifecycle lock; false releases nothing. */
+  readonly when?: Effect.Effect<boolean, E>;
+}
+
 export interface DeviceAgentReadiness extends DeviceReadiness {
   /** Null when each device has its own daemon; see `DeviceOperations.agentEndpoint`. */
   readonly agentDevice: DeviceHost.AgentDeviceEndpoint | null;
@@ -197,7 +202,10 @@ export class DeviceService extends Context.Service<
       input: DeviceOpenInput,
       context?: DeviceHost.DeviceOpenContext,
     ) => Effect.Effect<DeviceSession, DeviceError>;
-    readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
+    readonly close: <E = never>(
+      input: DeviceCloseInput,
+      options?: DeviceCloseOptions<E>,
+    ) => Effect.Effect<void, DeviceError | E>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
@@ -897,10 +905,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
-    function* (input) {
+    function* (input, options) {
       // Open publishes under the same lock; an old close must not release a reopened claim.
       const closing = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
+          if (options?.when && !(yield* options.when)) return [];
           const { state } = yield* SynchronizedRef.get(stateRef);
           const closing = state.sessions.filter(
             (session) =>

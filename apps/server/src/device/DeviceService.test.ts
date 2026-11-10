@@ -1776,6 +1776,14 @@ describe("agent session release on close", () => {
       const other = ThreadId.make("other");
       const session = yield* openClaim(service, threadId);
       yield* openClaim(service, other, session.deviceId);
+      yield* service.close(
+        { threadId, deviceId: session.deviceId },
+        { when: Effect.succeed(false) },
+      );
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([
+        threadId,
+        other,
+      ]);
       yield* service.close({ threadId, deviceId: session.deviceId });
       yield* service.close({ threadId, deviceId: session.deviceId });
       const name = yield* agentDeviceSession(threadId, session.hostId, session.deviceId).pipe(
