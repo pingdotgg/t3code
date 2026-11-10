@@ -21,7 +21,7 @@ export default defineRule({
     return {
       ImportDeclaration(node) {
         const source = node.source.value;
-        if (source === "lucide-react" || TABLER_SOURCE.test(source)) {
+        if (source === "lucide" || source === "lucide-react" || TABLER_SOURCE.test(source)) {
           if (TABLER_SOURCE.test(source) && SPARKLE_NAME.test(source.split("/").at(-1) ?? "")) {
             context.report({ node: node.source, message: MESSAGE });
             return;

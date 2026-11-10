@@ -32,6 +32,8 @@ describe("t3code/no-sparkles-icon", () => {
     `import { Sparkle, WandSparklesIcon, LucideSparkles } from "lucide-react";`,
   );
 
+  rule.invalid("reports Lucide icon nodes", `import { Sparkles } from "lucide";`);
+
   rule.invalid(
     "reports Tabler sparkles deep imports",
     `import IconSparkles from "@tabler/icons-react-native/IconSparkles";`,
