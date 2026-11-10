@@ -34,7 +34,6 @@ function Menu({ showSkills, query }: { showSkills: boolean; query: string }) {
     pullRequestProjectId: null,
     pullRequestRepository: null,
     threadPullRequests: undefined,
-    planModeUiEnabled: false,
     sideChatAvailable: false,
     sideChatDisabledReason: null,
     freshSessionAvailable: false,
@@ -57,6 +56,7 @@ function Menu({ showSkills, query }: { showSkills: boolean; query: string }) {
     showSkillsInSlashMenu: showSkills,
     workspaceSkillsScanning: false,
     questionAttachmentTarget: null,
+    modelMentions: { instanceEntries: [], modelOptionsByInstance: new Map() },
   });
   return <output>{JSON.stringify(items.map((item) => item.label))}</output>;
 }
