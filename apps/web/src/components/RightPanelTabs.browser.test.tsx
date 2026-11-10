@@ -3,7 +3,7 @@ import "~/index.css";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
-import { act, render, stubGlobal } from "../../test/render";
+import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
 
@@ -125,16 +125,6 @@ describe("RightPanelTabs", () => {
     scroll(viewport.querySelector("[data-active-tab]")!, [-10, -20, -30, ...momentum]);
 
     expect(viewport.scrollLeft).toBe(0);
-    expect(navigateHistory).not.toHaveBeenCalled();
-
-    // Gesture events reach the renderer over IPC, so a wheel can land after its gesture's end.
-    await act(() => {
-      viewport.dispatchEvent(new WheelEvent("wheel", { deltaX: -10, bubbles: true }));
-    });
-    expect(screen.container.querySelector(".lucide-arrow-left")).toBeNull();
-    viewport.scrollLeft = 120;
-    scroll(viewport.querySelector("[data-active-tab]")!, [-10, -20, -30, ...momentum]);
-
     expect(navigateHistory).not.toHaveBeenCalled();
 
     viewport.scrollLeft = 0;

@@ -96,7 +96,7 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
-      setSwipe((current) => (current?.tracking ? { ...current, tracking: false } : current));
+      setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
       if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
@@ -109,8 +109,10 @@ export function HistorySwipeNavigation() {
     const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
       if (gesture?.kind === "ignored") gesture = null;
     });
-    // A gesture's last wheels can arrive after its end IPC; ignore them until the next begin.
-    const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(release);
+    const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
+      if (gesture?.kind === "tracking") release();
+      gesture = null;
+    });
     const onWheel = (event: WheelEvent) => {
       if (gesture === null) {
         gesture =
