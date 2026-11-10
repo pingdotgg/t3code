@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { useState, type MouseEvent, type ReactNode } from "react";
+import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useEnvironmentScope } from "../../../state/session";
@@ -228,8 +228,15 @@ export function RowAnswersPopover(props: {
   onOpenChange: (open: boolean) => void;
   onOpenThread: () => void;
 }) {
+  const openingThread = useRef(false);
   return (
-    <Popover open={props.open} onOpenChange={props.onOpenChange}>
+    <Popover
+      open={props.open}
+      onOpenChange={(open) => {
+        if (open) openingThread.current = false;
+        props.onOpenChange(open);
+      }}
+    >
       <PopoverTrigger
         render={
           <button
@@ -252,11 +259,24 @@ export function RowAnswersPopover(props: {
         align="start"
         width="sm"
         padding="compact"
+        finalFocus={() =>
+          openingThread.current
+            ? (document.querySelector<HTMLElement>("[data-pending-user-input-panel] button") ??
+              false)
+            : true
+        }
         onClick={stopRowActivation}
         onDoubleClick={stopRowActivation}
       >
         <div className="flex min-w-0 flex-col gap-2">
-          <RowAnswerContent thread={props.thread} onOpenThread={props.onOpenThread} />
+          <RowAnswerContent
+            thread={props.thread}
+            onOpenThread={() => {
+              openingThread.current = true;
+              props.onOpenChange(false);
+              props.onOpenThread();
+            }}
+          />
         </div>
       </PopoverPopup>
     </Popover>

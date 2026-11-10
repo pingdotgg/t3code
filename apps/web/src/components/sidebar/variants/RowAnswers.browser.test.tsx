@@ -3,6 +3,7 @@ import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, userEvent } from "vite-plus/test/browser";
 
@@ -117,21 +118,39 @@ it("draws nothing on the row for a question that needs the full thread", async (
   expect(screen.container.querySelector("[data-row-answers]")?.childElementCount).toBe(0);
 });
 
-it("offers the thread from the popover when the row cannot answer", async () => {
+it("closes the popover and focuses the question when opening its thread", async () => {
   setup({ userInputs: [question({ multiSelect: true })] });
   const onOpenThread = vi.fn();
-  await using screen = await render(
-    <RowAnswersPopover
-      thread={thread}
-      label="Input"
-      className=""
-      open
-      onOpenChange={() => {}}
-      onOpenThread={onOpenThread}
-    />,
-  );
+  function AnswerPopover() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <RowAnswersPopover
+          thread={thread}
+          label="Input"
+          className=""
+          open={open}
+          onOpenChange={setOpen}
+          onOpenThread={onOpenThread}
+        />
+        <div data-pending-user-input-panel>
+          <button type="button">Question</button>
+        </div>
+      </>
+    );
+  }
+  await using screen = await render(<AnswerPopover />);
   await screen.getByRole("button", { name: "Open thread" }).click();
   expect(onOpenThread).toHaveBeenCalledOnce();
+  await expect.element(screen.getByRole("button", { name: "Open thread" })).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("button", { name: "Question", exact: true })).toHaveFocus();
+  await screen.getByRole("button", { name: "Input: answer without opening the thread" }).click();
+  await expect.element(screen.getByRole("button", { name: "Open thread" })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(screen.getByRole("button", { name: "Open thread" })).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: "Input: answer without opening the thread" }))
+    .toHaveFocus();
 });
 
 const rowShowingAnswers = (
