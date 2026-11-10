@@ -1401,7 +1401,7 @@ describe("AcpRegistryAdapterV2", () => {
       // cmd.exe, which splits the unquoted T3 executable path at the space.
       const commandCode = {
         source: "local",
-        commandPath: "C:\\tools\\cmdc.cmd",
+        commandPath: "C:\\tools\\cmdc.exe",
         commandArgs: ["acp"],
       };
       // Command Code is not Copilot: no deferred tool-exposure header.
