@@ -52,6 +52,7 @@ describe("parseMarkdownFileLink", () => {
     ["pages/posts/%5Bid%5D.tsx", "pages/posts/[id].tsx"],
     ["+page.svelte", "+page.svelte"],
     ["[id].tsx", "[id].tsx"],
+    ["/\\server\\share\\x.ts", "/\\server\\share\\x.ts"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
@@ -75,6 +76,7 @@ describe("parseMarkdownFileLink", () => {
     "me@example.com",
     "foo(bar)",
     "$HOME",
+    "\\foo.ts",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });

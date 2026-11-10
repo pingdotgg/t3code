@@ -310,7 +310,12 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
     splitMarkdownLinkSearchAndHash(normalized);
-  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
+  const decodedPath = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(source.path.trim()));
+  // Only relative paths take `/`: rewriting a rooted `\\host` or `\foo` would change its root.
+  const path =
+    /^[\\/]/.test(decodedPath) || isWindowsAbsolutePath(decodedPath)
+      ? decodedPath
+      : decodedPath.replaceAll("\\", "/");
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
@@ -424,7 +429,7 @@ export function resolveMarkdownFileLinkTarget(
       : pathWithPosition;
   }
   if (!baseDir) return null;
-  return resolvePathLinkTarget(pathWithPosition, baseDir);
+  return resolvePathLinkTarget(pathWithPosition.replace(/^(?:\.\/)+/, ""), baseDir);
 }
 
 export function isWindowsDrivePathHref(href: string): boolean {
