@@ -73,13 +73,7 @@ describe("parseHttpResponse", () => {
   });
 
   it("parses without Transfer-Encoding: chunked", async () => {
-    const chunks = [
-      "HTTP/1.1 200 OK\r\n",
-      "Content-Type: text/xml\r\n\r\n",
-      "abc",
-      "def",
-      "ghi",
-    ];
+    const chunks = ["HTTP/1.1 200 OK\r\n", "Content-Type: text/xml\r\n\r\n", "abc", "def", "ghi"];
     const res = await parseHttpResponse(createChunkedStream(chunks));
     expect(await reduceResponse(res)).toEqual({
       status: 200,
@@ -114,9 +108,9 @@ describe("parseHttpResponse", () => {
       "Content-Type: text/plain\r",
       "\nTransfer-Encoding: chunked\r\n",
     ];
-    await expect(
-      parseHttpResponse(createChunkedStream(chunks)),
-    ).rejects.toThrow("Expected to find blank line in HTTP message");
+    await expect(parseHttpResponse(createChunkedStream(chunks))).rejects.toThrow(
+      "Expected to find blank line in HTTP message",
+    );
   });
 
   // HTTP messages sent by `workerd` (obtained by setting `workerd`'s
