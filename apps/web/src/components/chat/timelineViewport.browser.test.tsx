@@ -59,6 +59,27 @@ describe("attachTimelineViewport", () => {
     timeline.scrollTop -= 100;
     await scroll;
     expect(sources).toEqual(["scroll"]);
+    const frame = screen.getByTitle("render").element() as HTMLIFrameElement;
+    const resize = (height: number, source: Window | null = frame.contentWindow) =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          source,
+          data: { jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height } },
+        }),
+      );
+    sources.length = 0;
+    resize(200);
+    resize(400);
+    expect(sources).toEqual([]);
+    frame.focus();
+    resize(400, window);
+    resize(400);
+    expect(sources).toEqual([]);
+    resize(600);
+    resize(200);
+    expect(sources).toEqual(["command", "command"]);
     viewport.dispose();
+    resize(800);
+    expect(sources).toEqual(["command", "command"]);
   });
 });
