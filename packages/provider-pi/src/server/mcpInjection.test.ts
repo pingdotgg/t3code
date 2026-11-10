@@ -7,6 +7,7 @@ import {
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -33,6 +34,8 @@ const mcpSession = {
   authorizationHeader: "Bearer secret-pi-token",
   browserToolsAvailable: true,
 };
+
+class ExtensionReadError extends Data.TaggedError("ExtensionReadError")<{}> {}
 
 describe("pi T3 MCP injection", () => {
   it("always adds the permission bridge and configures MCP when available", () => {
@@ -194,7 +197,7 @@ describe("materializePiT3McpExtension", () => {
             const text = yield* Effect.try({
               try: () =>
                 NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
-              catch: (cause) => cause,
+              catch: () => new ExtensionReadError(),
             }).pipe(Effect.option);
             if (Option.isNone(text)) return; // Missing between writes: legitimate.
             // A production reader (a pi launch) reads once, never in a zero-gap
