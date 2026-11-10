@@ -219,6 +219,7 @@ describe("isCodexUsageLoginMissing", () => {
       true,
     );
     expect(loginMissing(-32600, "chatgpt authentication required to read rate limits")).toBe(true);
+    expect(loginMissing(-32600, "invalid request")).toBe(false);
     expect(loginMissing(-32603, "failed to fetch codex rate limits: HTTP 401 Unauthorized")).toBe(
       false,
     );
