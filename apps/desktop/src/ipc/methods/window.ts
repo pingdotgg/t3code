@@ -43,6 +43,7 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { requireMainRenderer } from "../TrustedRenderer.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -128,52 +129,56 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
-  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
-    const pool = yield* DesktopBackendPool.DesktopBackendPool;
-    const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-    const instances = yield* pool.list;
-    const bootstraps: DesktopEnvironmentBootstrap[] = [];
-    for (const instance of instances) {
-      const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
-      const config = yield* instance.currentConfig;
-      const snapshot = yield* instance.snapshot;
-      if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
-        const fatalPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          config.value.preflightFailure.value.fatal;
-        const stoppedPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          (!snapshot.desiredRunning || !snapshot.restartScheduled);
-        if (isPrimary || fatalPreflight || stoppedPreflight) continue;
+  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(
+    function* (event) {
+      yield* requireMainRenderer(event);
+      const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+      const instances = yield* pool.list;
+      const bootstraps: DesktopEnvironmentBootstrap[] = [];
+      for (const instance of instances) {
+        const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+        const config = yield* instance.currentConfig;
+        const snapshot = yield* instance.snapshot;
+        if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
+          const fatalPreflight =
+            Option.isSome(config) &&
+            Option.isSome(config.value.preflightFailure) &&
+            config.value.preflightFailure.value.fatal;
+          const stoppedPreflight =
+            Option.isSome(config) &&
+            Option.isSome(config.value.preflightFailure) &&
+            (!snapshot.desiredRunning || !snapshot.restartScheduled);
+          if (isPrimary || fatalPreflight || stoppedPreflight) continue;
+          bootstraps.push({
+            id: instance.id,
+            label: yield* instance.label,
+            runningDistro: null,
+            httpBaseUrl: null,
+            wsBaseUrl: null,
+          });
+          continue;
+        }
+        const { bootstrap, httpBaseUrl } = config.value;
+        const runningDistro = config.value.runningDistro ?? null;
         bootstraps.push({
           id: instance.id,
-          label: yield* instance.label,
-          runningDistro: null,
-          httpBaseUrl: null,
-          wsBaseUrl: null,
+          label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
+          runningDistro,
+          httpBaseUrl: httpBaseUrl.href,
+          wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
+          // Use the current window's derived token; the launch config's token may be stale.
+          ...(bootstrap.desktopBootstrapSecret
+            ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+            : bootstrap.desktopBootstrapToken
+              ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+              : {}),
         });
-        continue;
       }
-      const { bootstrap, httpBaseUrl } = config.value;
-      const runningDistro = config.value.runningDistro ?? null;
-      bootstraps.push({
-        id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
-        runningDistro,
-        httpBaseUrl: httpBaseUrl.href,
-        wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // Use the current window's derived token; the launch config's token may be stale.
-        ...(bootstrap.desktopBootstrapSecret
-          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
-          : bootstrap.desktopBootstrapToken
-            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-            : {}),
-      });
-    }
-    return bootstraps;
-  }),
+      return bootstraps;
+    },
+    Effect.catchTags({ DesktopIpcUntrustedSenderError: () => Effect.succeed([]) }),
+  ),
 });
 
 function extractWslDistroFromEnvironmentId(envId: string): string | null {
@@ -188,10 +193,13 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL,
   payload: Schema.Void,
   result: Schema.String,
-  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
-    const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
-    return yield* localAuth.getBearerToken;
-  }),
+  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(
+    function* (_input, event) {
+      yield* requireMainRenderer(event);
+      const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+      return yield* localAuth.getBearerToken;
+    },
+  ),
 });
 
 export const pickFolder = DesktopIpc.makeIpcMethod({
