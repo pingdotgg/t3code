@@ -129,70 +129,43 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 const SELECT_MENU_OPTION_LIMIT = 10_000;
 const SELECT_MENU_LABEL_LIMIT = 150;
 /**
- * Presses the dropdown select at a viewport point, through shadow roots and same-origin frames,
- * and returns `{ select, x, y, pressed }`, or null where the real press should land instead.
+ * Presses the dropdown select at a viewport point, through shadow roots, and returns
+ * `{ select, x, y, pressed }`, or null where the real press should land instead.
  * The events are synthetic: they run page handlers but can never open the native popup.
+ * A select in a frame keeps the real press: a CDP user gesture only activates the main frame.
  */
 const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
-  const transformed = (element) => {
-    for (let node = element; node; node = node.parentElement ?? node.getRootNode().host) {
-      const style = node.ownerDocument.defaultView.getComputedStyle(node);
-      if (style.transform !== "none" || style.rotate !== "none" || style.scale !== "none") return true;
-    }
-    return false;
-  };
-  let root = document;
-  for (;;) {
-    let element = root.elementFromPoint(x, y);
-    while (element && element.shadowRoot) {
-      const inner = element.shadowRoot.elementFromPoint(x, y);
-      if (!inner || inner === element) break;
-      element = inner;
-    }
-    if (element && (element.tagName === "IFRAME" || element.tagName === "FRAME") && element.contentDocument) {
-      // A transformed frame maps points in ways this walk does not model; it keeps the real press.
-      if (transformed(element)) return null;
-      const box = element.getBoundingClientRect();
-      const style = element.ownerDocument.defaultView.getComputedStyle(element);
-      x -= box.left + element.clientLeft + parseFloat(style.paddingLeft);
-      y -= box.top + element.clientTop + parseFloat(style.paddingTop);
-      root = element.contentDocument;
-      continue;
-    }
-    if (element && element.tagName === "OPTION") element = element.closest("select");
-    if (!element || element.tagName !== "SELECT") return null;
-    if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
-    const view = element.ownerDocument.defaultView;
-    // A customizable select draws its picker in the page, where the stream already shows it.
-    if (
-      view.getComputedStyle(element).appearance === "base-select" &&
-      view.getComputedStyle(element, "::picker(select)").appearance === "base-select"
-    )
-      return null;
-    if (element.options.length > optionLimit) return null;
-    const keys = { altKey: (modifiers & 1) !== 0, ctrlKey: (modifiers & 2) !== 0, metaKey: (modifiers & 4) !== 0, shiftKey: (modifiers & 8) !== 0 };
-    const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 1, ...keys };
-    const pressed =
-      element.dispatchEvent(new view.PointerEvent("pointerdown", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })) &&
-      element.dispatchEvent(new view.MouseEvent("mousedown", { ...init, detail: 1 }));
-    if (pressed) element.focus({ preventScroll: true });
-    return { select: element, x, y, keys, pressed };
+  let element = document.elementFromPoint(x, y);
+  while (element && element.shadowRoot) {
+    const inner = element.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === element) break;
+    element = inner;
   }
+  if (element && element.tagName === "OPTION") element = element.closest("select");
+  if (!element || element.tagName !== "SELECT") return null;
+  if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
+  // A customizable select draws its picker in the page, where the stream already shows it.
+  if (
+    getComputedStyle(element).appearance === "base-select" &&
+    getComputedStyle(element, "::picker(select)").appearance === "base-select"
+  )
+    return null;
+  if (element.options.length > optionLimit) return null;
+  const keys = { altKey: (modifiers & 1) !== 0, ctrlKey: (modifiers & 2) !== 0, metaKey: (modifiers & 4) !== 0, shiftKey: (modifiers & 8) !== 0 };
+  const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1, ...keys };
+  const pressed =
+    element.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })) &&
+    element.dispatchEvent(new MouseEvent("mousedown", { ...init, detail: 1 }));
+  if (pressed) element.focus({ preventScroll: true });
+  return { select: element, x, y, keys, pressed };
 }`;
-/** Describes a pressed select in top-level viewport CSS px and keeps the offered options. */
+/** Describes a pressed select in viewport CSS px and keeps the offered options. */
 const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
   const select = this.select;
   // Page handlers ran in between: they may have added options or removed the select.
   if (!this.pressed || !select.isConnected || !select.ownerDocument.defaultView) return null;
   if (select.options.length > optionLimit) return null;
-  let { left, top, width, height } = select.getBoundingClientRect();
-  for (let view = select.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
-    const frame = view.frameElement;
-    const box = frame.getBoundingClientRect();
-    const style = view.parent.getComputedStyle(frame);
-    left += box.left + frame.clientLeft + parseFloat(style.paddingLeft);
-    top += box.top + frame.clientTop + parseFloat(style.paddingTop);
-  }
+  const { left, top, width, height } = select.getBoundingClientRect();
   const view = select.ownerDocument.defaultView;
   const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
   this.offered = Array.from(select.options).filter(
@@ -1064,8 +1037,9 @@ const make = Effect.gen(function* () {
       void reportLoaded(tab);
     });
     // frameNavigated is cross-document only; a select's handle dies with its document.
-    cdp.on("Page.frameNavigated", ({ frame }) => checkSelectMenus(tab, !frame.parentId));
-    cdp.on("Page.frameDetached", () => checkSelectMenus(tab, false));
+    cdp.on("Page.frameNavigated", ({ frame }) => {
+      if (!frame.parentId) for (const viewer of tab.viewers) withdrawSelectMenu(viewer);
+    });
     page.on("framenavigated", (frame) => {
       const open = tab.fileChooser;
       if (open) {
@@ -2540,33 +2514,6 @@ const make = Effect.gen(function* () {
     releaseSelectHandle(viewer, offer.session, offer.objectId);
   };
 
-  /** A new main document withdraws every offer; elsewhere an offer goes with its select. */
-  const checkSelectMenus = (tab: ServerTab, mainDocument: boolean) => {
-    for (const viewer of tab.viewers) {
-      const offer = viewer.selectMenu;
-      if (!offer) continue;
-      if (mainDocument) {
-        withdrawSelectMenu(viewer);
-        continue;
-      }
-      void offer.session
-        .send("Runtime.callFunctionOn", {
-          objectId: offer.objectId,
-          // A replaced frame document keeps its nodes connected but loses its window.
-          functionDeclaration:
-            "function () { return this.select.isConnected && this.select.ownerDocument.defaultView !== null; }",
-          returnByValue: true,
-        })
-        .then(
-          ({ result }) => result.value === true,
-          () => false,
-        )
-        .then((live) => {
-          if (!live && viewer.selectMenu === offer) withdrawSelectMenu(viewer);
-        });
-    }
-  };
-
   // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
   // a desktop host it is a native menu CDP cannot dismiss, so the real press must not reach it.
   const pressSelect = async (
@@ -2577,6 +2524,8 @@ const make = Effect.gen(function* () {
     modifiers: number,
   ) => {
     const { result } = await session.send("Runtime.evaluate", {
+      // The viewer's press stands in for a trusted one, so it grants the page user activation.
+      userGesture: true,
       expression: `(${PRESS_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${modifiers}, ${SELECT_MENU_OPTION_LIMIT})`,
     });
     const objectId = result.objectId;
@@ -2626,6 +2575,7 @@ const make = Effect.gen(function* () {
               .send("Runtime.callFunctionOn", {
                 objectId: press,
                 functionDeclaration: RELEASE_SELECT_PRESS_SCRIPT,
+                userGesture: true,
               })
               .catch(constVoid);
             await offerSelectMenu(session, viewer, press);
@@ -2763,6 +2713,7 @@ const make = Effect.gen(function* () {
             objectId: offer.objectId,
             functionDeclaration: CHOOSE_SELECT_OPTION_SCRIPT,
             arguments: [{ value: message.index }],
+            userGesture: true,
           })
           .catch(constVoid);
         releaseSelectHandle(viewer, session, offer.objectId);

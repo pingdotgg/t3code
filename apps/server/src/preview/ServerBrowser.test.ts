@@ -1717,13 +1717,12 @@ it.live("a click on a native select offers its options to the viewer and takes i
 it.live("a relayed select press reaches page handlers, and a page can keep its own press", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { viewer, click, output, evaluate } = yield* realSelectPage(
+      const { page, viewer, click, output, evaluate } = yield* realSelectPage(
         `<style>
           select { position: absolute; left: 40px; width: 200px; height: 30px }
           #custom, #custom::picker(select) { appearance: base-select }
           #half { appearance: base-select }
-          iframe { position: absolute; left: 300px; top: 20px; width: 400px; height: 200px; border: 0;
-            transform: rotate(180deg) }
+          iframe { position: absolute; left: 300px; top: 20px; width: 400px; height: 200px; border: 0 }
         </style>
         <select id="relayed" style="top: 20px"><option>One</option><option>Two</option></select>
         <select id="readonly" style="top: 80px" onmousedown="return false">
@@ -1800,11 +1799,29 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
       yield* click(140, 395);
       expect(yield* output("selectMenu"), "a select its click removed offers nothing").toEqual([]);
 
-      yield* click(650, 205);
-      expect(
-        yield* output("selectMenu"),
-        "a transformed frame keeps the real press rather than guess a select",
-      ).toEqual([]);
+      yield* click(340, 35);
+      expect(yield* output("selectMenu"), "a select in a frame keeps the real press").toEqual([]);
+
+      // A loaded page is activated by the server's title read, which Playwright evaluates with a
+      // gesture; about:blank skips that read, and content written without a gesture keeps it so.
+      yield* Effect.promise(() => page.goto("about:blank"));
+      const cdp = yield* Effect.promise(() => page.context().newCDPSession(page));
+      yield* Effect.promise(() =>
+        cdp.send("Runtime.evaluate", {
+          expression: `document.body.innerHTML = \`
+            <select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px"
+              onmousedown="event.preventDefault(); document.querySelector('input').showPicker()">
+              <option>Upload</option>
+            </select><input type="file">\``,
+        }),
+      );
+      yield* Queue.clear(viewer.output);
+      yield* click(140, 35);
+      let chooser = yield* Queue.take(viewer.output);
+      while (chooser._tag !== "fileChooser") chooser = yield* Queue.take(viewer.output);
+      expect(chooser._tag, "the relayed press carries the viewer's user activation").toBe(
+        "fileChooser",
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1864,25 +1881,6 @@ it.live("navigating away or releasing control withdraws an offered select menu",
       expect(yield* output("selectMenuClosed")).toEqual([
         { _tag: "selectMenuClosed", id: offer!.id },
       ]);
-
-      yield* Effect.promise(() =>
-        page.setContent(
-          `<iframe style="position: absolute; left: 20px; top: 0; padding: 20px; border: 0"
-            srcdoc="<body style='margin: 0'><select style='width: 200px; height: 30px'><option>One</option></select>"></iframe>`,
-        ),
-      );
-      yield* Queue.clear(viewer.output);
-      yield* click(140, 35);
-      const [framed] = yield* output("selectMenu");
-      yield* Effect.promise(() =>
-        page.evaluate(`document.querySelector("iframe").srcdoc = "<p>Replaced</p>"`),
-      );
-      let closed = yield* Queue.take(viewer.output);
-      while (closed._tag !== "selectMenuClosed") closed = yield* Queue.take(viewer.output);
-      expect(closed, "a replaced frame document withdraws its offer").toEqual({
-        _tag: "selectMenuClosed",
-        id: framed!.id,
-      });
 
       yield* Effect.promise(() =>
         page.setContent(
