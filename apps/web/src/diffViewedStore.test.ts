@@ -6,7 +6,7 @@ import { diffViewedEntry, diffViewedFingerprint, useDiffViewedStore } from "./di
 function patchFile(index: string, hunk: string) {
   return parsePatchFiles(
     `diff --git a/a.ts b/a.ts\nindex ${index} 100644\n--- a/a.ts\n+++ b/a.ts\n${hunk}`,
-    "a.ts",
+    { cacheKeyPrefix: "a.ts" },
   )[0]!.files[0]!;
 }
 
@@ -31,8 +31,9 @@ describe("diffViewedFingerprint", () => {
 
   it("falls back to the diff content without blob ids", () => {
     const withoutIndex = (hunk: string) =>
-      parsePatchFiles(`diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n${hunk}`, "a.ts")[0]!
-        .files[0]!;
+      parsePatchFiles(`diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n${hunk}`, {
+        cacheKeyPrefix: "a.ts",
+      })[0]!.files[0]!;
     expect(diffViewedFingerprint(withoutIndex(WITHOUT_WHITESPACE))).not.toBe(
       diffViewedFingerprint(withoutIndex(WITH_WHITESPACE)),
     );

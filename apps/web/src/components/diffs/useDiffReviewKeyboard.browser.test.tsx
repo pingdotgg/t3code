@@ -210,7 +210,7 @@ it("expands unchanged context after an equivalent partial diff refreshes", async
       id: "review",
       type: "diff" as const,
       version,
-      fileDiff: parsePatchFiles(patch, "refresh")[0]!.files[0]!,
+      fileDiff: parsePatchFiles(patch, { cacheKeyPrefix: "refresh" })[0]!.files[0]!,
     },
   ];
   await using screen = await render(<CodeView ref={viewer} items={items(1)} options={options} />);

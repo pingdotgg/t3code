@@ -371,8 +371,13 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         if (!firstRow) return true;
         input.setCollapsed(file.fileKey, false);
         // Shift+J and Shift+K need the full file; loading it on the first one draws the new
-        // lines after the scroll that should follow them.
-        if (canExpand(file)) void fileDiffInstance(file.fileKey)?.prepareForEditing();
+        // lines after the scroll that should follow them. A refresh mid-load rejects this
+        // warm-up, and expanding then loads the file itself.
+        if (canExpand(file)) {
+          fileDiffInstance(file.fileKey)
+            ?.prepareForEditing()
+            .catch(() => {});
+        }
         setCursor({ mode: "line", fileKey: file.fileKey, filePath: file.filePath, row: firstRow });
         scrollToRow(file, firstRow);
         return true;
