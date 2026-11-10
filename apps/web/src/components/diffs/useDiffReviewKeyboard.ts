@@ -233,7 +233,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     return visibleDiffRows(
       item?.type === "diff" ? item.fileDiff : file.fileDiff,
       input.diffStyle,
-      fileDiffInstance(file.fileKey)?.getExpandedHunks() ?? NO_EXPANSIONS,
+      fileDiffInstance(file.fileKey)?.getExpandedHunksForSearch() ?? NO_EXPANSIONS,
     );
   };
   const canExpand = (file: DiffReviewFile) => !file.fileDiff.isPartial || input.canLoadFullFiles;

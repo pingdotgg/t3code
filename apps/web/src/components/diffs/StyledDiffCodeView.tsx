@@ -22,6 +22,17 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr);
 }
 
+/* Translucent find matches keep the syntax colours under them. */
+:host {
+  --diffs-bg-search-match-override: light-dark(#ff963288, #ff963266);
+  --diffs-bg-search-match-current-override: color-mix(
+    in lab,
+    var(--diffs-modified-base) 45%,
+    transparent
+  );
+  --diffs-fg-search-match-override: currentColor;
+}
+
 :is(
   [data-line],
   [data-line-annotation],
