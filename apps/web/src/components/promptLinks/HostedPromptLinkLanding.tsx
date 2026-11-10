@@ -144,29 +144,16 @@ function HostedPromptLinkLanding({
     );
   }
 
-  if (openedInApp) {
-    return (
-      <StandalonePage>
-        <StandalonePageHeader
-          title="Opened in T3 Code"
-          description="You can close this tab. If T3 Code didn't open, try again or get the app."
-        />
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Button render={<a href={deepLink} />}>
-            {onPhone ? "Open in app" : "Open in desktop app"}
-          </Button>
-          <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
-            Get T3 Code
-          </Button>
-        </div>
-      </StandalonePage>
-    );
-  }
-
-  const { title, description, prompt, details } = summary.value;
+  const { prompt, details } = summary.value;
+  const header = openedInApp
+    ? {
+        title: "Opened in T3 Code",
+        description: "You can close this tab. If T3 Code didn't open, pick an option below.",
+      }
+    : summary.value;
   return (
     <StandalonePage>
-      <StandalonePageHeader title={title} description={description} />
+      <StandalonePageHeader title={header.title} description={header.description} />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">
           <AlertTitle>This prompt had hidden characters, it may be malicious</AlertTitle>
