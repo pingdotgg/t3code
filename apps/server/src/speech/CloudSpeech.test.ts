@@ -204,6 +204,22 @@ it.effect("sends Deepgram raw WAV with its token and reads the first transcript"
     expect(wav.readInt16LE(46)).toBe(16384);
     yield* transcribe("auto");
     expect(new URL(String(upstream.mock.calls[1]![0])).searchParams.get("language")).toBe("multi");
+    upstream.mockResolvedValueOnce(
+      Response.json(
+        {
+          err_code: "Bad Request",
+          err_msg:
+            "Bad Request: Keyterm limit exceeded. The maximum number of tokens across all keyterms is 500.",
+        },
+        { status: 400 },
+      ),
+    );
+    expect(yield* transcribe("en")).toBe("hello");
+    const [limited, retried] = upstream.mock.calls.slice(-2).map(([url]) => new URL(String(url)));
+    expect(limited!.searchParams.getAll("keyterm")).toEqual(["T3 Code"]);
+    expect(retried!.searchParams.has("keyterm")).toBe(false);
+    upstream.mockResolvedValueOnce(new Response("Bad Request", { status: 400 }));
+    expect(yield* Effect.flip(transcribe("en"))).toMatchObject({ reason: "unavailable" });
     upstream.mockResolvedValueOnce(new Response(null, { status: 402 }));
     expect(yield* Effect.flip(transcribe("en"))).toMatchObject({
       provider: "deepgram",

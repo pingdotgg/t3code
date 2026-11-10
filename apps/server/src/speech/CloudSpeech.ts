@@ -111,13 +111,14 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
-function deepgramUrl(language: string, options: SpeechTranscriptionOptions) {
+function deepgramUrl(language: string, options: SpeechTranscriptionOptions, keyterms: boolean) {
   const url = new URL(endpoints.deepgram.url);
   url.searchParams.set("model", endpoints.deepgram.model);
   url.searchParams.set("smart_format", "true");
   // `multi` transcribes speech that switches languages, such as English terms in other speech.
   url.searchParams.set("language", language === "auto" ? "multi" : language);
-  for (const { term } of options.speechCustomWords) url.searchParams.append("keyterm", term);
+  if (keyterms)
+    for (const { term } of options.speechCustomWords) url.searchParams.append("keyterm", term);
   if (!options.speechRemoveFillerWords || options.speechCorrectionWord)
     url.searchParams.set("filler_words", "true");
   return url;
@@ -231,12 +232,14 @@ export const layer = Layer.effect(
         );
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
+        const deepgramRequest = (keyterms: boolean) =>
+          HttpClientRequest.post(deepgramUrl(language, options, keyterms)).pipe(
+            HttpClientRequest.setHeader("authorization", `Token ${key}`),
+            HttpClientRequest.bodyUint8Array(new Uint8Array(audio), "audio/wav"),
+          );
         const request =
           provider === "deepgram"
-            ? HttpClientRequest.post(deepgramUrl(language, options)).pipe(
-                HttpClientRequest.setHeader("authorization", `Token ${key}`),
-                HttpClientRequest.bodyUint8Array(new Uint8Array(audio), "audio/wav"),
-              )
+            ? deepgramRequest(true)
             : HttpClientRequest.post(endpoints[provider].url).pipe(
                 HttpClientRequest.bearerToken(Redacted.make(key)),
                 provider === "openrouter"
@@ -251,7 +254,15 @@ export const layer = Layer.effect(
             provider,
             reason: current ? "key-changed" : "missing-key",
           });
-        const response = yield* execute(request).pipe(Effect.mapError(unavailable));
+        let response = yield* execute(request).pipe(Effect.mapError(unavailable));
+        // Deepgram caps keyterms in tokens clients cannot count; the dictionary still fixes the text below.
+        if (
+          provider === "deepgram" &&
+          response.status === 400 &&
+          options.speechCustomWords.length > 0 &&
+          (yield* response.text.pipe(Effect.orElseSucceed(() => ""))).includes("Keyterm limit")
+        )
+          response = yield* execute(deepgramRequest(false)).pipe(Effect.mapError(unavailable));
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({
             provider,
