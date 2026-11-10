@@ -44,4 +44,30 @@ describe("parseElicitationForm", () => {
       },
     );
   }
+  it("requires a multi-select with a minimum and accepts none for an optional one", () => {
+    const items = { type: "string", enum: ["web", "mobile"] };
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          targets: { type: "array", minItems: 1, items },
+          extras: { type: "array", items },
+        },
+        required: ["targets"],
+      },
+      "Choose",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["targets", true],
+        ["extras", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ targets: ["web"], extras: [] }), {
+      targets: ["web"],
+      extras: [],
+    });
+  });
 });
