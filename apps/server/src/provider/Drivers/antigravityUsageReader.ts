@@ -100,11 +100,28 @@ const MODEL_IDS: Record<number, string> = {
   1018: "gemini-3-flash-preview",
   1084: "gemini-3-flash-preview",
   1047: "gemini-3-flash-preview",
+  1020: "gemini-3.5-flash-low",
+  1072: "gemini-3.6-flash-medium",
+  1073: "gemini-3.6-flash-low",
+  1132: "gemini-3-flash-agent",
+  1133: "gemini-3-flash-agent",
+  1187: "gemini-3.5-flash-extra-low",
+  1298: "gemini-3.7-flash-high",
+  1299: "gemini-3.7-flash-medium",
+  1301: "gemini-3.7-flash-tiered",
+  1318: "gemini-3.8-flash-high",
+  1319: "gemini-3.8-flash-medium",
+  1320: "gemini-3.8-flash-low",
+  1322: "gemini-3.8-flash-tiered",
 };
 
-// ACP slugs append the thinking level, which shares the base model's price.
+// Effort and routing variants share the base model's price.
 function withRateModel(record: UsageRecord): UsageRecord {
-  const rateModel = record.model.replace(/-(?:low|medium|high)$/, "");
+  const base = record.model.replace(
+    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/,
+    "",
+  );
+  const rateModel = base === "gemini-3-flash" ? "gemini-3-flash-preview" : base;
   return rateModel === record.model ? record : { ...record, rateModel };
 }
 
