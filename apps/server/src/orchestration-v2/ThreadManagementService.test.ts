@@ -461,7 +461,13 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
   }),
 );
 
-it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
+it.effect.each([
+  "live",
+  "no-session",
+  "unsupported-runtime",
+  "failing-runtime",
+  "busy-runtime",
+] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
     Effect.gen(function* () {
@@ -491,6 +497,7 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
         updatedAt: now,
       };
       const calls: Array<{ providerThreadId: ProviderThreadId; awaited: boolean }> = [];
+      const adapterCalled = yield* Deferred.make<void>();
       const runtime = {
         driver,
         providerSessionId,
@@ -508,7 +515,16 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
                     awaited: input.awaited,
                   });
                   return { matched: input.taskIds.filter((taskId) => taskId === "tests") };
-                }),
+                }).pipe(
+                  Effect.tap(() => Deferred.succeed(adapterCalled, undefined)),
+                  Effect.andThen((result) =>
+                    state === "failing-runtime"
+                      ? Effect.fail({ _tag: "AdapterRejected" } as const)
+                      : state === "busy-runtime"
+                        ? Effect.never
+                        : Effect.succeed(result),
+                  ),
+                ),
             }),
       } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
       const layerTest = ThreadManagementService.layer.pipe(
@@ -536,9 +552,14 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
       );
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
-        return yield* service
+        const fiber = yield* service
           .awaitBackgroundTasks({ threadId, taskIds: ["tests", "finished"], awaited: true })
-          .pipe(Effect.result);
+          .pipe(Effect.result, Effect.forkChild);
+        if (state === "busy-runtime") {
+          yield* Deferred.await(adapterCalled);
+          yield* TestClock.adjust("16 seconds");
+        }
+        return yield* Fiber.join(fiber);
       }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
 
       if (state === "live") {
@@ -546,6 +567,18 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
           success: { matched: ["tests"], unmatched: ["finished"] },
         });
         expect(calls).toEqual([{ providerThreadId, awaited: true }]);
+      } else if (state === "failing-runtime") {
+        expect(result).toMatchObject({
+          failure: { _tag: "ThreadManagementBackgroundWaitError", reason: "failed" },
+        });
+      } else if (state === "busy-runtime") {
+        // A busy provider session is a retryable timeout, not a generic failure.
+        expect(result).toMatchObject({
+          failure: { _tag: "ThreadManagementBackgroundWaitError", reason: "timed-out" },
+        });
+        const message = result._tag === "Failure" ? result.failure.message : "";
+        expect(message).toMatch(/timed out/i);
+        expect(message).toMatch(/retry|try again/i);
       } else {
         expect(result).toMatchObject({
           failure: {
