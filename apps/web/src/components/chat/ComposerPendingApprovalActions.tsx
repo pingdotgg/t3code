@@ -72,13 +72,14 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             {content}
           </Button>
         );
-        return option.warning ? (
+        return (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
-            <TooltipPopup side="top">{option.warning}</TooltipPopup>
+            <TooltipPopup side="top">
+              <div className={option.warning ? "font-medium" : undefined}>{option.label}</div>
+              {option.warning}
+            </TooltipPopup>
           </Tooltip>
-        ) : (
-          button
         );
       })}
       {moreOptions.length > 0 ? (
