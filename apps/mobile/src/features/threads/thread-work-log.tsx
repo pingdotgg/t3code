@@ -54,6 +54,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
+import {
+  commandHighlightLanguage,
+  withVisibleControlCharacters,
+} from "@t3tools/client-runtime/work-log/command-label";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
@@ -803,7 +807,7 @@ function ToolCodeText({
   theme,
 }: {
   readonly code: string;
-  readonly language: "typescript" | "html" | "json";
+  readonly language: "typescript" | "html" | "json" | "shellscript" | "powershell";
   readonly theme: "light" | "dark";
 }) {
   const lines = useMarkdownCodeHighlight({ code, language, theme, enabled: true });
@@ -1179,7 +1183,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               props.renderReasoning(reasoning.text)
             ) : call ? (
               [
-                call.command,
+                call.command ? (
+                  <ToolCodeText
+                    key="command"
+                    code={withVisibleControlCharacters(call.command.trim())}
+                    language={commandHighlightLanguage(call.command)}
+                    theme={props.themeAppearance}
+                  />
+                ) : null,
                 ...(call.args ?? []).map(([key, value]) => {
                   const language =
                     key === "html"
