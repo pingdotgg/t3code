@@ -871,121 +871,123 @@ export function createServerEnvironmentAtoms<R, E>(
           Effect.andThen(Deferred.succeed(desktopReconnected, undefined)),
           Effect.forkChild,
         );
-        const result = yield* scheduleAtomCommandEffect(
+        // Let queued settings saves land first, but keep the lane free during the download.
+        yield* scheduleAtomCommandEffect(
           atomRegistry,
           configScheduler,
           configConcurrency,
           target,
-          Effect.gen(function* () {
-            const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
-            fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
-            atomRegistry.set(stateAtom, {
-              status: "running",
-              stage: currentStage,
-              fromVersion,
-              targetVersion,
-            });
+          Effect.void,
+        );
+        const result = yield* Effect.gen(function* () {
+          const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
+          fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
+          atomRegistry.set(stateAtom, {
+            status: "running",
+            stage: currentStage,
+            fromVersion,
+            targetVersion,
+          });
 
-            const supportsProgress =
-              currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
-            const updateResult: ServerSelfUpdateResult = supportsProgress
-              ? yield* Effect.gen(function* () {
-                  let receivedProgress = false;
-                  const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
-                    Option.none(),
-                  );
-                  const streamExit = yield* environmentRegistry
-                    .runStream(
-                      target.environmentId,
-                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
-                    )
-                    .pipe(
-                      Stream.runForEach((event) =>
-                        Effect.sync(() => {
-                          receivedProgress ||= event.type === "progress";
-                          const state = serverUpdateStateForProgressEvent(
-                            fromVersion,
-                            targetVersion,
-                            event,
-                          );
-                          currentStage = state.stage;
-                          atomRegistry.set(stateAtom, state);
-                        }).pipe(
-                          Effect.andThen(
-                            event.type === "complete"
-                              ? Ref.set(terminal, Option.some(event.result))
-                              : Effect.void,
-                          ),
+          const supportsProgress =
+            currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
+          const updateResult: ServerSelfUpdateResult = supportsProgress
+            ? yield* Effect.gen(function* () {
+                let receivedProgress = false;
+                const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
+                  Option.none(),
+                );
+                const streamExit = yield* environmentRegistry
+                  .runStream(
+                    target.environmentId,
+                    runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                  )
+                  .pipe(
+                    Stream.runForEach((event) =>
+                      Effect.sync(() => {
+                        receivedProgress ||= event.type === "progress";
+                        const state = serverUpdateStateForProgressEvent(
+                          fromVersion,
+                          targetVersion,
+                          event,
+                        );
+                        currentStage = state.stage;
+                        atomRegistry.set(stateAtom, state);
+                      }).pipe(
+                        Effect.andThen(
+                          event.type === "complete"
+                            ? Ref.set(terminal, Option.some(event.result))
+                            : Effect.void,
                         ),
                       ),
-                      Effect.exit,
-                    );
-                  const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
-                  // Desktop preparation needs its terminal commit token.
-                  const accepted =
-                    receivedProgress &&
-                    (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
-                      ? { targetVersion, method: selfUpdateMethod }
-                      : undefined;
-                  return yield* resolveServerUpdateProgressResult(
-                    targetVersion,
-                    yield* Ref.get(terminal),
-                    streamExit,
-                    accepted,
+                    ),
+                    Effect.exit,
                   );
-                })
-              : yield* Effect.gen(function* () {
-                  const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
-                  const exit = yield* environmentRegistry
-                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
-                    .pipe(Effect.exit);
-                  if (Exit.isSuccess(exit)) {
-                    return exit.value;
-                  }
-                  if (
-                    (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
-                    isLegacyUpdateHandoffLoss(exit.cause)
-                  ) {
-                    // Older servers can tear down the transport before their
-                    // unary acknowledgement arrives. Treat only that transport
-                    // loss as a handoff, then prove it by waiting for target ready.
-                    return { targetVersion, method: selfUpdateMethod };
-                  }
-                  return yield* Effect.failCause(exit.cause);
-                });
+                const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
+                // Desktop preparation needs its terminal commit token.
+                const accepted =
+                  receivedProgress &&
+                  (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
+                    ? { targetVersion, method: selfUpdateMethod }
+                    : undefined;
+                return yield* resolveServerUpdateProgressResult(
+                  targetVersion,
+                  yield* Ref.get(terminal),
+                  streamExit,
+                  accepted,
+                );
+              })
+            : yield* Effect.gen(function* () {
+                const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
+                const exit = yield* environmentRegistry
+                  .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                  .pipe(Effect.exit);
+                if (Exit.isSuccess(exit)) {
+                  return exit.value;
+                }
+                if (
+                  (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
+                  isLegacyUpdateHandoffLoss(exit.cause)
+                ) {
+                  // Older servers can tear down the transport before their
+                  // unary acknowledgement arrives. Treat only that transport
+                  // loss as a handoff, then prove it by waiting for target ready.
+                  return { targetVersion, method: selfUpdateMethod };
+                }
+                return yield* Effect.failCause(exit.cause);
+              });
 
-            if (
-              updateResult.method === "desktop-app" &&
-              updateResult.desktopUpdateToken !== undefined
-            ) {
-              yield* Deferred.succeed(desktopCommitStarting, undefined);
-              yield* Deferred.await(desktopReconnectObserverArmed);
-              const commitExit = yield* environmentRegistry
-                .run(
-                  target.environmentId,
-                  request(WS_METHODS.serverCommitDesktopUpdate, {
-                    requestId: updateResult.desktopUpdateToken,
-                  }),
-                )
-                .pipe(Effect.exit);
-              if (Exit.isFailure(commitExit) && !isLegacyUpdateHandoffLoss(commitExit.cause)) {
-                return yield* Effect.failCause(commitExit.cause);
-              }
-              desktopCommitLostTransport = Exit.isFailure(commitExit);
+          if (
+            updateResult.method === "desktop-app" &&
+            updateResult.desktopUpdateToken !== undefined
+          ) {
+            yield* Deferred.succeed(desktopCommitStarting, undefined);
+            yield* Deferred.await(desktopReconnectObserverArmed);
+            const commitExit = yield* environmentRegistry
+              .run(
+                target.environmentId,
+                request(WS_METHODS.serverCommitDesktopUpdate, {
+                  requestId: updateResult.desktopUpdateToken,
+                }),
+              )
+              .pipe(Effect.exit);
+            if (Exit.isFailure(commitExit) && !isLegacyUpdateHandoffLoss(commitExit.cause)) {
+              return yield* Effect.failCause(commitExit.cause);
             }
+            desktopCommitLostTransport = Exit.isFailure(commitExit);
+          }
 
-            targetVersion = updateResult.targetVersion;
+          targetVersion = updateResult.targetVersion;
 
-            currentStage = "resuming";
-            atomRegistry.set(stateAtom, {
-              status: "running",
-              stage: currentStage,
-              fromVersion,
-              targetVersion,
-            });
-            return updateResult;
-          }),
-        );
+          currentStage = "resuming";
+          atomRegistry.set(stateAtom, {
+            status: "running",
+            stage: currentStage,
+            fromVersion,
+            targetVersion,
+          });
+          return updateResult;
+        });
 
         // A track switch's desktop host already on its track's newest build only saved the
         // track; nothing restarts.

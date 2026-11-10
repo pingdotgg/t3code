@@ -1396,69 +1396,107 @@ describe("provider setup commands", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("saves settings while a provider update is still running", () =>
-    Effect.gen(function* () {
-      const updateStarted = yield* Deferred.make<void>();
-      const settingsSaved = yield* Deferred.make<void>();
-      const client = {
-        [WS_METHODS.serverUpdateProvider]: () =>
-          Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
-        [WS_METHODS.serverUpdateSettings]: () =>
-          Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
-      } as unknown as WsRpcProtocolClient;
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target: TARGET,
-        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-        session: yield* SubscriptionRef.make(Option.some(session(client))),
-        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const runtime = Atom.runtime(
-        Layer.merge(
-          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
-            run: (_environmentId, effect) =>
-              Effect.provideService(
-                effect,
-                EnvironmentSupervisor.EnvironmentSupervisor,
-                supervisor,
+  it.effect.each(["provider", "server"] as const)(
+    "saves settings while a %s update is still running",
+    (kind) =>
+      Effect.gen(function* () {
+        const updateStarted = yield* Deferred.make<void>();
+        const settingsSaved = yield* Deferred.make<void>();
+        const config = {
+          ...CONFIG,
+          environment: {
+            ...CONFIG.environment,
+            serverVersion: "0.0.30",
+            capabilities: {
+              ...CONFIG.environment.capabilities,
+              serverSelfUpdate: "desktop-managed",
+              serverSelfUpdateProgress: true,
+            },
+          },
+        } satisfies ServerConfig;
+        const client = {
+          [WS_METHODS.subscribeServerConfig]: () => Stream.never,
+          [WS_METHODS.serverUpdateProvider]: () =>
+            Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          [WS_METHODS.serverUpdateServerWithProgress]: () =>
+            Stream.make({ type: "progress" as const, stage: "downloading" as const }).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+                ),
               ),
-          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
-          Layer.succeed(
-            Persistence.EnvironmentCacheStore,
-            {} as Persistence.EnvironmentCacheStore["Service"],
+            ),
+          [WS_METHODS.serverUpdateSettings]: () =>
+            Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+              run: (_environmentId, effect) =>
+                Effect.provideService(
+                  effect,
+                  EnvironmentSupervisor.EnvironmentSupervisor,
+                  supervisor,
+                ),
+              runStream: (_environmentId, stream) =>
+                Stream.provideService(
+                  stream,
+                  EnvironmentSupervisor.EnvironmentSupervisor,
+                  supervisor,
+                ),
+              stateChanges: () => Stream.never,
+            } as Partial<
+              EnvironmentRegistry.EnvironmentRegistry["Service"]
+            > as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            Layer.succeed(Persistence.EnvironmentCacheStore, {
+              loadServerConfig: () => Effect.succeedNone,
+            } as unknown as Persistence.EnvironmentCacheStore["Service"]),
           ),
-        ),
-      );
-      const atoms = createServerEnvironmentAtoms(runtime, {
-        initialConfigValueAtom: () => Atom.make(CONFIG),
-      });
-      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
-        Effect.sync(() => registry.dispose()),
-      );
+        );
+        const atoms = createServerEnvironmentAtoms(runtime, {
+          initialConfigValueAtom: () => Atom.make(config),
+        });
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
 
-      void atoms.updateProvider.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: { provider: ProviderDriverKind.make("opencode") },
-      });
-      yield* Deferred.await(updateStarted);
-      void atoms.updateSettings.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: { patch: { fastWorktreeCheckout: true } },
-      });
+        if (kind === "provider") {
+          void atoms.updateProvider.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { provider: ProviderDriverKind.make("opencode") },
+          });
+        } else {
+          void atoms.updateServer.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { targetVersion: "0.0.31" },
+          });
+        }
+        yield* Deferred.await(updateStarted);
+        void atoms.updateSettings.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { patch: { fastWorktreeCheckout: true } },
+        });
 
-      const saved = yield* Deferred.await(settingsSaved).pipe(
-        Effect.as(true),
-        Effect.timeoutOrElse({
-          duration: Duration.seconds(1),
-          orElse: () => Effect.succeed(false),
-        }),
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust(Duration.seconds(1));
-      expect(yield* Fiber.join(saved)).toBe(true);
-    }).pipe(Effect.scoped),
+        const saved = yield* Deferred.await(settingsSaved).pipe(
+          Effect.as(true),
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(1),
+            orElse: () => Effect.succeed(false),
+          }),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust(Duration.seconds(1));
+        expect(yield* Fiber.join(saved)).toBe(true);
+      }).pipe(Effect.scoped),
   );
 });
 
