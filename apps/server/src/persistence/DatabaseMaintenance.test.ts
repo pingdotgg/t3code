@@ -12,9 +12,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as Sqlite from "./Sqlite.ts";
-import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
@@ -104,6 +101,77 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
+    it.effect("runs a repair requested from Settings once and keeps its failure for Settings", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-requested-reclaim-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        const files = DatabaseMaintenance.reclaimFiles(path, dbPath);
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        const autoVacuum = Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql<{ readonly auto_vacuum: number }>`PRAGMA auto_vacuum`,
+        ).pipe(
+          Effect.map((rows) => rows[0]?.auto_vacuum),
+          Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })),
+        );
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA auto_vacuum = NONE`;
+          yield* sql`VACUUM`;
+          yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          yield* sql`INSERT INTO retained_data VALUES ('keep')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+        // Every server exit runs this; without a request it must leave the database alone.
+        yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
+        assert.equal(yield* autoVacuum, 0);
+
+        yield* fs.writeFileString(files.request, "");
+        yield* fs.writeFileString(files.failure, "an earlier failure");
+        yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
+        assert.isFalse(yield* fs.exists(files.request));
+        assert.isFalse(yield* fs.exists(files.failure));
+        assert.equal(yield* autoVacuum, 2);
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
+
+        const brokenPath = path.join(baseDir, "broken", "statev2.sqlite");
+        const broken = DatabaseMaintenance.reclaimFiles(path, brokenPath);
+        yield* fs.makeDirectory(path.dirname(brokenPath));
+        yield* fs.writeFileString(brokenPath, "not a database");
+        yield* fs.writeFileString(broken.request, "");
+        yield* DatabaseMaintenance.runRequestedReclaim(brokenPath);
+        assert.isFalse(
+          yield* fs.exists(broken.request),
+          "a failed repair must not rerun on every exit",
+        );
+        assert.equal(
+          yield* fs.readFileString(broken.failure),
+          new DatabaseMaintenance.DatabaseCompactError({ path: brokenPath, cause: null }).message,
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("refuses a repair whose copies would not fit on disk", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dbPath = path.join(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-reclaim-space-" }),
+          "statev2.sqlite",
+        );
+        assert.isNull(yield* DatabaseMaintenance.reclaimSpaceShortfall(dbPath, 1024));
+        const huge = 2 ** 60;
+        const shortfall = yield* DatabaseMaintenance.reclaimSpaceShortfall(dbPath, huge);
+        assert.isAtLeast(shortfall?.neededBytes ?? 0, huge);
+        assert.isBelow(shortfall?.freeBytes ?? Infinity, huge);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -111,17 +179,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-" });
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        yield* Effect.flatMap(
-          ProjectionMaintenance.ProjectionMaintenanceV2,
-          (projections) => projections.rebuild,
-        ).pipe(
-          Effect.provide(
-            ProjectionMaintenance.layer.pipe(
-              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
-            ),
-          ),
-        );
+        // Opening the database migrates it.
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA auto_vacuum = NONE`;
@@ -168,18 +227,22 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const clock = yield* Clock.Clock;
         const pauses: number[] = [];
         let activeNanos = 0n;
-        const result = yield* maintenance.compact(dbPath).pipe(
-          Effect.provideService(Clock.Clock, {
-            ...clock,
-            // Exceed the background budget whenever the compactor checks elapsed time.
-            monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
-            sleep: (duration) =>
-              Effect.sync(() => {
-                pauses.push(Duration.toMillis(duration));
-              }),
-          }),
-        );
+        const steps: string[] = [];
+        const result = yield* maintenance
+          .compact(dbPath, (step) => Effect.sync(() => steps.push(step)))
+          .pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              // Exceed the background budget whenever the compactor checks elapsed time.
+              monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
+              sleep: (duration) =>
+                Effect.sync(() => {
+                  pauses.push(Duration.toMillis(duration));
+                }),
+            }),
+          );
         assert.deepEqual(pauses, [], "offline doctor must not throttle compaction");
+        assert.deepEqual(steps, ["prune-events", "vacuum", "rebuild-search", "checkpoint"]);
         assert.equal(result.deletedReceiptCount, 51);
         assert.isBelow(result.afterBytes, result.beforeBytes - 3 * 1024 * 1024);
         yield* Effect.gen(function* () {
@@ -197,38 +260,6 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
             [{ messageId: "message-1" }],
           );
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
-      }).pipe(Effect.scoped),
-    );
-
-    it.effect("reports each compaction step as it starts", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-steps-" });
-        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        yield* Effect.flatMap(
-          ProjectionMaintenance.ProjectionMaintenanceV2,
-          (projections) => projections.rebuild,
-        ).pipe(
-          Effect.provide(
-            ProjectionMaintenance.layer.pipe(
-              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
-            ),
-          ),
-        );
-
-        const steps: string[] = [];
-        yield* maintenance.compact(dbPath, (step) => Effect.sync(() => steps.push(step)));
-        assert.deepEqual(steps, [
-          "verify",
-          "compact-events",
-          "verify",
-          "vacuum",
-          "rebuild-search",
-          "checkpoint",
-        ]);
       }).pipe(Effect.scoped),
     );
   },

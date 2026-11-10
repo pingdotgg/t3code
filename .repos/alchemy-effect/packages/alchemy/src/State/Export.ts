@@ -50,9 +50,7 @@ export interface ExportStateFilter {
  * Results are ordered deterministically: by stack, then stage, then
  * FQN.
  */
-export const exportState = Effect.fn("exportState")(function* (
-  filter: ExportStateFilter = {},
-) {
+export const exportState = Effect.fn("exportState")(function* (filter: ExportStateFilter = {}) {
   const state = yield* yield* State;
   const perStage = yield* Effect.forEach(
     yield* allStages(filter),
@@ -63,9 +61,7 @@ export const exportState = Effect.fn("exportState")(function* (
           fqns,
           (fqn) =>
             Effect.map(state.get({ stack, stage, fqn }), (value) =>
-              value === undefined
-                ? undefined
-                : ({ stack, stage, fqn, state: value } as const),
+              value === undefined ? undefined : ({ stack, stage, fqn, state: value } as const),
             ),
           { concurrency: 16 },
         );

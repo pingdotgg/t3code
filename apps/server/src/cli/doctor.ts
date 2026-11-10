@@ -23,8 +23,7 @@ const formatElapsed = (nanos: bigint) => {
 };
 
 const COMPACT_STEP_LABELS: Record<DatabaseMaintenance.DatabaseCompactStep, string> = {
-  verify: "Checking the database",
-  "compact-events": "Removing superseded events",
+  "prune-events": "Removing superseded events",
   vacuum: "Rewriting the database file",
   "rebuild-search": "Rebuilding the search index",
   checkpoint: "Flushing the write-ahead log",

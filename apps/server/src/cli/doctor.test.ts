@@ -60,10 +60,8 @@ it.effect("warns how long reclaiming can take and reports each step with its ela
   Effect.gen(function* () {
     const output: string[] = [];
     const steps = [
-      ["verify", "5 seconds"],
-      ["compact-events", "1 minute"],
-      ["verify", "1 second"],
-      ["vacuum", "700 seconds"],
+      ["prune-events", "65 seconds"],
+      ["vacuum", "701 seconds"],
       ["rebuild-search", "1 second"],
       ["checkpoint", "1 second"],
     ] as const;
@@ -125,7 +123,7 @@ it.effect("warns how long reclaiming can take and reports each step with its ela
       .map((line) => /\[(\d+:\d{2})\]/.exec(line)?.[1] ?? `unprefixed: ${line}`);
     assert.deepEqual(
       progress,
-      ["0:00", "0:05", "1:05", "1:06", "12:46", "12:47"],
+      ["0:00", "1:05", "12:46", "12:47"],
       "each compaction step must print one line with the elapsed time as it starts",
     );
   }),

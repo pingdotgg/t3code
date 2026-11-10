@@ -4,9 +4,7 @@ import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type { BuildOutput } from "./BuildOutput.ts";
 
-export class FrameworkError extends Data.TaggedError<"FrameworkError">(
-  "FrameworkError",
-)<{
+export class FrameworkError extends Data.TaggedError<"FrameworkError">("FrameworkError")<{
   /** The framework the implementation drives (e.g. "vite", "waku", "astro"). */
   readonly framework?: string | undefined;
   readonly message: string;
@@ -65,9 +63,7 @@ export interface FrameworkDevServer {
 export class Framework extends Context.Service<
   Framework,
   {
-    readonly build: (
-      options?: FrameworkBuildOptions,
-    ) => Effect.Effect<BuildOutput, FrameworkError>;
+    readonly build: (options?: FrameworkBuildOptions) => Effect.Effect<BuildOutput, FrameworkError>;
     readonly dev: (
       options?: FrameworkDevOptions,
     ) => Effect.Effect<FrameworkDevServer, FrameworkError, Scope.Scope>;

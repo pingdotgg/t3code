@@ -4,14 +4,17 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect has no free-space query.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError } from "effect/sql/SqlError";
 
-import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
 
 export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
@@ -29,15 +32,6 @@ export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()
 ) {
   override get message() {
     return "Stop the T3 Code server and desktop app, including any version before 0.1.0, before repairing the database.";
-  }
-}
-
-export class DatabaseProjectionsInvalidError extends Schema.TaggedError<DatabaseProjectionsInvalidError>()(
-  "DatabaseProjectionsInvalidError",
-  { path: Schema.String },
-) {
-  override get message() {
-    return "Database projections need repair before compaction. Start T3 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
   }
 }
 
@@ -68,12 +62,16 @@ export class LegacyDatabaseRemoveError extends Schema.TaggedError<LegacyDatabase
   }
 }
 
-export type DatabaseCompactStep =
-  | "verify"
-  | "compact-events"
-  | "vacuum"
-  | "rebuild-search"
-  | "checkpoint";
+export class DiskSpaceCheckError extends Schema.TaggedError<DiskSpaceCheckError>()(
+  "DiskSpaceCheckError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Could not check free disk space.";
+  }
+}
+
+export type DatabaseCompactStep = "prune-events" | "vacuum" | "rebuild-search" | "checkpoint";
 
 export class DatabaseMaintenance extends Context.Service<
   DatabaseMaintenance,
@@ -102,10 +100,7 @@ export class DatabaseMaintenance extends Context.Service<
         readonly deletedEventCount: number;
         readonly deletedReceiptCount: number;
       },
-      | DatabaseMissingError
-      | DatabaseInUseError
-      | DatabaseProjectionsInvalidError
-      | DatabaseCompactError
+      DatabaseMissingError | DatabaseInUseError | DatabaseCompactError
     >;
     /** Deletes only the pre-0.1.0 database; earlier versions still use it. */
     readonly removeLegacyDatabase: (
@@ -114,9 +109,7 @@ export class DatabaseMaintenance extends Context.Service<
   }
 >()("t3/persistence/DatabaseMaintenance") {}
 
-const isDomainError = Schema.is(
-  Schema.Union([DatabaseMissingError, DatabaseInUseError, DatabaseProjectionsInvalidError]),
-);
+const isDomainError = Schema.is(Schema.Union([DatabaseMissingError, DatabaseInUseError]));
 
 const readStorage = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -196,16 +189,8 @@ const make = Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* lockExclusively(databasePath);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        yield* onStep("verify");
-        if (!(yield* maintenance.verify).valid) {
-          return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
-        }
-        yield* onStep("compact-events");
-        const summary = yield* maintenance.compactEventStore();
-        yield* onStep("verify");
-        if (!(yield* maintenance.verify).valid) {
-          return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
-        }
+        yield* onStep("prune-events");
+        const summary = yield* maintenance.pruneEventStore();
         yield* onStep("vacuum");
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
@@ -218,7 +203,6 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.provide(
           ProjectionMaintenance.layer.pipe(
-            Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
             Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
           ),
         ),
@@ -275,3 +259,103 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(DatabaseMaintenance, make);
+
+/** Settings' Reclaim writes the request; the failure stays for Settings until the next request. */
+export const reclaimFiles = (path: Path.Path, databasePath: string) => ({
+  request: path.join(path.dirname(databasePath), "reclaim-requested"),
+  failure: path.join(path.dirname(databasePath), "reclaim-failed"),
+});
+
+/** Runs a repair that Settings requested. The server calls this on exit, once its database is closed. */
+export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedReclaim")(
+  function* (databasePath: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const files = reclaimFiles(yield* Path.Path, databasePath);
+    if (!(yield* fs.exists(files.request))) return;
+    // One attempt per request, so a repair killed midway (it rolls back) cannot delay later exits.
+    yield* fs.remove(files.request, { force: true });
+    yield* Effect.logInfo("Reclaiming database space before the restart. This can take minutes.");
+    const maintenance = yield* DatabaseMaintenance;
+    yield* maintenance.compact(databasePath).pipe(
+      // Worker threads and agent processes can hold the file for a moment after the server stops.
+      Effect.retry({
+        times: 10,
+        while: (error) => error._tag === "DatabaseInUseError",
+        schedule: Schedule.spaced("1 second"),
+      }),
+      Effect.matchEffect({
+        onSuccess: (result) =>
+          fs
+            .remove(files.failure, { force: true })
+            .pipe(Effect.andThen(Effect.logInfo("Reclaimed database space", result))),
+        onFailure: (error) =>
+          fs
+            .writeFileString(
+              files.failure,
+              error._tag === "DatabaseInUseError"
+                ? "Another program kept the database open. Close other T3 Code apps and t3 commands on this machine, then try again."
+                : error.message,
+            )
+            .pipe(
+              Effect.andThen(Effect.logWarning("Database space reclamation failed", { error })),
+            ),
+      }),
+    );
+  },
+  Effect.catchCause((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
+);
+
+// SQLite's search order for its temporary files (unixTempFileDir in os_unix.c).
+const sqliteTempDirectory = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) === "win32") return NodeOS.tmpdir();
+  const fs = yield* FileSystem.FileSystem;
+  const env = yield* HostProcess.Environment;
+  for (const directory of [env.SQLITE_TMPDIR, env.TMPDIR, "/var/tmp", "/usr/tmp", "/tmp"]) {
+    if (directory === undefined || directory === "") continue;
+    const info = yield* fs.stat(directory).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "Directory") continue;
+    // SQLite skips directories it cannot write to and search: osAccess(zDir, 03).
+    const usable = yield* Effect.tryPromise({
+      try: () => NodeFSP.access(directory, NodeFSP.constants.W_OK | NodeFSP.constants.X_OK),
+      catch: (cause) => new DiskSpaceCheckError({ path: directory, cause }),
+    }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (usable) return directory;
+  }
+  return ".";
+});
+
+const freeBytes = (directory: string) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.statfs(directory),
+    catch: (cause) => new DiskSpaceCheckError({ path: directory, cause }),
+  }).pipe(Effect.map((stats) => stats.bavail * stats.bsize));
+
+/**
+ * VACUUM copies the live pages to a temporary file, then writes them again to the WAL.
+ * Returns the free space the repair needs when either file system has less, else null.
+ */
+export const reclaimSpaceShortfall = Effect.fn("DatabaseMaintenance.reclaimSpaceShortfall")(
+  function* (databasePath: string, liveBytes: number) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const databaseDirectory = path.dirname(databasePath);
+    const tempDirectory = yield* sqliteTempDirectory;
+    const copyBytes = Math.ceil(liveBytes * 1.1);
+    const [databaseFree, tempFree, databaseDevice, tempDevice] = yield* Effect.all([
+      freeBytes(databaseDirectory),
+      freeBytes(tempDirectory),
+      fs.stat(databaseDirectory).pipe(Effect.map((info) => info.dev)),
+      fs.stat(tempDirectory).pipe(Effect.map((info) => info.dev)),
+    ]);
+    if (databaseDevice === tempDevice) {
+      return databaseFree < 2 * copyBytes
+        ? { neededBytes: 2 * copyBytes, freeBytes: databaseFree }
+        : null;
+    }
+    if (databaseFree < copyBytes) return { neededBytes: copyBytes, freeBytes: databaseFree };
+    return tempFree < copyBytes ? { neededBytes: copyBytes, freeBytes: tempFree } : null;
+  },
+);

@@ -107,6 +107,31 @@ describe("preview stream control", () => {
     expect(client.send({ type: "dialog", accept: false })).toBe(false);
     client.stop();
   });
+
+  it("withdraws an offered file picker when the stream drops or stops", () => {
+    const onFileChooser = vi.fn();
+    const events = {
+      onFrame: vi.fn(),
+      onFileChooser,
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    };
+    const client = createPreviewStreamClient(target, events);
+    const socket = FakeSocket.current;
+    socket.dispatchEvent(new Event("open"));
+    socket.message(JSON.stringify({ type: "fileChooser", id: "c1", multiple: false, accept: "" }));
+    socket.dispatchEvent(Object.assign(new Event("close"), { code: 1012 }));
+    expect(onFileChooser).toHaveBeenLastCalledWith(null);
+    client.stop();
+
+    const restarted = createPreviewStreamClient(target, events);
+    FakeSocket.current.message(
+      JSON.stringify({ type: "fileChooser", id: "c2", multiple: false, accept: "" }),
+    );
+    restarted.stop();
+    expect(onFileChooser).toHaveBeenLastCalledWith(null);
+  });
 });
 
 describe("preview stream downloads", () => {
