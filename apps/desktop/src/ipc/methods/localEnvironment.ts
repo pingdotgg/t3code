@@ -1,9 +1,9 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
-import * as DesktopPreReadyFileSystem from "../../app/DesktopPreReadyFileSystem.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
@@ -14,28 +14,6 @@ export const getLocalEnvironmentEnabled = makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.localEnvironment.getEnabled")(function* () {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     return (yield* appSettings.get).localEnvironmentEnabled;
-  }),
-});
-
-export const getHomeEnvironmentId = makeSyncIpcMethod({
-  channel: IpcChannels.GET_HOME_ENVIRONMENT_ID_CHANNEL,
-  result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.localEnvironment.getHomeEnvironmentId")(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    // Sync IPC must reply without suspending or failing, including when the identity file is absent.
-    const id = yield* DesktopPreReadyFileSystem.make
-      .readFileString(environment.path.join(environment.stateDir, "environment-id"))
-      .pipe(
-        Effect.map((raw) => raw.trim()),
-        Effect.catch((error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed("")
-            : Effect.logWarning("Could not read the home environment ID.", { error }).pipe(
-                Effect.as(""),
-              ),
-        ),
-      );
-    return id.length > 0 ? id : null;
   }),
 });
 
@@ -50,5 +28,20 @@ export const setLocalEnvironmentEnabled = makeIpcMethod({
     if (change.changed) {
       yield* lifecycle.relaunch(`localEnvironmentEnabled=${enabled}`);
     }
+  }),
+});
+
+// A background service sharing this app's T3 home records its environment ID in the same state dir.
+export const getHostEnvironmentId = makeIpcMethod({
+  channel: IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.localEnvironment.getHostEnvironmentId")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const contents = yield* fileSystem
+      .readFileString(environment.path.join(environment.stateDir, "environment-id"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    return contents.trim() || null;
   }),
 });

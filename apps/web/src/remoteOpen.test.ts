@@ -31,7 +31,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
-        desktopHomeEnvironmentId: null,
+        hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -43,7 +43,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
-        desktopHomeEnvironmentId: null,
+        hostEnvironmentId: null,
       }),
     ).toEqual({
       mode: "remote-links",
@@ -59,7 +59,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
-        desktopHomeEnvironmentId: null,
+        hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -73,7 +73,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
-        desktopHomeEnvironmentId: environmentId,
+        hostEnvironmentId: environmentId,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -85,7 +85,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
-        desktopHomeEnvironmentId: EnvironmentId.make("environment-desktop-home"),
+        hostEnvironmentId: EnvironmentId.make("environment-host"),
       }),
     ).toEqual({
       mode: "remote-links",
@@ -101,7 +101,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
       ],
-      desktopHomeEnvironmentId: null,
+      hostEnvironmentId: null,
     });
     expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -130,7 +130,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget,
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
-      desktopHomeEnvironmentId: null,
+      hostEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -155,7 +155,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
       ],
-      desktopHomeEnvironmentId: null,
+      hostEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -172,7 +172,7 @@ describe("resolveRemoteOpenState", () => {
           sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
-          desktopHomeEnvironmentId: null,
+          hostEnvironmentId: null,
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
