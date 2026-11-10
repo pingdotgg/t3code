@@ -125,7 +125,7 @@ export function useLinkedPullRequestActions(input: {
             {
               id: "agent-merge",
               title: "Agent merge",
-              image: "sparkles",
+              image: "hammer",
               subactions: AGENT_MERGE_OPTIONS.map((option) => ({
                 id: `agent-merge:${option.value}`,
                 title: option.label,

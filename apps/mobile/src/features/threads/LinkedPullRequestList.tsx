@@ -132,7 +132,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           ) : null}
           {watching ? (
             <SymbolView
-              name={link.watch?.agentMerge === undefined ? "eye" : "sparkles"}
+              name={link.watch?.agentMerge === undefined ? "eye" : "hammer"}
               size={13}
               tintColorClassName="accent-foreground-muted"
             />
