@@ -67,6 +67,7 @@ vi.mock("../../state/project-grouping", () => ({
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../triage/usePrepareTriage", () => ({ usePrepareTriage: () => vi.fn() }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
   useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
