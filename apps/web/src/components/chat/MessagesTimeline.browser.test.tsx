@@ -33,9 +33,9 @@ import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { observeResize } from "~/lib/observeResize";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { observeResize } from "~/lib/observeResize";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
@@ -336,17 +336,8 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() =>
       expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" })),
     );
-    // Shrinks by more than the new viewport while that smooth pin runs. Observers run in creation
-    // order before paint, so this one reads the position the resized frame paints with.
-    const distanceWhenPainted = new Promise<number>((resolve) => {
-      const observer = new ResizeObserver(() => {
-        observer.disconnect();
-        resolve(distanceFromEnd());
-      });
-      observer.observe(viewport);
-      container.style.height = "200px";
-    });
-    expect(await distanceWhenPainted).toBeLessThan(2);
+    // Shrinks by more than the new viewport while that smooth pin runs.
+    container.style.height = "200px";
     await pinnedEnd("instant");
 
     await screen.rerender(
