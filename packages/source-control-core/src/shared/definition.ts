@@ -260,7 +260,8 @@ export interface SourceControlDefinition {
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
   /**
    * The repository URL when `url` is a page inside one of this host's repositories. `known` is set
-   * when the caller already knows this host serves the URL's repository.
+   * when the caller already knows this host serves the URL's repository. Off a known host, return
+   * `url.href` when the path may already be a clone URL, so no rewrite happens.
    */
   readonly repositoryUrlFromPage?: (url: URL, known: boolean) => string | null;
   /**
