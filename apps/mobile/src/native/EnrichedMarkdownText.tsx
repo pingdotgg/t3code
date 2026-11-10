@@ -170,7 +170,7 @@ function enrichedStyle(
 
 /**
  * Diagram and math fences, as web draws them, and code enriched-markdown cannot colour.
- * Diagrams and math stream as native code until they close; fallback code keeps one block throughout.
+ * Diagrams and math stay native until the library reports them complete; fallback code keeps one block throughout.
  */
 function codeBlockElement(
   block: MarkdownCodeBlock,

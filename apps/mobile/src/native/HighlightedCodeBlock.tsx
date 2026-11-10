@@ -69,7 +69,7 @@ export function HighlightedCodeBlock(props: {
   readonly code: string;
   readonly fence: string;
   readonly language: string;
-  /** Highlighting waits for the closing fence, as the native block's does. */
+  /** False only while the library withholds an unclosed fence (`streamingAnimation`); highlighting waits for it. */
   readonly complete: boolean;
   readonly scheme: HighlightScheme;
   readonly textStyle: NativeMarkdownTextStyle;
