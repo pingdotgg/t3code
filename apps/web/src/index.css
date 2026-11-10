@@ -1383,11 +1383,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 @utility surface-gloss-thumb {
   background: var(--gloss-thumb-fill);
-  box-shadow: var(--raised-shadow);
+  box-shadow: var(--thumb-shadow, var(--raised-shadow));
 }
 @utility surface-gloss-off-thumb {
   background: var(--gloss-off-thumb-fill);
-  box-shadow: var(--raised-shadow);
+  box-shadow: var(--thumb-shadow, var(--raised-shadow));
 }
 
 /* Paint find results without changing rendered markdown or copied text. */
@@ -4557,8 +4557,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 /* Gradient rim everywhere: the lit edge that fades out on every surface. Cards
-   draw it in their transparent border so it follows the radius; borderless
-   cards show none. */
+   and composers share one transparent border with panels. */
 :root[data-surface-style="gradient-rim-everywhere"] > body,
 [data-surface-preview="gradient-rim-everywhere"],
 :root.black-chrome[data-surface-style="gradient-rim-everywhere"] [data-chrome-scope] {
@@ -4567,22 +4566,22 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     color-mix(in srgb, var(--foreground) 30%, transparent),
     color-mix(in srgb, var(--foreground) 3%, transparent)
   ) !important;
-  --card-fill:
-    linear-gradient(var(--card-bottom), var(--card-bottom)) padding-box,
-    linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--foreground) 14%, transparent),
-        color-mix(in srgb, var(--foreground) 2%, transparent)
-      )
-      border-box !important;
-  --card-settings-fill:
-    linear-gradient(var(--card-bottom), var(--card-bottom)) padding-box,
-    linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--foreground) 14%, transparent),
-        color-mix(in srgb, var(--foreground) 2%, transparent)
-      )
-      border-box !important;
+  --popover-top: var(--popover-bottom) !important;
+  --card-fill: linear-gradient(var(--card-bottom), var(--card-bottom)) !important;
+  --card-settings-fill: var(--card-fill) !important;
+  --card-rim: var(--popover-rim) !important;
+  --card-background:
+    var(--card-fill) padding-box, var(--card-rim) border-box, var(--card-fill) border-box;
+  --card-settings-background: var(--card-background);
+  --tint-fill-top: 10%;
+  --tint-fill-bottom: 10%;
+  --tint-rim-top: 40%;
+  --tint-rim-bottom: 4%;
+  --thumb-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 22%, transparent),
+    inset 0 -1px color-mix(in srgb, var(--foreground) 2%, transparent);
+  --slider-thumb-shadow: var(--thumb-shadow);
+  --kbd-on-destructive-foreground: #fff !important;
   --kbd-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--foreground) 22%, transparent), 0 1px 0 #00000033 !important;
   --selected-fill:
@@ -4597,6 +4596,39 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
       color-mix(in srgb, var(--foreground) 5%, transparent)
     ) !important;
   --sidebar-row-selected-rim: color-mix(in srgb, var(--foreground) 16%, transparent) !important;
+}
+
+:root[data-surface-style="gradient-rim-everywhere"] :is(.surface-card, .surface-card-settings) {
+  border: 1px solid transparent;
+}
+
+:root[data-surface-style="gradient-rim-everywhere"] .surface-composer {
+  border: 1px solid transparent;
+  background:
+    var(--composer-fill) padding-box,
+    var(--raised-rim) border-box,
+    var(--composer-fill) border-box;
+  box-shadow: none;
+}
+
+:root[data-surface-style="gradient-rim-everywhere"] [data-chat-composer-main-surface] {
+  border: 0;
+  background: var(--composer-fill);
+}
+
+/* The main surface has a fixed 48px stack; its edge cannot consume layout space. */
+:root[data-surface-style="gradient-rim-everywhere"] [data-chat-composer-main-surface]::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--raised-rim);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
 }
 
 /* Secondary and destructive controls take the style's label colors: light on
