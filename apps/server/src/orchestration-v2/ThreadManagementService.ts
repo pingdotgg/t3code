@@ -1803,7 +1803,9 @@ const make = Effect.gen(function* () {
     getDelegationReceipt,
     getReceiptChildRun: Effect.fn("ThreadManagementService.getReceiptChildRun")(
       function* (threadId, runId) {
-        const records = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+        const records = yield* orchestrator.getThreadRecords(threadId, ["runs"], {
+          runIds: [runId],
+        });
         return records.runs.find((run) => run.id === runId) ?? null;
       },
     ),
