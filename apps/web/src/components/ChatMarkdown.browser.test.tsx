@@ -502,9 +502,11 @@ describe("ChatMarkdown inline code selection", () => {
       return window.getSelection()?.toString().trim();
     };
 
+    const paragraphs = screen.container.querySelectorAll("p");
+    expect(paragraphs).toHaveLength(2);
     const selections = [];
     const lines = [];
-    for (const paragraph of screen.container.querySelectorAll("p")) {
+    for (const paragraph of paragraphs) {
       lines.push(paragraph.textContent?.trim(), paragraph.textContent?.trim());
       selections.push(
         await tripleClickWord(paragraph, "Before"),
