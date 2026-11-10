@@ -191,9 +191,11 @@ describe("materializePiT3McpExtension", () => {
             // async readers hold the destination open in ways that deny the
             // rename on Windows. The torn-read property this asserts is also
             // proven under real two-process contention.
-            const text = yield* Effect.try(() =>
-              NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
-            ).pipe(Effect.option);
+            const text = yield* Effect.try({
+              try: () =>
+                NodeFSn.readFileSync(path.join(directory, "pi-t3-mcp-extension.ts"), "utf8"),
+              catch: (cause) => cause,
+            }).pipe(Effect.option);
             if (Option.isNone(text)) return; // Missing between writes: legitimate.
             // A production reader (a pi launch) reads once, never in a zero-gap
             // loop; pace this one so the writer's rename gets realistic gaps.

@@ -1,7 +1,8 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
-import * as Crypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- randomUUID keeps concurrent materializations from colliding on one staging path; the effect version here has no Crypto service.
 import * as FileSystem from "effect/FileSystem";
+import * as Crypto from "node:crypto";
 
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import {
