@@ -1101,8 +1101,8 @@ function OnboardingCodexSetup({
     const current =
       appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings
         .providerInstances[instanceId] ?? instance;
-    const { setupMode: _managed, ...rest } =
-      current.config !== null && typeof current.config === "object" ? current.config : {};
+    const { setupMode: _managed, ...rest }: Record<string, unknown> =
+      current.config !== null && typeof current.config === "object" ? { ...current.config } : {};
     void persistProviderInstance({
       operation: "upsert",
       instanceId,
