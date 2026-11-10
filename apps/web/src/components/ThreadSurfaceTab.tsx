@@ -22,7 +22,6 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { FolderX, Unlink2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -35,8 +34,10 @@ import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useLayoutPane } from "../layout/layoutPaneContext";
+import { copyLayoutFilePath } from "../layout/PaneTabs";
 import type { LauncherSurfaceKind } from "./SurfaceLauncher";
 import { THREAD_TERMINAL_SURFACE_ID } from "../layout/layoutModel";
+import { terminalTabTitle } from "../layout/surfaceTabLabels";
 import { runInNewLayoutTab } from "../layout/layoutStore";
 import {
   useThreadChatBridge,
@@ -44,10 +45,9 @@ import {
   waitForThreadChatSendReady,
 } from "../layout/threadSurfaceBridge";
 import { showThreadChatBeside } from "../layout/openRules";
+import { requestLayoutSurfacePlacement } from "../layout/surfaceSync";
 import { shortcutLabelForCommand } from "../keybindings";
 import { readLocalApi } from "../localApi";
-import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { randomUUID } from "../lib/utils";
 import {
   isAtomCommandInterrupted,
@@ -81,7 +81,8 @@ import {
   useEnvironmentSessionStatus,
 } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
+import { knownTerminalSessionsAtom, useKnownTerminalSessions } from "../state/terminalSessions";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
 import type { TerminalContextSelection } from "../lib/terminalContext";
@@ -518,9 +519,15 @@ function ThreadSurfacePane({
   const previewState = useThreadPreviewState(threadRef);
   const terminalLabels = useTerminalLabels(threadRef);
   const threadTitle = useThreadTitle(threadRef);
-  const { visible } = useLayoutPane();
+  const { visible, paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
   const { projectRef } = context;
+  const add = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+    if (paneId !== null && openers.available[kind]) {
+      requestLayoutSurfacePlacement(threadRef, { kind: "pane", paneId });
+    }
+    openers.open(kind, browserProfileId);
+  };
   const getShortcutContext = () => ({
     terminalFocus: false,
     terminalOpen: false,
@@ -561,28 +568,21 @@ function ThreadSurfacePane({
       onCloseOtherSurfaces={noop}
       onCloseSurfacesToRight={noop}
       onCloseAllSurfaces={noop}
-      onCopyFilePath={(path) =>
-        void navigator.clipboard?.writeText(
-          formatFilePathForClipboard(
-            path,
-            resolvePathLinkTarget(path, context.gitCwd ?? context.workspaceRoot ?? ""),
-          ),
-        )
-      }
-      onAddBrowser={() => openers.open("browser")}
-      onAddBrowserInProfile={(profileId) => openers.open("browser", profileId)}
+      onCopyFilePath={(path) => copyLayoutFilePath(threadRef, path)}
+      onAddBrowser={() => add("browser")}
+      onAddBrowserInProfile={(profileId) => add("browser", profileId)}
       onNewThread={
         projectRef === null
           ? undefined
           : () => void runInNewLayoutTab(() => handleNewThread(projectRef))
       }
-      onAddTerminal={() => openers.open("terminal")}
-      onAddDiff={() => openers.open("diff")}
-      onAddFiles={() => openers.open("files")}
-      onAddPullRequest={() => openers.open("pull-request")}
-      onAddPullRequests={() => openers.open("pull-requests")}
-      onAddDevice={() => openers.open("device")}
-      onAddSideChat={() => openers.open("side-chat")}
+      onAddTerminal={() => add("terminal")}
+      onAddDiff={() => add("diff")}
+      onAddFiles={() => add("files")}
+      onAddPullRequest={() => add("pull-request")}
+      onAddPullRequests={() => add("pull-requests")}
+      onAddDevice={() => add("device")}
+      onAddSideChat={() => add("side-chat")}
       sideChatAvailable={openers.available["side-chat"]}
       browserAvailable={openers.available.browser}
       browserUnavailableReason={openers.browserUnavailableReason}
@@ -602,6 +602,7 @@ function ThreadSurfacePane({
           context={context}
           visible={visible}
           openers={openers}
+          openInPane={add}
           getShortcutContext={getShortcutContext}
         />
       )}
@@ -638,6 +639,7 @@ function ThreadSurfaceContent({
   context,
   visible,
   openers,
+  openInPane,
   getShortcutContext,
 }: {
   threadRef: ScopedThreadRef;
@@ -645,6 +647,7 @@ function ThreadSurfaceContent({
   context: ReturnType<typeof useThreadSurfaceContext>;
   visible: boolean;
   openers: ReturnType<typeof useThreadSurfaceOpeners>;
+  openInPane: (kind: LauncherSurfaceKind) => void;
   getShortcutContext: () => {
     terminalFocus: boolean;
     terminalOpen: boolean;
@@ -730,7 +733,7 @@ function ThreadSurfaceContent({
           }
           onSplitTerminal={terminal.split}
           onSplitTerminalVertical={terminal.splitVertical}
-          onNewTerminal={() => openers.open("terminal")}
+          onNewTerminal={() => openInPane("terminal")}
           onActiveTerminalChange={terminal.activate}
           onCloseTerminal={terminal.close}
           {...shortcutLabels}
@@ -794,7 +797,7 @@ function ThreadSurfaceContent({
             onBack={
               openers.available["pull-requests"] &&
               visibleThreadPullRequests(shell?.pullRequests ?? []).length > 1
-                ? () => openers.open("pull-requests")
+                ? () => openInPane("pull-requests")
                 : undefined
             }
           />
@@ -990,6 +993,24 @@ let surfaceServices: {
   endTerminals: (threadRef: ScopedThreadRef, terminalIds: readonly string[]) => void;
 } | null = null;
 
+function readTerminalTabTitles(
+  threadRef: ScopedThreadRef,
+  terminalIds: readonly string[],
+): string[] {
+  const sessions = readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
+    ? appAtomRegistry.get(knownTerminalSessionsAtom(threadRef.environmentId, threadRef.threadId))
+    : null;
+  return terminalIds.map((terminalId) =>
+    terminalTabTitle(
+      terminalId,
+      resolveTerminalSessionLabel(
+        terminalId,
+        sessions?.find((session) => session.target.terminalId === terminalId)?.state.summary,
+      ),
+    ),
+  );
+}
+
 /** Closing a surface ends its resources; cmd+J preserves the thread terminal's shells. */
 export async function closeThreadSurface(
   threadRef: ScopedThreadRef,
@@ -1002,7 +1023,7 @@ export async function closeThreadSurface(
         useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
         threadRef,
       );
-      const [first, ...rest] = terminalIds.map((terminalId) => getTerminalLabel(terminalId));
+      const [first, ...rest] = readTerminalTabTitles(threadRef, terminalIds);
       if (first !== undefined) {
         if (!options.bulk && !(await confirmTerminalClose([first, ...rest]))) return;
         surfaceServices?.endTerminals(threadRef, terminalIds);
@@ -1039,9 +1060,7 @@ export async function closeThreadSurface(
     !options.bulk &&
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
   ) {
-    const [first = getTerminalLabel(surface.activeTerminalId), ...rest] = surface.terminalIds.map(
-      (terminalId) => getTerminalLabel(terminalId),
-    );
+    const [first = "Terminal", ...rest] = readTerminalTabTitles(threadRef, surface.terminalIds);
     if (!(await confirmTerminalClose([first, ...rest]))) return;
   }
   finish();

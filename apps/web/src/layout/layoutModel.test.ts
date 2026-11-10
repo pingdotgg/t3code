@@ -6,19 +6,27 @@ import {
   createLayoutState,
   ghostLoneLayoutChats,
   layoutChatSwaps,
+  moveLayoutTab,
+  moveLayoutTabToWorkspace,
   openLayoutGhostChat,
   openLayoutKeptTab,
   openLayoutTab,
+  placeLayoutContent,
   placeLayoutTabs,
   replaceLayoutTabContent,
+  resizeLayoutColumnEdge,
   selectFocusedTab,
+  selectFocusedWorkspace,
+  selectLayoutPaneSlots,
   showLayoutContent,
   type LayoutState,
   type LayoutTab,
   type LayoutTabContent,
+  type LayoutTabPlacement,
 } from "./layoutModel";
 import type { DraftId } from "../composerDraftStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
+import type { LayoutWhenNoRoom } from "./layoutBehavior";
 
 const environmentId = EnvironmentId.make("local");
 const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread"));
@@ -128,6 +136,41 @@ function shapeOf(state: LayoutState): Shape[] {
         ),
       ),
     );
+}
+
+const column = (id: string, width: number) => ({
+  id,
+  width,
+  panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null, size: 1 }],
+});
+
+function drawnRightEdges(
+  state: LayoutState,
+  viewportWidth: number,
+  whenNoRoom: LayoutWhenNoRoom = "shrink-then-scroll",
+): number[] {
+  const { slots, stripWidth } = selectLayoutPaneSlots(state.workspaces[0]!, {
+    width: viewportWidth,
+    whenNoRoom,
+  });
+  return slots.map((slot) =>
+    Math.round((slot.rect.left + slot.rect.width) * stripWidth * viewportWidth),
+  );
+}
+
+function chatFor(id: string): LayoutTabContent {
+  return {
+    kind: "chat",
+    target: { kind: "server", threadRef: scopeThreadRef(environmentId, ThreadId.make(id)) },
+  };
+}
+
+function tabContents(state: LayoutState) {
+  return state.workspaces.map((workspace) =>
+    workspace.columns
+      .flatMap((column) => column.panes)
+      .flatMap((pane) => pane.tabs.map((tab) => tab.content)),
+  );
 }
 
 describe("showLayoutContent", () => {
@@ -255,6 +298,74 @@ describe("openLayoutKeptTab", () => {
   });
 });
 
+describe("placeLayoutContent", () => {
+  it("places exact side splits before companions while commands keep their grouping", () => {
+    const before = openLayoutTab(showLayoutContent(createLayoutState(), chat), diff, {
+      placement: "new-column",
+    });
+    const paneId = before.workspaces[0]!.columns[0]!.panes[0]!.id;
+    const withNext = openLayoutTab(before, next, { placement: "new-column" });
+    const tabId = selectFocusedTab(withNext)!.id;
+    for (const exact of [false, true]) {
+      const destination = { kind: "split", paneId, side: "right", exact } as const;
+      const expected = exact ? [[chat], [next], [diff]] : [[chat], [diff], [next]];
+      const placed = placeLayoutContent(before, next, destination);
+      const moved = moveLayoutTab(withNext, tabId, destination);
+      expect(columnsOf(placed)).toEqual(expected);
+      expect(columnsOf(moved)).toEqual(expected);
+      expect(selectFocusedTab(placed)?.content).toBe(next);
+      expect(selectFocusedTab(moved)?.content).toBe(next);
+    }
+  });
+});
+
+describe("placeLayoutTabs", () => {
+  // An app's open (focus: false) leaves the user where they are, an empty workspace included.
+  const focusOn = (state: LayoutState, workspaceId: string) => ({
+    ...state,
+    focusedWorkspaceId: workspaceId,
+  });
+  it.each<{ case: string; layout: LayoutState; placement: LayoutTabPlacement; expected: Shape[] }>([
+    {
+      case: "into another workspace from an empty middle one",
+      layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
+      placement: { kind: "after", tabId: "C" },
+      expected: [[[["A"]]], [[["C*", "X"]]]],
+    },
+    {
+      case: "into another workspace from the empty last one",
+      layout: focusOn(layoutOf([[["A"]]], [[["C"]]], []), "w2"),
+      placement: { kind: "after", tabId: "C" },
+      expected: [[[["A"]]], [[["C*", "X"]]]],
+    },
+    {
+      case: "into a new workspace from an empty middle one",
+      layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
+      placement: { kind: "column", workspaceId: "w3", index: 0 },
+      expected: [[[["A"]]], [[["C"]]], [[["X"]]]],
+    },
+    {
+      case: "an exact side split from an empty workspace preserves focus",
+      layout: focusOn(layoutOf([[["A"]], [["t:A"]]], []), "w1"),
+      placement: { kind: "split", paneId: "w0c0p0", side: "right", exact: true },
+      expected: [[[["A"]], [["X"]], [["t:A"]]]],
+    },
+    {
+      case: "into the focused workspace",
+      layout: layoutOf([[["A!"]], [["B"]]], []),
+      placement: { kind: "after", tabId: "B" },
+      expected: [[[["A!"]], [["B*", "X"]]]],
+    },
+  ])("$case", ({ layout, placement, expected }) => {
+    const placed = placeLayoutTabs(layout, [tabOf("X")], placement, {
+      activate: null,
+      focus: false,
+    });
+    expect(shapeOf(placed)).toEqual(expected);
+    expect(placed.focusedWorkspaceId).toBe(layout.focusedWorkspaceId);
+  });
+});
+
 describe("ghost tabs", () => {
   it("stay ghosts when a sent first message promotes their draft", () => {
     const state = showLayoutContent(createLayoutState(), draftOf("draft"));
@@ -343,5 +454,93 @@ describe("replaceLayoutTabContent", () => {
   it("leaves an open thread alone when the tab to replace has already closed", () => {
     const before = openLayoutTab(createLayoutState(), chat);
     expect(replaceLayoutTabContent(before, "closed-tab", chat)).toBe(before);
+  });
+});
+
+describe("resizeLayoutColumnEdge", () => {
+  it("keeps the dragged edge under the pointer when the strip was arranged wider than the window", () => {
+    const viewportWidth = 1000;
+    const base: LayoutState = {
+      focusedWorkspaceId: "workspace",
+      workspaces: [
+        {
+          id: "workspace",
+          name: null,
+          focusedPaneId: null,
+          cameraWidth: 1200,
+          columns: [column("chat", 0.5), column("terminal", 0.55)],
+        },
+      ],
+    };
+    const { unitWidth } = selectLayoutPaneSlots(base.workspaces[0]!, {
+      width: viewportWidth,
+      whenNoRoom: "shrink-then-scroll",
+    });
+    expect(drawnRightEdges(base, viewportWidth)).toEqual([600, 1260]);
+
+    const pointers = Array.from({ length: 41 }, (_, index) => 300 + index * 10);
+    const drawn = pointers.map((pointer) =>
+      drawnRightEdges(
+        resizeLayoutColumnEdge(
+          base,
+          "chat",
+          pointer / viewportWidth,
+          "shrink-then-scroll",
+          viewportWidth,
+          unitWidth,
+        ),
+        viewportWidth,
+      ),
+    );
+    expect(drawn).toEqual(pointers.map((pointer) => [pointer, pointer + 660]));
+  });
+
+  it("lands the dragged edge where it is released when columns always shrink to fit", () => {
+    const viewportWidth = 1000;
+    const base: LayoutState = {
+      focusedWorkspaceId: "workspace",
+      workspaces: [
+        {
+          id: "workspace",
+          name: null,
+          focusedPaneId: null,
+          cameraWidth: viewportWidth,
+          columns: [column("chat", 0.4), column("diff", 0.4), column("terminal", 0.4)],
+        },
+      ],
+    };
+    const { unitWidth } = selectLayoutPaneSlots(base.workspaces[0]!, {
+      width: viewportWidth,
+      whenNoRoom: "always-shrink",
+    });
+    expect(drawnRightEdges(base, viewportWidth, "always-shrink")).toEqual([333, 667, 1000]);
+
+    const released = resizeLayoutColumnEdge(
+      base,
+      "diff",
+      (600 - 1000 / 3) / viewportWidth,
+      "always-shrink",
+      viewportWidth,
+      unitWidth,
+    );
+    expect(drawnRightEdges(released, viewportWidth, "always-shrink")).toEqual([333, 600, 1000]);
+  });
+});
+
+describe("moveLayoutTabToWorkspace", () => {
+  it("moves the top workspace's tab into a new workspace above it", () => {
+    const first = chatFor("first");
+    const second = chatFor("second");
+    const state = [first, second].reduce(
+      (layout, content) =>
+        openLayoutTab(layout, content, { placement: "active-pane", position: "end" }),
+      createLayoutState(),
+    );
+
+    const moved = moveLayoutTabToWorkspace(state, -1);
+
+    expect(tabContents(moved)).toEqual([[second], [first], []]);
+    expect(selectFocusedWorkspace(moved)).toBe(moved.workspaces[0]);
+    expect(selectFocusedTab(moved)?.content).toBe(second);
   });
 });

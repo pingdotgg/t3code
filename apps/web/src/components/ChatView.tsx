@@ -35,9 +35,14 @@ import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  shouldShowComposerTasks,
+} from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { DeferredChatContext } from "../layout/chatRenderGate";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -212,7 +217,7 @@ import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
-import { isPreviewFocused } from "../lib/previewFocus";
+import { isBrowserFocused } from "../lib/previewFocus";
 import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -348,6 +353,7 @@ import {
 import {
   buildLocalDraftThread,
   deriveCommittedServerUserMessageIds,
+  deriveTimelineWorking,
   dismissBranchMismatchForSession,
   shouldRenderPreviewMiniPlayer,
   deriveLockedProvider,
@@ -356,6 +362,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   codexArtifactTemplatePromptToAppend,
+  isCoveredByModal,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1493,8 +1500,12 @@ export default function ChatView(props: ChatViewProps) {
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
-  const isWorking =
-    phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
+  const isWorking = deriveTimelineWorking({
+    phase,
+    isSendBusy,
+    isCompacting,
+    runlessWorkStartedAt,
+  });
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -1595,6 +1606,17 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timelineEmpty = timelineEntries.length === 0 && !hasStreamedTimelineRows;
   const displayedTimelineKey = activeThreadKey ?? routeThreadKey;
+  const deferredChat = use(DeferredChatContext);
+  const [timelineInstance, setTimelineInstance] = useState({
+    threadKey: displayedTimelineKey,
+    revision: 0,
+  });
+  if (timelineInstance.threadKey !== displayedTimelineKey) {
+    setTimelineInstance({
+      threadKey: displayedTimelineKey,
+      revision: timelineInstance.revision + (deferredChat ? 1 : 0),
+    });
+  }
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
   const {
     worktreeSetup,
@@ -2144,16 +2166,18 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
+  const focusOpenedThreadComposer = useStableCallback(() => {
+    if (!isCoveredByModal(composerOverlayElement)) focusComposer();
+  });
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
     if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
-    const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
-    });
+    const frame = window.requestAnimationFrame(focusOpenedThreadComposer);
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, embedded, focusOpenedThreadComposer, terminalUiState.terminalOpen]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
@@ -2790,7 +2814,9 @@ export default function ChatView(props: ChatViewProps) {
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
-    previewFocus: isPreviewFocused(),
+    // A thread's own toggles answer from its diff, files and pull request tabs; only a
+    // browser keeps the keys it shares with them (mod+l).
+    previewFocus: isBrowserFocused(),
     previewOpen: previewPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
@@ -3487,6 +3513,7 @@ export default function ChatView(props: ChatViewProps) {
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
+                  key={timelineInstance.revision}
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
@@ -3596,13 +3623,12 @@ export default function ChatView(props: ChatViewProps) {
                 />
               </WorkspaceMutationIdContext>
 
-              {showScrollToBottom && !isThreadFindActive && (
-                <ScrollToEndButton
-                  bottom={scrollToEndClearance + 4}
-                  summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
-                />
-              )}
+              <ScrollToEndButton
+                visible={showScrollToBottom && !isThreadFindActive}
+                bottom={scrollToEndClearance + 4}
+                summary={scrollToEndSummary}
+                onScrollToEnd={() => scrollToEnd(true)}
+              />
             </div>
 
             {/* Input bar — docked at the bottom; an empty draft centers its headline above it. */}
@@ -3661,7 +3687,7 @@ export default function ChatView(props: ChatViewProps) {
                         className="empty:hidden"
                       />
                       {hasThreadNow ? (
-                        <div className="ps-2.5 pe-3.25 pt-2">
+                        <div className="surface-composer-banner ps-2.5 pe-3.25 pt-2">
                           <ThreadNow
                             key={routeThreadKey}
                             attention={attentionNow}
@@ -3673,8 +3699,14 @@ export default function ChatView(props: ChatViewProps) {
                       ) : null}
                       {hasQueuedTurns ? queuedRunsControl : null}
                       {composerTasks?.type === "todo_list" &&
-                      (isWorking ||
-                        composerTasks.steps.some((step) => step.status !== "completed")) ? (
+                      shouldShowComposerTasks({
+                        steps: composerTasks.steps,
+                        planRunSettled: isLatestRunSettled(
+                          activeActivityRun ?? activeLatestRun,
+                          activeRuntime,
+                        ),
+                        isSendBusy,
+                      }) ? (
                         <ComposerTaskStatus
                           key={composerTasks.planId}
                           steps={composerTasks.steps}

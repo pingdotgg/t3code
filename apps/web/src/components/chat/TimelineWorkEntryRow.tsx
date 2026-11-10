@@ -364,9 +364,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? "text-error-foreground"
         : showFailedIndicator
           ? failedToolIconClassName
-          : workEntry.tone === "tool"
-            ? "text-muted-foreground"
-            : iconConfig.className,
+          : workEntry.tone === "error"
+            ? iconConfig.className
+            : "text-dim-foreground",
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"

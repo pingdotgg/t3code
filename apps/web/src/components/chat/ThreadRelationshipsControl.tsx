@@ -73,7 +73,12 @@ import {
   useHiddenThreadKeys,
   useAnyEnvironmentHiding,
 } from "../../state/entities";
-import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import {
+  useEnvironment,
+  useEnvironmentMachines,
+  useEnvironmentProviders,
+} from "../../state/environments";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
@@ -286,6 +291,28 @@ function RemoteSubagentRow(props: {
     title: props.agent.title ?? "Subagent",
     isSubagent: true,
   });
+  const running = status === "pending" || status === "running" || status === "waiting";
+  const [timing] = projectedSubagentsToRuntime([props.agent]);
+  const machine = useEnvironmentMachines().get(remoteChild.environmentId) ?? "server";
+  const providerModel = props.provider?.models.find((model) => model.slug === props.agent.model);
+  const modelLabel = providerModel
+    ? getTriggerDisplayModelName(providerModel, props.provider?.driver)
+    : props.agent.model
+      ? formatModelSlugName(props.agent.model)
+      : null;
+  // Older servers keep no selection on a remote task; the thread there still knows its own.
+  const remoteThread = useQuietThreadShell(
+    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
+  );
+  const modelSelection = props.agent.modelSelection ?? remoteThread?.modelSelection;
+  const effort = props.agent.model
+    ? formatSubagentEffort({
+        modelSlug: props.agent.model,
+        modelSelection,
+        provider: props.provider,
+      })
+    : null;
+  // Same two lines as a local child: title and state, then where and what it runs on, and its time.
   return (
     <li className="group relative flex min-h-9 items-center rounded-lg">
       <Tooltip>
@@ -296,7 +323,8 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              className="h-9 min-h-9 sm:min-h-9"
+              multiline
+              className="min-h-10 sm:min-h-10"
               aria-disabled={environment === null || undefined}
               render={props.inMenu ? <MenuItem /> : undefined}
               onClick={() => {
@@ -316,17 +344,42 @@ function RemoteSubagentRow(props: {
             driver={props.provider?.driver}
             provider={props.provider}
             fallbackIcon={BotIcon}
-            status={status}
+            // The machine it runs on rides the logo, so the second line lines up with local rows.
+            badge={
+              <EnvironmentMachineIcon
+                kind={machine}
+                aria-label={`On ${remoteChild.label}`}
+                className="size-2.5"
+              />
+            }
           />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-label text-foreground/85">{title}</span>
-          </span>
-          <span
-            className={`ms-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-meta ${failed ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <span>on {remoteChild.label}</span>
-              <span>{threadRelationshipStatusLabel(status)}</span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-left text-label leading-4">
+                {title}
+              </span>
+              {failed || running ? (
+                <span className={THREAD_DETAILS_PANEL_META_CLASS}>
+                  {failed ? (
+                    <span className="text-destructive-foreground">Failed</span>
+                  ) : (
+                    <Spinner size="xs" tone="muted" aria-label="Running" />
+                  )}
+                </span>
+              ) : null}
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
+              {props.agent.model ? <span className="min-w-0 truncate">{modelLabel}</span> : null}
+              {effort ? <span className="shrink-0">{effort}</span> : null}
+              {failed ? null : (
+                <span className={THREAD_DETAILS_PANEL_META_CLASS}>
+                  {timing && deriveSubagentElapsedMs(timing, 0) !== null ? (
+                    <AgentElapsed agent={timing} compact />
+                  ) : running ? null : (
+                    threadRelationshipStatusLabel(status)
+                  )}
+                </span>
+              )}
             </span>
           </span>
         </TooltipTrigger>
@@ -1136,7 +1189,7 @@ export function ThreadRelationshipsPanel(props: {
           data-thread-relationships-panel
         >
           {hasRelatives ? (
-            <>
+            <div className="flex flex-col has-[>ul:first-child]:pt-1 has-[>ul:last-child]:pb-1">
               {delegatedFrom === undefined ? null : (
                 <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
                   <DelegatedFromRow
@@ -1169,7 +1222,7 @@ export function ThreadRelationshipsPanel(props: {
                   threads
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
         </ThreadDetailsSection>
       ) : null}

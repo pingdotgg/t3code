@@ -1247,6 +1247,10 @@ export function PullRequestDetailPanel({
           mergeMethod: selectedMergeMethod,
           stale: !nativeStackQuery.isFresh,
           canMerge: supportsStackActions && can("merge") && allowedMergeMethods.length > 0,
+          conflictsWith:
+            detail.state === "open" && detail.mergeability === "conflicting"
+              ? detail.baseBranch
+              : null,
           canRebase: supportsStackActions && detail.viewerPermissions.stackRebase === true,
           onActed: () => {
             refreshDetail();
@@ -1278,7 +1282,7 @@ export function PullRequestDetailPanel({
     />
   ) : null;
   const stackMergeButton =
-    stackMenuProps !== null && stackMenuProps.canMerge ? (
+    stackMenuProps !== null && stackMenuProps.canMerge && stackMenuProps.conflictsWith === null ? (
       <PullRequestStackMenu {...stackMenuProps} display="merge-button" />
     ) : null;
   const showsArmedNote = autoMergeArmed && primaryAction !== "auto-merge-armed";
@@ -1484,7 +1488,7 @@ export function PullRequestDetailPanel({
               ) : null}
               <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-sm/pr-header:hidden"
                   aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />

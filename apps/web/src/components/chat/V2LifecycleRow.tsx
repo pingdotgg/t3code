@@ -78,7 +78,6 @@ export function V2LifecycleRow(props: {
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
   /** Subagent members listed inside a group header render as flat one-line rows. */
-  readonly subagentLayout?: "card" | "flat";
 }) {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
@@ -173,7 +172,6 @@ export function V2LifecycleRow(props: {
         threadId={item.childThreadId}
         remote={item.remoteChild}
         onOpenThread={props.onOpenThread}
-        layout={props.subagentLayout ?? "card"}
       />
     );
   }
@@ -220,7 +218,7 @@ function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
   return value ? DateTime.formatIso(value) : null;
 }
 
-export function SubagentElapsed({ agent }: { agent: Parameters<typeof AgentElapsed>[0]["agent"] }) {
+function SubagentElapsed({ agent }: { agent: Parameters<typeof AgentElapsed>[0]["agent"] }) {
   return <AgentElapsed agent={agent} />;
 }
 
@@ -262,7 +260,7 @@ function SubagentAvatar({
             iconClassName="size-4"
           />
         ) : (
-          <BotIcon className="size-4 text-muted-foreground" />
+          <BotIcon className="size-4 text-dim-foreground" />
         )}
       </span>
     );
@@ -499,7 +497,6 @@ function SubagentTimelineLink(props: {
   /** The thread in a linked environment that runs this task, when it runs there. */
   readonly remote?: OrchestrationV2RemoteTaskChild | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
-  readonly layout?: "card" | "flat";
   readonly event?: {
     readonly status: OrchestrationV2TurnItem["status"] | null;
     readonly label: string;
@@ -540,7 +537,6 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
-  const flat = props.layout === "flat";
   // One quiet line: logo, title, what it is doing, model, time, state.
   const content = (
     <>
@@ -550,6 +546,8 @@ function SubagentTimelineLink(props: {
         driver={props.driver}
         remote={remote}
         plain
+        // The tool rows' 24px icon column; the pull-back leaves their 5px gap to the label.
+        className="-me-0.75 size-6"
       />
       <span className="min-w-0 shrink truncate text-label text-foreground">{props.title}</span>
       {remote !== undefined ? (
@@ -591,10 +589,9 @@ function SubagentTimelineLink(props: {
       {props.event ? null : <SubagentStatusGlyph status={liveStatus} />}
     </>
   );
-  // Timeline rows share the tool rows' columns: avatar on the text line, title on the label line.
-  const className = flat
-    ? "group/subagent flex h-[30px] w-full min-w-0 items-center gap-2 rounded-row px-2.5 text-left"
-    : "group/subagent flex h-7.5 w-full min-w-0 items-center gap-2 rounded-row px-1.5 text-left";
+  // The tool rows' metrics: 24px tall, flush left, the same end inset.
+  const className =
+    "group/subagent flex min-h-6 w-full min-w-0 items-center gap-2 rounded-md pe-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger

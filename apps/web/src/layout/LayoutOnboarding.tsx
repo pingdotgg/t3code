@@ -6,7 +6,7 @@ import {
   KeyboardIcon,
   PlusIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -83,11 +83,13 @@ export function LayoutLearningTips() {
 export function LayoutOnboarding() {
   const [completed, setCompleted] = useLocalStorage(TOUR_KEY, false, Schema.Boolean);
   const [step, setStep] = useState<number | null>(null);
+  const nextRef = useRef<HTMLButtonElement | null>(null);
+  const [learnedBeforeTour, setLearnedBeforeTour] = useState<ReadonlyArray<string>>([]);
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const steps = [
     {
       title: "New tab",
-      text: "Opens a new chat in this pane. Right-click it for a terminal, browser or files.",
+      text: "Opens a new chat, terminal, browser or files in this pane.",
       selector: '[data-layout-pane-focused="true"] [aria-label^="New tab"]',
       Icon: PlusIcon,
     },
@@ -106,7 +108,7 @@ export function LayoutOnboarding() {
     {
       title: "See the whole workspace",
       text: "Pinch to zoom out, or move to the bottom-left corner. Pick a pane to return to it.",
-      selector: "[data-layout-strip]",
+      selector: "[data-layout-hot-corner]",
       Icon: Columns2Icon,
     },
     {
@@ -124,10 +126,6 @@ export function LayoutOnboarding() {
     return () => useLayoutStore.getState().setOverviewOpen(wasOpen);
   }, [step]);
   const current = step === null ? null : steps[step];
-  const anchor = () =>
-    current
-      ? (document.querySelector(current.selector) ?? document.querySelector("[data-layout-strip]"))
-      : null;
   const finish = () => {
     setCompleted(true);
     setStep(null);
@@ -156,7 +154,7 @@ export function LayoutOnboarding() {
             <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 md:grid-cols-4">
               {(
                 [
-                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser, settings."],
+                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser."],
                   ["split", "Drag to split", "Drop a tab on an edge to put it beside."],
                   [
                     "overview",
@@ -180,7 +178,13 @@ export function LayoutOnboarding() {
               ))}
             </div>
             <div className="flex justify-end gap-2">
-              <Button size="standard" onClick={() => setStep(0)}>
+              <Button
+                size="standard"
+                onClick={() => {
+                  setLearnedBeforeTour(learned);
+                  setStep(0);
+                }}
+              >
                 Show me
               </Button>
               <Button size="standard" variant="secondary" onClick={finish}>
@@ -192,6 +196,11 @@ export function LayoutOnboarding() {
       </Dialog>
     );
   if (!current) return null;
+  const anchor =
+    document.querySelector(current.selector) ?? document.querySelector("[data-layout-strip]");
+  const lesson = (["tabs", "split", null, "overview", "keys"] as const)[step];
+  const tried =
+    lesson != null && (lesson === "overview" ? learnedBeforeTour : learned).includes(lesson);
   return (
     <Popover
       open
@@ -203,11 +212,11 @@ export function LayoutOnboarding() {
       <PopoverPopup
         anchor={anchor}
         className={step === 0 ? "w-75 max-w-full" : "w-82.5 max-w-full"}
-        side="bottom"
-        align={step === 3 ? "end" : "start"}
+        side={step === 3 ? "top" : "bottom"}
+        align="start"
         sideOffset={12}
         collisionAvoidance={{ side: "shift", align: "shift" }}
-        initialFocus={false}
+        initialFocus={nextRef}
       >
         <div className="flex flex-col gap-2" role="region" aria-label="Layout tour">
           {step === 0 ? (
@@ -223,14 +232,13 @@ export function LayoutOnboarding() {
           <div className="mt-2 flex items-center gap-2">
             <span className="mr-auto flex items-center gap-2 text-meta text-dim-foreground">
               <span>{step + 1} of 5</span>
-              {learned.includes(["tabs", "split", "scroll", "overview", "keys"][step]!) ? (
-                <Badge variant="success">Tried</Badge>
-              ) : null}
+              {tried ? <Badge variant="success">Tried</Badge> : null}
             </span>
             <Button size="standard" variant="ghost-muted" onClick={finish}>
               Skip
             </Button>
             <Button
+              ref={nextRef}
               size="standard"
               onClick={() => {
                 if (step === 4) finish();

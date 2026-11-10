@@ -6,7 +6,7 @@ const DIALOG_APP_PANEL_BACKDROP_CLASS = `${DIALOG_BACKDROP_BASE_CLASS} bg-[light
 const DIALOG_MEDIA_BACKDROP_CLASS = `${DIALOG_BACKDROP_BASE_CLASS} bg-black/75 backdrop-blur-none`;
 
 const DIALOG_POPUP_BASE_CLASS =
-  "-translate-y-[calc(1.25rem*var(--nested-dialogs))] relative flex min-h-0 w-full min-w-0 scale-[calc(1-0.1*var(--nested-dialogs))] flex-col opacity-[calc(1-0.1*var(--nested-dialogs))] outline-none transition-[scale,opacity,translate] duration-200 ease-in-out will-change-transform data-nested:data-ending-style:translate-y-8 data-nested:data-starting-style:translate-y-8 data-nested-dialog-open:origin-top data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 starting:scale-98 starting:opacity-0 data-nested:starting:translate-y-8 [-webkit-app-region:no-drag] motion-reduce:transition-none";
+  "-translate-y-[calc(1.25rem*var(--nested-dialogs))] relative flex min-h-0 w-full min-w-0 scale-[calc(1-0.1*var(--nested-dialogs))] flex-col brightness-[calc(1-0.1*var(--nested-dialogs))] outline-none transition-[scale,opacity,translate,filter] duration-200 ease-in-out will-change-transform data-nested:data-ending-style:translate-y-8 data-nested:data-starting-style:translate-y-8 data-nested-dialog-open:origin-top data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 starting:scale-98 starting:opacity-0 data-nested:starting:translate-y-8 [-webkit-app-region:no-drag] motion-reduce:transition-none";
 
 const DIALOG_POPUP_CLASS = `surface-dialog kbd-in-popover ${DIALOG_POPUP_BASE_CLASS} rounded-pane`;
 // The command palette: the dialog shell with the palette's shorter shadow.
@@ -16,7 +16,7 @@ const DIALOG_MEDIA_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} max-h-[92vh] w-auto
 const DIALOG_APP_POPUP_CLASS = `${DIALOG_POPUP_CLASS} size-full overflow-hidden text-body max-sm:rounded-none max-sm:pt-(--app-modal-top-inset) max-sm:pb-safe duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] starting:scale-[0.985] sm:max-h-[60rem] sm:max-w-[80rem]`;
 
 // A large floating panel with its own surface, independent of window chrome.
-const DIALOG_APP_PANEL_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} kbd-in-popover size-full max-h-[60rem] max-w-[75rem] overflow-hidden rounded-[16px] border border-black/10 bg-[var(--app-panel-fill,light-dark(#fafafa,#171717))] text-body text-foreground shadow-[0_24px_64px_#00000040] dark:border-white/10 dark:shadow-[inset_0_1px_0_#ffffff12,0_24px_64px_#000000cc] duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] starting:scale-[0.985]`;
+const DIALOG_APP_PANEL_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} kbd-in-popover size-full max-h-[60rem] max-w-[75rem] overflow-hidden rounded-[16px] surface-app-panel text-body text-foreground duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] starting:scale-[0.985]`;
 
 const DIALOG_MOBILE_SHEET_CLASS =
   "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4";

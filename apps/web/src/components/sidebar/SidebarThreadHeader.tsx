@@ -147,6 +147,7 @@ export function SidebarHeaderIconButton({
             size="icon"
             type="button"
             aria-label={label}
+            data-sidebar-header-control={size === "header" ? "" : undefined}
             {...rest}
             className={cn("relative shrink-0", size === "footer" ? "size-8" : "size-7", className)}
           />
