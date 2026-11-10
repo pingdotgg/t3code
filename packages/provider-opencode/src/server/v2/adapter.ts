@@ -374,23 +374,34 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
 
 const sessionRules = (
   policy: RulesPolicy,
+  nativeRules: ReadonlyArray<Rule>,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
-): ReadonlyArray<Rule> => [
-  ...(policy.runtimeMode === "full-access"
-    ? [rule("*", "allow")]
-    : [
-        rule("shell", "ask"),
-        rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
-        rule("external_directory", "ask"),
-      ]),
-  ...grants,
-  // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
-  ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
-  ...paths,
-  ...mcpRules(mcpServerName),
-];
+): ReadonlyArray<Rule> => {
+  const rules = [
+    ...(policy.runtimeMode === "full-access"
+      ? [rule("*", "allow")]
+      : [
+          rule("shell", "ask"),
+          rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
+          rule("external_directory", "ask"),
+        ]),
+    ...nativeRules,
+    ...grants,
+    // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
+    ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
+    ...paths,
+    ...mcpRules(mcpServerName),
+  ];
+  const lastRules = new Map<string, Rule>();
+  for (const entry of rules) {
+    const key = `${entry.action}\u0000${entry.resource}`;
+    lastRules.delete(key);
+    lastRules.set(key, entry);
+  }
+  return [...lastRules.values()];
+};
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
   left?.length === right.length &&
@@ -479,6 +490,21 @@ const agentPaths = (rules: ReadonlyArray<Rule>) =>
       entry.resource !== "*" &&
       (entry.action === "edit" || entry.action === "external_directory"),
   );
+
+const nativeSessionRules = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) => {
+  if (policy.runtimeMode === "auto") {
+    // The default agent's catch-all allow is not an explicit opt-in to unrestricted Auto.
+    return rules.filter((entry) => entry.action !== "*" || entry.effect !== "allow");
+  }
+  if (policy.runtimeMode !== "full-access") return [];
+  const firstDeny = rules.findIndex((entry) => entry.effect === "deny");
+  // Keep later exceptions in order: a deny-only copy would also block allowed .env.example files.
+  return firstDeny < 0
+    ? []
+    : rules
+        .slice(firstDeny)
+        .map((entry) => (entry.effect === "ask" ? { ...entry, effect: "allow" as const } : entry));
+};
 
 const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
   driver: OPENCODE_PROVIDER,
@@ -2784,7 +2810,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     yield* readModels(session.cwd);
 
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
-    const pathsFor = Effect.fnUntraced(function* (
+    const rulesForAgents = Effect.fn("OpenCode2Adapter.rulesForAgents")(function* (
       directory: string,
       agents: ReadonlyArray<string>,
     ) {
@@ -2797,27 +2823,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             schedule: Schedule.spaced("250 millis"),
           }),
           Effect.timeout("5 seconds"),
-          Effect.tapCause((cause) =>
-            Effect.logWarning(
-              "Could not list OpenCode agents; their path rules are skipped.",
-              cause,
-            ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
-          ),
-          Effect.option,
         );
-        if (listed._tag === "None") return [];
-        known = new Map(
-          listed.value.data.map((agent) => [agent.id, agentPaths(agent.permissions)]),
-        );
+        known = new Map(listed.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
       }
-      const paths = new Map<string, Rule>();
-      for (const agent of agents) {
-        for (const entry of known.get(agent) ?? []) {
-          paths.set(`${entry.action}\u0000${entry.resource}`, entry);
-        }
-      }
-      return [...paths.values()];
+      return agents.flatMap((agent) => known.get(agent) ?? []);
     });
 
     const rulesFor = Effect.fnUntraced(function* (
@@ -2826,12 +2836,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       appThreadId: string | null,
     ) {
       const plan = policy.interactionMode === "plan";
-      const paths =
-        policy.runtimeMode === "full-access" && !plan
+      const nativeRules = yield* rulesForAgents(thread.directory, [thread.agent]);
+      const paths = plan
+        ? agentPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]))
+        : policy.runtimeMode === "auto" || policy.runtimeMode === "full-access"
           ? []
-          : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+          : agentPaths(nativeRules);
       return sessionRules(
         policy,
+        nativeSessionRules(nativeRules, policy),
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),

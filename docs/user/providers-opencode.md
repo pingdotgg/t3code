@@ -46,9 +46,14 @@ session.
 
 ## Approvals
 
-OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has
-the same rules as **Supervised** because OpenCode has no AI approval reviewer.
-Environment files such as `.env` and `.env.local` need approval in restricted
+OpenCode follows the shared [permission modes](./permission-modes.md). OpenCode 2's
+**Auto** honors native permission rules for specific actions, such as `shell`,
+including command patterns that allow routine commands and ask for others. Without
+those rules it asks, as **Supervised** does; OpenCode has no AI approval reviewer.
+A catch-all `"*": "allow"` does not remove Auto's default approval requirements.
+**Full access** skips prompts but preserves native deny rules and their exceptions.
+OpenCode 1.x keeps its existing mode rules, including Supervised behavior in Auto.
+By default, environment files such as `.env` and `.env.local` need approval in restricted
 modes even though normal file reads do not; `.env.example` is allowed.
 
 **Allow for workspace** applies to matching requests in other OpenCode sessions
