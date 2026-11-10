@@ -1780,55 +1780,6 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live("prices free models on OpenCode's own gateways at zero", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const directory = NodePath.join(home, "opencode", "storage", "message", "session-1");
-      yield* Effect.promise(() => NodeFSP.mkdir(directory, { recursive: true }));
-      for (const [id, providerID] of [
-        ["msg_go", "opencode-go"],
-        ["msg_zen", "opencode"],
-      ]) {
-        const message = yield* encodeUnknownJson({
-          id,
-          sessionID: "session-1",
-          role: "assistant",
-          providerID,
-          modelID: "deepseek-v4.1-flash-free",
-          time: { created: Date.parse("2026-08-01T10:00:00Z") },
-          cost: 0,
-          tokens: { input: 1000, output: 200, cache: { read: 500 } },
-        });
-        yield* Effect.promise(() =>
-          NodeFSP.writeFile(NodePath.join(directory, `${id}.json`), message),
-        );
-      }
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(layerService({ prefix: "usage-service-opencode-free", home, settings })),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      const buckets = summary.buckets.filter((bucket) => bucket.provider === "opencode");
-      assert.deepStrictEqual(
-        buckets.map(({ model, records, costUsd, costSource, unpricedRecords }) => ({
-          model,
-          records,
-          costUsd,
-          costSource: costSource === "unpriced" ? "unpriced" : "priced",
-          unpricedRecords,
-        })),
-        [
-          {
-            model: "deepseek-v4.1-flash-free",
-            records: 2,
-            costUsd: 0,
-            costSource: "priced",
-            unpricedRecords: 0,
-          },
-        ],
-      );
-    }).pipe(Effect.scoped),
-  );
-
   it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

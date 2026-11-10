@@ -208,6 +208,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               `SELECT id, session_id, ${timestamp} AS created, json_object(
                  'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
                  'model', data -> '$.model', 'modelID', data -> '$.modelID',
+                 'providerID', data -> '$.providerID',
                  'time', data -> '$.time', 'id', data -> '$.id', 'sessionID', data -> '$.sessionID'
                ) AS data
                FROM ${table}
