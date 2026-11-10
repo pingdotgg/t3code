@@ -277,13 +277,16 @@ describe("useQueuedRunEdit", () => {
     );
   });
 
-  it("opens an edit with the thread and machine records its mentions refer to", async () => {
+  it("opens an edit with only the thread and machine records its text still mentions", async () => {
     const { hook } = setup();
     const thread = threadContextRecord(THREAD_B, "Support Any File Uploads");
     const machine = environmentContextRecord(ENV, "Build box");
+    const unreferenced = threadContextRecord(THREAD_A, "Removed earlier");
     const messageId = MessageId.make("message-1");
     const text = `wait for ${formatInlineContextReference(threadContextReference(thread))} on ${formatInlineContextReference(environmentContextReference(machine))}`;
-    const messages = [{ id: messageId, text, context: { version: 1, records: [thread, machine] } }];
+    const messages = [
+      { id: messageId, text, context: { version: 1, records: [thread, machine, unreferenced] } },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
 
     await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
@@ -292,21 +295,6 @@ describe("useQueuedRunEdit", () => {
     expect(draft?.prompt).toBe(text);
     expect(draft?.threadContexts).toEqual([thread]);
     expect(draft?.environmentContexts).toEqual([machine]);
-  });
-
-  it("opens an edit without records the message text no longer mentions", async () => {
-    const { hook } = setup();
-    const unreferenced = threadContextRecord(THREAD_B, "Removed earlier");
-    const messageId = MessageId.make("message-1");
-    const text = "plain text";
-    const messages = [{ id: messageId, text, context: { version: 1, records: [unreferenced] } }];
-    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
-
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
-
-    const draft = useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget);
-    expect(draft?.prompt).toBe(text);
-    expect(draft?.threadContexts).toEqual([]);
   });
 
   it("saves only the thread mentions still in the edited message", async () => {
