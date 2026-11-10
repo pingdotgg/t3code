@@ -218,7 +218,6 @@ jobs:
               | sed -n '/^\[/,$p' \
               | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
           fi
-          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then link=""; fi # TEMP: exercise the build once
           echo "link=$link" >> "$GITHUB_OUTPUT"
           if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
           echo "android fingerprint \`$hash\`: ${link:-no client yet, building on Blacksmith}" >> "$GITHUB_STEP_SUMMARY"
