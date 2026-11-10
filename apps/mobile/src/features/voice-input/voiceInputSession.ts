@@ -19,7 +19,7 @@ export type VoiceInputTarget = {
   readonly label?: string;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
-  readonly subscribe: () => () => void;
+  readonly subscribe: (onReset: () => void) => () => void;
 };
 
 export type VoiceInputSnapshot = {
@@ -53,6 +53,7 @@ export function createVoiceInputTarget(
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
   subscribeToChanges: (onChange: () => void) => () => void,
+  subscribeToReset?: (onReset: () => void) => () => void,
 ): VoiceInputTarget {
   let revision = 0;
   return {
@@ -63,15 +64,24 @@ export function createVoiceInputTarget(
       return { ownerKey, text, selection, revision };
     },
     commitDraft,
-    subscribe: () => {
+    subscribe: (onReset) => {
       let previousText = readText();
-      return subscribeToChanges(() => {
+      const unsubscribeChanges = subscribeToChanges(() => {
         const text = readText();
+        if (text === null) {
+          onReset();
+          return;
+        }
         if (text !== previousText) {
           previousText = text;
           revision += 1;
         }
       });
+      const unsubscribeReset = subscribeToReset?.(onReset);
+      return () => {
+        unsubscribeChanges();
+        unsubscribeReset?.();
+      };
     },
   };
 }
@@ -141,8 +151,9 @@ export class VoiceInputSession {
 
   start(target: VoiceInputTarget): Promise<void> {
     if (voiceInputBlocksSubmission(this.controller.currentState)) return Promise.resolve();
+    this.unsubscribe?.();
     this.target = target;
-    this.unsubscribe = target.subscribe();
+    this.unsubscribe = target.subscribe(() => this.cancel(target.ownerKey));
     return this.controller.start();
   }
 
@@ -155,7 +166,7 @@ export class VoiceInputSession {
   }
 
   private handleStateChange(state: VoiceInputState): void {
-    if (!voiceInputBlocksSubmission(state)) {
+    if (state.phase === "idle") {
       this.unsubscribe?.();
       this.unsubscribe = null;
     }

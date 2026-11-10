@@ -122,6 +122,10 @@ function markComposerDraftReset(draftKey: string): void {
   appAtomRegistry.set(composerDraftResetAtom(draftKey), nextComposerDraftReset());
 }
 
+export function subscribeComposerDraftReset(draftKey: string, onReset: () => void): () => void {
+  return appAtomRegistry.subscribe(composerDraftResetAtom(draftKey), onReset);
+}
+
 /**
  * Raised when a draft's text is replaced outright (sent, discarded), or when the editor switches
  * drafts. iOS editor events read it synchronously, so an edit the editor made before applying the

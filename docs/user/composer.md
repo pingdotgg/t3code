@@ -241,9 +241,12 @@ when the preferred microphone cannot be routed. Devices with the same name may s
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
 If transcription on a paired environment fails, retry dictation to reuse the same
-recording. Dismiss the error or choose another transcription destination to discard it.
+recording. Sending or discarding the draft, dismissing the error, or choosing another
+transcription destination discards that recording.
 T3 Code deletes the temporary recording from your phone after successful transcription
-or cancellation. The transcript stays in your draft until you send the message to the agent.
+or cancellation. On-device iPhone transcription also deletes it after a failed attempt,
+so retrying requires a new recording. The transcript stays in your draft until you send
+the message to the agent.
 
 ## Queued messages
 
