@@ -115,14 +115,14 @@ describe("ThreadActivityAnnouncer", () => {
       router: false,
     });
     const { detail, status } = regions(screen.container);
-    const said = message("Checking the repo", "assistant");
+    const entries = [prompt, message("Checking the repo", "assistant"), command("git")];
     const heard: Array<[status: string, detail: string]> = [];
     using _timers = fakeTimers();
     for (const props of [
       {},
-      { entries: [prompt, said, command("git")], status: "approval", requestId: "request-1" },
-      { entries: [prompt, said, command("git")] },
-      { entries: [prompt, said, command("git"), command("rg")] },
+      { entries },
+      { entries, status: "approval", requestId: "request-1" },
+      { entries: [...entries, command("rg")] },
     ] satisfies ReadonlyArray<Partial<ComponentProps<typeof ThreadActivityAnnouncer>>>) {
       await screen.rerender(announcer(props));
       heard.push([status.textContent, detail.textContent]);
@@ -132,10 +132,29 @@ describe("ThreadActivityAnnouncer", () => {
 
     expect(heard).toEqual([
       ["Working", ""],
-      ["Needs approval", "T3 Code: Checking the repo"],
+      ["Working", "T3 Code: Checking the repo"],
       ["Needs approval", "T3 Code: Checking the repo"],
       ["Needs approval", "T3 Code: Checking the repo"],
       ["Needs approval", "Running rg"],
     ]);
+  });
+
+  it("reads a status that lands with a message as the message's last sentence", async () => {
+    // The announcer reads no route.
+    await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {
+      router: false,
+    });
+    const { detail, status } = regions(screen.container);
+    await screen.rerender(announcer({}));
+    await screen.rerender(
+      announcer({
+        entries: [prompt, message("Checking the repo", "assistant"), command("git")],
+        status: "approval",
+        requestId: "request-1",
+      }),
+    );
+
+    await expect.element(detail).toHaveTextContent("T3 Code: Checking the repo. Needs approval");
+    await expect.element(status).toHaveTextContent("Working");
   });
 });

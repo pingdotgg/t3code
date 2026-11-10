@@ -39,7 +39,7 @@ function asOneAnnouncement(texts: ReadonlyArray<string>) {
 
 /**
  * The open thread's polite live regions. Status has its own, so "Needs
- * approval" landing right after a message doesn't replace it unheard.
+ * approval" landing a moment after a message doesn't replace it unheard.
  */
 export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
   threadKey,
@@ -133,10 +133,13 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
       return;
     }
     if (detail.messages.length > 0) {
-      const text = asOneAnnouncement(detail.messages);
+      // NVDA reads two regions written in the same frame in either order, so a
+      // status that lands with a message is read as its last sentence.
+      const text = asOneAnnouncement(
+        turn.announcement === null ? detail.messages : [...detail.messages, turn.announcement],
+      );
       write(text, holdAfter(text));
-    }
-    if (turn.announcement !== null) {
+    } else if (turn.announcement !== null) {
       announce(turn.announcement);
       step.quietUntil = Math.max(step.quietUntil, Date.now() + ACTIVITY_GAP_MS);
     }
