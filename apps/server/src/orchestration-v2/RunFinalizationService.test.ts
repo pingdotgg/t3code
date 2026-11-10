@@ -113,7 +113,7 @@ it.effect.each(
       {
         label: "does not refresh during a newer active run",
         branch: "feature",
-        checkedOut: "feature",
+        checkedOut: "other",
         activeRun: "newer-run",
         expected: [],
       },
@@ -335,10 +335,24 @@ it.effect.each([
       assert.deepEqual(
         commands.flatMap((command) =>
           command.type === "thread.metadata.update" && command.branch !== undefined
-            ? [{ threadId: command.threadId, branch: command.branch }]
+            ? [
+                {
+                  threadId: command.threadId,
+                  branch: command.branch,
+                  expectedBranch: command.expectedBranch,
+                  expectedWorktreePath: command.expectedWorktreePath,
+                },
+              ]
             : [],
         ),
-        [{ threadId, branch: scenario.checkedOut }],
+        [
+          {
+            threadId,
+            branch: scenario.checkedOut,
+            expectedBranch: scenario.stored,
+            expectedWorktreePath: null,
+          },
+        ],
         `thread kept branch ${scenario.stored} after its turn checked out ${scenario.checkedOut}`,
       );
       if (!scenario.isDefaultRef) yield* Deferred.await(lookedUp);
