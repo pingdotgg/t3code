@@ -352,11 +352,11 @@ describe("OrchestratorMcpService", () => {
       const parentThreadId = ThreadId.make("thread:mcp-followup-parent");
       const childThreadId = ThreadId.make("thread:mcp-followup-child");
       const followupTaskId = NodeId.make("node:mcp-followup-task");
-      const parentTransfers: Array<unknown> = [];
+      const childTransfers: Array<unknown> = [];
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: parentTransfers,
+        contextTransfers: [],
         subagents: [
           {
             id: followupTaskId,
@@ -399,7 +399,7 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:03:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: childTransfers,
         messages: [],
         subagents: [
           {
@@ -580,7 +580,7 @@ describe("OrchestratorMcpService", () => {
         assert.equal(settled.summary, "The grandchild finished the next step.");
 
         // Reading the wake's reply reads the follow-up's result, so it acknowledges the follow-up.
-        parentTransfers.push({
+        childTransfers.push({
           id: "context-transfer:mcp-followup-result",
           type: "subagent_result",
           sourceThreadId: childThreadId,
