@@ -233,7 +233,7 @@ function layerTest(input: {
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
-  readonly copiedTexts?: string[];
+  readonly onCopyText?: (text: string) => Effect.Effect<void>;
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
@@ -325,10 +325,7 @@ function layerTest(input: {
               return true;
             }),
           openSystemSettings: () => Effect.succeed(true),
-          copyText: (text) =>
-            Effect.sync(() => {
-              input.copiedTexts?.push(text);
-            }),
+          copyText: input.onCopyText ?? (() => Effect.void),
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
@@ -1182,6 +1179,56 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("offers to copy the bare address when right-clicking a mailto link", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const copied = yield* Deferred.make<string>();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        onPopupTemplate: (input) => Deferred.succeed(popup, input),
+        onCopyText: (text) => Deferred.succeed(copied, text),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+        contextMenu(
+          { preventDefault: vi.fn() },
+          {
+            linkURL: "mailto:restaurant%40example.com?subject=Hi",
+            misspelledWord: "",
+            dictionarySuggestions: [],
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+          },
+        );
+
+        const { template } = yield* Deferred.await(popup);
+        const copyEmail = template.find((item) => item.label === "Copy Email Address");
+        assert.isDefined(
+          copyEmail,
+          `no "Copy Email Address" item in ${JSON.stringify(template.map((item) => item.label ?? item.role ?? item.type))}`,
+        );
+        copyEmail?.click?.(
+          {} as Electron.MenuItem,
+          fakeWindow.window,
+          {} as Electron.KeyboardEvent,
+        );
+        assert.equal(yield* Deferred.await(copied), "restaurant@example.com");
       }).pipe(Effect.provide(layer));
     }),
   );
