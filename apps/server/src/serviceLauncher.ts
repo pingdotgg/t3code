@@ -54,10 +54,19 @@ const ownerOnOtherMachine = async (baseDir: string): Promise<string | undefined>
   try {
     const record = JSON.parse(
       await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "server-runtime.json"), "utf8"),
-    ) as { readonly hostname?: unknown };
-    return typeof record.hostname === "string" && record.hostname !== NodeOS.hostname()
-      ? record.hostname
-      : undefined;
+    ) as { readonly hostname?: unknown; readonly pid?: unknown };
+    if (typeof record.hostname !== "string" || record.hostname === NodeOS.hostname()) {
+      return undefined;
+    }
+    if (typeof record.pid === "number" && record.pid > 0) {
+      try {
+        process.kill(record.pid, 0);
+        return undefined;
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EPERM") return undefined;
+      }
+    }
+    return record.hostname;
   } catch {
     return undefined;
   }

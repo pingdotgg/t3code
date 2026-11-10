@@ -706,7 +706,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         path.join(baseDir, "userdata", "server-runtime.json"),
         JSON.stringify({
           version: 1,
-          pid: 1,
+          pid: 4_194_305,
           hostname: "host-a",
           port: 3773,
           origin: "http://127.0.0.1:3773",
