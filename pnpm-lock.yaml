@@ -198,8 +198,8 @@ catalogs:
       specifier: 1.8.0
       version: 1.8.0
     '@pierre/highlights':
-      specifier: 0.2.0
-      version: 0.2.0
+      specifier: 0.5.0
+      version: 0.5.0
     '@types/plist':
       specifier: 3.0.5
       version: 3.0.5
@@ -281,7 +281,7 @@ overrides:
   expo-widgets: 58.0.27
   '@ff-labs/fff-node': 0.11.0
   '@legendapp/list': 3.7.2
-  '@pierre/diffs': 1.6.1
+  '@pierre/diffs': 1.7.0-beta.3
   '@react-native-ai/apple': 0.12.0
   '@react-native-menu/menu': 2.0.0
   '@react-navigation/native-stack': 7.21.0
@@ -290,7 +290,7 @@ overrides:
   react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.7.1
   react-native-keyboard-controller: 1.23.0
-  react-native-pdf-jsi: 5.0.0
+  react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
@@ -361,7 +361,7 @@ patchedDependencies:
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
-  '@pierre/diffs@1.6.1': 322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34
+  '@pierre/diffs@1.7.0-beta.3': aea143f4a2e59744371219c4e7ae675ec739c9ba16f1732e2f11748b496ea05e
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
@@ -380,10 +380,10 @@ patchedDependencies:
   micromark-extension-llm-math@3.1.0: 4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b
   micromark@4.0.2: cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67
   node-pty@1.2.0-beta.15: f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651
-  react-native-gesture-handler@3.5.0: 25b41728fe1796cc791bf394ec07fbe232072e78c508cf325759a96ca19db0d8
+  react-native-gesture-handler@3.5.0: 171379dd378f8f11e9187876dec2116e5cbf5f21cef6576cdde6956518324f98
   react-native-image-viewing@0.2.2: 4aa038d541c7ddcc8f1437eb3e7b4f769f61de78e7f91b53f9805dfca608474d
-  react-native-keyboard-controller@1.23.0: 362fe9364d6457a26c240ab9af55a845c6ae5dd295e28ec345b1e38c21314280
-  react-native-pdf-jsi@5.0.0: 6f52854210f61bef499850ebd498229a111bc34ec5b2a4925e644f2f48f42760
+  react-native-keyboard-controller@1.23.0: 1c7c80317ef050e08d4aabe034a0813d03b497dff2dc8b37fb5f4a6e3b20fddb
+  react-native-pdf-jsi@6.1.0: d29e6b69813548de641a09db705dd94823d3f96832821ae9c3f6a196dd15cb68
   react-native-reanimated@4.7.1: 95ee26e5fcab5f50bc4b4c47b3f7e6278a0b20850205efb9f6ee7e70a22d2b59
   react-native-svg@15.16.1: 110f9243ffad03654ce40dd1cdb09f01af16b8fa2ccb2b2cd3d62e682c180399
   react-native-webview@14.0.1: 71009983c76818bd5e73d4ca597f76efd04101600c84cd4b4c5d920781c048ae
@@ -548,17 +548,14 @@ importers:
         specifier: 0.3.0
         version: 0.3.0
       '@pierre/diffs':
-        specifier: 1.6.1
-        version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.3
+        version: 1.7.0-beta.3(patch_hash=aea143f4a2e59744371219c4e7ae675ec739c9ba16f1732e2f11748b496ea05e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/highlights':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.5.0
       '@react-native-ai/apple':
         specifier: 0.12.0
         version: 0.12.0(patch_hash=2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))
-      '@react-native-async-storage/async-storage':
-        specifier: 3.1.1
-        version: 3.1.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@react-native-menu/menu':
         specifier: 2.0.0
         version: 2.0.0(patch_hash=6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -730,27 +727,24 @@ importers:
       react-native:
         specifier: 0.88.1
         version: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
-      react-native-blob-util:
-        specifier: 0.25.1
-        version: 0.25.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-enriched-markdown:
         specifier: file:deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz
         version: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-gesture-handler:
         specifier: 3.5.0
-        version: 3.5.0(patch_hash=25b41728fe1796cc791bf394ec07fbe232072e78c508cf325759a96ca19db0d8)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        version: 3.5.0(patch_hash=171379dd378f8f11e9187876dec2116e5cbf5f21cef6576cdde6956518324f98)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-image-viewing:
         specifier: 0.2.2
         version: 0.2.2(patch_hash=4aa038d541c7ddcc8f1437eb3e7b4f769f61de78e7f91b53f9805dfca608474d)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-keyboard-controller:
         specifier: 1.23.0
-        version: 1.23.0(patch_hash=362fe9364d6457a26c240ab9af55a845c6ae5dd295e28ec345b1e38c21314280)(3ba24c675da40640708746e9087ede39)
+        version: 1.23.0(patch_hash=1c7c80317ef050e08d4aabe034a0813d03b497dff2dc8b37fb5f4a6e3b20fddb)(3ba24c675da40640708746e9087ede39)
       react-native-nitro-modules:
         specifier: 0.37.2
         version: 0.37.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-pdf-jsi:
-        specifier: 5.0.0
-        version: 5.0.0(patch_hash=6f52854210f61bef499850ebd498229a111bc34ec5b2a4925e644f2f48f42760)(5049cdc7fba026f5c77b3698860d56c9)
+        specifier: 6.1.0
+        version: 6.1.0(patch_hash=d29e6b69813548de641a09db705dd94823d3f96832821ae9c3f6a196dd15cb68)(expo@58.0.23)(react-native-nitro-modules@0.37.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-reanimated:
         specifier: 4.7.1
         version: 4.7.1(patch_hash=95ee26e5fcab5f50bc4b4c47b3f7e6278a0b20850205efb9f6ee7e70a22d2b59)(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -825,8 +819,8 @@ importers:
   apps/server:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.316
-        version: 0.3.316(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)
+        specifier: ^0.3.321
+        version: 0.3.321(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)
       '@cursor/sdk':
         specifier: 1.2.0
         version: 1.2.0(zod@4.6.7)
@@ -1066,8 +1060,8 @@ importers:
         specifier: 'catalog:'
         version: 1.8.0
       '@pierre/diffs':
-        specifier: 1.6.1
-        version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.3
+        version: 1.7.0-beta.3(patch_hash=aea143f4a2e59744371219c4e7ae675ec739c9ba16f1732e2f11748b496ea05e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -1236,9 +1230,6 @@ importers:
       tiff:
         specifier: 7.1.3
         version: 7.1.3
-      unbash:
-        specifier: ^5.0.0
-        version: 5.0.0
       unified:
         specifier: 'catalog:'
         version: 11.0.5
@@ -1485,8 +1476,8 @@ importers:
   packages/client-runtime:
     dependencies:
       '@pierre/diffs':
-        specifier: 1.6.1
-        version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.3
+        version: 1.7.0-beta.3(patch_hash=aea143f4a2e59744371219c4e7ae675ec739c9ba16f1732e2f11748b496ea05e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -1538,6 +1529,9 @@ importers:
       three:
         specifier: 0.180.0
         version: 0.180.0
+      unbash:
+        specifier: ^5.0.0
+        version: 5.0.0
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
@@ -2697,8 +2691,8 @@ packages:
       vitest:
         optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.316':
-    resolution: {integrity: sha512-mCMr0que5kIy80JslJub6WFDB2+GYRGWNeVgSZaBpkBwXrr4wnRMnnGHitkA2BEJ5QP5xWyc6YH/6do/edxCWg==}
+  '@anthropic-ai/claude-agent-sdk@0.3.321':
+    resolution: {integrity: sha512-Smer/h/jQLTtT+l4sxaAUwZq7wif/9RzzuqltS5Gy+kAFo/iP89H7JHa8avhVT0xGkPBvBD/1Bbdg3pcArhQcw==}
     engines: {node: '>=18.14.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -5908,8 +5902,8 @@ packages:
     resolution: {integrity: sha512-ODOov0sGMJMf3jPonOkgGqPknTsu+DdQ7kD++gz8aI+aFMOMHFbWAA2taqXXVTdP+OTOQR/znGvSpmkeI0WTYQ==}
     engines: {node: '>=14.18.0'}
 
-  '@pierre/diffs@1.6.1':
-    resolution: {integrity: sha512-XTfLW4bFETyosZfFNUoyRh1zPE4tmAijOoxdHx4X805tlaq/7/fuQXIiJSm21+jLkDo8vn5elQ+2O4YtMTKM0Q==}
+  '@pierre/diffs@1.7.0-beta.3':
+    resolution: {integrity: sha512-eAoAoL9aoO7vR9VV5NCLIuIAEr4yu5LsBnhTbyoy8wDFjT0y7bDrlhX8doO7FUb/MCd0Ldcd15Ga/yTOq2mjBA==}
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
@@ -5919,8 +5913,11 @@ packages:
       react-dom:
         optional: true
 
-  '@pierre/highlights@0.2.0':
-    resolution: {integrity: sha512-hTpcOU1EzDAP4bYtEhxmMu2jwMvtkUydRUBUpWMSHTs3dw0IaC3Ld5ansMy18L0GE3b6Vfl2OGkLK+pWWpnBmw==}
+  '@pierre/highlights@0.5.0':
+    resolution: {integrity: sha512-G8gscrHrik3YjKd+tPTcmivJ/W0zRrtg4adVxnfX7+415+0Qplo6qUWuEX5R0UkA1fMhmE2sOSuLBMNGDtLhIw==}
+
+  '@pierre/patches@0.0.1':
+    resolution: {integrity: sha512-NycJQVQNuqmBdr7u1LsUcmkiIz1fRm9xhWZyRbm21oJYd0MVVCa45t9Lsuj5IKrTMBonxOuh4LMv+R3BpL4bmQ==}
 
   '@pierre/theme@2.0.0':
     resolution: {integrity: sha512-yNDd9GYLQl1mEUJR8AneJ5e4ohLIHQd/wZLWr4fagt78vS2RwwZNW530vVgHqXFAyFVcFlRmGUD5ramXH46OXw==}
@@ -5976,12 +5973,6 @@ packages:
     resolution: {integrity: sha512-BC/kEDbCZprv1xcQCWsgapXm/WEsj5lieBDvU1vJXStrN+BG+hWM01zoqDGTD/j71zvt9DEfHcMvEqbrGY2uAA==}
     peerDependencies:
       react-native: '>=0.76.0'
-
-  '@react-native-async-storage/async-storage@3.1.1':
-    resolution: {integrity: sha512-z+PnLz1n6ECKhgoHZHkfc+dijXZEyZnNFSajbtE0NEbsJhmX8x9GlOeiMQIKX2E4DUqPSgfIh4FYBv1M49KgPQ==}
-    peerDependencies:
-      react: '*'
-      react-native: '*'
 
   '@react-native-masked-view/masked-view@0.3.2':
     resolution: {integrity: sha512-XwuQoW7/GEgWRMovOQtX3A4PrXhyaZm0lVUiY8qJDvdngjLms9Cpdck6SmGAUNqQwcj2EadHC1HwL0bEyoa/SQ==}
@@ -6056,9 +6047,6 @@ packages:
   '@react-native/metro-config@0.88.1':
     resolution: {integrity: sha512-Q0rKoC55HSOIc4j55lCOHpjIt/JkGQ66u2KsorfTC99LaRIez9UYJ/mhMwhjkZqGHq5Z4iBT6PCd4eQf35zdgQ==}
     engines: {node: ^22.13.0 || ^24.3.0 || >= 26.0.0}
-
-  '@react-native/normalize-color@2.1.0':
-    resolution: {integrity: sha512-Z1jQI2NpdFJCVgpY+8Dq/Bt3d+YUi1928Q+/CZm/oh66fzM0RUl54vvuXlPJKybH4pdCZey1eDTPaLHkMPNgWA==}
 
   '@react-native/normalize-colors@0.88.1':
     resolution: {integrity: sha512-2SAKiLyZRf+peBLkhhJWGY5vC26w1Uj9QBgUZvjAnOxjgeEKUGBE5riPS0R7+YoqSrRL0w8ucwZB4M+vvy9HMg==}
@@ -8178,9 +8166,6 @@ packages:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
     engines: {node: '>= 0.8'}
 
-  deprecated-react-native-prop-types@2.3.0:
-    resolution: {integrity: sha512-pWD0voFtNYxrVqvBMYf5gq3NA2GCpfodS1yNynTPc93AYA/KEMGeWDqqeUB6R2Z9ZofVhks2aeJXiuQqKNpesA==}
-
   dequal@2.0.3:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
@@ -9371,9 +9356,6 @@ packages:
 
   idb-keyval@6.2.1:
     resolution: {integrity: sha512-8Sb3veuYCyrZL+VBt9LJfZjLUPWVvqn8tG28VqYNFCo43KHcKuq+b4EiXGeuaLAQWL2YmyDgMp2aSpH9JHsEQg==}
-
-  idb@8.0.3:
-    resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -10735,9 +10717,6 @@ packages:
     resolution: {integrity: sha512-NxNv/kLguCA7p3jE8oL2aEBsrJWgAakBpgmgK6lpPWV+WuOmY6r2/zbAVnP+T8bQlA0nzHXSJSJW0Hq7ylaD2Q==}
     engines: {node: '>= 6'}
 
-  prop-types@15.8.1:
-    resolution: {integrity: sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==}
-
   proper-lockfile@4.1.2:
     resolution: {integrity: sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA==}
 
@@ -10853,9 +10832,6 @@ packages:
       react:
         optional: true
 
-  react-is@16.13.1:
-    resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
-
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
@@ -10870,12 +10846,6 @@ packages:
     peerDependencies:
       '@types/react': '>=18'
       react: '>=18'
-
-  react-native-blob-util@0.25.1:
-    resolution: {integrity: sha512-HMzab2SL8h48pvfufji0TKdet/jnNvamxYmYyNqTV5YOge00V28ycdc3S4leHjGXMJ1+fS2j2SrQ3aG5pzbx1w==}
-    peerDependencies:
-      react: '*'
-      react-native: '*'
 
   react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz:
     resolution: {integrity: sha512-2Ph2EXnXbcYd5LK5SmDwqnQNgwqOVAK2uqasW1NzzFGqm5SRR4QD1TmAvUFytrKudnRkzHW8kpnHgXcYRhcyBA==, tarball: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz}
@@ -10919,14 +10889,16 @@ packages:
       react: '*'
       react-native: '*'
 
-  react-native-pdf-jsi@5.0.0:
-    resolution: {integrity: sha512-yemeI1tWRfG0IUbUcc/aD757kBI0qCLqFZJ6pTd4eAIsnuNwpqahAviUj7C3JG2Ddl5LEElwwFx49nUi1RXZmg==}
+  react-native-pdf-jsi@6.1.0:
+    resolution: {integrity: sha512-bB8nuJkTypWssAasAlSe3ye3h9PTCyttBPQuzVgMNpMmEWR9I/J1Gpkmz1fxqHa7GXAChlYCSUXa5jDFKZnx4Q==}
     peerDependencies:
-      '@react-native-async-storage/async-storage': '>=1.17.0'
+      expo: '>=52.0.0'
       react: '*'
-      react-native: '*'
-      react-native-blob-util: '>=0.13.7'
+      react-native: '>=0.76.0'
       react-native-nitro-modules: ^0.37.1
+    peerDependenciesMeta:
+      expo:
+        optional: true
 
   react-native-reanimated@4.7.1:
     resolution: {integrity: sha512-HviDFSZ6V4KTRsrLS6hRbBJ4j63l/L8a5az0EoWdJwaMLYnBNyYISTDxwXpEYkMbAbLzCMCviIdiOxXHYQWcNA==}
@@ -12511,7 +12483,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@anthropic-ai/claude-agent-sdk@0.3.316(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)':
+  '@anthropic-ai/claude-agent-sdk@0.3.321(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.6.7)
       '@modelcontextprotocol/sdk': 1.32.2(supports-color@8.1.1)(zod@4.6.7)
@@ -15420,9 +15392,10 @@ snapshots:
       tslib: 2.8.1
       webcrypto-core: 1.9.2
 
-  '@pierre/diffs@1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.7.0-beta.3(patch_hash=aea143f4a2e59744371219c4e7ae675ec739c9ba16f1732e2f11748b496ea05e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@pierre/highlights': 0.2.0
+      '@pierre/highlights': 0.5.0
+      '@pierre/patches': 0.0.1
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.2(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
       diff: 9.0.0
@@ -15435,7 +15408,9 @@ snapshots:
     transitivePeerDependencies:
       - '@shikijs/themes'
 
-  '@pierre/highlights@0.2.0': {}
+  '@pierre/highlights@0.5.0': {}
+
+  '@pierre/patches@0.0.1': {}
 
   '@pierre/theme@2.0.0': {}
 
@@ -15485,12 +15460,6 @@ snapshots:
       '@ai-sdk/provider-utils': 4.0.57(zod@4.6.7)
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       zod: 4.6.7
-
-  '@react-native-async-storage/async-storage@3.1.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
-    dependencies:
-      idb: 8.0.3
-      react: 19.3.0
-      react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
   '@react-native-masked-view/masked-view@0.3.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
     dependencies:
@@ -15628,8 +15597,6 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
-
-  '@react-native/normalize-color@2.1.0': {}
 
   '@react-native/normalize-colors@0.88.1': {}
 
@@ -17803,12 +17770,6 @@ snapshots:
 
   depd@2.0.0: {}
 
-  deprecated-react-native-prop-types@2.3.0:
-    dependencies:
-      '@react-native/normalize-color': 2.1.0
-      invariant: 2.2.4
-      prop-types: 15.8.1
-
   dequal@2.0.3: {}
 
   destr@2.0.5: {}
@@ -19110,8 +19071,6 @@ snapshots:
 
   idb-keyval@6.2.1:
     optional: true
-
-  idb@8.0.3: {}
 
   ignore@5.3.2: {}
 
@@ -20858,12 +20817,6 @@ snapshots:
       kleur: 3.0.3
       sisteransi: 1.0.5
 
-  prop-types@15.8.1:
-    dependencies:
-      loose-envify: 1.4.0
-      object-assign: 4.1.1
-      react-is: 16.13.1
-
   proper-lockfile@4.1.2:
     dependencies:
       graceful-fs: 4.2.11
@@ -21014,8 +20967,6 @@ snapshots:
     optionalDependencies:
       react: 19.3.0
 
-  react-is@16.13.1: {}
-
   react-is@17.0.2: {}
 
   react-is@18.3.1: {}
@@ -21040,12 +20991,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-native-blob-util@0.25.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
-    dependencies:
-      base-64: 1.0.0
-      react: 19.3.0
-      react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
-
   react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
       react: 19.3.0
@@ -21053,7 +20998,7 @@ snapshots:
     optionalDependencies:
       katex: 0.16.47
 
-  react-native-gesture-handler@3.5.0(patch_hash=25b41728fe1796cc791bf394ec07fbe232072e78c508cf325759a96ca19db0d8)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
+  react-native-gesture-handler@3.5.0(patch_hash=171379dd378f8f11e9187876dec2116e5cbf5f21cef6576cdde6956518324f98)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
       '@types/react-test-renderer': 19.1.0
       invariant: 2.2.4
@@ -21070,7 +21015,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
-  react-native-keyboard-controller@1.23.0(patch_hash=362fe9364d6457a26c240ab9af55a845c6ae5dd295e28ec345b1e38c21314280)(3ba24c675da40640708746e9087ede39):
+  react-native-keyboard-controller@1.23.0(patch_hash=1c7c80317ef050e08d4aabe034a0813d03b497dff2dc8b37fb5f4a6e3b20fddb)(3ba24c675da40640708746e9087ede39):
     dependencies:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
@@ -21083,15 +21028,13 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
-  react-native-pdf-jsi@5.0.0(patch_hash=6f52854210f61bef499850ebd498229a111bc34ec5b2a4925e644f2f48f42760)(5049cdc7fba026f5c77b3698860d56c9):
+  react-native-pdf-jsi@6.1.0(patch_hash=d29e6b69813548de641a09db705dd94823d3f96832821ae9c3f6a196dd15cb68)(expo@58.0.23)(react-native-nitro-modules@0.37.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
-      '@react-native-async-storage/async-storage': 3.1.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
-      crypto-js: 4.2.0
-      deprecated-react-native-prop-types: 2.3.0
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
-      react-native-blob-util: 0.25.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-nitro-modules: 0.37.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+    optionalDependencies:
+      expo: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
 
   react-native-reanimated@4.7.1(patch_hash=95ee26e5fcab5f50bc4b4c47b3f7e6278a0b20850205efb9f6ee7e70a22d2b59)(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
