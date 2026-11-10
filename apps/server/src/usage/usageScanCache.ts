@@ -15,7 +15,7 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 /**
  * An older server sharing that directory cannot read a newer cache and would
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
- * both.
+ * the newer one; older files are removed once it is saved.
  */
 export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v11.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
