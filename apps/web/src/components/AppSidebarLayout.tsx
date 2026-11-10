@@ -353,9 +353,14 @@ function SidebarControl() {
     context: { usagePageOpen },
   });
   const onStageBackdrop = isSidebarVisible && stageBackdropVariant !== null;
+  const overviewPhase = useOverviewPhase();
+  const overviewShown = overviewPhase === "opening" || overviewPhase === "open";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
   useEffect(() => {
+    const toggleOutsideOverview = () => {
+      if (!useLayoutStore.getState().overviewOpen) toggleSidebar();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -387,12 +392,12 @@ function SidebarControl() {
 
       event.preventDefault();
       event.stopPropagation();
-      toggleSidebar();
+      toggleOutsideOverview();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "sidebar.toggle") toggleSidebar();
+      if (action === "sidebar.toggle") toggleOutsideOverview();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
@@ -418,23 +423,33 @@ function SidebarControl() {
       data-chrome-scope=""
       data-sidebar-control=""
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-              )}
-              aria-label="Toggle main sidebar"
-            />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      <div
+        className="flex"
+        inert={overviewShown}
+        style={{
+          ...overviewZoomTransition(),
+          transitionProperty: "opacity",
+          ...(overviewShown && { opacity: 0 }),
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <SidebarTrigger
+                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                className={cn(
+                  "pointer-events-auto",
+                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                )}
+                aria-label="Toggle main sidebar"
+              />
+            }
+          />
+          <TooltipPopup side="bottom">
+            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          </TooltipPopup>
+        </Tooltip>
+      </div>
       {/* Phones keep the header for the page; the system back gesture covers them. */}
       <div className="pointer-events-auto hidden items-center [-webkit-app-region:no-drag] md:flex">
         <NavigationHistoryButton direction="back" onStageBackdrop={onStageBackdrop} />
