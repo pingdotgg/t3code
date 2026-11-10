@@ -16,7 +16,11 @@ import * as ServiceProtection from "../cloud/serviceProtection.ts";
 import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { otherOwnerHostname, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  otherOwnerHostname,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveEntryPath } from "./invocation.ts";
 
@@ -97,7 +101,11 @@ export const otherBaseDirError = Effect.fn("cli.service.otherBaseDirError")(func
     {},
   );
   const state = yield* readPersistedServerRuntimeState(serverRuntimeStatePath);
-  const ownerHostname = Option.isSome(state) ? yield* otherOwnerHostname(state.value) : undefined;
+  // A pid alive here means this machine, whose hostname may have changed since the server started.
+  const ownerHostname =
+    Option.isSome(state) && !isProcessAlive(state.value.pid)
+      ? yield* otherOwnerHostname(state.value)
+      : undefined;
   return yield* new BootService.BootServiceOtherBaseDirError({
     installedBaseDir,
     baseDir,

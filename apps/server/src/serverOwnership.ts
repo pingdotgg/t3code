@@ -194,12 +194,12 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
   // The holder may be on another machine sharing this home; name it so nobody stops the wrong one.
+  // A pid alive here means this machine, whose hostname may have changed since the owner started.
   const alreadyRunning = readPersistedServerRuntimeState(statePath).pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.undefined,
-        onSome: otherOwnerHostname,
-      }),
+    Effect.flatMap((state) =>
+      Option.isSome(state) && !isProcessAlive(state.value.pid)
+        ? otherOwnerHostname(state.value)
+        : Effect.undefined,
     ),
     Effect.orElseSucceed(() => undefined),
     Effect.flatMap((ownerHostname) =>

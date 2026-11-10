@@ -182,16 +182,24 @@ describe("server ownership", () => {
         Effect.gen(function* () {
           const owner = yield* ServerOwnership.acquireServerOwnership(statePath);
           yield* owner.publish(state);
-          const before = yield* fs.readFileString(statePath);
+          const renamedHost = Effect.provideService(HostProcess.Hostname, `not-${state.hostname}`);
           const refused = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
             Effect.flip,
           );
           assert.equal(refused._tag, "ServerAlreadyRunningError");
           assert.include(refused.message, "do not delete it while a server is running");
-          // regression: #34060 a shared $HOME names the machine that owns it.
-          const fromOtherMachine = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
-            Effect.provideService(HostProcess.Hostname, `not-${state.hostname}`),
+          // A live local pid is this machine even after its hostname changed.
+          const afterRename = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
             Effect.flip,
+            renamedHost,
+          );
+          assert.include(afterRename.message, "Stop that server");
+          // regression: #34060 a shared $HOME names the machine that owns it.
+          yield* owner.publish({ ...state, pid: 4_194_305 });
+          const before = yield* fs.readFileString(statePath);
+          const fromOtherMachine = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.flip,
+            renamedHost,
           );
           assert.equal(fromOtherMachine._tag, "ServerAlreadyRunningError");
           assert.include(fromOtherMachine.message, `on ${state.hostname} already owns`);
