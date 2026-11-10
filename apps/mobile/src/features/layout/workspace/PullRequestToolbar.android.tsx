@@ -5,7 +5,7 @@ import { AppBar } from "../../../components/ui/AppBar";
 import { appBarMenuItemsFromActions } from "../../../components/ui/menuActionItems";
 import { useHomeRouteVisible } from "../../home/home-route-visibility";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
-import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
+import { useWorkspacePaneState } from "../adaptive-workspace-context";
 import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "../../pull-requests/PullRequestListFilters";
@@ -21,7 +21,7 @@ export function PullRequestToolbar(props: {
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
-  const { panes } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const tab = workspace.state.tabs.pullRequests;
   const homeVisible = useHomeRouteVisible();
   // Compact Home uses route visibility; a split sidebar stays interactive while its detail is focused.
