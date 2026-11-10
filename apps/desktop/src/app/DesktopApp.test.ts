@@ -130,6 +130,7 @@ it.effect.each([
           Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
             installIntoProcess: Effect.succeed(true),
             awaitDiscovery: Effect.succeed(true),
+            awaitUserShellDiscovery: Effect.succeed(true),
             updates: Stream.empty,
           }),
           Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
