@@ -209,6 +209,7 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { FILE_FIND_SCOPE_SELECTOR } from "./files/RenderedFileFind";
 import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -2711,7 +2712,9 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.find": () => {
+      "chat.find": ({ event }) => {
+        if (event.target instanceof Element && event.target.closest(FILE_FIND_SCOPE_SELECTOR))
+          return false;
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
         openThreadFind(activeThreadKey);

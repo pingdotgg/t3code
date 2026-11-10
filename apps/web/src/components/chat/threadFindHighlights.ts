@@ -14,6 +14,54 @@ interface ThreadFindRange {
   readonly range: Range;
 }
 
+/** Ranges matching the query in a scope's text, without matching across block elements. */
+export function collectTextFindRanges(scope: Element, query: string): Range[] {
+  if (query.length === 0) return [];
+  const ranges: Range[] = [];
+  let text = "";
+  let nodes: { node: Node; start: number; end: number }[] = [];
+  const flush = () => {
+    let startIndex = 0;
+    let endIndex = 0;
+    for (const offset of findThreadSearchOccurrences(text, query)) {
+      while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
+      if (endIndex < startIndex) endIndex = startIndex;
+      while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
+      const start = nodes[startIndex];
+      const end = nodes[endIndex];
+      if (!start || !end) continue;
+      const range = scope.ownerDocument.createRange();
+      range.setStart(start.node, offset - start.start);
+      range.setEnd(end.node, offset + query.length - end.start);
+      ranges.push(range);
+    }
+    text = "";
+    nodes = [];
+  };
+  const visit = (node: Node, inPre = false) => {
+    const element = node.nodeType === 1 ? (node as Element) : null;
+    if (element?.matches("svg")) return;
+    if (element?.matches(`${THREAD_FIND_IGNORE_SELECTOR}, [role="toolbar"]`)) {
+      flush();
+      return;
+    }
+    const tag = element?.tagName.toLowerCase() ?? "";
+    const block = THREAD_FIND_BLOCK_TAGS.has(tag);
+    if (block) flush();
+    if (node.nodeType === 3) {
+      const value = node.nodeValue ?? "";
+      const start = text.length;
+      text += inPre ? value : value.replace(/\r?\n/g, " ");
+      nodes.push({ node, start, end: text.length });
+    }
+    for (const child of node.childNodes) visit(child, inPre || tag === "pre");
+    if (block) flush();
+  };
+  visit(scope);
+  flush();
+  return ranges;
+}
+
 export function collectThreadFindRanges(container: HTMLElement, query: string): ThreadFindRange[] {
   if (query.length === 0) return [];
 
@@ -24,50 +72,11 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     if (scope.parentElement?.closest(THREAD_FIND_TEXT_SELECTOR)) continue;
     const rowId = scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
     if (!rowId) continue;
-
-    let text = "";
-    let nodes: { node: Node; start: number; end: number }[] = [];
-    const flush = () => {
-      let startIndex = 0;
-      let endIndex = 0;
-      for (const offset of findThreadSearchOccurrences(text, query)) {
-        while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
-        if (endIndex < startIndex) endIndex = startIndex;
-        while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
-        const start = nodes[startIndex];
-        const end = nodes[endIndex];
-        if (!start || !end) continue;
-        const range = container.ownerDocument.createRange();
-        range.setStart(start.node, offset - start.start);
-        range.setEnd(end.node, offset + query.length - end.start);
-        const occurrence = occurrenceByRowId.get(rowId) ?? 0;
-        ranges.push({ rowId, occurrence, range });
-        occurrenceByRowId.set(rowId, occurrence + 1);
-      }
-      text = "";
-      nodes = [];
-    };
-    const visit = (node: Node, inPre = false) => {
-      const element = node.nodeType === 1 ? (node as Element) : null;
-      if (element?.matches("svg")) return;
-      if (element?.matches(`${THREAD_FIND_IGNORE_SELECTOR}, [role="toolbar"]`)) {
-        flush();
-        return;
-      }
-      const tag = element?.tagName.toLowerCase() ?? "";
-      const block = THREAD_FIND_BLOCK_TAGS.has(tag);
-      if (block) flush();
-      if (node.nodeType === 3) {
-        const value = node.nodeValue ?? "";
-        const start = text.length;
-        text += inPre ? value : value.replace(/\r?\n/g, " ");
-        nodes.push({ node, start, end: text.length });
-      }
-      for (const child of node.childNodes) visit(child, inPre || tag === "pre");
-      if (block) flush();
-    };
-    visit(scope);
-    flush();
+    for (const range of collectTextFindRanges(scope, query)) {
+      const occurrence = occurrenceByRowId.get(rowId) ?? 0;
+      ranges.push({ rowId, occurrence, range });
+      occurrenceByRowId.set(rowId, occurrence + 1);
+    }
   }
   return ranges;
 }
