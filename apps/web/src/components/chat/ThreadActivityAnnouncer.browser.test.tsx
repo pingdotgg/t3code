@@ -89,6 +89,26 @@ describe("ThreadActivityAnnouncer", () => {
     await expect.element(detail).toBeEmptyDOMElement();
   });
 
+  it("reads a waiting step once the thread's detail catches up", async () => {
+    // The announcer reads no route.
+    await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {
+      router: false,
+    });
+    const { detail } = regions(screen.container);
+    {
+      // Restored before the assertion, which polls on real timers.
+      using _timers = fakeTimers();
+      await screen.rerender(announcer({}));
+      const entries = [prompt, command("git")];
+      await screen.rerender(announcer({ entries }));
+      await screen.rerender(announcer({ entries, detailBehind: true }));
+      await screen.rerender(announcer({ entries }));
+      await act(() => vi.advanceTimersByTime(2_000));
+    }
+
+    await expect.element(detail).toHaveTextContent("Running git");
+  });
+
   it("keeps a message beside the status that follows it, then reads the newest step", async () => {
     // The announcer reads no route.
     await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {

@@ -1,4 +1,5 @@
 import { MessageId, RunAttemptId, RunId, type ScreenReaderAnnouncements } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { TimelineAttempt, TimelineEntry, WorkLogEntry } from "../../session-logic";
@@ -54,10 +55,12 @@ const command = (id: string, fields: Partial<WorkLogEntry> = {}) =>
   });
 const notice = work("notice", { itemType: "system_notice", tone: "info", label: "Heads up" });
 const steer = message("steer", "user", { inputIntent: "steer" });
+const time = (clock: string) => DateTime.makeUnsafe(`2026-01-01T${clock}.000Z`);
 const inAttempt = (
   entry: TimelineEntry,
   id: string,
   status: TimelineAttempt["status"],
+  completed?: string,
 ): TimelineEntry => ({
   ...entry,
   attempt: {
@@ -66,9 +69,16 @@ const inAttempt = (
     attemptOrdinal: 1,
     rootNodeId: `${id}-root` as TimelineAttempt["rootNodeId"],
     status,
-    completedAt: null,
+    completedAt: completed === undefined ? null : time(completed),
   },
 });
+const completedAt = (entry: TimelineEntry, clock: string) =>
+  ({
+    ...entry,
+    projectedItem: {
+      item: { type: "assistant_message", status: "completed", completedAt: time(clock) },
+    },
+  }) as TimelineEntry;
 
 describe("turnDetail", () => {
   it.each<{
@@ -96,9 +106,19 @@ describe("turnDetail", () => {
       activity: "Editing src/a.ts",
     },
     {
+      name: "a file change to a file called search",
+      entries: [prompt, work("edit", { itemType: "file_change", changedFiles: ["search.ts"] })],
+      activity: "Editing search.ts",
+    },
+    {
       name: "a web search, with the verb its icon stands for",
-      entries: [prompt, work("search", { itemType: "web_search", detail: "vitest fake timers" })],
-      activity: "Searching the web for vitest fake timers",
+      entries: [prompt, work("search", { itemType: "web_search", detail: "searchParams usage" })],
+      activity: "Searching the web for searchParams usage",
+    },
+    {
+      name: "a file search that already says so",
+      entries: [prompt, work("find", { itemType: "file_search", label: "Searched files *.ts" })],
+      activity: "Searched files *.ts",
     },
     {
       name: "the step under a notice",
@@ -183,6 +203,19 @@ describe("turnDetail", () => {
       finished: [],
     },
     {
+      name: "a reply that completed before a steer replaced its attempt",
+      entries: [
+        prompt,
+        completedAt(
+          inAttempt(message("complete", "assistant"), "attempt-1", "superseded", "00:00:10"),
+          "00:00:04",
+        ),
+        steer,
+        inAttempt(command("git"), "attempt-2", "running"),
+      ],
+      finished: ["complete"],
+    },
+    {
       name: "no last message that only a notice follows",
       entries: [prompt, command("git"), message("last", "assistant"), notice],
       finished: [],
@@ -208,7 +241,12 @@ describe("turnDetail", () => {
     );
   });
 
-  it("marks only messages after the entry last seen as fresh", () => {
+  it.each<{ name: string; knownTailId: string | null; fresh: ReadonlyArray<boolean> }>([
+    { name: "after the entry last seen", knownTailId: "seen", fresh: [false, true] },
+    { name: "after a prompt that was last seen", knownTailId: "prompt", fresh: [true, true] },
+    { name: "not when the entry last seen is gone", knownTailId: "gone", fresh: [false, false] },
+    { name: "not when no entry was seen", knownTailId: null, fresh: [false, false] },
+  ])("marks messages as fresh $name", ({ knownTailId, fresh }) => {
     const entries = [
       prompt,
       message("loaded", "assistant"),
@@ -216,10 +254,9 @@ describe("turnDetail", () => {
       message("new", "assistant"),
       command("git"),
     ];
-    expect(turnDetail(entries, undefined, "seen").messages.map((spoken) => spoken.fresh)).toEqual([
-      false,
-      true,
-    ]);
+    expect(
+      turnDetail(entries, undefined, knownTailId).messages.map((spoken) => spoken.fresh),
+    ).toEqual(fresh);
   });
 });
 
@@ -299,6 +336,12 @@ describe("nextTurnDetailAnnouncement", () => {
         frame(null, [first, { ...said("empty", true, true), text: "<!-- note -->" }]),
       ]),
     ).toEqual(["T3 Code: Tests pass in web. See the docs"]);
+  });
+
+  it("cuts a very long message short", () => {
+    const long = { ...said("long", true, true), text: "word ".repeat(1_000) };
+    const [spoken] = speak("messages", [frame(null), frame(null, [long])]);
+    expect(spoken).toMatch(/^T3 Code: (?:word ){399}word More in the thread\.$/);
   });
 
   it("says a step again after waiting on the user", () => {

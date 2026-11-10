@@ -1,4 +1,5 @@
 import type { RunId, ScreenReaderAnnouncements } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
 import {
@@ -30,13 +31,32 @@ export interface TurnDetail {
 export const NO_TURN_DETAIL: TurnDetail = { activity: null, messages: [], tailId: null };
 
 const ACTIVITY_MAX_LENGTH = 120;
+// Parsing is synchronous, and nobody listens to a longer message through a live region.
+const MESSAGE_MAX_LENGTH = 2_000;
 
 // On screen these labels are a path or a query beside an icon.
-const SPOKEN_VERBS: Partial<Record<NonNullable<WorkLogEntry["itemType"]>, string>> = {
-  file_change: "Editing",
-  file_search: "Searching for",
-  web_search: "Searching the web for",
-};
+function withVerb(work: WorkLogEntry, label: string) {
+  if (work.itemType === "file_change") return `Editing ${label}`;
+  if (work.itemType !== "file_search" && work.itemType !== "web_search") return label;
+  if (/^search(?:ed|ing)?\s/i.test(label)) return label;
+  return `${work.itemType === "web_search" ? "Searching the web for" : "Searching for"} ${label}`;
+}
+
+type MessageEntry = Extract<TimelineEntry, { kind: "message" }>;
+
+// A steer starts a new attempt in the same run. The reply it cut off also stops streaming,
+// so only one that completed before the steer finished; see completeSupersededReplyEntryIds.
+function completedBeforeSuperseded(entry: MessageEntry) {
+  const item = entry.projectedItem?.item;
+  const supersededAt = entry.attempt?.completedAt ?? null;
+  return (
+    item?.type === "assistant_message" &&
+    item.status === "completed" &&
+    item.completedAt !== null &&
+    supersededAt !== null &&
+    DateTime.isLessThan(item.completedAt, supersededAt)
+  );
+}
 
 function stepLabel(work: WorkLogEntry, workspaceRoot: string | undefined): string | null {
   // Reasoning text is never read out.
@@ -45,8 +65,7 @@ function stepLabel(work: WorkLogEntry, workspaceRoot: string | undefined): strin
   if (status === "failed" || status === "declined" || status === "stopped") return null;
   const label = liveWorkEntryLabel(work, workspaceRoot, true).replace(/\s+/g, " ").trim();
   if (label === "") return null;
-  const verb = work.itemType === undefined ? undefined : SPOKEN_VERBS[work.itemType];
-  const spoken = verb === undefined || /^search/i.test(label) ? label : `${verb} ${label}`;
+  const spoken = withVerb(work, label);
   return spoken.length > ACTIVITY_MAX_LENGTH ? `${spoken.slice(0, ACTIVITY_MAX_LENGTH)}…` : spoken;
 }
 
@@ -70,7 +89,8 @@ export function turnDetail(
   };
   let activity: string | null | undefined;
   let fresh = true;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
+  let index = entries.length - 1;
+  for (; index >= 0; index -= 1) {
     const entry = entries[index]!;
     if (timelineEntryStartsResponse(entry)) break;
     if (entry.id === knownTailId) fresh = false;
@@ -99,18 +119,26 @@ export function turnDetail(
         text: entry.message.text,
         finished:
           !entry.message.streaming &&
-          // A steer starts a new attempt in the same run; the reply it cut off never finished.
-          (entry.attempt?.status === "superseded"
-            ? continuedAttemptIds.has(entry.attempt.id)
-            : continuedRunIds.has(runId)),
+          continuedRunIds.has(runId) &&
+          (entry.attempt?.status !== "superseded" ||
+            continuedAttemptIds.has(entry.attempt.id) ||
+            completedBeforeSuperseded(entry)),
         fresh,
       });
     }
     markContinued(entry, runId);
   }
+  // Nothing is known to be new when the entry last seen is gone, or there was none.
+  let tailKnown = !fresh;
+  if (knownTailId !== null) {
+    for (; !tailKnown && index >= 0; index -= 1) tailKnown = entries[index]!.id === knownTailId;
+  }
   return {
     activity: activity ?? null,
-    messages: messages.reverse(),
+    messages: (tailKnown
+      ? messages
+      : messages.map((message) => ({ ...message, fresh: false }))
+    ).reverse(),
     tailId: entries.at(-1)?.id ?? null,
   };
 }
@@ -161,7 +189,11 @@ export function nextTurnDetailAnnouncement(
           previous.messages.get(message.id) !== true &&
           (message.fresh || previous.messages.has(message.id)),
       )
-      .map((message) => markdownPlainText(message.text))
+      .map((message) =>
+        message.text.length > MESSAGE_MAX_LENGTH
+          ? `${markdownPlainText(message.text.slice(0, MESSAGE_MAX_LENGTH))} More in the thread.`
+          : markdownPlainText(message.text),
+      )
       .filter((text) => text !== "")
       .map((text) => `${MESSAGE_AUTHOR}: ${text}`),
     activity:

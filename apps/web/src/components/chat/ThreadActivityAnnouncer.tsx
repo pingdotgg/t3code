@@ -101,7 +101,14 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
       return;
     }
     const waitingLabel = takeWaiting();
-    if (detailBehind) return;
+    if (detailBehind) {
+      // The dropped step counts as unsaid, so it is read once the detail catches up.
+      if (waitingLabel !== null && memoryRef.current !== null) {
+        const { detail } = memoryRef.current;
+        memoryRef.current = { ...memoryRef.current, detail: { ...detail, activity: null } };
+      }
+      return;
+    }
     const previous = memoryRef.current?.threadKey === threadKey ? memoryRef.current : null;
     const turn = nextThreadAnnouncement(previous?.memory ?? null, {
       status,
