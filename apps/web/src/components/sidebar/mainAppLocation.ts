@@ -1,4 +1,4 @@
-import { useNavigate, type AnyRouter } from "@tanstack/react-router";
+import { useMatches, useNavigate, type AnyRouter } from "@tanstack/react-router";
 
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
@@ -6,6 +6,13 @@ import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigat
 /** Settings and Usage open as modals over the last main-app view. */
 export function isAppModalPage(pathname: string) {
   return pathname === "/settings" || pathname.startsWith("/settings/") || pathname === "/usage";
+}
+
+// Read matches, not location, so this agrees with the params the thread routes read.
+export function useAppModalOpen() {
+  return useMatches({
+    select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
+  });
 }
 
 export function isSidebarUtilityPage(pathname: string) {
