@@ -542,14 +542,16 @@ function htmlTableCell(cell: Element, rtl: boolean): string {
 }
 
 function htmlTableSection(tag: string, rows: ReadonlyArray<Element>, rtl: boolean): string[] {
-  const lines = rows.flatMap((row) => {
+  let hasCells = false;
+  const lines = rows.map((row) => {
     const cells = [...row.children].filter(
       (cell) => cell.tagName === "TH" || cell.tagName === "TD",
     );
     const html = cells.map((cell) => htmlTableCell(cell, rtl)).join("");
-    return cells.length > 0 ? [`    <tr>${html}</tr>`] : [];
+    hasCells ||= cells.length > 0;
+    return `    <tr>${html}</tr>`;
   });
-  return lines.length > 0 ? [`  <${tag}>`, ...lines, `  </${tag}>`] : [];
+  return hasCells ? [`  <${tag}>`, ...lines, `  </${tag}>`] : [];
 }
 
 /**

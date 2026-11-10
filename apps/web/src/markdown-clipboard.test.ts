@@ -412,6 +412,7 @@ describe("copying a table as HTML", () => {
           cell("TD", "1", { rowspan: "0" }),
           cell("TD", "2", { rowspan: "-1" }),
         ),
+        row(),
       ),
       new FakeElement("TFOOT").append(
         row(cell("TD", "Total"), cell("TD", "3", { colspan: "2garbage" })),
@@ -428,6 +429,7 @@ describe("copying a table as HTML", () => {
         "  <tbody>",
         // rowspan="0" runs to the end of its section; a negative span is invalid.
         '    <tr><th align="left">EU</th><td rowspan="0">1</td><td>2</td></tr>',
+        "    <tr></tr>",
         "  </tbody>",
         "  <tfoot>",
         // HTML reads a span's leading digits, as the DOM does.
