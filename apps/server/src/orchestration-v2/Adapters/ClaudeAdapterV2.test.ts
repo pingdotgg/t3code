@@ -11080,6 +11080,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Exit.isFailure(started),
           "a turn whose Claude query ended before its first frame started running on the dead query",
         );
+        if (Exit.isFailure(started)) {
+          assert.include(
+            Cause.pretty(started.cause),
+            "Claude provider query ended before the turn could start.",
+          );
+        }
         const followUp = yield* harness.runtime
           .startTurn(harness.turnInput("b", 2))
           .pipe(Effect.exit);
