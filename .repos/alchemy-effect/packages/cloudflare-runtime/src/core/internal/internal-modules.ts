@@ -23,9 +23,7 @@ export const formatExtensionModule = (self: {
     }),
   );
 
-export const moduleToWorkerd = (
-  module: Module,
-): WorkerdConfig.Worker_Module => {
+export const moduleToWorkerd = (module: Module): WorkerdConfig.Worker_Module => {
   switch (module.type) {
     case "ESModule":
       return { name: module.name, esModule: module.content };

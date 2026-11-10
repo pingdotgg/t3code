@@ -20,22 +20,22 @@ Invalid bodies and ids get `400`.
 - `GCP.SQL.Instance` `Postgres` — PostgreSQL 17, `db-f1-micro`, zonal, no
   backups, Data API enabled. No authorized networks.
 - `GCP.SQL.Database` `App` and `GCP.SQL.User` `App` — the application
-  database and its built-in login.
+  database and its built-in login. Each deploy applies pending migrations
+  from `./migrations` through the Cloud SQL Data API, logged in as that
+  user, recording them in `__alchemy_migrations`.
 - `Alchemy.Random` `AppPassword` — the user's password, generated once and
   kept in state.
 - `GCP.SecretManager.LocationsSecret` `AppPassword` — a regional secret in
-  the instance's region (`location: instance.region`) holding that password. The Data API only reads passwords
-  from regional secrets in the instance's region.
+  the instance's region holding that password, for the service to read at
+  runtime.
 - `Drizzle.Schema` `Schema` — regenerates `./migrations` with drizzle-kit
   when [`src/schema.ts`](./src/schema.ts) changes.
-- `Alchemy.Action` `Migrate` ([`src/migrate.ts`](./src/migrate.ts)) — at
-  deploy time, writes the password as the secret's latest version and
-  applies pending migrations with `instances.executeSql`, recording them
-  in `__alchemy_migrations`.
+- `Alchemy.Action` `StorePassword` ([`src/password.ts`](./src/password.ts)) —
+  at deploy time, writes the password as the secret's latest version.
 - `GCP.Function` `Api` ([`src/Api.ts`](./src/Api.ts)) — public Cloud Run
   service (`invokerIamDisabled: true`) running Drizzle over
-  `/cloudsql/{connectionName}`. It depends on the `Migrate` output, so it
-  only rolls out once the schema exists.
+  `/cloudsql/{connectionName}`. It binds the database, so it only rolls
+  out once the migrations are applied.
 
 ## Bindings
 
@@ -43,8 +43,7 @@ Invalid bodies and ids get `400`.
 | ------------------------------------------------ | ------------- | -------------------------------------------------------------------------------------------------------- |
 | `GCP.SQL.Connect(instance, { … })`               | `Api`         | `roles/cloudsql.client` on the project under an IAM Condition naming only `Postgres`; mounts its socket |
 | ↳ reads `passwordSecret`                         | `Api`         | `roles/secretmanager.secretAccessor` on `AppPassword` only                                               |
-| `GCP.SQL.ExecuteSql(instance)`                   | `Migrate`     | none — Actions run as the deploying identity                                                             |
-| `GCP.SecretManager.ReadWriteSecret(secret)`      | `Migrate`     | none — Actions run as the deploying identity                                                             |
+| `GCP.SecretManager.ReadWriteSecret(secret)`      | `StorePassword` | none — Actions run as the deploying identity                                                           |
 
 `GCP.SQL.Connect` adds the instance to the service's `cloudsql` volume, so
 Cloud Run starts its Cloud SQL connector and the Postgres socket appears
@@ -52,7 +51,8 @@ at `/cloudsql/{project}:{region}:{instance}`. Each request reads the
 password from Secret Manager and hands Drizzle a socket URL.
 
 The deploying identity needs `cloudsql.instances.executeSql` (e.g.
-`roles/cloudsql.admin`) and access to the secret.
+`roles/cloudsql.admin`) and Secret Manager access: migrations stage the
+password in a short-lived regional secret while they run.
 
 ## Deploy
 
@@ -77,8 +77,8 @@ to propagate; until then requests answer `500`.
 ## Changing the schema
 
 Edit [`src/schema.ts`](./src/schema.ts) and deploy. `Drizzle.Schema`
-writes a new migration under `./migrations` (commit it), `Migrate`
-applies it, and the service rolls a new revision.
+writes a new migration under `./migrations` (commit it), the `App`
+database applies it, and the service rolls a new revision.
 
 ## Test
 
