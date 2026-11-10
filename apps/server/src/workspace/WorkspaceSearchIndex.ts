@@ -536,10 +536,16 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     ),
   );
 
-  const hasIncompleteInitialScan = Effect.suspend(() =>
-    initialScanTimedOut
-      ? Effect.promise(() => finder.isScanning().catch(() => true))
-      : Effect.succeed(false),
+  // Reopen first, so a rebuilt index whose scan timed out still reports truncated results.
+  const hasIncompleteInitialScan = currentFinder.pipe(
+    Effect.ignore,
+    Effect.andThen(
+      Effect.suspend(() =>
+        initialScanTimedOut
+          ? Effect.promise(() => finder.isScanning().catch(() => true))
+          : Effect.succeed(false),
+      ),
+    ),
   );
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
