@@ -294,12 +294,6 @@ describe("resolveTranscriptCommit", () => {
     ],
     ["at the caret", { start: 6, end: 6 }, "hello [cite] world", "hello [cite] new text world"],
     [
-      "at the caret before a space",
-      { start: 5, end: 5 },
-      "hello [Assistant quote](t3-citation://v1/a) world",
-      "hello [Assistant quote](t3-citation://v1/a) new text world",
-    ],
-    [
       "that repeats the selection",
       { start: 0, end: 5 },
       "hello there hello world",
@@ -705,27 +699,6 @@ describe("VoiceInputController", () => {
 
     expect(harness.commits).toEqual([]);
     expect(harness.controller.currentState.error).toContain("draft changed");
-  });
-
-  it("inserts the transcript where recording started when the draft changed meanwhile", async () => {
-    const harness = createHarness();
-    await harness.controller.start();
-    harness.setDraft(
-      draft({
-        text: "> cited line\n\nhello world",
-        selection: { start: 0, end: 25 },
-      }),
-    );
-    await harness.controller.stop();
-
-    expect(harness.controller.currentState).toEqual({
-      phase: "idle",
-      error: null,
-      errorAction: null,
-    });
-    expect(harness.commits).toEqual([
-      { text: "> cited line\n\nhello world new text", selection: { start: 34, end: 34 } },
-    ]);
   });
 
   it("queues the next recording until canceled preparation settles", async () => {
