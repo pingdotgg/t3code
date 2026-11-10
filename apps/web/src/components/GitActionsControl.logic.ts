@@ -34,6 +34,7 @@ export interface GitActionMenuItem {
   icon: GitActionIconName;
   kind: "open_dialog" | "run_action";
   action?: GitStackedAction;
+  featureBranch?: boolean;
   dialogAction?: GitDialogAction;
 }
 
@@ -186,6 +187,7 @@ export function buildMenuItems(
   const terminology = changeRequestTerminologyFor(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
+  const needsFeatureBranch = !hasBranch || gitStatus.isDefaultRef;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
@@ -194,27 +196,41 @@ export function buildMenuItems(
   const canCommit = !isBusy && hasChanges;
   const canPush =
     !isBusy &&
-    hasBranch &&
-    (gitStatus.aheadCount > 0 || hasChanges) &&
-    (isBehind
-      ? !hasChanges && gitStatus.hasUpstream
-      : gitStatus.hasUpstream || canPushWithoutUpstream);
+    hasPrimaryRemote &&
+    (needsFeatureBranch || gitStatus.aheadCount > 0 || hasChanges) &&
+    (needsFeatureBranch ||
+      (isBehind
+        ? !hasChanges && gitStatus.hasUpstream
+        : gitStatus.hasUpstream || canPushWithoutUpstream));
   const canCreatePr =
     !isBusy &&
-    hasBranch &&
     !hasOpenPr &&
-    (hasDefaultBranchDelta || hasChanges) &&
-    !isBehind &&
+    (hasDefaultBranchDelta || hasChanges || !hasBranch) &&
+    (needsFeatureBranch || !isBehind) &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
 
+  const branchItems: GitActionMenuItem[] = needsFeatureBranch
+    ? [
+        {
+          id: "branch",
+          label: "Create feature branch",
+          disabled: isBusy,
+          icon: "branch",
+          kind: "run_action",
+          action: "create_branch",
+          featureBranch: true,
+        },
+      ]
+    : [];
   const commitItems: GitActionMenuItem[] = [
     {
       id: "commit",
       label: "Commit",
-      disabled: !canCommit || !hasBranch || gitStatus.isDefaultRef,
+      disabled: !canCommit,
       icon: "commit",
       kind: "run_action",
       action: "commit",
+      ...(needsFeatureBranch ? { featureBranch: true } : {}),
     },
     {
       id: "commit_dialog",
@@ -226,48 +242,15 @@ export function buildMenuItems(
     },
   ];
 
-  if (!hasBranch) {
-    return [
-      {
-        id: "branch",
-        label: "Create feature branch",
-        disabled: isBusy,
-        icon: "branch",
-        kind: "open_dialog",
-        dialogAction: "create_branch",
-      },
-      ...commitItems,
-      ...(hasPrimaryRemote
-        ? [
-            {
-              id: "push" as const,
-              label: "Push",
-              disabled: true,
-              icon: "push" as const,
-              kind: "open_dialog" as const,
-              dialogAction: "push" as const,
-            },
-            {
-              id: "pr" as const,
-              label: `Create ${terminology.shortLabel}`,
-              disabled: true,
-              icon: "pr" as const,
-              kind: "open_dialog" as const,
-              dialogAction: "create_pr" as const,
-            },
-          ]
-        : []),
-    ];
-  }
-
   if (!hasPrimaryRemote) {
-    return commitItems;
+    return [...branchItems, ...commitItems];
   }
 
   const pushItem: GitActionMenuItem = {
     id: "push",
     label: hasChanges ? "Commit & push" : "Push",
     action: "commit_push",
+    ...(needsFeatureBranch ? { featureBranch: true } : {}),
     disabled: !canPush,
     icon: "push",
     kind: "open_dialog",
@@ -275,10 +258,11 @@ export function buildMenuItems(
   };
 
   if (hasOpenPr) {
-    return [...commitItems, pushItem];
+    return [...branchItems, ...commitItems, pushItem];
   }
 
   return [
+    ...branchItems,
     ...commitItems,
     pushItem,
     {
@@ -287,6 +271,7 @@ export function buildMenuItems(
         ? `Commit, push & create ${terminology.shortLabel}`
         : `Create ${terminology.shortLabel}`,
       action: "commit_push_pr",
+      ...(needsFeatureBranch ? { featureBranch: true } : {}),
       disabled: !canCreatePr,
       icon: "pr",
       kind: "open_dialog",

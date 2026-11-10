@@ -4186,10 +4186,13 @@ export const make = Effect.gen(function* () {
         const initialStatus = yield* input.forceWithLease
           ? gitCore.statusDetailsLocal(input.cwd)
           : gitCore.statusDetails(input.cwd);
+        const featureBranch = input.featureBranch === true || input.action === "create_branch";
         const branchOnly =
-          input.featureBranch === true &&
-          input.action === "commit" &&
-          initialStatus.branch === null;
+          input.action === "create_branch" ||
+          (featureBranch &&
+            input.action === "commit" &&
+            initialStatus.branch === null &&
+            !initialStatus.hasWorkingTreeChanges);
         const wantsCommit = isCommitAction(input.action) && !branchOnly;
         const wantsPush =
           input.action === "push" ||
@@ -4219,7 +4222,7 @@ export const make = Effect.gen(function* () {
           });
         }
 
-        if (input.featureBranch && !wantsCommit && !branchOnly) {
+        if (featureBranch && !wantsCommit && !branchOnly) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
@@ -4227,7 +4230,7 @@ export const make = Effect.gen(function* () {
           });
         }
         const phases: GitActionProgressPhase[] = [
-          ...(input.featureBranch ? (["branch"] as const) : []),
+          ...(featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
           ...(wantsPush ? (["push"] as const) : []),
           ...(wantsPr ? (["pr"] as const) : []),
@@ -4238,14 +4241,14 @@ export const make = Effect.gen(function* () {
           phases,
         });
 
-        if (!input.featureBranch && wantsPush && !initialStatus.branch) {
+        if (!featureBranch && wantsPush && !initialStatus.branch) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
             detail: "Cannot push from detached HEAD.",
           });
         }
-        if (!input.featureBranch && wantsPr && !initialStatus.branch) {
+        if (!featureBranch && wantsPr && !initialStatus.branch) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
@@ -4286,7 +4289,7 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-        if (input.featureBranch) {
+        if (featureBranch) {
           yield* Ref.set(currentPhase, Option.some("branch"));
           yield* progress.emit({
             kind: "phase_started",
@@ -4299,11 +4302,15 @@ export const make = Effect.gen(function* () {
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
-            branchOnly,
+            branchOnly || !initialStatus.hasWorkingTreeChanges,
           );
           branchStep = result.branchStep;
-          commitMessageForStep = result.resolvedCommitMessage;
-          preResolvedCommitSuggestion = result.resolvedCommitSuggestion;
+          commitMessageForStep = initialStatus.hasWorkingTreeChanges
+            ? result.resolvedCommitMessage
+            : input.commitMessage;
+          preResolvedCommitSuggestion = initialStatus.hasWorkingTreeChanges
+            ? result.resolvedCommitSuggestion
+            : undefined;
         } else {
           branchStep = { status: "skipped_not_requested" as const };
         }

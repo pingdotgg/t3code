@@ -110,7 +110,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const sheetMenuItems = menuItems.map((item) => ({
     item: {
       ...item,
-      disabled: item.disabled || (!canWriteSourceControl && item.kind !== "open_pr"),
+      disabled:
+        item.disabled ||
+        (!canWriteSourceControl && item.kind !== "open_pr") ||
+        (item.featureBranch === true && !canChangeThreadBranch),
     },
     disabledReason:
       !canWriteSourceControl && item.kind !== "open_pr"
@@ -182,6 +185,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       return;
     }
     if (!canWriteSourceControl) return;
+    if (item.dialogAction === "create_branch") {
+      await runActionWithPrompt({ action: "create_branch", featureBranch: true });
+      return;
+    }
     if (item.dialogAction === "commit") {
       presentRoute(() =>
         navigation.navigate("GitCommit", {
@@ -216,11 +223,17 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         );
         return;
       }
-      await runActionWithPrompt({ action: item.action ?? "commit_push" });
+      await runActionWithPrompt({
+        action: item.action ?? "commit_push",
+        featureBranch: item.featureBranch,
+      });
       return;
     }
     if (item.dialogAction === "create_pr") {
-      await runActionWithPrompt({ action: item.action ?? "commit_push_pr" });
+      await runActionWithPrompt({
+        action: item.action ?? "commit_push_pr",
+        featureBranch: item.featureBranch,
+      });
     }
   };
 
@@ -271,6 +284,17 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       }
     >
       <ListSection>
+        {sheetMenuItems
+          .filter(({ item }) => item.id === "branch")
+          .map(({ item }) => (
+            <ListRow
+              key={item.id}
+              icon="arrow.branch"
+              label={item.label}
+              disabled={item.disabled}
+              onPress={() => void onPressMenuItem(item)}
+            />
+          ))}
         <ListRow
           icon="checkmark.circle"
           label="Commit"
@@ -280,10 +304,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             busy ||
             !isRepo ||
             !gitStatus.data?.hasWorkingTreeChanges ||
-            !gitStatus.data.refName ||
-            isDefaultRef
+            ((!gitStatus.data.refName || isDefaultRef) && !canChangeThreadBranch)
           }
-          onPress={() => void gitActions.onRunSelectedThreadGitAction({ action: "commit" })}
+          onPress={() =>
+            void gitActions.onRunSelectedThreadGitAction({
+              action: "commit",
+              featureBranch: !gitStatus.data?.refName || isDefaultRef,
+            })
+          }
         />
         {sheetMenuItems
           .filter(({ item }) => item.id === "commit")
@@ -311,7 +339,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           }
         />
         {sheetMenuItems
-          .filter(({ item }) => item.id !== "commit")
+          .filter(({ item }) => item.id !== "commit" && item.id !== "branch")
           .map(({ item, disabledReason }) => (
             <ListRow
               key={`${item.id}-${item.label}`}

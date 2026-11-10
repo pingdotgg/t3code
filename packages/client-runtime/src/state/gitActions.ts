@@ -10,13 +10,14 @@ export type GitActionIconName = "branch" | "commit" | "push" | "pr";
 export type GitDialogAction = "create_branch" | "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "branch" | "commit" | "push" | "pr";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
   kind: "open_dialog" | "open_pr";
   dialogAction?: GitDialogAction;
   action?: GitStackedAction;
+  featureBranch?: boolean;
 }
 
 export interface GitQuickAction {
@@ -59,6 +60,7 @@ export function buildMenuItems(
   const terminology = changeRequestTerminologyFor(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
+  const needsFeatureBranch = !hasBranch || gitStatus.isDefaultRef;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
@@ -66,21 +68,36 @@ export function buildMenuItems(
   const canCommit = !isBusy && hasChanges;
   const canPush =
     !isBusy &&
-    hasBranch &&
-    (gitStatus.aheadCount > 0 || hasChanges) &&
-    (isBehind
-      ? !hasChanges && gitStatus.hasUpstream
-      : gitStatus.hasUpstream || canPushWithoutUpstream);
+    hasOriginRemote &&
+    (needsFeatureBranch || gitStatus.aheadCount > 0 || hasChanges) &&
+    (needsFeatureBranch ||
+      (isBehind
+        ? !hasChanges && gitStatus.hasUpstream
+        : gitStatus.hasUpstream || canPushWithoutUpstream));
   const canCreatePr =
     !isBusy &&
-    hasBranch &&
     !hasOpenPr &&
-    ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 || hasChanges) &&
-    !isBehind &&
+    ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 || hasChanges || !hasBranch) &&
+    (needsFeatureBranch || !isBehind) &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
 
+  const branchItems: GitActionMenuItem[] = needsFeatureBranch
+    ? [
+        {
+          id: "branch",
+          label: "Create feature branch",
+          disabled: isBusy,
+          icon: "branch",
+          kind: "open_dialog",
+          dialogAction: "create_branch",
+          action: "create_branch",
+          featureBranch: true,
+        },
+      ]
+    : [];
   return [
+    ...branchItems,
     {
       id: "commit",
       label: "Commit",
@@ -93,6 +110,7 @@ export function buildMenuItems(
       id: "push",
       label: hasChanges ? "Commit & push" : "Push",
       action: "commit_push",
+      ...(needsFeatureBranch ? { featureBranch: true } : {}),
       disabled: !canPush,
       icon: "push",
       kind: "open_dialog",
@@ -112,6 +130,7 @@ export function buildMenuItems(
             ? `Commit, push & create ${terminology.shortLabel}`
             : `Create ${terminology.shortLabel}`,
           action: "commit_push_pr",
+          ...(needsFeatureBranch ? { featureBranch: true } : {}),
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",

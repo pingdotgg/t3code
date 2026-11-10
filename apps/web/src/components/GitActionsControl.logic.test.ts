@@ -434,51 +434,31 @@ describe("when: HEAD is detached and there are no local changes", () => {
     });
   });
 
-  it("buildMenuItems enables feature branch creation and keeps other actions disabled", () => {
-    const items = buildMenuItems(status({ refName: null, hasWorkingTreeChanges: false }), false);
-    assert.deepEqual(items, [
-      {
-        id: "branch",
-        label: "Create feature branch",
-        disabled: false,
-        icon: "branch",
-        kind: "open_dialog",
-        dialogAction: "create_branch",
-      },
-      {
-        id: "commit",
-        label: "Commit",
-        disabled: true,
-        icon: "commit",
-        kind: "run_action",
-        action: "commit",
-      },
-      {
-        id: "commit_dialog",
-        label: "Commit dialog",
-        disabled: true,
-        icon: "commit",
-        kind: "open_dialog",
-        dialogAction: "commit",
-      },
-      {
-        id: "push",
-        label: "Push",
-        disabled: true,
-        icon: "push",
-        kind: "open_dialog",
-        dialogAction: "push",
-      },
-      {
-        id: "pr",
-        label: "Create PR",
-        disabled: true,
-        icon: "pr",
-        kind: "open_dialog",
-        dialogAction: "create_pr",
-      },
-    ]);
-  });
+  it.each([null, "main"])(
+    "offers a feature branch first and enables actions from %s",
+    (refName) => {
+      for (const hasWorkingTreeChanges of [false, true]) {
+        const items = buildMenuItems(
+          status({
+            refName,
+            isDefaultRef: refName === "main",
+            hasWorkingTreeChanges,
+            aheadOfDefaultCount: refName === null ? 0 : 2,
+          }),
+          false,
+        );
+        assert.equal(items[0]?.id, "branch");
+        assert.isFalse(items[0]?.disabled);
+        assert.equal(items.find((item) => item.id === "commit")?.disabled, !hasWorkingTreeChanges);
+        for (const id of ["push", "pr"]) {
+          assert.deepInclude(
+            items.find((item) => item.id === id),
+            { disabled: false, featureBranch: true },
+          );
+        }
+      }
+    },
+  );
 });
 
 describe("commit menu actions", () => {
@@ -508,10 +488,13 @@ describe("commit menu actions", () => {
     }
   });
 
-  it("requires the dialog on default refs and detached HEADs", () => {
+  it("creates a feature branch implicitly on default refs and detached HEADs", () => {
     for (const overrides of [{ refName: "main", isDefaultRef: true }, { refName: null }]) {
       const items = buildMenuItems(status({ hasWorkingTreeChanges: true, ...overrides }), false);
-      assert.isTrue(items.find((item) => item.id === "commit")?.disabled);
+      assert.deepInclude(
+        items.find((item) => item.id === "commit"),
+        { disabled: false, featureBranch: true },
+      );
       assert.isFalse(items.find((item) => item.id === "commit_dialog")?.disabled);
     }
   });

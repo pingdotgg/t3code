@@ -88,6 +88,26 @@ describe("git action copy", () => {
       action: "commit_push",
       label: "Commit & push",
     });
+    for (const refName of [null, "main"]) {
+      const items = buildMenuItems(
+        status({
+          ...gitLab,
+          refName,
+          isDefaultRef: refName === "main",
+          hasWorkingTreeChanges: true,
+        }),
+        false,
+      );
+      expect(items[0]).toMatchObject({ id: "branch", disabled: false, action: "create_branch" });
+      expect(items.find((item) => item.id === "push")).toMatchObject({
+        disabled: false,
+        featureBranch: true,
+      });
+      expect(items.find((item) => item.id === "pr")).toMatchObject({
+        disabled: false,
+        featureBranch: true,
+      });
+    }
   });
 
   it("names the host's change request in the default-branch dialog", () => {

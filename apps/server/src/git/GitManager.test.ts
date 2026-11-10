@@ -631,7 +631,7 @@ function runStackedAction(
   manager: GitManager.GitManager["Service"],
   input: {
     cwd: string;
-    action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
+    action: "create_branch" | "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
     actionId?: string;
     commitMessage?: string;
     splitCommits?: boolean;
@@ -856,7 +856,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
-        action: "commit",
+        action: "create_branch",
         featureBranch: true,
       });
 
@@ -1503,7 +1503,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
         const result = yield* runStackedAction(manager, {
           cwd: repoDir,
-          action: "commit",
+          action: "create_branch",
           featureBranch: true,
         });
 
@@ -1528,12 +1528,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect.each(["commit", "prepare"] as const)(
+  it.effect.each(["commit", "prepare", "create_branch", "commit-detached"] as const)(
     "featureBranch honors project branch naming config: %s",
     (mode) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
+        if (mode === "commit-detached") yield* runGit(repoDir, ["checkout", "--detach"]);
         const configDir = NodePath.join(repoDir, ".t3code");
         NodeFS.mkdirSync(configDir, { recursive: true });
         NodeFS.writeFileSync(
@@ -1561,10 +1562,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
         const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
         const branch =
-          mode === "commit"
+          mode !== "prepare"
             ? (yield* runStackedAction(manager, {
                 cwd: repoDir,
-                action: "commit",
+                action: mode === "commit-detached" ? "commit" : mode,
                 featureBranch: true,
               })).branch.name
             : yield* manager.createFeatureBranch({
@@ -1577,7 +1578,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 },
               });
         expect(branch).toBe("jm/bugfix/externe-budgetgrenze-abrechnungsart");
-        if (mode === "prepare") {
+        if (mode !== "commit" && mode !== "commit-detached") {
           expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
           expect((yield* runGit(repoDir, ["diff", "--cached"])).stdout).toBe("");
           expect((yield* runGit(repoDir, ["diff", "--", "README.md"])).stdout).toContain(
@@ -4475,67 +4476,85 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("creates feature branch, commits, and pushes with featureBranch option", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nfeature-branch\n");
-      let generatedCount = 0;
+  it.effect.each([
+    { detached: false, dirty: true },
+    { detached: true, dirty: true },
+    { detached: true, dirty: false },
+  ])(
+    "creates feature branch, commits, and pushes (detached: $detached, dirty: $dirty)",
+    ({ detached, dirty }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        if (detached) yield* runGit(repoDir, ["checkout", "--detach"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nfeature-branch\n");
+        if (!dirty) {
+          yield* runGit(repoDir, ["add", "README.md"]);
+          yield* runGit(repoDir, ["commit", "-m", "Existing detached feature"]);
+        }
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        let generatedCount = 0;
 
-      const { manager } = yield* makeManager({
-        textGeneration: {
-          generateCommitMessage: (input) =>
-            Effect.sync(() => {
-              generatedCount += 1;
-              return {
-                subject: "Implement stacked git actions",
-                body: "",
-                ...(input.includeBranch ? { branch: "feature/implement-stacked-git-actions" } : {}),
-              };
-            }),
-        },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit_push",
-        featureBranch: true,
-      });
-
-      expect(result.branch.status).toBe("created");
-      expect(result.branch.name).toBe("feature/implement-stacked-git-actions");
-      expect(result.commit.status).toBe("created");
-      expect(result.push.status).toBe("pushed");
-      expect(result.toast).toMatchObject({
-        description: "Implement stacked git actions",
-        cta: {
-          kind: "run_action",
-          label: "Create PR",
-          action: {
-            kind: "create_pr",
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                generatedCount += 1;
+                return {
+                  subject: "Implement stacked git actions",
+                  body: "",
+                  ...(input.includeBranch
+                    ? { branch: "feature/implement-stacked-git-actions" }
+                    : {}),
+                };
+              }),
           },
-        },
-      });
-      expect(result.toast.title).toMatch(
-        /^Pushed [0-9a-f]{7} to origin\/feature\/implement-stacked-git-actions$/,
-      );
-      expect(
-        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
-          Effect.map((result) => result.stdout.trim()),
-        ),
-      ).toBe("feature/implement-stacked-git-actions");
+        });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push",
+          featureBranch: true,
+        });
 
-      const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
-        Effect.map((r) => r.stdout.trim()),
-      );
-      const mergeBase = yield* runGit(repoDir, ["merge-base", "main", "HEAD"]).pipe(
-        Effect.map((r) => r.stdout.trim()),
-      );
-      expect(mergeBase).toBe(mainSha);
-      expect(generatedCount).toBe(1);
-    }),
+        expect(result.branch.status).toBe("created");
+        expect(result.branch.name).toBe("feature/implement-stacked-git-actions");
+        expect(result.commit.status).toBe(dirty ? "created" : "skipped_no_changes");
+        expect(result.push.status).toBe("pushed");
+        if (dirty) {
+          expect(result.toast).toMatchObject({
+            description: "Implement stacked git actions",
+            cta: {
+              kind: "run_action",
+              label: "Create PR",
+              action: {
+                kind: "create_pr",
+              },
+            },
+          });
+          expect(result.toast.title).toMatch(
+            /^Pushed [0-9a-f]{7} to origin\/feature\/implement-stacked-git-actions$/,
+          );
+        } else {
+          expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+        }
+        expect(
+          yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+        ).toBe("feature/implement-stacked-git-actions");
+
+        const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
+          Effect.map((r) => r.stdout.trim()),
+        );
+        const mergeBase = yield* runGit(repoDir, ["merge-base", "main", "HEAD"]).pipe(
+          Effect.map((r) => r.stdout.trim()),
+        );
+        expect(mergeBase).toBe(mainSha);
+        expect(generatedCount).toBe(1);
+      }),
   );
 
   it.effect.each([
