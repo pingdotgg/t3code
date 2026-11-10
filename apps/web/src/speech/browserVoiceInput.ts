@@ -15,6 +15,7 @@ import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/cont
 import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { appleSpeechLocale } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
@@ -122,6 +123,56 @@ export function createBrowserVoiceInputPlatform(input: {
         onText: input.onText,
         onError: (error) => input.onError(error.message),
       }),
+    };
+  });
+}
+
+/** Records like the environment path, then transcribes in the desktop main process; audio stays on this Mac. */
+export function createAppleSpeechVoiceInputPlatform(input: {
+  readonly hasAudioConsent: () => boolean;
+  readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  readonly getMicrophoneId: () => string;
+  readonly onLevel: (level: number) => void;
+  readonly onDurationLimit: () => void;
+  readonly onError: (message: string) => void;
+}) {
+  return createBrowserPcmCapture(input, async ({ signal }) => {
+    const appleSpeech = window.desktopBridge?.appleSpeech;
+    if (!appleSpeech)
+      throw new VoiceTranscriptionError({
+        code: "unavailable",
+        message: "Apple Speech needs the T3 Code desktop app on macOS 26 or later.",
+      });
+    const prepared = await appleSpeech.prepare(
+      appleSpeechLocale(input.getTranscriptionOptions().speechLanguage),
+    );
+    throwIfVoiceTranscriptionAborted(signal);
+    if (!prepared.ok)
+      throw new VoiceTranscriptionError({
+        code: prepared.code === "failed" ? "preparation-failed" : prepared.code,
+        message: prepared.message,
+      });
+    const locale = prepared.value;
+    return {
+      locale,
+      transcribe: async (uri, { signal: transcriptionSignal }) => {
+        const response = await fetch(uri, { signal: transcriptionSignal });
+        const pcm = new Uint8Array(await response.arrayBuffer());
+        throwIfVoiceTranscriptionAborted(transcriptionSignal);
+        if (!input.hasAudioConsent())
+          throw new VoiceTranscriptionError({
+            code: "cancelled",
+            message: "Voice transcription was cancelled.",
+          });
+        const result = await appleSpeech.transcribe({ locale, pcm });
+        throwIfVoiceTranscriptionAborted(transcriptionSignal);
+        if (!result.ok)
+          throw new VoiceTranscriptionError({
+            code: "transcription-failed",
+            message: result.message,
+          });
+        return result.value;
+      },
     };
   });
 }

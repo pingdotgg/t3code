@@ -213,6 +213,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   readMedia: (url: string) => ipcRenderer.invoke(IpcChannels.READ_MEDIA_CHANNEL, url),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
+  appleSpeech: {
+    isAvailable: () => ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_AVAILABLE_CHANNEL, undefined),
+    prepare: (locale: string) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_PREPARE_CHANNEL, locale),
+    transcribe: (input: { locale: string; pcm: Uint8Array }) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_TRANSCRIBE_CHANNEL, input),
+  },
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
