@@ -169,6 +169,16 @@ describe("GitHub media URLs", () => {
         "ghe.example.com",
       ),
     ).toBeNull();
+    expect(
+      definition.mediaUrl(
+        new URL("https://raw.ghe.example.com/o/r/main/a.png?token=t"),
+        "ghe.example.com",
+      )?.fetchUrl,
+    ).toBe("https://raw.ghe.example.com/o/r/main/a.png?token=t");
+    // Enterprise Cloud's raw host is unverified, so its media keeps loading directly.
+    expect(
+      definition.mediaUrl(new URL("https://acme.ghe.com/o/r/blob/main/a.png"), "acme.ghe.com"),
+    ).toBeNull();
     // github.com media keeps its own mapping inside an Enterprise pull request.
     expect(
       definition.mediaUrl(new URL("https://github.com/o/r/blob/main/a.png"), "ghe.example.com")

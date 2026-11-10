@@ -54,7 +54,7 @@ function rawFile(fetchUrl: string): SourceControlMediaUrl {
 function enterpriseMediaUrl(url: URL, knownHost: string): SourceControlMediaUrl | null {
   const host = url.host.toLowerCase();
   const rawHost = `raw.${knownHost}`;
-  if (host === rawHost) return rawFile(`https://${host}${url.pathname}`);
+  if (host === rawHost) return rawFile(`https://${host}${url.pathname}${url.search}`);
   if (host !== knownHost) return null;
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
   return repositoryFile
@@ -66,7 +66,12 @@ export function gitHubMediaUrl(url: URL, knownHost?: string): SourceControlMedia
   if (url.protocol !== "https:") return null;
   const host = url.hostname.toLowerCase();
   const enterpriseHost = knownHost?.trim().toLowerCase();
-  if (enterpriseHost && !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost)) {
+  // `*.ghe.com` keeps loading directly until its raw host is known to accept a token.
+  if (
+    enterpriseHost &&
+    !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost) &&
+    !enterpriseHost.endsWith(".ghe.com")
+  ) {
     const enterpriseMedia = enterpriseMediaUrl(url, enterpriseHost);
     if (enterpriseMedia !== null) return enterpriseMedia;
   }

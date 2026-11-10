@@ -19,6 +19,7 @@ import {
   resolveChangeRequestMediaUrl,
 } from "@t3tools/client-runtime/pull-request-markdown";
 import {
+  changeRequestMediaHost,
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -65,7 +66,12 @@ export function PullRequestMarkdownRepository(props: {
   });
   const cwd = project?.workspaceRoot;
   const media = cwd
-    ? { environmentId: target.environmentId, cwd, repository: target.input.repository }
+    ? {
+        environmentId: target.environmentId,
+        cwd,
+        repository: target.input.repository,
+        host: changeRequestMediaHost(props.changeRequest),
+      }
     : null;
   return (
     <AutolinksContext value={autolinks}>
