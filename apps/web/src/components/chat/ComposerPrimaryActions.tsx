@@ -456,14 +456,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
-  const showQueueLabel = isQueuing && !isSendBusy;
   const sendButton = (
     <button
       type={showResume ? "button" : "submit"}
-      className={cn(
-        COMPOSER_PILL_BUTTON_CLASS_NAME,
-        showQueueLabel ? "ps-1.5 pe-2.5 text-label" : "w-8",
-      )}
+      className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
       {...pointerFocusProps}
       onClick={(event) => {
         if (stopPhase === "landed") {
@@ -488,10 +484,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : isEditingQueuedMessage ? (
         <CheckIcon className="size-3.5" aria-hidden="true" />
       ) : isQueuing ? (
-        <>
-          <ListPlusIcon className="size-3.5" aria-hidden="true" />
-          Queue
-        </>
+        <ListPlusIcon className="size-3.5" aria-hidden="true" />
       ) : isRunning ? (
         <CornerUpRightIcon className="size-3.5" aria-hidden="true" />
       ) : (
