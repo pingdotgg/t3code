@@ -498,6 +498,9 @@ describe("MessagesTimeline messages", () => {
 
     viewport.scrollTop -= 30;
     await vi.waitFor(() => expect(screen.button("Next turn")).not.toBeDisabled());
+    // Legend keeps its initial end anchor until a scroll leaves the end, and re-pins on resize.
+    viewport.scrollTop = 0;
+    await vi.waitFor(() => expect(strips()[0]?.dataset.inView).toBe("true"));
 
     // Shrinking a detached viewport moves the bottom away without a scroll event.
     await screen.rerender(
