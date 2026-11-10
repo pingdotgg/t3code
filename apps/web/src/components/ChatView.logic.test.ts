@@ -270,6 +270,15 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(acknowledged);
+
+    expect(
+      deriveTimelineWorking({
+        phase: derivePhase({ ...readySession, status }),
+        isSendBusy: !acknowledged,
+        isCompacting: false,
+        runlessWorkStartedAt: null,
+      }),
+    ).toBe(true);
   });
 
   it("waits for the matching running turn before acknowledging", () => {
