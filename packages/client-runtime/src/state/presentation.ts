@@ -182,6 +182,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
         prior !== undefined &&
           prior.entry === presentation.entry &&
           prior.connection === presentation.connection &&
+          prior.refusedRouteIds === presentation.refusedRouteIds &&
           prior.serverConfig === serverConfig
           ? prior
           : { ...presentation, serverConfig },
