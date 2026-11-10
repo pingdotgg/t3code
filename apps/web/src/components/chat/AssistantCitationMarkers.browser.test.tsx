@@ -37,8 +37,8 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
       range.setEnd(source.firstChild!, 5);
       return { source, range };
     });
-    const prompt = serializeAssistantCitation({
-      version: 1,
+    const citation = {
+      version: 1 as const,
       environmentId: EnvironmentId.make("env"),
       threadId: ThreadId.make("thread"),
       messageId: MessageId.make("message"),
@@ -47,7 +47,8 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
       end: 5,
       prefix: "",
       suffix: "",
-    });
+    };
+    const prompt = serializeAssistantCitation(citation);
     const onOpen = vi.fn();
     await using screen = await render(
       <AssistantCitationMarkers
@@ -96,8 +97,34 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
       });
     }
     if (scenario === "narrow gutter") {
+      const nextSource = source.cloneNode(true) as HTMLParagraphElement;
+      await act(() => {
+        source.style.lineHeight = "20px";
+        nextSource.style.lineHeight = "20px";
+        source.style.margin = "0";
+        nextSource.style.margin = "0";
+        content.style.paddingInlineEnd = "32px";
+        content.append(nextSource);
+      });
+      mocks.findAnchor.mockImplementation((_viewport, citation) => {
+        const target = citation.comment === "next line" ? nextSource : source;
+        const range = document.createRange();
+        range.setStart(target.firstChild!, 0);
+        range.setEnd(target.firstChild!, 5);
+        return { source: target, range };
+      });
+      const nextPrompt = serializeAssistantCitation({ ...citation, comment: "next line" });
+      await screen.rerender(
+        <AssistantCitationMarkers
+          viewport={viewport}
+          prompt={`${prompt} ${nextPrompt} ${prompt}`}
+          richTextEnabled
+          onOpen={onOpen}
+        />,
+      );
       await act(() => {
         source.style.width = "100%";
+        nextSource.style.width = "100%";
         viewport.dispatchEvent(new Event("scroll"));
       });
       await vi.waitFor(() => {
@@ -109,7 +136,28 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
             viewport.clientWidth,
           );
         }
+        const positioned = Array.from(
+          screen.container.querySelectorAll<HTMLButtonElement>("[data-citation-marker-key]"),
+          (marker) => {
+            expect(marker.style.left).not.toBe("");
+            expect(marker.hidden).toBe(false);
+            return marker.getBoundingClientRect();
+          },
+        );
+        expect(positioned).toHaveLength(3);
+        for (let i = 0; i < positioned.length; i++) {
+          for (const other of positioned.slice(i + 1)) {
+            const rect = positioned[i]!;
+            expect(
+              rect.right <= other.left ||
+                other.right <= rect.left ||
+                rect.bottom <= other.top ||
+                other.bottom <= rect.top,
+            ).toBe(true);
+          }
+        }
       });
+      await act(() => nextSource.remove());
     }
     await act(() => source.remove());
     await vi.waitFor(() => {

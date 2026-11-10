@@ -64,6 +64,7 @@ function CitationMarkers({
       frame = null;
       const bounds = viewport.getBoundingClientRect();
       const occurrences = new Map<string, number>();
+      const placed: { left: number; right: number; top: number; bottom: number }[] = [];
       let resolvedSource = false;
       for (const [index, marker] of citations.entries()) {
         const { citation, key } = marker;
@@ -96,9 +97,22 @@ function CitationMarkers({
           const base = Math.max(0, sourceRight - bounds.left + 3);
           const columns = Math.max(1, Math.floor((bounds.width - base + 2) / (width + 2)));
           const left = base + (occurrence % columns) * (width + 2);
-          const top =
+          let top =
             Math.max(0, rect.bottom - bounds.top - height) +
             Math.floor(occurrence / columns) * (height + 2);
+          let collision;
+          while (
+            (collision = placed.find(
+              (other) =>
+                left < other.right + 2 &&
+                left + width + 2 > other.left &&
+                top < other.bottom + 2 &&
+                top + height + 2 > other.top,
+            ))
+          ) {
+            top = collision.bottom + 2;
+          }
+          placed.push({ left, right: left + width, top, bottom: top + height });
           button.style.left = `${left}px`;
           button.style.top = `${top}px`;
         }
