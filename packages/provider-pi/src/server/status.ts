@@ -486,8 +486,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     const failure = Cause.findErrorOption(discoveryExit.cause);
     yield* Effect.logWarning("Pi RPC discovery failed.", {
       errorTag: causeErrorTag(discoveryExit.cause),
-      // Pi RPC error messages are bounded and carry no stderr.
-      ...(Option.isSome(failure) ? { detail: failure.value.message } : {}),
+      ...(Option.isSome(failure) ? { operation: failure.value.operation } : {}),
     });
     return buildServerProvider({
       presentation: PI_PRESENTATION,
