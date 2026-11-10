@@ -138,10 +138,14 @@ export async function parsePly(
   // Each item takes at least its fixed-size properties (an ASCII value and its separator take two
   // bytes), so a larger count means a damaged header; reject it before allocating for it.
   const minItemBytes = (element: Element) =>
-    element.properties.reduce(
-      (sum, property) =>
-        sum + (header.format === "ascii" ? 2 : SCALARS[property.countType ?? property.type]!.bytes),
-      0,
+    Math.max(
+      1,
+      element.properties.reduce(
+        (sum, property) =>
+          sum +
+          (header.format === "ascii" ? 2 : SCALARS[property.countType ?? property.type]!.bytes),
+        0,
+      ),
     );
   const bodyBytes = bytes.length - header.bodyOffset + 1;
   if (header.elements.some((element) => element.count * minItemBytes(element) > bodyBytes)) {
