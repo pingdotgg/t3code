@@ -925,7 +925,7 @@ export const updateAgentAwarenessRegistrationPreferences = Effect.fn(
   ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
     const generation = deviceRegistrationGeneration;
     yield* registerDevice({ preferencesOverride });
-    if (generation !== deviceRegistrationGeneration) yield* Effect.interrupt;
+    if (generation !== deviceRegistrationGeneration) return yield* Effect.interrupt;
   },
   Effect.tapError((error) =>
     Effect.sync(() => {
