@@ -326,7 +326,10 @@ const make = Effect.gen(function* () {
           }),
         )
           ? channelEndpoint(
-              channelHostname(config.channelHost, yield* channelKey(verified.environmentId)),
+              channelHostname(
+                config.channelHost,
+                yield* channelKey(verified.environmentId, verified.environmentPublicKey),
+              ),
             )
           : null;
       const endpoint = provisioned?.endpoint ?? channel ?? verified.endpoint;

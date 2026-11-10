@@ -465,7 +465,10 @@ const make = Effect.gen(function* () {
         channelHostname:
           settings.channelHost === undefined
             ? null
-            : channelHostname(settings.channelHost, yield* channelKey(input.link.environmentId)),
+            : channelHostname(
+                settings.channelHost,
+                yield* channelKey(input.link.environmentId, input.link.environmentPublicKey),
+              ),
       });
       if (Result.isSuccess(result)) {
         return result.success;

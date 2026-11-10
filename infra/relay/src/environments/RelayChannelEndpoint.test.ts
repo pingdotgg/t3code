@@ -21,10 +21,12 @@ describe("channelKeyForHost", () => {
 describe("channelKey", () => {
   it.effect("gives each environment its own stable host label", () =>
     Effect.gen(function* () {
-      const first = yield* channelKey("env-a");
+      const first = yield* channelKey("env-a", "key-a");
       expect(first).toMatch(/^[0-9a-f]{32}$/u);
-      expect(yield* channelKey("env-a")).toBe(first);
-      expect(yield* channelKey("env-b")).not.toBe(first);
+      expect(yield* channelKey("env-a", "key-a")).toBe(first);
+      expect(yield* channelKey("env-b", "key-a")).not.toBe(first);
+      // Environment ids are public; another key claiming the same id gets another host.
+      expect(yield* channelKey("env-a", "key-b")).not.toBe(first);
       expect(
         channelKeyForHost("t3-*.example.test", channelHostname("t3-*.example.test", first)),
       ).toBe(first);

@@ -3,10 +3,16 @@ import * as Effect from "effect/Effect";
 
 const CHANNEL_KEY_PATTERN = /^[0-9a-f]{32}$/u;
 
-/** Host label for an environment's relay channel; hashed so the host does not reveal the environment id. */
-export const channelKey = (environmentId: string) =>
+/**
+ * Host label for an environment's relay channel. Environment ids are public, so the key also
+ * covers the environment's public key: only the holder of a credential for that key can serve it.
+ */
+export const channelKey = (environmentId: string, environmentPublicKey: string) =>
   Effect.promise(() =>
-    crypto.subtle.digest("SHA-256", new TextEncoder().encode(`t3-relay-channel:${environmentId}`)),
+    crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`t3-relay-channel:${environmentId}:${environmentPublicKey.trim()}`),
+    ),
   ).pipe(
     Effect.map((digest) =>
       Array.from(new Uint8Array(digest).slice(0, 16), (byte) =>

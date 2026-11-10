@@ -88,10 +88,13 @@ export const withRelayChannels = (channelHost: string) => {
   };
 
   const serveChannel = Effect.fn("RelayChannels.serveChannel")(function* (
-    environmentId: string,
+    principal: EnvironmentCredentials.EnvironmentCredentialPrincipal,
+    token: string,
     request: HttpServerRequest.HttpServerRequest,
   ) {
-    const key = yield* channelKey(environmentId);
+    const { environmentId } = principal;
+    const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+    const key = yield* channelKey(environmentId, principal.environmentPublicKey);
     const socket = yield* request.upgrade;
     const writer = yield* socket.writer;
     const reader = yield* socket.reader;
@@ -121,9 +124,25 @@ export const withRelayChannels = (channelHost: string) => {
         yield* Effect.logInfo("Relay channel disconnected", { environmentId });
       }),
     );
+    // The environment pings every 25 seconds; a revoked credential closes its channel.
+    const stillAuthorized = credentials.authenticate(token).pipe(
+      Effect.map((current) =>
+        Option.exists(current, (now) => now.credentialId === principal.credentialId),
+      ),
+      Effect.orElseSucceed(() => true),
+    );
     yield* reader.pull.pipe(
       Effect.flatMap((chunks) =>
-        Effect.forEach(chunks, (chunk) => dispatch(channel, chunk), { discard: true }),
+        Effect.forEach(
+          chunks,
+          (chunk) =>
+            Option.getOrNull(parseFrame(chunk))?.type === "ping"
+              ? stillAuthorized.pipe(
+                  Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail("revoked" as const))),
+                )
+              : dispatch(channel, chunk),
+          { discard: true },
+        ),
       ),
       Effect.forever,
       Effect.ignore,
@@ -231,7 +250,7 @@ export const withRelayChannels = (channelHost: string) => {
       .authenticate(token)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     return Option.isSome(principal) && principal.value.environmentId === decodeURIComponent(pathId)
-      ? principal.value.environmentId
+      ? { principal: principal.value, token }
       : null;
   });
 
@@ -240,9 +259,9 @@ export const withRelayChannels = (channelHost: string) => {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const channelPath = CHANNEL_PATH.exec(request.url);
       if (channelPath?.[1] !== undefined && isWebSocketUpgrade(request)) {
-        const environmentId = yield* authenticateChannel(request, channelPath[1]);
-        if (environmentId === null) return HttpServerResponse.empty({ status: 401 });
-        return yield* serveChannel(environmentId, request).pipe(
+        const authorized = yield* authenticateChannel(request, channelPath[1]);
+        if (authorized === null) return HttpServerResponse.empty({ status: 401 });
+        return yield* serveChannel(authorized.principal, authorized.token, request).pipe(
           Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 400 })),
         );
       }
