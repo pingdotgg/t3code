@@ -83,6 +83,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
+  usageLimitNoticeResetAt,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveWorkflowOpening,
@@ -981,10 +982,19 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit"
       ? (activeThreadShell?.latestRun ?? null)
       : null;
+  const limitRecoveryResetAt =
+    limitRecoveryRun === null || activeThreadShell === null
+      ? null
+      : usageLimitNoticeResetAt({
+          runId: limitRecoveryRun.runId,
+          resetAt: serverRuntime?.usageLimitResetAt,
+          stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
+          recovery: activeThreadShell.limitRecovery,
+        });
   // The recovery banner offers Wake now for a snooze it set.
   const limitRecoveryHoldsSnooze = limitRecoveryOwnsSnooze({
     runId: limitRecoveryRun?.runId,
-    resetAt: serverRuntime?.usageLimitResetAt,
+    resetAt: limitRecoveryResetAt,
     recovery: activeThreadShell?.limitRecovery,
     snoozedUntil: activeThreadShell?.snoozedUntil,
   });
@@ -2523,7 +2533,7 @@ export default function ChatView(props: ChatViewProps) {
       ? usageLimitRecoveryBannerItem({
           runId: limitRecoveryRun.runId,
           errorCode: serverRuntime?.lastErrorCode ?? null,
-          resetAt: serverRuntime?.usageLimitResetAt ?? null,
+          resetAt: limitRecoveryResetAt,
           stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
           settled: activeThreadShell.settledOverride === "settled",
           requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,

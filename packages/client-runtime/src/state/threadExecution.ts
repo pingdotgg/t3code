@@ -437,6 +437,25 @@ export function withoutUsageLimitNoticeRows<
   return rows.some(hidden) ? rows.filter((row) => !hidden(row)) : rows;
 }
 
+/**
+ * The reset a usage-limit notice offers for `runId`. When the provider's reset is missing or
+ * already passed, a recovery armed for the run carries the server's retry time instead.
+ */
+export function usageLimitNoticeResetAt(input: {
+  readonly runId: RunId | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly stoppedAt: string;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+}): string | null {
+  const { runId, resetAt, stoppedAt, recovery } = input;
+  if (resetAt != null && Date.parse(resetAt) > Date.parse(stoppedAt)) return resetAt;
+  return runId != null &&
+    recovery?.runId === runId &&
+    Date.parse(recovery.resetAt) > Date.parse(stoppedAt)
+    ? recovery.resetAt
+    : (resetAt ?? null);
+}
+
 /** Whether a usage-limit recovery holds the thread's snooze, so its notice offers Wake now. */
 export function limitRecoveryOwnsSnooze(input: {
   readonly runId: RunId | null | undefined;

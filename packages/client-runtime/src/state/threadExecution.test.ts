@@ -34,6 +34,7 @@ import {
   presentProviderGoal,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
+  usageLimitNoticeResetAt,
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
@@ -644,5 +645,43 @@ describe("presentPendingBackgroundWork", () => {
       },
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
+  });
+});
+
+describe("usageLimitNoticeResetAt", () => {
+  const runId = RunId.make("limited-run");
+  const stoppedAt = "2026-07-28T10:00:00.000Z";
+  const retryAt = "2026-07-28T10:02:00.000Z";
+  const recovery = { runId, resetAt: retryAt, autoResume: true, snooze: false };
+  it.each([
+    [
+      "the provider's later reset",
+      "2026-07-28T11:00:00.000Z",
+      recovery,
+      "2026-07-28T11:00:00.000Z",
+    ],
+    ["a retry armed for the run when the provider gave no reset", null, recovery, retryAt],
+    [
+      "a retry armed for the run over an expired reset",
+      "2026-07-28T09:00:00.000Z",
+      recovery,
+      retryAt,
+    ],
+    [
+      "the expired reset when the recovery is for another run",
+      "2026-07-28T09:00:00.000Z",
+      { ...recovery, runId: RunId.make("earlier-run") },
+      "2026-07-28T09:00:00.000Z",
+    ],
+    [
+      "nothing when the recovery's own reset has expired",
+      null,
+      { ...recovery, resetAt: "2026-07-28T09:00:00.000Z" },
+      null,
+    ],
+  ] as const)("offers %s", (_label, resetAt, limitRecovery, expected) => {
+    expect(usageLimitNoticeResetAt({ runId, resetAt, stoppedAt, recovery: limitRecovery })).toBe(
+      expected,
+    );
   });
 });
