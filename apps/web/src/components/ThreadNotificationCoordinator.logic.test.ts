@@ -102,6 +102,22 @@ describe("createThreadNotificationGate", () => {
       ["thread", "completion"],
       ["thread", "input"],
     ]);
+    const failureReport = {
+      ...completed(2),
+      attention: "run-2:failed",
+    };
+    observe(failureReport);
+    observe({ ...failureReport });
+    observe(working);
+    observe(completed(2));
+    expect(notify.mock.calls).toEqual([
+      ["thread", "completion"],
+      ["thread", "input"],
+      ["thread", "input"],
+    ]);
+    observe(completed(3));
+    expect(notify.mock.calls.at(-1)).toEqual(["thread", "completion"]);
+    expect(notify).toHaveBeenCalledTimes(4);
   });
 
   it("never notifies existing, archived or stopped completions, including when unarchived", () => {
