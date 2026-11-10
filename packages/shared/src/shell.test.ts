@@ -18,6 +18,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyShellEnvironment,
+  pathSetup,
+  pathSetupCommand,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -32,6 +34,7 @@ import {
   resolveCommandPath,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
+  runsGitWithoutConsole,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   withPathDirectoryListings,
@@ -559,6 +562,36 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+});
+
+describe("runsGitWithoutConsole", () => {
+  const git = "C:\\Program Files\\Git\\ucrt64\\bin\\git.exe";
+
+  it.each([
+    [["rev-parse", "--git-path", "index"], true],
+    [["--git-dir", "C:\\repo\\.git", "symbolic-ref", "refs/remotes/origin/HEAD"], true],
+    [["remote", "get-url", "--", "origin"], true],
+    [["config", "--get", "branch.main.pushRemote"], true],
+    [["symbolic-ref", "--quiet", "HEAD"], true],
+    [["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], true],
+    [["rev-parse", "HEAD"], false],
+    [["symbolic-ref", "HEAD", "refs/heads/x"], false],
+    [["symbolic-ref", "-qd", "refs/remotes/origin/HEAD"], false],
+    [["config", "--get", "--edit"], false],
+    [["-c", "core.pager=x", "config", "--get", "user.name"], false],
+  ])("Git for Windows %j without a console: %s", (args, expected) => {
+    expect(runsGitWithoutConsole("win32", git, args)).toBe(expected);
+  });
+
+  it.each([
+    ["win32", "C:\\Program Files\\Git\\cmd\\git.exe"],
+    ["win32", "C:\\Users\\x\\scoop\\shims\\git.exe"],
+    ["linux", git],
+  ] as const)("keeps the console on %s for %s", (platform, executable) => {
+    expect(runsGitWithoutConsole(platform, executable, ["rev-parse", "--show-toplevel"])).toBe(
+      false,
+    );
+  });
 });
 
 describe("preferGitForWindowsBinary", () => {
@@ -1128,4 +1161,58 @@ describe("desktop shell environment updates", () => {
       });
     },
   );
+});
+
+describe("pathSetupCommand", () => {
+  // Undefined where a pasted line could break things: Windows (it would flatten %VAR% entries in
+  // the registry PATH), macOS bash (several startup files), other shells, and unsafe paths.
+  it.each([
+    [
+      "/home/theo/.local/bin",
+      "/bin/bash",
+      "linux",
+      `printf '\\n%s\\n' 'export PATH="$PATH:/home/theo/.local/bin"' >> ~/.bashrc`,
+    ],
+    [
+      "/Users/theo/.local/bin",
+      "/usr/bin/fish",
+      "linux",
+      `mkdir -p ~/.config/fish && printf '\\n%s\\n' 'fish_add_path --append --path $HOME/.local/bin' >> ~/.config/fish/config.fish`,
+    ],
+    [
+      "/opt/t3/bin",
+      "/bin/zsh",
+      "linux",
+      `printf '\\n%s\\n' 'export PATH="$PATH:/opt/t3/bin"' >> ~/.zshrc`,
+    ],
+    ["/Users/theo/.local/bin", "/bin/tcsh", "darwin", undefined],
+    ["/Users/theo/.local/bin", "/bin/bash", "darwin", undefined],
+    ["C:\\Users\\theo\\.local\\bin", "pwsh", "win32", undefined],
+    ["/Users/theo/it's here", "/bin/zsh", "darwin", undefined],
+    ["/opt/a$PWD/bin", "/bin/zsh", "linux", undefined],
+    // Relative: PATH would follow the working directory into any checkout's `bin`.
+    ["bin", "/bin/zsh", "linux", undefined],
+  ] as const)("%s with %s on %s", (directory, shell, platform, expected) => {
+    expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
+  });
+
+  it("writes the startup file fish and zsh read, under XDG_CONFIG_HOME or ZDOTDIR", () => {
+    const setup = { directory: "/opt/t3/bin", home: "/home/theo", shell: "/usr/bin/fish" } as const;
+    expect(pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/cfg" })?.file).toBe(
+      "/home/theo/cfg/fish/config.fish",
+    );
+    expect(pathSetup({ ...setup, platform: "linux" })?.file).toBe("~/.config/fish/config.fish");
+    // zsh reads .zshrc from ZDOTDIR when it is set.
+    expect(
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/.zsh" })
+        ?.file,
+    ).toBe("/Users/theo/.zsh/.zshrc");
+    // A set folder that cannot be written safely means no setup, never the unread default.
+    expect(
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/my zsh" }),
+    ).toBeUndefined();
+    expect(
+      pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/my cfg" }),
+    ).toBeUndefined();
+  });
 });

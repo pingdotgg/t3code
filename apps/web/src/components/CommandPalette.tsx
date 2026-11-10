@@ -1,3 +1,4 @@
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -73,6 +74,7 @@ import {
   MonitorIcon,
   PinIcon,
   PinOffIcon,
+  PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
@@ -81,6 +83,7 @@ import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
   useEffect,
+  useId,
   useReducer,
   useRef,
   useState,
@@ -149,6 +152,7 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
@@ -215,7 +219,7 @@ import {
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
-import { CommandPaletteContent } from "./CommandPaletteContent";
+import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
   useEnvironmentLookups,
@@ -246,6 +250,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -307,6 +312,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
+      <ThreadContextDragGhost />
       <CommandDialog
         open={state.open}
         onOpenChange={(open, eventDetails) => {
@@ -432,6 +438,8 @@ function OpenCommandPaletteDialog(props: {
   const resultListRef = useRef<LegendListRef | null>(null);
   // A pushed view drops the typed highlight until the user moves it again.
   const highlightClearedRef = useRef(viewStack.length > 0);
+  // Entering or leaving browse mode remounts the input; carry the caret across it.
+  const remountSelectionRef = useRef<PendingInputSelection | null>(null);
   function clearTypedHighlight(): void {
     highlightClearedRef.current = true;
     setHighlightedItemValue(null);
@@ -826,8 +834,15 @@ function OpenCommandPaletteDialog(props: {
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
+      const currentEntry =
+        currentProjectId === null
+          ? undefined
+          : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
         projects: pickerProjects.filter((project) => !isScratch(project)),
+        currentProjectKey: currentEntry
+          ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
+          : null,
         projectGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
@@ -930,10 +945,25 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
 
-  function handleQueryChange(nextQuery: string): void {
+  function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
-    setQuery(canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery);
+    const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
+    // A rewritten paste has no matching offsets, so its caret lands at the end.
+    if (
+      source instanceof HTMLInputElement &&
+      resolvedQuery === nextQuery &&
+      (canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) !==
+        isBrowsing
+    ) {
+      remountSelectionRef.current = {
+        value: resolvedQuery,
+        start: source.selectionStart,
+        end: source.selectionEnd,
+        direction: source.selectionDirection,
+      };
+    }
+    setQuery(resolvedQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
     }
@@ -1583,6 +1613,34 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:use-in-another-app",
+    searchTerms: [
+      "mcp",
+      "connector",
+      "another app",
+      "poke",
+      "claude",
+      "chatgpt",
+      "grok",
+      "muse",
+      "instinct",
+      "openclaw",
+      "hermes",
+    ],
+    title: "Use T3 Code in another app (MCP)",
+    icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openUseInAnotherApp(
+        currentProjectEnvironmentId ??
+          (paletteRouteTarget?.kind === "server"
+            ? paletteRouteTarget.threadRef.environmentId
+            : null),
+      );
+    },
+  });
 
   actionItems.push({
     kind: "action",
@@ -2736,9 +2794,17 @@ function OpenCommandPaletteDialog(props: {
     await handleAddProject(pickedPath);
   };
 
+  const submitButtonId = useId();
+  const browseSubmitLabel =
+    isCloneDestinationStep && !canCloneProject
+      ? "This connection needs permission to write source control and add projects."
+      : canCreateProject
+        ? `${submitActionLabel} (${addShortcutLabel})`
+        : "This connection cannot add projects.";
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={isCreatingNewProject ? "Creating" : "Create"}
         shortcutLabel={createShortcutLabel}
         ariaLabel={`Create (${createShortcutLabel})`}
@@ -2750,6 +2816,7 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : addProjectCloneFlow?.step === "repository" ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}
         shortcutLabel="Enter"
         ariaLabel={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
@@ -2761,16 +2828,11 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : isBrowsing ? (
       <CommandPaletteSubmitButton
+        id={submitButtonId}
         label={isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
         shortcutLabel={addShortcutLabel}
-        ariaLabel={`${submitActionLabel} (${addShortcutLabel})`}
-        tooltip={
-          isCloneDestinationStep && !canCloneProject
-            ? "This connection needs permission to write source control and add projects."
-            : canCreateProject
-              ? `${submitActionLabel} (${addShortcutLabel})`
-              : "This connection cannot add projects."
-        }
+        ariaLabel={browseSubmitLabel}
+        tooltip={browseSubmitLabel}
         disabled={
           !canCreateProject ||
           !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
@@ -2838,6 +2900,7 @@ function OpenCommandPaletteDialog(props: {
                 })
               : undefined,
         placeholder: inputPlaceholder,
+        "aria-describedby": inputAccessory ? submitButtonId : undefined,
         ...(isSubmenu
           ? {
               startAddon: (
@@ -2868,7 +2931,8 @@ function OpenCommandPaletteDialog(props: {
           scrollCommandPaletteRowIntoView(resultListRef.current, rowIndex);
         }
       }}
-      onValueChange={handleQueryChange}
+      onValueChange={(nextQuery, { event }) => handleQueryChange(nextQuery, event.target)}
+      pendingSelectionRef={remountSelectionRef}
       showBackHint={isSubmenu}
       value={query}
     >
