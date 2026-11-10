@@ -16,13 +16,13 @@ export interface ArchiveEntry {
 }
 
 export type BinaryWorkerRequest =
-  | { type: "open"; kind: "archive" | "sqlite"; name: string; bytes: ArrayBuffer }
+  | { type: "open"; kind: "archive" | "sqlite"; name: string; src: string }
   | { type: "entry"; path: string }
   | { type: "rows"; table: string; page: number };
 
 export type BinaryWorkerResult =
   | { type: "error"; message: string }
-  | { type: "archive"; entries: ArchiveEntry[] }
+  | { type: "archive"; entries: ArchiveEntry[]; sizeBytes: number }
   | { type: "entry"; path: string; bytes: Uint8Array<ArrayBuffer> }
-  | { type: "sqlite"; tables: { name: string; count: number }[] }
+  | { type: "sqlite"; tables: { name: string; count: number }[]; sizeBytes: number }
   | { type: "rows"; table: string; page: number; columns: string[]; rows: string[][] };

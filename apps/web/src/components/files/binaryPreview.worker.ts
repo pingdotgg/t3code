@@ -1,6 +1,6 @@
 import type { Database } from "sql.js";
 
-import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
+import { boundedZip, rangedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import {
   ARCHIVE_ENTRY_MAX_BYTES,
   ARCHIVE_MAX_ENTRIES,
@@ -11,10 +11,12 @@ import {
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
+import { readBinaryPreview } from "./readBinaryPreview";
 
 let database: Database | null = null;
 let tables: string[] = [];
 let files = new Map<string, Uint8Array<ArrayBuffer>>();
+let ranged: Awaited<ReturnType<typeof rangedZip>> = null;
 const reply = (result: BinaryWorkerResult) => self.postMessage(result, { transfer: [] });
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -140,10 +142,10 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
 
 async function handle(input: BinaryWorkerRequest) {
   if (input.type === "entry") {
-    const bytes = files.get(input.path);
-    if (!bytes) throw new Error("This archive entry is unavailable.");
-    if (bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
-      throw new Error("Entry previews are limited to 10 MB.");
+    const size = ranged ? ranged.entries.get(input.path)?.size : files.get(input.path)?.length;
+    if (size === undefined) throw new Error("This archive entry is unavailable.");
+    if (size > ARCHIVE_ENTRY_MAX_BYTES) throw new Error("Entry previews are limited to 10 MB.");
+    const bytes = ranged ? await ranged.read(input.path) : files.get(input.path)!;
     reply({ type: "entry", path: input.path, bytes });
     return;
   }
@@ -179,15 +181,38 @@ async function handle(input: BinaryWorkerRequest) {
     });
     return;
   }
-  if (input.bytes.byteLength > BINARY_PREVIEW_MAX_BYTES)
-    throw new Error("Preview limited to files under 50 MB.");
+  files = new Map();
+  ranged =
+    input.kind === "archive" && /\.(zip|jar)$/i.test(input.name)
+      ? await rangedZip(
+          input.src,
+          // A cached partial response makes the browser add If-Range, which the server answers in full.
+          (url, init) => fetch(url, { ...init, cache: "no-store" }),
+          BINARY_PREVIEW_MAX_BYTES,
+          // A browser that preflights Range cross-origin rejects here; the full reader still works.
+        ).catch(() => null)
+      : null;
+  if (ranged) {
+    reply({
+      type: "archive",
+      sizeBytes: ranged.size,
+      entries: [...ranged.entries].map(([path, file]) => ({
+        path,
+        size: file.size,
+        directory: file.directory,
+        modified: new Date(file.modified).toISOString(),
+      })),
+    });
+    return;
+  }
+  const source = await readBinaryPreview(input.src);
   if (input.kind === "sqlite") {
     const [{ default: initSqlJs }, { default: wasmUrl }] = await Promise.all([
       import("sql.js"),
       import("sql.js/dist/sql-wasm.wasm?url"),
     ]);
     const SQL = await initSqlJs({ locateFile: () => wasmUrl });
-    database = new SQL.Database(new Uint8Array(input.bytes));
+    database = new SQL.Database(new Uint8Array(source));
     database.run("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
     tables =
       database
@@ -198,6 +223,7 @@ async function handle(input: BinaryWorkerRequest) {
     if (tables.length > 100) throw new Error("Database previews are limited to 100 tables.");
     reply({
       type: "sqlite",
+      sizeBytes: source.byteLength,
       tables: tables.map((name) => ({
         name,
         count: Number(
@@ -206,14 +232,13 @@ async function handle(input: BinaryWorkerRequest) {
       })),
     });
   } else {
-    files = new Map();
     let entries: ArchiveEntry[];
     if (
       /\.(zip|jar)$/i.test(input.name) ||
-      (input.bytes.byteLength >= 4 &&
-        [0x04034b50, 0x06054b50].includes(new DataView(input.bytes).getUint32(0, true)))
+      (source.byteLength >= 4 &&
+        [0x04034b50, 0x06054b50].includes(new DataView(source).getUint32(0, true)))
     ) {
-      const archive = await boundedZip(input.bytes, BINARY_PREVIEW_MAX_BYTES);
+      const archive = await boundedZip(source, BINARY_PREVIEW_MAX_BYTES);
       entries = [...archive].map(([path, file]) => {
         files.set(path, file.bytes);
         return {
@@ -223,8 +248,8 @@ async function handle(input: BinaryWorkerRequest) {
           modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString(),
         };
       });
-    } else if (/\.(gz|tgz)$/i.test(input.name) || new Uint8Array(input.bytes)[0] === 0x1f) {
-      const bytes = await gunzip(input.bytes);
+    } else if (/\.(gz|tgz)$/i.test(input.name) || new Uint8Array(source)[0] === 0x1f) {
+      const bytes = await gunzip(source);
       if (/\.(tar\.gz|tgz)$/i.test(input.name)) entries = tarEntries(bytes);
       else {
         const path = input.name.replace(/\.gz$/i, "") || "contents";
@@ -234,8 +259,8 @@ async function handle(input: BinaryWorkerRequest) {
           entries = [{ path, size: bytes.length, directory: false, modified: null }];
         }
       }
-    } else entries = tarEntries(new Uint8Array(input.bytes));
-    reply({ type: "archive", entries });
+    } else entries = tarEntries(new Uint8Array(source));
+    reply({ type: "archive", entries, sizeBytes: source.byteLength });
   }
 }
 

@@ -28,7 +28,6 @@ import {
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
 import { PreviewImage } from "./PreviewImage";
-import { readBinaryPreview } from "./readBinaryPreview";
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 type Archive = Extract<BinaryWorkerResult, { type: "archive" }>;
@@ -83,7 +82,6 @@ export default function BinaryViewer(props: {
   readonly kind: "archive" | "sqlite";
   readonly onRetry?: () => void;
 }) {
-  const [sizeBytes, setSizeBytes] = useState<number | null>(null);
   const [archive, setArchive] = useState<Archive | null>(null);
   const [database, setDatabase] = useState<Database | null>(null);
   const [rows, setRows] = useState<Rows | null>(null);
@@ -94,6 +92,7 @@ export default function BinaryViewer(props: {
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const sizeBytes = archive?.sizeBytes ?? database?.sizeBytes ?? null;
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const send = (request: BinaryWorkerRequest) => {
@@ -105,7 +104,7 @@ export default function BinaryViewer(props: {
       setBusy(false);
       workerRef.current?.terminate();
       workerRef.current = null;
-    }, 15_000);
+    }, 30_000);
     workerRef.current?.postMessage(request);
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the binary fetch, archive or database worker, message subscription, and request timeout for this file.
@@ -149,16 +148,7 @@ export default function BinaryViewer(props: {
         }
       }
     });
-    void readBinaryPreview(props.src, controller.signal)
-      .then((bytes) => {
-        if (!controller.signal.aborted) {
-          setSizeBytes(bytes.byteLength);
-          worker.postMessage({ type: "open", name: props.name, kind: props.kind, bytes }, [bytes]);
-        }
-      })
-      .catch((cause: unknown) =>
-        fail(cause instanceof Error ? cause.message : "Could not read this file."),
-      );
+    worker.postMessage({ type: "open", name: props.name, kind: props.kind, src: props.src }, []);
     return () => {
       controller.abort();
       worker.terminate();
@@ -279,7 +269,7 @@ export default function BinaryViewer(props: {
       ) : busy ? (
         <FileSurfaceLoading />
       ) : selectedPath ? (
-        entry ? (
+        entry?.path === selectedPath ? (
           <ArchiveFile key={entry.path} path={entry.path} bytes={entry.bytes} />
         ) : null
       ) : archive ? (

@@ -3,6 +3,7 @@ import {
   ARCHIVE_ENTRY_MAX_BYTES,
   ARCHIVE_MAX_BYTES,
   boundedZip,
+  rangedZip,
 } from "@t3tools/client-runtime/zip/bounded-zip";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
@@ -132,6 +133,27 @@ async function readArchiveBody(
   return bytes.buffer;
 }
 
+function toArchive(
+  files: ReadonlyMap<string, { readonly size: number; readonly directory: boolean }>,
+  read: (path: string) => Promise<Uint8Array<ArrayBuffer>>,
+): ZipArchive {
+  const entries = [...files].map(([path, file]): ZipEntry => {
+    const name = path.split("/").findLast(Boolean) ?? path;
+    const dot = name.lastIndexOf(".");
+    return {
+      path,
+      name,
+      isDirectory: file.directory,
+      sizeBytes: file.size,
+      mimeType:
+        (dot > 0 ? hostPreviewMimeTypeFromExtension(name.slice(dot).toLowerCase()) : null) ??
+        "application/octet-stream",
+      read: () => read(path),
+    };
+  });
+  return { entries, fileCount: entries.filter((entry) => !entry.isDirectory).length };
+}
+
 async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
   let files: Awaited<ReturnType<typeof boundedZip>>;
   try {
@@ -145,21 +167,15 @@ async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
       },
     });
   }
-  const entries = [...files].map(([path, file]): ZipEntry => {
-    const name = path.split("/").findLast(Boolean) ?? path;
-    const dot = name.lastIndexOf(".");
-    return {
-      path,
-      name,
-      isDirectory: file.directory,
-      sizeBytes: file.bytes.byteLength,
-      mimeType:
-        (dot > 0 ? hostPreviewMimeTypeFromExtension(name.slice(dot).toLowerCase()) : null) ??
-        "application/octet-stream",
-      bytes: file.bytes,
-    };
-  });
-  return { entries, fileCount: entries.filter((entry) => !entry.isDirectory).length };
+  return toArchive(
+    new Map(
+      [...files].map(([path, file]) => [
+        path,
+        { size: file.bytes.byteLength, directory: file.directory },
+      ]),
+    ),
+    async (path) => files.get(path)!.bytes,
+  );
 }
 
 type ArchiveState =
@@ -199,6 +215,9 @@ function useZipArchive(input: {
         return openArchive(await file.arrayBuffer());
       }
       const url = (await refresh()) ?? uri;
+      // Archives the range reader can't list are downloaded and read whole below.
+      const ranged = await rangedZip(url, fetch, ARCHIVE_MAX_BYTES, abort.signal).catch(() => null);
+      if (ranged) return toArchive(ranged.entries, ranged.read);
       const response = await fetch(url, { signal: abort.signal });
       if (!response.ok || !response.body) throw new ZipFailureError({ failure: NETWORK });
       const bytes = await readArchiveBody(response.body, (receivedBytes) =>
@@ -558,7 +577,7 @@ async function addZipEntryToDraft(input: {
 }) {
   const { entry, signal } = input;
   const file = await writeGeneratedAttachmentFile({
-    bytes: entry.bytes,
+    bytes: await entry.read(),
     attachment: { name: entry.name, mimeType: entry.mimeType },
   });
   try {
@@ -628,9 +647,9 @@ function ZipEntryView(props: {
     const controller = new AbortController();
     let release: (() => void) | undefined;
     void (async (): Promise<EntryContent> => {
-      if (isText) return { status: "text", ...decodeFilePreviewText(entry.bytes) };
+      if (isText) return { status: "text", ...decodeFilePreviewText(await entry.read()) };
       const file = await writeGeneratedAttachmentFile({
-        bytes: entry.bytes,
+        bytes: await entry.read(),
         attachment: { name: entry.name, mimeType },
       });
       if (controller.signal.aborted) {
@@ -681,9 +700,9 @@ function ZipEntryView(props: {
     );
   };
   const save = () =>
-    run("save", (signal) =>
+    run("save", async (signal) =>
       shareGeneratedAttachment({
-        bytes: entry.bytes,
+        bytes: await entry.read(),
         attachment: { name: entry.name, mimeType },
         signal,
       }),
