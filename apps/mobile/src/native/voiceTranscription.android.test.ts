@@ -5,6 +5,17 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
   transcribe: vi.fn<(id: number, uri: string, locale: string, mode: number) => Promise<string>>(),
   cancel: vi.fn<(id: number) => Promise<void>>(),
+  LiveVoiceRecorder: class {
+    readonly uri = "file:///live.pcm";
+  },
+}));
+
+vi.mock("react-native", () => ({
+  Platform: {
+    get Version() {
+      return 31;
+    },
+  },
 }));
 
 vi.mock("expo", () => ({
@@ -15,8 +26,17 @@ import {
   VoiceInputController,
   resetVoiceInputGlobalsForTests,
 } from "../../../../packages/client-runtime/src/voice-input/controller";
+import { Platform } from "react-native";
 
-import { getLocalVoiceTranscriber } from "./voiceTranscription.android";
+import { createLiveVoiceRecorder, getLocalVoiceTranscriber } from "./voiceTranscription.android";
+
+it.each([
+  [30, null],
+  [31, "file:///live.pcm"],
+] as const)("offers live recording only on supported Android versions (%s)", (version, uri) => {
+  using _version = vi.spyOn(Platform, "Version", "get").mockReturnValue(version);
+  expect(createLiveVoiceRecorder()?.uri ?? null).toBe(uri);
+});
 
 it.each([false, true])(
   "waits for device support before offering a transcriber (%s)",
@@ -58,10 +78,11 @@ it.each([
     selection: { start: 16, end: 16 },
     revision: 1,
   };
+  const prepareToRecordAsync = vi.fn(async () => {});
   const controller = new VoiceInputController({
     recorder: {
       uri: "file:///acceptance.m4a",
-      prepareToRecordAsync: async () => {},
+      prepareToRecordAsync,
       record: () => {},
       stop: async () => {},
     },
@@ -81,4 +102,5 @@ it.each([
   expect(commit).not.toHaveBeenCalled();
   expect(draft.text).toBe("Preserved draft.");
   expect(controller.currentState.error).toMatch(expected);
+  expect(prepareToRecordAsync).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
 });
