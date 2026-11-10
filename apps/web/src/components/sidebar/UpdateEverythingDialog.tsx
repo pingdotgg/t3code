@@ -115,7 +115,7 @@ function UpdateEverythingDialogContent({
 }: UpdateEverythingDialogContentProps) {
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(() => new Set());
   const rowKey = (row: UpdateEverythingRow) =>
-    row.app === "this-app" ? "this-app" : (row.environmentId ?? "this-app");
+    row.hostedByThisApp || row.app === "this-app" ? "this-app" : (row.environmentId ?? "this-app");
   const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
   const selected = updating.filter((row) => !selectable || !excluded.has(rowKey(row)));
   const selectedIds = new Set(
@@ -127,6 +127,7 @@ function UpdateEverythingDialogContent({
   const selectedProviderCount = selectable
     ? selected.reduce((count, row) => count + row.providers.length, 0)
     : providerCount;
+  const selectedVersion = selected.some((row) => row.app !== null) ? version : null;
   const stopped = useAtomValue(
     runningThreadCountAtom(
       restarts
@@ -155,17 +156,17 @@ function UpdateEverythingDialogContent({
           {title ?? `Update ${selected.length} ${selected.length === 1 ? "machine" : "machines"}?`}
         </AlertDialogTitle>
         <AlertDialogDescription>
-          {version !== null ? (
+          {selectedVersion !== null ? (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              T3 Code <span className="font-mono text-xs">{selectedVersion}</span>
             </>
           ) : null}
-          {version !== null && selectedProviderCount > 0 ? " · " : null}
+          {selectedVersion !== null && selectedProviderCount > 0 ? " · " : null}
           {selectedProviderCount > 0
             ? `${selectedProviderCount} provider ${selectedProviderCount === 1 ? "update" : "updates"}`
             : null}
           {checking
-            ? `${version !== null || providerCount > 0 ? " · " : ""}Checking for more…`
+            ? `${selectedVersion !== null || selectedProviderCount > 0 ? " · " : ""}Checking for more…`
             : null}
         </AlertDialogDescription>
       </AlertDialogHeader>

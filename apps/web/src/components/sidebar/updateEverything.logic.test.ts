@@ -363,6 +363,16 @@ describe("describeUpdateEverything", () => {
     });
 
     expect(
+      describeUpdateEverything({
+        localVersion: null,
+        localMachines: [{ environmentId: id("local"), label: "Mainbook" }],
+        servers: [],
+        providerMachines: [{ environmentId: id("local"), label: "Mainbook", providers: ["Codex"] }],
+        skipped: [],
+      }).rows[0],
+    ).toMatchObject({ app: null, hostedByThisApp: true });
+
+    expect(
       rows.map(({ label, app, skipped, providers }) => [label, app, skipped, providers]),
     ).toEqual([
       ["Mainbook", "this-app", null, ["Codex"]],
