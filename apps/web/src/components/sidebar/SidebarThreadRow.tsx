@@ -1292,7 +1292,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : (
                 <span className="ml-auto hidden shrink-0 text-secondary-label text-xs tabular-nums @min-[12rem]/sidebar-tile:inline">
-                  <RelativeTimeLabel timestamp={threadTimeTimestamp(thread)} />
+                  <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                 </span>
               )}
             </div>
