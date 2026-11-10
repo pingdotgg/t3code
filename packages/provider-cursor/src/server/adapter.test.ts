@@ -2033,6 +2033,11 @@ describe("CursorAdapterV2", () => {
         yield* fileSystem.symlink(workspace, path.join(scratch, "link"));
         const cwd = path.join(scratch, "link", "packages", "app");
         yield* spawnAndCollect("git", ChildProcess.make("git", ["init", workspace]));
+        // Git prints forward slashes on Windows, and the loader passes its spelling through.
+        const projectRoot = (yield* spawnAndCollect(
+          "git",
+          ChildProcess.make("git", ["rev-parse", "--show-toplevel"], { cwd }),
+        )).stdout.trim();
         yield* fileSystem.makeDirectory(path.join(workspace, ".cursor"), { recursive: true });
         yield* fileSystem.makeDirectory(path.join(home, ".cursor"), { recursive: true });
         yield* fileSystem.writeFileString(
@@ -2193,27 +2198,27 @@ describe("CursorAdapterV2", () => {
         const expectedServers = {
           repro: {
             command: "node",
-            args: [`${workspace}/server.mjs`],
+            args: [`${projectRoot}/server.mjs`],
             startupTimeoutSec: 120,
-            cwd: workspace,
+            cwd: projectRoot,
           },
           "argument-only": {
             command: "node",
-            args: ["server.mjs", "--workspace", workspace],
-            cwd: workspace,
+            args: ["server.mjs", "--workspace", projectRoot],
+            cwd: projectRoot,
           },
           "env-only": {
             command: "node",
             args: ["server.mjs"],
-            env: { PROJECT_ROOT: workspace },
-            cwd: workspace,
+            env: { PROJECT_ROOT: projectRoot },
+            cwd: projectRoot,
           },
-          "cwd-only": { command: "node", args: ["server.mjs"], cwd: workspace },
-          "unset-env": { command: "node", env: { CONFIG: "" }, cwd: workspace },
+          "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
+          "unset-env": { command: "node", env: { CONFIG: "" }, cwd: projectRoot },
           wrapped: {
             command: "proto",
-            args: ["run", "node", "--", `${workspace}/server.mjs`],
-            cwd: workspace,
+            args: ["run", "node", "--", `${projectRoot}/server.mjs`],
+            cwd: projectRoot,
           },
         };
         // The agent is created with T3's server only; the resolved servers go with each turn.
