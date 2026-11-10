@@ -158,6 +158,33 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
+
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
         uses: voidzero-dev/setup-vp@v1
@@ -275,6 +302,32 @@ jobs:
             echo "link=$(git tag -l --format='%(contents:subject)' "$BUILD_TAG")" >> "$GITHUB_OUTPUT"
           fi
 
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
+
       - name: Prepare build directories
         if: steps.record.outputs.built != 'true'
         run: |
@@ -367,8 +420,8 @@ jobs:
         shell: bash
         run: |
           eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
-          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json 2>&1 | tee "$RUNNER_TEMP/upload.json"
-          link="$(grep -o 'https://expo\.dev/[^" ]*' "$RUNNER_TEMP/upload.json" | head -n 1)"
+          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
             exit 1
@@ -386,11 +439,13 @@ jobs:
         if: steps.record.outputs.built != 'true'
         env:
           LINK: ${{ steps.build.outputs.link }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$BUILD_TAG" -m "$LINK"
-          git push origin "refs/tags/$BUILD_TAG"
+          # Only this step has the token; the checkout's copy was removed before the build.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
 
       - name: Comment
         env:

@@ -41,3 +41,22 @@ test("a new fingerprint drops the old client; the same one keeps it", () => {
     group: "new",
   });
 });
+
+test("a build that finishes after the PR moved to another fingerprint changes nothing", () => {
+  const current = { fingerprint: "f".repeat(40), client: "", group: "new" };
+  assert.deepEqual(
+    mergeState(current, { fingerprint, client: "https://expo.dev/a/b", group: "" }),
+    current,
+  );
+});
+
+test("state from the comment is always three strings", () => {
+  assert.deepEqual(
+    readState('<!-- mobile-preview-android {"fingerprint":5,"client":null} -->\nx'),
+    {
+      fingerprint: "",
+      client: "",
+      group: "",
+    },
+  );
+});

@@ -9,14 +9,33 @@ function readState(body) {
   const match = new RegExp(`^<!-- ${MARKER} (\\{.*\\}) -->`).exec(body ?? "");
   if (!match) return null;
   try {
-    return JSON.parse(match[1]);
+    const state = JSON.parse(match[1]);
+    const text = (value) => (typeof value === "string" ? value : "");
+    return {
+      fingerprint: text(state.fingerprint),
+      client: text(state.client),
+      group: text(state.group),
+    };
   } catch {
     return null;
   }
 }
 
-/** New values win; a new fingerprint drops the old fingerprint's client. */
+/**
+ * New values win; a new fingerprint drops the old fingerprint's client. A build that finishes
+ * after the PR moved to another fingerprint changes nothing: its client cannot run the update
+ * the comment now shows.
+ */
 function mergeState(previous, next) {
+  const buildOnly = Boolean(next.client) && !next.group;
+  if (
+    buildOnly &&
+    previous?.fingerprint &&
+    next.fingerprint &&
+    previous.fingerprint !== next.fingerprint
+  ) {
+    return previous;
+  }
   const fingerprint = next.fingerprint || previous?.fingerprint || "";
   const sameFingerprint = !previous?.fingerprint || previous.fingerprint === fingerprint;
   return {
@@ -76,7 +95,12 @@ async function main() {
     const comments = await github(
       `/repos/${repository}/issues/${pr}/comments?per_page=100&page=${page}`,
     );
-    existing = comments.find((comment) => readState(comment.body) !== null) ?? null;
+    // Only this workflow's own comment: anyone can post the marker, and nobody else's is editable.
+    existing =
+      comments.find(
+        (comment) =>
+          comment.user?.login === "github-actions[bot]" && readState(comment.body) !== null,
+      ) ?? null;
     if (comments.length < 100) break;
   }
   const state = mergeState(readState(existing?.body), {

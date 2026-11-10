@@ -81,18 +81,6 @@ jobs:
           fetch-depth: 0
           # No sparse-checkout: see mobile-eas-preview.yml.
 
-      # `persist-credentials: false` fails here: its cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
-      - name: Drop checkout credentials
-        if: steps.expo-token.outputs.present == 'true'
-        run: |
-          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
-            | while read -r key; do git config --local --unset-all "$key"; done
-          if git config --local --get-regexp 'extraheader|includeif' ; then
-            echo "::error::checkout credentials are still configured"
-            exit 1
-          fi
-
       # The comment script comes from main, not from the PR.
       - name: Checkout trusted scripts
         if: steps.expo-token.outputs.present == 'true'
@@ -100,7 +88,33 @@ jobs:
         with:
           path: .trusted
           sparse-checkout: .github/scripts
-          persist-credentials: false
+
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
 
       # No caches: pull_request_target saves them under main's scope, where
       # trusted workflows with other secrets would restore what PR code wrote.
@@ -240,21 +254,38 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Drop checkout credentials
-        run: |
-          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
-            | while read -r key; do git config --local --unset-all "$key"; done
-          if git config --local --get-regexp 'extraheader|includeif' ; then
-            echo "::error::checkout credentials are still configured"
-            exit 1
-          fi
-
+      # The comment script comes from main, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@v6
         with:
           path: .trusted
           sparse-checkout: .github/scripts
-          persist-credentials: false
+
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -308,8 +339,8 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
           eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
-          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json 2>&1 | tee "$RUNNER_TEMP/upload.json"
-          link="$(grep -o 'https://expo\.dev/[^" ]*' "$RUNNER_TEMP/upload.json" | head -n 1)"
+          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
             exit 1
