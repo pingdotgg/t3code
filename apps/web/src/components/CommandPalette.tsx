@@ -1783,12 +1783,12 @@ function OpenCommandPaletteDialog(props: {
       });
     },
   }));
-  const sourceSelectionViewValue =
-    addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   const activeGroups =
     addProjectEnvironmentId !== null &&
     currentView !== null &&
-    currentView.groups[0]?.value === sourceSelectionViewValue
+    (currentView.groups[0]?.value.startsWith("sources:") ||
+      (currentView.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP &&
+        addProjectEntry.kind === "choose-source"))
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
           buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data),
