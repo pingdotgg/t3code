@@ -198,11 +198,10 @@ export function PaneNotch({
         aria-hidden
         ref={side === "right" ? holdEndCornerWhileSliding : undefined}
         data-pane-notch-corner={side === "left" ? "" : side}
-        data-sidebar-slide-stay={side === "left" ? "" : undefined}
       />
       {side === "left" ? (
         <>
-          <span aria-hidden data-pane-bar-corner="start" data-sidebar-slide-stay="" />
+          <span aria-hidden data-pane-bar-corner="start" />
           <span
             aria-hidden
             ref={holdEndCornerWhileSliding}
