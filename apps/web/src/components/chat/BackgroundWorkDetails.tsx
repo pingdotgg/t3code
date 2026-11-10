@@ -37,10 +37,10 @@ export function BackgroundWorkDetails(props: {
         <DialogPanel>
           <div className="space-y-5">
             {props.tasks.map((task) => {
-              const item = props.turnItems.findLast(
-                (candidate) =>
-                  candidate.id === task.itemId ||
-                  (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
+              const item = props.turnItems.findLast((candidate) =>
+                task.itemId === undefined
+                  ? (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId
+                  : candidate.id === task.itemId,
               );
               const command =
                 task.command ?? (item?.type === "command_execution" ? item.input : undefined);
@@ -68,8 +68,7 @@ export function BackgroundWorkDetails(props: {
                     </div>
                   ) : null}
                   {itemId && streamsOutput && item?.status === "running" ? (
-                    <div className="space-y-1 font-mono text-xs whitespace-pre-wrap break-words">
-                      <p className="font-sans text-muted-foreground">Captured output</p>
+                    <div className="font-mono text-xs whitespace-pre-wrap break-words">
                       <CommandOutputPanel
                         environmentId={props.environmentId}
                         threadId={task.sourceThreadId ?? item?.threadId ?? props.threadId}
