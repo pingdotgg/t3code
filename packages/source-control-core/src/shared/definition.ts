@@ -768,12 +768,13 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryUrlFromPage: (value) => {
       const url = httpUrl(value);
-      // A path ending in `.git` is already a clone URL, whatever routes it happens to contain.
-      if (url === null || url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
+      if (url === null) return null;
       // A recognized host's paths are its own, so another host's any-host route never rewrites them.
       const remote = parseGitRemoteHost(value);
       const owner = remote === null ? undefined : remoteOwner(remote);
       if (owner) return owner.repositoryUrlFromPage?.(url, true) ?? null;
+      // Elsewhere a path ending in `.git` is already a clone URL, whatever routes it contains.
+      if (url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
       // On an unrecognized host, only rewrite when every route that matches agrees. A route that
       // answers with the page itself says it may already be the clone URL.
       const [repositoryUrl, ...others] = new Set(
