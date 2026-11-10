@@ -126,7 +126,7 @@ export function parseRateTable(document: unknown): RateTable {
 
   const aliasCandidates = new Map<string, { rate: ModelRate | null; firstParty: boolean }>();
   for (const [key, rate] of table) {
-    const alias = bareModelName(key);
+    const alias = aliasModelName(key);
     if (alias.length === 0 || alias === key || table.has(alias)) continue;
     const firstParty = FIRST_PARTY_PROVIDERS.has(key.slice(0, key.indexOf("/")));
     const held = aliasCandidates.get(alias);
@@ -178,6 +178,16 @@ function normalizeRateKey(model: string): string {
 function bareModelName(key: string): string {
   const slash = key.lastIndexOf("/");
   return slash === -1 ? key : key.slice(slash + 1);
+}
+
+// New Claude models can reach LiteLLM as Bedrock rows only. The unprefixed row is the list price;
+// regional `us.`, `eu.` and `us-gov.` rows add a markup.
+const BEDROCK_ANTHROPIC_PREFIX = "anthropic.";
+
+function aliasModelName(key: string): string {
+  return key.startsWith(BEDROCK_ANTHROPIC_PREFIX)
+    ? key.slice(BEDROCK_ANTHROPIC_PREFIX.length)
+    : bareModelName(key);
 }
 
 // Price Claude's bracketed context variants at the base tier, the only name the rate table knows.

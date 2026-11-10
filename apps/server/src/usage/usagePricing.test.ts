@@ -277,6 +277,21 @@ describe("usage pricing", () => {
     }
   });
 
+  it("prices a bare Claude name from Bedrock's base row, not its regional markups", () => {
+    const table = parseRateTable({
+      "us.anthropic.claude-example-5": rate(8.8e-6),
+      "anthropic.claude-example-5": rate(8e-6, 8e-7),
+      "global.anthropic.claude-example-5": rate(8e-6, 8e-7),
+      "us-gov.anthropic.claude-example-5": rate(9.6e-6),
+      "bedrock/us-gov-west-1/anthropic.claude-example-5": rate(9.6e-6),
+    });
+
+    expect(lookupRate(table, "claude-example-5")).toEqual(
+      lookupRate(table, "anthropic.claude-example-5"),
+    );
+    expect(lookupRate(table, "claude-example-5")?.inputCostPerToken).toBe(8e-6);
+  });
+
   it("leaves a bare name unpriced when model makers' own entries disagree", () => {
     const table = parseRateTable({
       "openai/example-model": rate(1),
