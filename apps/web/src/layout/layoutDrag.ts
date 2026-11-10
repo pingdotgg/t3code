@@ -23,6 +23,7 @@ import {
   type LayoutTabDestination,
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
+import { notePaneDrop } from "../motion/paneDrop";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 export type LayoutDragSource =
@@ -349,7 +350,11 @@ export function dropLayoutDrag(): boolean {
   const current = dragState;
   setDragState(null);
   if (!current?.target) return false;
-  return commitLayoutDrop(current.source, current.target);
+  const before = useLayoutStore.getState().layout;
+  notePaneDrop(true);
+  const committed = commitLayoutDrop(current.source, current.target);
+  if (!committed || useLayoutStore.getState().layout === before) notePaneDrop(false);
+  return committed;
 }
 
 export function cancelLayoutDrag(): void {
