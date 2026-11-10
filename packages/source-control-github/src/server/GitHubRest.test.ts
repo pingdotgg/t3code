@@ -511,9 +511,13 @@ describe("GitHubRest", () => {
   });
 
   it.effect("reads a proxy's 403 with Retry-After as a refusal and keeps the host open", () => {
+    const pages = [
+      "<html><head><title>403 Forbidden</title></head><body>nginx</body></html>",
+      "<html><body>Request blocked by proxy abuse detection; contact your administrator</body></html>",
+    ];
     const { layer, requests } = harness(
       () =>
-        new Response("<html><head><title>403 Forbidden</title></head><body>nginx</body></html>", {
+        new Response(pages.shift(), {
           status: 403,
           headers: { "content-type": "text/html", "retry-after": "5" },
         }),
