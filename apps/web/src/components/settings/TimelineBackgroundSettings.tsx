@@ -25,6 +25,49 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const MAX_BLUR = 30;
 
+async function resolveWallpaperImage(source: string | File): Promise<string> {
+  let nextImage: string;
+  if (typeof source === "string") {
+    const parsed = new URL(source.trim());
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      throw new Error("Use an http or https image URL, or choose a local file.");
+    }
+    nextImage = parsed.href;
+  } else {
+    const result = await compressImageForWallpaper(source);
+    if (!result.ok) {
+      throw new Error(
+        result.reason === "too-large"
+          ? "Choose an image no larger than 50 MB and 64 megapixels."
+          : "Could not read this image. Choose a PNG, JPEG, GIF, or WebP file.",
+      );
+    }
+    nextImage = result.image.dataUrl;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const probe = new Image();
+    const timeout = window.setTimeout(() => finish(false), 15000);
+    function finish(loaded: boolean) {
+      window.clearTimeout(timeout);
+      probe.removeEventListener("load", onLoad);
+      probe.removeEventListener("error", onError);
+      if (loaded) resolve();
+      else reject(new Error("Could not load this image. Check the URL or choose another file."));
+    }
+    const onLoad = () => finish(true);
+    const onError = () => finish(false);
+    probe.addEventListener("load", onLoad);
+    probe.addEventListener("error", onError);
+    probe.src = nextImage;
+  });
+  return nextImage;
+}
+
+function wallpaperErrorMessage(cause: unknown): string {
+  if (cause instanceof TypeError) return "Enter a full image URL, or choose a local file.";
+  return cause instanceof Error ? cause.message : "Could not load this image.";
+}
+
 export function TimelineBackgroundSettings() {
   const image = useClientSettings((settings) => settings.timelineBackgroundImage);
   const opacity = useClientSettings((settings) => settings.timelineBackgroundOpacity);
@@ -71,6 +114,7 @@ export function TimelineBackgroundSettings() {
     if (value !== shadowBlur) updateSettings({ timelineTextShadowBlur: value });
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates an in-flight image import on unmount so it cannot write settings afterwards
   useEffect(
     () => () => {
       request.current++;
@@ -82,68 +126,28 @@ export function TimelineBackgroundSettings() {
     const generation = ++request.current;
     setBusy(true);
     setError("");
-    try {
-      let nextImage: string;
-      if (typeof source === "string") {
-        const parsed = new URL(source.trim());
-        if (!["https:", "http:"].includes(parsed.protocol)) {
-          throw new Error("Use an http or https image URL, or choose a local file.");
-        }
-        nextImage = parsed.href;
-      } else {
-        const result = await compressImageForWallpaper(source);
-        if (!result.ok) {
-          throw new Error(
-            result.reason === "too-large"
-              ? "Choose an image no larger than 50 MB and 64 megapixels."
-              : "Could not read this image. Choose a PNG, JPEG, GIF, or WebP file.",
-          );
-        }
-        nextImage = result.image.dataUrl;
-      }
-      if (generation !== request.current) return;
-      await new Promise<void>((resolve, reject) => {
-        const probe = new Image();
-        const timeout = window.setTimeout(() => finish(false), 15000);
-        function finish(loaded: boolean) {
-          window.clearTimeout(timeout);
-          probe.removeEventListener("load", onLoad);
-          probe.removeEventListener("error", onError);
-          if (loaded) resolve();
-          else
-            reject(new Error("Could not load this image. Check the URL or choose another file."));
-        }
-        const onLoad = () => finish(true);
-        const onError = () => finish(false);
-        probe.addEventListener("load", onLoad);
-        probe.addEventListener("error", onError);
-        probe.src = nextImage;
-      });
-      if (generation !== request.current) return;
-      try {
-        await persistClientSettingsUpdate((current) =>
-          generation === request.current
-            ? { ...current, timelineBackgroundImage: nextImage }
-            : current,
-        );
-      } catch {
-        throw new Error(
-          "Could not save this image. Client storage may be full. Try a smaller image.",
-        );
-      }
-    } catch (cause) {
-      if (generation === request.current) {
-        setError(
-          cause instanceof TypeError
-            ? "Enter a full image URL, or choose a local file."
-            : cause instanceof Error
-              ? cause.message
-              : "Could not load this image.",
-        );
-      }
-    } finally {
-      if (generation === request.current) setBusy(false);
+    const resolved = await resolveWallpaperImage(source).then(
+      (nextImage) => ({ nextImage, error: null }),
+      (cause: unknown) => ({ nextImage: null, error: wallpaperErrorMessage(cause) }),
+    );
+    if (generation !== request.current) return;
+    const { nextImage } = resolved;
+    if (nextImage === null) {
+      setError(resolved.error);
+      setBusy(false);
+      return;
     }
+    const saved = await persistClientSettingsUpdate((current) =>
+      generation === request.current ? { ...current, timelineBackgroundImage: nextImage } : current,
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (generation !== request.current) return;
+    if (!saved) {
+      setError("Could not save this image. Client storage may be full. Try a smaller image.");
+    }
+    setBusy(false);
   }
 
   function removeImage() {

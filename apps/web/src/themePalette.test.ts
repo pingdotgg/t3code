@@ -666,7 +666,9 @@ describe("context chip colors", () => {
     const properties = new Map<string, string>();
     vi.stubGlobal("window", { localStorage: { getItem: () => null } });
     vi.stubGlobal("document", {
+      querySelector: () => null,
       documentElement: {
+        classList: { toggle: vi.fn() },
         dataset: {},
         style: {
           setProperty: (name: string, value: string) => properties.set(name, value),

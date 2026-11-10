@@ -570,11 +570,9 @@ export default function ChatView(props: ChatViewProps) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the header DOM element so wallpaper rows can scroll beneath it
   useLayoutEffect(() => {
     if (!chatHeaderElement || !hasTimelineBackground) return;
-    const measure = () => setChatHeaderHeight(chatHeaderElement.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(chatHeaderElement);
-    return () => observer.disconnect();
+    return observeResize(chatHeaderElement, () =>
+      setChatHeaderHeight(chatHeaderElement.getBoundingClientRect().height),
+    );
   }, [chatHeaderElement, hasTimelineBackground]);
   const timelineUnderHeader = hasTimelineBackground && !embedded;
   const timelineHeaderInset = timelineUnderHeader ? chatHeaderHeight : 0;
