@@ -1845,20 +1845,12 @@ describe("CursorAdapterV2", () => {
             messageId: MessageId.make("cursor-sandbox-message"),
             createdBy: "user",
             creationSource: "web",
-            text: "teste",
+            text: "Hello.",
             attachments: [],
           },
         })
         .pipe(Effect.flip);
-      const message = makeProviderFailure({
-        cause: new ProviderAdapter.ProviderAdapterTurnStartError({
-          driver: CursorAgentSdk.CURSOR_PROVIDER,
-          threadId,
-          providerThreadId: providerThread.id,
-          runId: RunId.make("cursor-sandbox-run"),
-          cause: sendFailure,
-        }),
-      }).message;
+      const message = makeProviderFailure({ cause: sendFailure }).message;
       assert.match(message, /^Cursor (?:could not start its command sandbox|cannot sandbox)/);
       assert.match(message, advice);
     }).pipe(
