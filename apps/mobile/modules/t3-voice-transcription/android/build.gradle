@@ -1,0 +1,33 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'com.t3tools.voicetranscription'
+version = '0.0.0'
+
+android {
+  namespace 'expo.modules.t3voicetranscription'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation project(':expo-audio')
+  implementation 'androidx.media3:media3-common:1.9.1'
+  implementation 'com.google.mlkit:genai-speech-recognition:1.0.0-alpha2'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'com.facebook.react:react-android'
+  testImplementation 'org.robolectric:robolectric:4.16.1'
+  testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
+}
+
+tasks.withType(Test).configureEach {
+  systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+  javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+}

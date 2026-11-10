@@ -90,14 +90,8 @@ export interface PlatformProxyCache {
     request: CacheRequestLike,
     options?: CacheQueryOptions,
   ) => Promise<Response | undefined>;
-  readonly put: (
-    request: CacheRequestLike,
-    response: CacheResponseLike,
-  ) => Promise<void>;
-  readonly delete: (
-    request: CacheRequestLike,
-    options?: CacheQueryOptions,
-  ) => Promise<boolean>;
+  readonly put: (request: CacheRequestLike, response: CacheResponseLike) => Promise<void>;
+  readonly delete: (request: CacheRequestLike, options?: CacheQueryOptions) => Promise<boolean>;
 }
 
 export type CacheRequestLike = string | URL | { url: string; method?: string };
@@ -151,9 +145,7 @@ interface ChainRef {
 }
 
 const CHAIN = Symbol.for("cloudflare-runtime/platform-proxy/chain");
-const DURABLE_OBJECT_ID = Symbol.for(
-  "cloudflare-runtime/platform-proxy/durable-object-id",
-);
+const DURABLE_OBJECT_ID = Symbol.for("cloudflare-runtime/platform-proxy/durable-object-id");
 
 interface MaterializedDurableObjectId {
   readonly [DURABLE_OBJECT_ID]: true;
@@ -162,10 +154,7 @@ interface MaterializedDurableObjectId {
   readonly equals: (other: unknown) => boolean;
 }
 
-const makeDurableObjectId = (
-  id: string,
-  name?: string,
-): MaterializedDurableObjectId => ({
+const makeDurableObjectId = (id: string, name?: string): MaterializedDurableObjectId => ({
   [DURABLE_OBJECT_ID]: true,
   name,
   toString: () => id,
@@ -177,9 +166,7 @@ const getChainRef = (value: unknown): ChainRef | undefined =>
     ? ((value as Record<PropertyKey, unknown>)[CHAIN] as ChainRef | undefined)
     : undefined;
 
-const isMaterializedId = (
-  value: unknown,
-): value is MaterializedDurableObjectId =>
+const isMaterializedId = (value: unknown): value is MaterializedDurableObjectId =>
   typeof value === "object" && value !== null && DURABLE_OBJECT_ID in value;
 
 const encodeNodeValue = (value: unknown): EncodedValue | undefined => {
@@ -217,9 +204,7 @@ const encodeChain = (
     args: segment.args.map((arg) => encodeArg(binding, arg)),
   }));
 
-const decodeNodeValue = (
-  encoded: EncodedValue,
-): { readonly value: unknown } | undefined => {
+const decodeNodeValue = (encoded: EncodedValue): { readonly value: unknown } | undefined => {
   if (encoded.$ === "durable-object-id") {
     return { value: makeDurableObjectId(encoded.id, encoded.name) };
   }
@@ -235,13 +220,11 @@ const decodeNodeValue = (
  * accessors (`arrayBuffer`/`bytes`/`text`/`json`/`blob`). `writeHttpMetadata`
  * mirrors the native behavior over the decoded `httpMetadata`.
  */
-const decodeR2Object = (
-  encoded: Extract<EncodedValue, { $: "r2-object" }>,
-): unknown => {
-  const fields = decodeValue(
-    { $: "object", value: encoded.fields },
-    decodeNodeValue,
-  ) as Record<string, unknown>;
+const decodeR2Object = (encoded: Extract<EncodedValue, { $: "r2-object" }>): unknown => {
+  const fields = decodeValue({ $: "object", value: encoded.fields }, decodeNodeValue) as Record<
+    string,
+    unknown
+  >;
   const httpMetadata = (fields.httpMetadata ?? {}) as Record<string, unknown>;
   const object: Record<string, unknown> = {
     checksums: {},
@@ -274,17 +257,11 @@ const decodeR2Object = (
         enumerable: true,
       },
     });
-    object.arrayBuffer = () =>
-      Promise.resolve(consume(() => copyBytes(bytes).buffer));
+    object.arrayBuffer = () => Promise.resolve(consume(() => copyBytes(bytes).buffer));
     object.bytes = () => Promise.resolve(consume(() => copyBytes(bytes)));
-    object.text = () =>
-      Promise.resolve(consume(() => new TextDecoder().decode(bytes)));
-    object.json = () =>
-      Promise.resolve(
-        consume(() => JSON.parse(new TextDecoder().decode(bytes))),
-      );
-    object.blob = () =>
-      Promise.resolve(consume(() => new Blob([copyBytes(bytes)])));
+    object.text = () => Promise.resolve(consume(() => new TextDecoder().decode(bytes)));
+    object.json = () => Promise.resolve(consume(() => JSON.parse(new TextDecoder().decode(bytes))));
+    object.blob = () => Promise.resolve(consume(() => new Blob([copyBytes(bytes)])));
   }
   return object;
 };
@@ -304,9 +281,7 @@ const decodeCallError = async (response: Response): Promise<Error> => {
     if (decoded instanceof Error) return decoded;
     return new Error(String(decoded));
   }
-  return new Error(
-    `platform-proxy: request failed with status ${response.status}`,
-  );
+  return new Error(`platform-proxy: request failed with status ${response.status}`);
 };
 
 const callBinding = async (
@@ -364,10 +339,7 @@ const passthroughFetch = async (
   headers.set(HEADER_BINDING, binding);
   headers.set(HEADER_URL, request.url);
   if (chain.length > 0) {
-    headers.set(
-      HEADER_CHAIN,
-      encodeURIComponent(JSON.stringify(encodeChain(binding, chain))),
-    );
+    headers.set(HEADER_CHAIN, encodeURIComponent(JSON.stringify(encodeChain(binding, chain))));
   }
   return await fetch(new URL(PATH_FETCH, client.url), {
     method: request.method,
@@ -379,21 +351,14 @@ const passthroughFetch = async (
   } as RequestInit);
 };
 
-const stubDescription = (
-  binding: string,
-  chain: ReadonlyArray<ChainSegment>,
-): string =>
+const stubDescription = (binding: string, chain: ReadonlyArray<ChainSegment>): string =>
   `[platform-proxy stub ${binding}${chain.map((segment) => `.${segment.method}(…)`).join("")}]`;
 
 /**
  * A lazy expression-tree proxy: property accesses build up a method chain,
  * awaiting the proxy sends the whole chain to the worker in one request.
  */
-const makeStub = (
-  client: ProxyClient,
-  binding: string,
-  chain: Array<ChainSegment>,
-): unknown => {
+const makeStub = (client: ProxyClient, binding: string, chain: Array<ChainSegment>): unknown => {
   let memo: Promise<unknown> | undefined;
   const run = () => (memo ??= callBinding(client, binding, chain));
   // A plain-object target: `typeof stub` must not be "function", otherwise
@@ -410,14 +375,9 @@ const makeStub = (
         const promise = run();
         return promise.then.bind(promise);
       }
-      if (
-        chain.length > 0 &&
-        (property === "catch" || property === "finally")
-      ) {
+      if (chain.length > 0 && (property === "catch" || property === "finally")) {
         const promise = run();
-        return (promise[property] as (...args: Array<unknown>) => unknown).bind(
-          promise,
-        );
+        return (promise[property] as (...args: Array<unknown>) => unknown).bind(promise);
       }
       if (property === "fetch") {
         return (input: string | URL | Request, init?: RequestInit) =>
@@ -425,9 +385,7 @@ const makeStub = (
       }
       if (property === "connect") {
         return () => {
-          throw new Error(
-            "platform-proxy: connect() is not supported over the platform proxy.",
-          );
+          throw new Error("platform-proxy: connect() is not supported over the platform proxy.");
         };
       }
       if (property === "toString" || property === Symbol.toPrimitive) {
@@ -446,30 +404,21 @@ const makeStub = (
 // Caches
 // ---------------------------------------------------------------------------
 
-const normalizeCacheRequest = (
-  request: CacheRequestLike,
-): { url: string; method: string } => {
+const normalizeCacheRequest = (request: CacheRequestLike): { url: string; method: string } => {
   if (typeof request === "string") return { url: request, method: "GET" };
   if (request instanceof URL) return { url: request.toString(), method: "GET" };
   return { url: request.url, method: request.method ?? "GET" };
 };
 
-const makeCache = (
-  client: ProxyClient,
-  cacheName: string,
-): PlatformProxyCache => {
-  const baseHeaders = (
-    request: CacheRequestLike,
-    options?: CacheQueryOptions,
-  ) => {
+const makeCache = (client: ProxyClient, cacheName: string): PlatformProxyCache => {
+  const baseHeaders = (request: CacheRequestLike, options?: CacheQueryOptions) => {
     const { url, method } = normalizeCacheRequest(request);
     return {
       [HEADER_TOKEN]: client.token,
       [HEADER_CACHE_NAME]: cacheName,
       [HEADER_CACHE_URL]: url,
       [HEADER_CACHE_METHOD]: method,
-      [HEADER_CACHE_IGNORE_METHOD]:
-        options?.ignoreMethod === true ? "true" : "false",
+      [HEADER_CACHE_IGNORE_METHOD]: options?.ignoreMethod === true ? "true" : "false",
     };
   };
   const rethrow = async (response: Response): Promise<never> => {
@@ -483,14 +432,10 @@ const makeCache = (
       });
       if (response.status === 204) return undefined;
       if (!response.ok) return rethrow(response);
-      const status = parseInt(
-        response.headers.get(HEADER_CACHE_STATUS) ?? "200",
-      );
+      const status = parseInt(response.headers.get(HEADER_CACHE_STATUS) ?? "200");
       const headers = new Headers(
         JSON.parse(
-          decodeURIComponent(
-            response.headers.get(HEADER_CACHE_HEADERS) ?? "%5B%5D",
-          ),
+          decodeURIComponent(response.headers.get(HEADER_CACHE_HEADERS) ?? "%5B%5D"),
         ) as Array<[string, string]>,
       );
       headers.set("cf-cache-status", "HIT");
@@ -503,9 +448,7 @@ const makeCache = (
         headers: {
           ...baseHeaders(request),
           [HEADER_CACHE_STATUS]: response.status.toString(),
-          [HEADER_CACHE_HEADERS]: encodeURIComponent(
-            JSON.stringify([...response.headers]),
-          ),
+          [HEADER_CACHE_HEADERS]: encodeURIComponent(JSON.stringify([...response.headers])),
         },
         body,
       });
@@ -529,9 +472,7 @@ const makeCacheStorage = (client: ProxyClient): PlatformProxyCacheStorage => {
     open: (cacheName: string) => {
       if (cacheName === "default") {
         return Promise.reject(
-          new TypeError(
-            '"default" is a reserved cache name. Use `caches.default` instead.',
-          ),
+          new TypeError('"default" is a reserved cache name. Use `caches.default` instead.'),
         );
       }
       return Promise.resolve(makeCache(client, `named:${cacheName}`));
@@ -546,11 +487,7 @@ const makeCacheStorage = (client: ProxyClient): PlatformProxyCacheStorage => {
 const deepFreeze = (value: Record<string, unknown>): void => {
   Object.freeze(value);
   for (const property of Object.values(value)) {
-    if (
-      property !== null &&
-      typeof property === "object" &&
-      !Object.isFrozen(property)
-    ) {
+    if (property !== null && typeof property === "object" && !Object.isFrozen(property)) {
       deepFreeze(property as Record<string, unknown>);
     }
   }
@@ -619,9 +556,7 @@ const makeCf = (): CfProperties => {
 // Env construction
 // ---------------------------------------------------------------------------
 
-const fetchEnvDescriptor = async (
-  client: ProxyClient,
-): Promise<EnvDescriptor> => {
+const fetchEnvDescriptor = async (client: ProxyClient): Promise<EnvDescriptor> => {
   let response: Response;
   try {
     response = await fetch(new URL(PATH_ENV, client.url), {
@@ -629,24 +564,19 @@ const fetchEnvDescriptor = async (
     });
   } catch (cause) {
     throw new Error(
-      `platform-proxy: could not reach the proxy worker at ${client.url} — ` +
+      `platform-proxy: could not reach the proxy worker at ${client.url.toString()} — ` +
         "the instance may have been disposed or restarted.",
       { cause },
     );
   }
   if (!response.ok) {
     await response.arrayBuffer().catch(() => {});
-    throw new Error(
-      `platform-proxy: /env request failed with status ${response.status}`,
-    );
+    throw new Error(`platform-proxy: /env request failed with status ${response.status}`);
   }
   return (await response.json()) as EnvDescriptor;
 };
 
-const buildEnv = (
-  client: ProxyClient,
-  descriptor: EnvDescriptor,
-): Record<string, unknown> => {
+const buildEnv = (client: ProxyClient, descriptor: EnvDescriptor): Record<string, unknown> => {
   const env: Record<string, unknown> = {};
   for (const binding of descriptor.bindings) {
     env[binding.name] =
