@@ -62,6 +62,8 @@ interface ComposerSelectionInput {
       readonly createdAt?: string;
     };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
+  /** Providers without in-session mode switches restart the session, so a live run keeps the draft for the next send. */
+  readonly runInProgress: boolean;
 }
 
 /**
@@ -88,6 +90,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
     setThreadRuntimeMode,
+    runInProgress,
   } = input;
   const navigate = useNavigate();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -103,7 +106,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
-    } else if (activeThread) {
+    } else if (activeThread && !runInProgress) {
       void setThreadRuntimeMode({
         environmentId: activeThread.environmentId,
         input: {

@@ -42,6 +42,7 @@ const mockActiveThread = {
 
 interface TestHarnessProps {
   readonly isLocalDraftThread?: boolean;
+  readonly runInProgress?: boolean;
   readonly activeThread?: EnvironmentThreadShell;
   readonly setThreadRuntimeMode: (input: {
     readonly environmentId: EnvironmentId;
@@ -74,6 +75,7 @@ function TestHarness(props: TestHarnessProps) {
     setPendingServerThreadStartFromOriginByThreadId: vi.fn(),
     scheduleComposerFocus: vi.fn(),
     setThreadRuntimeMode: props.setThreadRuntimeMode as never,
+    runInProgress: props.runInProgress ?? false,
   });
 
   props.onReady(hook);
@@ -206,6 +208,31 @@ describe("useComposerSelection runtime mode persistence", () => {
 
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
       "auto-accept-edits",
+    );
+  });
+
+  it("keeps the selection as a draft for the next send while a run is in progress", async () => {
+    using _cleanup = setup();
+    const setThreadRuntimeMode = vi.fn();
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    await using _screen = await render(
+      <TestHarness
+        runInProgress
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+
+    expect(setThreadRuntimeMode).not.toHaveBeenCalled();
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "approval-required",
     );
   });
 });

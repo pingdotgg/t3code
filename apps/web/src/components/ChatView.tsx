@@ -942,16 +942,6 @@ export default function ChatView(props: ChatViewProps) {
     composerRuntimeMode ??
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the optimistic composer draft runtime mode once the server thread shell confirms it
-  useEffect(() => {
-    if (
-      isServerThread &&
-      composerRuntimeMode !== null &&
-      activeThread?.runtimeMode === composerRuntimeMode
-    ) {
-      useComposerDraftStore.getState().setRuntimeMode(composerDraftTarget, null);
-    }
-  }, [isServerThread, composerRuntimeMode, activeThread?.runtimeMode, composerDraftTarget]);
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -2863,6 +2853,7 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
     setThreadRuntimeMode,
+    runInProgress: isWorking || phase === "connecting",
   });
   const { onResume, isResuming } = useComposerResume({
     environmentId,
