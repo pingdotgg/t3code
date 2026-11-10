@@ -53,6 +53,14 @@ export type VoiceDraftSnapshot = {
   readonly revision: number;
 };
 
+/** A failed recording kept for Retry, handed between controllers for the same destination. */
+export type VoiceRetryRecording = {
+  readonly uri: string;
+  readonly ownerKey: string;
+  readonly transcription: PreparedVoiceTranscription;
+  readonly error: string;
+};
+
 export type VoiceRecorderStatus = {
   readonly isFinished: boolean;
   readonly hasError: boolean;
@@ -243,6 +251,7 @@ export class VoiceInputController {
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
   private readonly ownedRecordingUris = new Set<string>();
+  private readonly handedOffRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
   private retryRecording: {
@@ -451,6 +460,34 @@ export class VoiceInputController {
     }
   }
 
+  /** Gives up this controller's failed recording, without deleting it, so another can retry it. */
+  takeRetryRecording(): VoiceRetryRecording | null {
+    const retry = this.retryRecording;
+    if (this.state.phase !== "error" || !retry) return null;
+    const recording = {
+      ...retry,
+      error: this.state.error ?? "Could not transcribe this recording.",
+    };
+    this.retryRecording = null;
+    this.ownedRecordingUris.delete(retry.uri);
+    this.handedOffRecordingUris.add(retry.uri);
+    this.setState(IDLE_STATE);
+    return recording;
+  }
+
+  adoptRetryRecording(recording: VoiceRetryRecording): boolean {
+    if (this.state.phase !== "idle") return false;
+    this.retryRecording = {
+      uri: recording.uri,
+      ownerKey: recording.ownerKey,
+      transcription: recording.transcription,
+    };
+    this.handedOffRecordingUris.delete(recording.uri);
+    this.ownedRecordingUris.add(recording.uri);
+    this.setError(recording.error, "retry");
+    return true;
+  }
+
   ownerChanged(): void {
     if (this.state.phase === "idle") return;
     this.cancel();
@@ -635,7 +672,7 @@ export class VoiceInputController {
 
   private deleteOwnedRecordings(): void {
     for (const uri of this.ownedRecordingUris) {
-      if (uri === this.retryRecording?.uri) continue;
+      if (uri === this.retryRecording?.uri || this.handedOffRecordingUris.has(uri)) continue;
       try {
         this.dependencies.deleteRecording(uri);
       } catch {}

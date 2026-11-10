@@ -412,6 +412,35 @@ it("keeps a recording that failed after its editor moved on for a retry in its o
   expect(commitThreadB).not.toHaveBeenCalled();
 });
 
+it("finishes a recording into its draft after the editor unmounts", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = ["the login bug"];
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await screen.unmount();
+  await vi.waitFor(() =>
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("the login bug", expect.anything()),
+  );
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it("keeps a recording that failed after its editor unmounted for a retry when it remounts", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed"), "second try"];
+  await using first = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await first.unmount();
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  await using _screen = await render(<Probe ownerKey="thread-a" />);
+  await vi.waitFor(() =>
+    expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" }),
+  );
+  await act(() => mocks.voice.start());
+  expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";

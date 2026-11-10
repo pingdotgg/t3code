@@ -611,6 +611,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
     composerDraftTargetKeyRef.current = composerDraftTargetKey;
+    // An unmounted composer shows no draft, so late handlers go through the store.
+    return () => {
+      composerDraftTargetKeyRef.current = "";
+    };
   });
   const questionAttachmentTarget =
     pendingUserInputs[0] && activePendingProgress?.activeQuestion
@@ -1801,7 +1805,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     draftText: prompt,
     disabled: dictationDisabled,
     finishOnOwnerChange: questionAttachmentTarget === null,
-    // Once the editor shows another draft, this render's draft is reached through the store.
+    // Once the editor shows another draft or unmounts, this render's draft is reached through the store.
     readDraft: () => {
       if (composerDraftTargetKeyRef.current !== composerDraftTargetKey) {
         const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";

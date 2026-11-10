@@ -9,6 +9,7 @@ export {
   type VoiceInputState,
   type VoiceRecorder,
   type VoiceRecorderStatus,
+  type VoiceRetryRecording,
 } from "./controller.ts";
 export {
   cancelEnvironmentSpeechModelDownload,

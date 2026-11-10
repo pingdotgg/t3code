@@ -10,6 +10,7 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceInputState,
+  type VoiceRetryRecording,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { AuthOrchestrationOperateScope, CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
@@ -65,6 +66,30 @@ function probeSpeechStatus(prepared: PreparedConnection, refresh = false) {
     if (statusProbes.get(prepared) === probe) statusProbes.delete(prepared);
   });
   return probe;
+}
+
+// Failed recordings whose editor moved on or unmounted, kept per draft until that draft's editor
+// adopts them for Retry. Only the controller for the same destination and consent may send them.
+const parkedRetries = new Map<
+  string,
+  {
+    readonly prepared: PreparedConnection;
+    readonly grantId: string;
+    readonly recording: VoiceRetryRecording;
+    readonly discard: () => void;
+  }
+>();
+function parkRetry(entry: typeof parkedRetries extends Map<string, infer T> ? T : never) {
+  parkedRetries.get(entry.recording.ownerKey)?.discard();
+  parkedRetries.set(entry.recording.ownerKey, entry);
+}
+function takeParkedRetry(ownerKey: string, prepared: PreparedConnection, grantId: string) {
+  const parked = parkedRetries.get(ownerKey);
+  if (!parked) return null;
+  parkedRetries.delete(ownerKey);
+  if (parked.prepared === prepared && parked.grantId === grantId) return parked.recording;
+  parked.discard();
+  return null;
 }
 
 type DraftInput = {
@@ -206,6 +231,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         : INITIAL_STATE;
 
   const controllerRef = useRef<VoiceInputController | null>(null);
+  const parkFailedRecordingRef = useRef<(() => void) | null>(null);
   const startRequestRef = useRef(0);
   const pendingSubmissionRef = useRef<{
     ownerKey: string;
@@ -219,6 +245,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     previousInputRef.current = latestRef.current.input;
     latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
   });
+  const unmountingRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs before the controller's cleanup so it can tell an unmount from a destination change
+  useEffect(() => {
+    unmountingRef.current = false;
+    return () => {
+      unmountingRef.current = true;
+    };
+  }, []);
   const lastSnapshotRef = useRef<VoiceDraftSnapshot | null>(null);
   // The previous owner's draft while its recording finishes after the editor moved on.
   const detachedRef = useRef<{ readonly input: HookInput; readonly revision: number } | null>(null);
@@ -360,6 +394,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         options,
       ).then((result) => result.text);
     };
+    const parkFailedRecording = () => {
+      const recording = controller.takeRetryRecording();
+      if (recording)
+        parkRetry({
+          prepared,
+          grantId,
+          recording,
+          discard: () => platform.deleteRecording(recording.uri),
+        });
+    };
     controller = new VoiceInputController({
       retryFailedRecording: true,
       recorder: platform.recorder,
@@ -383,23 +427,48 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
       },
       onStateChange: (value) => {
+        const detached = detachedRef.current;
+        if (value.phase === "idle" || value.phase === "error") detachedRef.current = null;
+        // Settles the controller first; takeRetryRecording reports idle back through here.
+        if (value.phase === "error" && detached) queueMicrotask(parkFailedRecording);
         if (disposed) return;
         if (value.phase === "error") pendingSubmissionRef.current = null;
-        const ownerKey = (detachedRef.current?.input ?? latestRef.current.input).ownerKey;
-        if (value.phase === "idle" || value.phase === "error") detachedRef.current = null;
+        const ownerKey = (detached?.input ?? latestRef.current.input).ownerKey;
         setControllerState({ prepared, grantId, ownerKey, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
     });
     controllerRef.current = controller;
+    parkFailedRecordingRef.current = parkFailedRecording;
     return () => {
       disposed = true;
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
+      if (controllerRef.current === controller) controllerRef.current = null;
+      if (parkFailedRecordingRef.current === parkFailedRecording)
+        parkFailedRecordingRef.current = null;
+      if (unmountingRef.current) {
+        const phase = controller.currentState.phase;
+        if (phase === "error") parkFailedRecording();
+        const current = latestRef.current.input;
+        const snapshot = lastSnapshotRef.current;
+        if (
+          !detachedRef.current &&
+          current.finishOnOwnerChange &&
+          snapshot?.ownerKey === current.ownerKey &&
+          (phase === "recording" || phase === "transcribing" || phase === "post-processing")
+        ) {
+          detachedRef.current = { input: current, revision: snapshot.revision };
+        }
+        // The editor is gone, but the recording still finishes into its draft or waits for Retry.
+        if (detachedRef.current) {
+          if (phase === "recording") void controller.stop();
+          return;
+        }
+      }
       detachedRef.current = null;
       controller.dispose();
-      if (controllerRef.current === controller) controllerRef.current = null;
     };
   }, [prepared, grantId, cloudProvider, cloudModel]);
 
@@ -459,8 +528,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const phase = controller.currentState.phase;
     const snapshot = lastSnapshotRef.current;
     if (previousOwner !== input.ownerKey && previousInputRef.current.finishOnOwnerChange) {
-      // A failed recording keeps its audio for Retry in its own draft; start() drops it elsewhere.
-      if (phase === "error") return;
+      // A failed recording keeps its audio for Retry in its own draft.
+      if (phase === "error") parkFailedRecordingRef.current?.();
       if (
         snapshot?.ownerKey === previousOwner &&
         (phase === "recording" || phase === "transcribing" || phase === "post-processing")
@@ -472,6 +541,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
     controller.ownerChanged();
   }, [input.ownerKey, input.disabled]);
+
+  const controllerPhase = controllerState.value.phase;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands a failed recording parked for this draft back to its controller for Retry
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (!controller || !prepared || !grantId || input.disabled) return;
+    if (controllerPhase !== "idle" || controller.currentState.phase !== "idle") return;
+    const recording = takeParkedRetry(input.ownerKey, prepared, grantId);
+    if (recording) controller.adoptRetryRecording(recording);
+  }, [controllerPhase, input.ownerKey, input.disabled, prepared, grantId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
   useEffect(() => {
