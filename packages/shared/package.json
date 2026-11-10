@@ -139,6 +139,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./publishedArtifacts": {
+      "types": "./src/publishedArtifacts.ts",
+      "import": "./src/publishedArtifacts.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"

@@ -33,6 +33,9 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const ArtifactsPanel = lazy(() =>
+  import("../artifacts/ArtifactsPanel").then((module) => ({ default: module.ArtifactsPanel })),
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -193,6 +196,16 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "artifacts":
+      return (
+        <Suspense fallback={null}>
+          <ArtifactsPanel
+            environmentId={props.environmentId}
+            threadId={threadRef.threadId}
+            visible={visible}
           />
         </Suspense>
       );

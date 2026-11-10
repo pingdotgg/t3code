@@ -45,6 +45,11 @@ const FIXTURES = "../src/orchestration-v2/testkit/fixtures";
 export const SCENARIOS = [
   { id: "showcase", name: "Showcase", file: "./dev-replay/showcase_transcript.ndjson" },
   {
+    id: "temp-artifact",
+    name: "Temp artifact",
+    file: "./dev-replay/temp_artifact_transcript.ndjson",
+  },
+  {
     id: "todo-list",
     name: "Plan and reads",
     file: `${FIXTURES}/todo_list/registry_transcript.ndjson`,
