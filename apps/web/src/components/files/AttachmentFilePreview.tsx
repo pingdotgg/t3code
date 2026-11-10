@@ -394,6 +394,15 @@ export function AttachmentFilePreview(props: {
             </span>
           ) : null}
         </div>
+        {showsRawText ? (
+          <FileSurfaceAction
+            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            pressed={wordWrap}
+            onPress={() => setWordWrapOverride(!wordWrap)}
+          >
+            <WrapTextIcon className="size-3.5" />
+          </FileSurfaceAction>
+        ) : null}
         {renderedMode ? (
           <FileSurfaceAction
             label={renderedToggleLabel(renderedMode, rendered)}
@@ -404,15 +413,6 @@ export function AttachmentFilePreview(props: {
               className="size-3.5"
               icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
             />
-          </FileSurfaceAction>
-        ) : null}
-        {showsRawText ? (
-          <FileSurfaceAction
-            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-            pressed={wordWrap}
-            onPress={() => setWordWrapOverride(!wordWrap)}
-          >
-            <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
         {content || streamsText ? (
