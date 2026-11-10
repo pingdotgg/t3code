@@ -1454,7 +1454,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
         ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
         extendEnv: options.spawn.extendEnv ?? true,
-        ...(options.ownDetachedProcessGroup === undefined
+        // Windows ends the tree with taskkill /T and needs no group. A detached agent there has
+        // no console, so every console tool it starts opens a visible window.
+        ...(options.ownDetachedProcessGroup === undefined ||
+        options.processGroupPlatform === "win32"
           ? {}
           : { detached: options.ownDetachedProcessGroup }),
         shell: containedSpawnCommand.shell,

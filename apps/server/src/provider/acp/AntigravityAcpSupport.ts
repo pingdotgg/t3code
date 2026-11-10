@@ -126,8 +126,12 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   SecureRandom.SecureRandom | Scope.Scope
 > {
+  const processGroupPlatform = yield* HostProcess.Platform;
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
+      // agy runs builds through nested helpers; Stop must be able to end the whole tree.
+      ownDetachedProcessGroup: true,
+      processGroupPlatform,
       ...input,
       authMethodId: input.authMethod ?? "oauth-personal",
       authenticateEagerly: true,

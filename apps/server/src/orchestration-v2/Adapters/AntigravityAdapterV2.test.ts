@@ -6,6 +6,7 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
@@ -15,12 +16,15 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -31,6 +35,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { acpScopedNativeId } from "@t3tools/provider-acp/server/adapter";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -1110,6 +1115,167 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       // A mode under the ceiling is still the user's to pick.
       assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
     }),
+  );
+});
+
+describe("AntigravityAdapterV2 stop", () => {
+  it.live("ends a hung turn as interrupted and tears down the agent's process tree", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const scratch = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-stop-" });
+      const toolPidFile = path.join(scratch, "tool.pid");
+      // Stands in for agy_acp_server: it starts a long tool, such as a build, then serves ACP.
+      const agentWithTool = path.join(scratch, "agent-with-tool.mjs");
+      yield* fileSystem.writeFileString(
+        agentWithTool,
+        [
+          `import { spawn } from "node:child_process";`,
+          `import { writeFileSync } from "node:fs";`,
+          `const tool = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+          `writeFileSync(${JSON.stringify(toolPidFile)}, String(tool.pid));`,
+          `await import(${JSON.stringify((yield* path.toFileUrl(mockAgentPath)).href)});`,
+        ].join("\n"),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const promptSent = yield* Deferred.make<void>();
+      let teardowns = 0;
+      const instanceId = ProviderInstanceId.make("antigravity-stop-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [agentWithTool],
+              cwd: input.cwd,
+              // agy can leave a prompt running and never confirm session/cancel.
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              prompt: (request, options) =>
+                Deferred.succeed(promptSent, undefined).pipe(
+                  Effect.andThen(runtime.prompt(request, options)),
+                ),
+              ...(runtime.terminateProcessGroup === undefined
+                ? {}
+                : {
+                    terminateProcessGroup: Effect.sync(() => {
+                      teardowns++;
+                    }).pipe(Effect.andThen(runtime.terminateProcessGroup)),
+                  }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-stop");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-stop"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const terminal = yield* session.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      yield* session
+        .startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-stop"),
+            title: "Antigravity stop",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-antigravity-stop"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-stop"),
+          rootNodeId: NodeId.make("node-antigravity-stop"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-stop"),
+            text: "run the build",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(promptSent);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ProviderDriverKind.make("antigravity"),
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+
+      // Stop, as ProviderTurnControlService sends it.
+      const stopped = yield* session
+        .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
+        .pipe(Effect.timeout("8 seconds"), Effect.exit);
+      if (Exit.isFailure(stopped)) {
+        assert.fail(`Stop must end the hung turn: ${Cause.pretty(stopped.cause)}`);
+      }
+      assert.equal(teardowns, 1);
+      const event = Option.getOrUndefined(yield* Fiber.join(terminal));
+      assert.equal(event?.type === "turn.terminal" ? event.status : undefined, "interrupted");
+      const toolPid = Number(yield* fileSystem.readFileString(toolPidFile));
+      const toolAlive = yield* Effect.sync(() => {
+        try {
+          process.kill(toolPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (toolAlive) yield* Effect.sync(() => process.kill(toolPid));
+      assert.isFalse(toolAlive, "Stop must end the tools the agent started");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 

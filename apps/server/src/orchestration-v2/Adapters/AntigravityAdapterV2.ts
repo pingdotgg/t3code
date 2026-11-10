@@ -275,6 +275,10 @@ export function makeAntigravityAcpAdapterFlavor(
     requiresSignIn: isAntigravitySignInRequiredError,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
+    // Cancel can time out while agy's tools keep running. Stop then ends the turn and the
+    // process tree, and the next turn resumes on a new process.
+    restartRuntimeAfterInterrupt: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
