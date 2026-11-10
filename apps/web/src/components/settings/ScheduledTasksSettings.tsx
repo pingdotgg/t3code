@@ -1786,7 +1786,7 @@ function ScheduledTaskEditorForm({
             <div>
               <ProviderModelPicker
                 environmentId={environmentId}
-                disabled={saving || !connected}
+                disabled={saving || !connected || draft.threadId !== ""}
                 activeInstanceId={activeInstanceId}
                 model={activeModel}
                 lockedProvider={null}
@@ -1799,6 +1799,9 @@ function ScheduledTaskEditorForm({
                 }
               />
             </div>
+            {draft.threadId !== "" ? (
+              <p className="text-sm text-muted-foreground">Runs use this thread's current model.</p>
+            ) : null}
           </Field>
 
           <div className="space-y-3">

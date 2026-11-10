@@ -858,7 +858,10 @@ function TaskForm({
           {promptField}
         </SettingsSection>
 
-        <SettingsSection title="Context">
+        <SettingsSection
+          title="Context"
+          footer={draft.threadId !== null ? "Runs use this thread's current model." : undefined}
+        >
           <SelectRow
             label="Project"
             value={
@@ -904,7 +907,9 @@ function TaskForm({
               (modelOptions.length ? "Choose model" : "No models available")
             }
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            disabled={saving || dictationPending || environmentUnavailable}
+            disabled={
+              saving || dictationPending || environmentUnavailable || draft.threadId !== null
+            }
           />
         </SettingsSection>
 

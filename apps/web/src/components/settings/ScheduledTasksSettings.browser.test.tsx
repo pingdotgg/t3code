@@ -215,4 +215,20 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
+
+  it("locks the model while the task is bound to a thread", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const dialog = page.getByRole("dialog");
+    const model = dialog.getByRole("button", { name: "Choose model" });
+    const note = dialog.getByText("Runs use this thread's current model.");
+    await expect.element(model).toBeDisabled();
+    await expect.element(note).toBeVisible();
+
+    await userEvent.click(dialog.getByRole("combobox", { name: "Destination" }));
+    await userEvent.click(page.getByRole("option", { name: "New thread each run" }));
+
+    await expect.element(model).toBeEnabled();
+    await expect.element(note).not.toBeInTheDocument();
+  });
 });
