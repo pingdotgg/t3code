@@ -678,3 +678,17 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     rows: Array.from(rows.values()),
   };
 }
+
+export interface UpdateMachineSelection {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly updateLocal: boolean;
+}
+
+export function selectUpdateMachines<T extends { readonly environmentId: EnvironmentId }>(
+  machines: ReadonlyArray<T>,
+  environmentIds?: ReadonlyArray<EnvironmentId>,
+): ReadonlyArray<T> {
+  return environmentIds === undefined
+    ? machines
+    : machines.filter((machine) => environmentIds.includes(machine.environmentId));
+}

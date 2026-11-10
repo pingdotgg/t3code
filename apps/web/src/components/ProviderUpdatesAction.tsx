@@ -1,4 +1,8 @@
-import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  PROVIDER_DISPLAY_NAMES,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -16,6 +20,7 @@ import {
   getProviderUpdateRunToastView,
   type ProviderUpdateRun,
 } from "./ProviderUpdateLaunchNotification.logic";
+import { selectUpdateMachines } from "./sidebar/updateEverything.logic";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -90,19 +95,26 @@ export function useProviderUpdates() {
       : [];
   });
 
-  const updateAll = async ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
+  const updateAll = async ({
+    quiet = false,
+    environmentIds,
+  }: {
+    readonly quiet?: boolean;
+    readonly environmentIds?: ReadonlyArray<EnvironmentId>;
+  } = {}) => {
     const runs = await Promise.all(
-      machines.flatMap(({ environmentId, label, candidates }) =>
-        candidates.map(async (candidate): Promise<ProviderUpdateRun> => ({
-          environmentId,
-          machineLabel: label,
-          driver: candidate.driver,
-          instanceId: candidate.instanceId,
-          result: await updateProvider({
+      selectUpdateMachines(machines, environmentIds).flatMap(
+        ({ environmentId, label, candidates }) =>
+          candidates.map(async (candidate): Promise<ProviderUpdateRun> => ({
             environmentId,
-            input: { provider: candidate.driver, instanceId: candidate.instanceId },
-          }),
-        })),
+            machineLabel: label,
+            driver: candidate.driver,
+            instanceId: candidate.instanceId,
+            result: await updateProvider({
+              environmentId,
+              input: { provider: candidate.driver, instanceId: candidate.instanceId },
+            }),
+          })),
       ),
     );
     const view = quiet ? null : getProviderUpdateRunToastView(runs);

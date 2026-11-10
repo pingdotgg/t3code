@@ -9,6 +9,7 @@ import {
   describeUpdateCapsule,
   describeUpdateEverything,
   runUpdateEverything,
+  selectUpdateMachines,
   type UpdateEverythingMachine,
 } from "./updateEverything.logic";
 
@@ -400,5 +401,15 @@ describe("describeUpdateCapsule", () => {
     expect(describeUpdateCapsule({ ...run, trackSwitch: true }, [failed], null, 0).action).toBe(
       "dismiss",
     );
+  });
+});
+
+describe("selectUpdateMachines", () => {
+  it("updates only selected machines and preserves the update-all default", () => {
+    const pc = { environmentId: EnvironmentId.make("pc") };
+    const laptop = { environmentId: EnvironmentId.make("laptop") };
+    expect(selectUpdateMachines([pc, laptop], [laptop.environmentId])).toEqual([laptop]);
+    expect(selectUpdateMachines([pc, laptop], [])).toEqual([]);
+    expect(selectUpdateMachines([pc, laptop])).toEqual([pc, laptop]);
   });
 });

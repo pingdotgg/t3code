@@ -42,7 +42,11 @@ import {
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
-import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
+import type {
+  UpdateEverythingRun,
+  UpdateRunLocalState,
+  UpdateMachineSelection,
+} from "./updateEverything.logic";
 import {
   clearSavedUpdateEverythingResult,
   saveUpdateEverythingResult,
@@ -361,12 +365,13 @@ function SidebarUpdateControl() {
     void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
   };
 
-  const runEverything = async () => {
+  const runEverything = async (selection?: UpdateMachineSelection) => {
     const bridge = window.desktopBridge;
     setIsConfirmingEverything(false);
     setIsActionPending(true);
     const result = await settlePromise(() =>
       everything.run({
+        ...(selection ? { selection } : {}),
         ...(bridge && action === "download"
           ? {
               downloadLocal: (reportError) =>
@@ -420,7 +425,8 @@ function SidebarUpdateControl() {
       rows={everything.rows}
       restarts={everything.restarts}
       checking={providerCheck === "dialog"}
-      onConfirm={() => void runEverything()}
+      selectable
+      onConfirm={(selection) => void runEverything(selection)}
     />
   );
 
