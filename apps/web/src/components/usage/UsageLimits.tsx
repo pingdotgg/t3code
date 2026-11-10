@@ -321,13 +321,12 @@ export function resetCreditsSummary(
   const expiresIn = grant.expiresAt ? formatDuration(Date.parse(grant.expiresAt) - now) : null;
   if (grant.count === 0) return "No reset credits banked";
   const scope = grant.scope ? `${grant.scope} ` : "";
-  if (compact)
-    return `${grant.count} ${scope}${grant.count === 1 ? "reset" : "resets"}${
-      expiresIn ? ` · expires in ${expiresIn}` : ""
-    }`;
-  return `${grant.count} ${scope}${grant.count === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · expires in ${expiresIn}` : ""
-  }`;
+  // A row can merge grants, so only its first reset is known to expire then.
+  const expiry = expiresIn
+    ? ` · ${grant.count > 1 ? "next expires" : "expires"} in ${expiresIn}`
+    : "";
+  if (compact) return `${grant.count} ${scope}${grant.count === 1 ? "reset" : "resets"}${expiry}`;
+  return `${grant.count} ${scope}${grant.count === 1 ? "reset credit" : "reset credits"} banked${expiry}`;
 }
 
 export function ResetCredits({

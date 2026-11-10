@@ -291,7 +291,9 @@ export function ResetCredits(props: {
           <View key={grant.id ?? "all"} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
             <Text className="min-w-0 shrink text-xs tabular-nums text-foreground-tertiary">
               {`${grant.count} ${scope}${grant.count === 1 ? "reset credit" : "reset credits"} banked${
-                expiresIn ? ` · expires in ${expiresIn}` : ""
+                expiresIn
+                  ? ` · ${grant.count > 1 ? "next expires" : "expires"} in ${expiresIn}`
+                  : ""
               }`}
             </Text>
             <Pressable
