@@ -543,7 +543,10 @@ describe("MessagesTimeline work rows", () => {
     const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
     const row = history.querySelector<HTMLElement>("[aria-expanded]")!;
     await click(row);
-    await vi.waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+    });
     viewport.scrollTop = 0;
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
 
