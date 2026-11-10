@@ -373,6 +373,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   codexArtifactTemplatePromptToAppend,
+  isCoveredByModal,
   shouldRefocusComposerOnWindowFocus,
   hasCompactableConversation,
 } from "./ChatView.logic";
@@ -2181,12 +2182,15 @@ export default function ChatView(props: ChatViewProps) {
       layoutPane.tabId
     );
   });
+  const focusOpenedThreadComposer = useStableCallback(() => {
+    if (!isCoveredByModal(composerOverlayElement)) focusComposerStable();
+  });
   useFocusComposerOnThreadOpen(
     activeThreadRef,
     workspaceLayoutElement,
     !embedded && layoutPane.focused && !backgroundThread,
     terminalUiState.terminalOpen,
-    isCoarsePointer ? ignoreComposerFocus : focusComposerStable,
+    isCoarsePointer ? ignoreComposerFocus : focusOpenedThreadComposer,
     keepsEnteredPaneFocus,
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records pane focus after thread entry reads it, so the next entry knows it moved between panes

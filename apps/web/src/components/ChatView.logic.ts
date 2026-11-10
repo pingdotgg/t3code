@@ -1057,6 +1057,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
+export function isCoveredByModal(element: Pick<Element, "closest"> | null): boolean {
+  return element?.closest('[aria-hidden="true"]') != null;
+}
+
 // Window return puts the caret in the composer unless focus is deliberate: another text field,
 // a terminal, an open dialog, menu, or popup, a region, timeline, or sidebar row reached from the
 // keyboard, or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked
