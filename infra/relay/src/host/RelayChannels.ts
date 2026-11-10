@@ -47,9 +47,24 @@ function parseFrame(chunk: string | Uint8Array): Option.Option<RelayChannelFrame
   }
 }
 
-function withoutHopByHop(headers: Readonly<Record<string, string>>): Record<string, string> {
+// Headers the relay owns on a carried environment's responses; the environment's own are dropped.
+const RELAY_OWNED_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "set-cookie2",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "x-content-type-options",
+]);
+
+/** Lowercases names, which frames from an environment need not do, then drops `excluded`. */
+function withoutHopByHop(
+  headers: Readonly<Record<string, string>>,
+  excluded: ReadonlySet<string> = HOP_BY_HOP_HEADERS,
+): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).filter(([name]) => !HOP_BY_HOP_HEADERS.has(name.toLowerCase())),
+    Object.entries(headers)
+      .map(([name, value]) => [name.toLowerCase(), value] as const)
+      .filter(([name]) => !HOP_BY_HOP_HEADERS.has(name) && !excluded.has(name)),
   );
 }
 
@@ -178,11 +193,10 @@ export const makeRelayChannels = () => {
     if (Option.isNone(result)) {
       return HttpServerResponse.text("The environment did not answer in time.", { status: 504 });
     }
-    const {
-      "content-type": contentType,
-      "set-cookie": _cookie,
-      ...forwarded
-    } = withoutHopByHop(result.value.headers);
+    const { "content-type": contentType, ...forwarded } = withoutHopByHop(
+      result.value.headers,
+      RELAY_OWNED_RESPONSE_HEADERS,
+    );
     // Every carried environment shares the relay's origin, and anyone can link one: its responses
     // may not run script there or set cookies the relay and other environments would see.
     const headers: Record<string, string> = {

@@ -57,7 +57,12 @@ const connectEnvironment = (port: number, token: string) =>
               type: "http-response",
               id: frame.id,
               status: 302,
-              headers: { "content-type": "text/plain", location: "/next", "set-cookie": "s=1" },
+              headers: {
+                "content-type": "text/plain",
+                location: "/next",
+                "Set-Cookie": "s=1",
+                "Content-Security-Policy": "default-src *",
+              },
               body: Buffer.from(echo).toString("base64"),
             }),
           );
