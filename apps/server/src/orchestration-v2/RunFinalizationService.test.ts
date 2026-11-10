@@ -95,6 +95,13 @@ it.effect.each(
         expected: [],
       },
       {
+        label: "keeps a project-folder thread's branch when its turn returns to the default branch",
+        branch: "feature",
+        checkedOut: "main",
+        activeRun: null,
+        expected: [],
+      },
+      {
         label: "leaves a branch checked out outside the project folder",
         branch: "feature",
         checkedOut: "other",
@@ -275,88 +282,83 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each([
-  { stored: "theo/edge", checkedOut: "theo/update-13.4.0", isDefaultRef: false },
-  { stored: "theo/update-13.4.0", checkedOut: "main", isDefaultRef: true },
-] as const)(
-  "a project-folder thread adopts the branch its agent checked out ($stored -> $checkedOut)",
-  (scenario) => {
-    const threadId = ThreadId.make("thread-project-folder");
-    const runId = RunId.make("completed-run");
-    const commands: OrchestrationV2ServerCommand[] = [];
-    const refreshed: string[] = [];
-    const lookedUp = Deferred.makeUnsafe<void>();
-    const layer = RunFinalization.layerObserver.pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          projectFolderAt("/repo"),
-          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
-          Layer.mock(PullRequestService.PullRequestService)({
-            refreshAfterTurn: () => Effect.void,
-          }),
-          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
-            refreshLocalStatus: () =>
-              Effect.succeed({
-                isRepo: true,
-                hasPrimaryRemote: true,
-                isDefaultRef: scenario.isDefaultRef,
-                refName: scenario.checkedOut,
-                hasWorkingTreeChanges: false,
-                workingTree: { files: [], insertions: 0, deletions: 0 },
-              }),
-            refreshPullRequestStatus: (cwd) => {
-              refreshed.push(cwd);
-              return Deferred.succeed(lookedUp, undefined).pipe(Effect.as(null));
-            },
-          }),
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({
-            getThreadShell: () =>
-              Effect.succeed({
-                id: threadId,
-                projectId: ProjectId.make("project-zact"),
-                branch: scenario.stored,
-                worktreePath: null,
-                activeRunId: null,
-              } as OrchestrationV2ThreadShell),
-          }),
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            dispatch: (command) =>
-              Effect.sync(() => {
-                commands.push(command);
-                return { sequence: commands.length, storedEvents: [] };
-              }),
-          }),
-        ),
-      ),
-    );
-    return Effect.gen(function* () {
-      const observer = yield* RunFinalization.RunFinalizationObserver;
-      yield* observer.refresh({ cwd: "/repo", threadId, runId });
-      assert.deepEqual(
-        commands.flatMap((command) =>
-          command.type === "thread.metadata.update" && command.branch !== undefined
-            ? [
-                {
-                  threadId: command.threadId,
-                  branch: command.branch,
-                  expectedBranch: command.expectedBranch,
-                  expectedWorktreePath: command.expectedWorktreePath,
-                },
-              ]
-            : [],
-        ),
-        [
-          {
-            threadId,
-            branch: scenario.checkedOut,
-            expectedBranch: scenario.stored,
-            expectedWorktreePath: null,
+it.effect("a project-folder thread adopts the branch its agent checked out", () => {
+  const scenario = { stored: "theo/edge", checkedOut: "theo/update-13.4.0" };
+  const threadId = ThreadId.make("thread-project-folder");
+  const runId = RunId.make("completed-run");
+  const commands: OrchestrationV2ServerCommand[] = [];
+  const refreshed: string[] = [];
+  const lookedUp = Deferred.makeUnsafe<void>();
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        projectFolderAt("/repo"),
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: false,
+              refName: scenario.checkedOut,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+          refreshPullRequestStatus: (cwd) => {
+            refreshed.push(cwd);
+            return Deferred.succeed(lookedUp, undefined).pipe(Effect.as(null));
           },
-        ],
-        `thread kept branch ${scenario.stored} after its turn checked out ${scenario.checkedOut}`,
-      );
-      if (!scenario.isDefaultRef) yield* Deferred.await(lookedUp);
-      assert.deepEqual(refreshed, scenario.isDefaultRef ? [] : ["/repo"]);
-    }).pipe(Effect.provide(layer));
-  },
-);
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              projectId: ProjectId.make("project-zact"),
+              branch: scenario.stored,
+              worktreePath: null,
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return { sequence: commands.length, storedEvents: [] };
+            }),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    assert.deepEqual(
+      commands.flatMap((command) =>
+        command.type === "thread.metadata.update" && command.branch !== undefined
+          ? [
+              {
+                threadId: command.threadId,
+                branch: command.branch,
+                expectedBranch: command.expectedBranch,
+                expectedWorktreePath: command.expectedWorktreePath,
+              },
+            ]
+          : [],
+      ),
+      [
+        {
+          threadId,
+          branch: scenario.checkedOut,
+          expectedBranch: scenario.stored,
+          expectedWorktreePath: null,
+        },
+      ],
+      `thread kept branch ${scenario.stored} after its turn checked out ${scenario.checkedOut}`,
+    );
+    yield* Deferred.await(lookedUp);
+    assert.deepEqual(refreshed, ["/repo"]);
+  }).pipe(Effect.provide(layer));
+});

@@ -132,6 +132,8 @@ export const layerObserver = Layer.effect(
           const thread = yield* projections.getThreadShell(threadId);
           if (!thread) return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
+          // Returning to the default branch (e.g. after merging) keeps the thread's merged PR for settlement.
+          if (local.isDefaultRef) return;
           if (thread.branch !== local.refName) {
             // Worktree threads follow WorktreeBranchSync; other threads in this folder keep theirs.
             if (thread.worktreePath !== null) return;
@@ -158,7 +160,6 @@ export const layerObserver = Layer.effect(
               );
             if (!adopted) return;
           }
-          if (local.isDefaultRef) return;
           // The forge CLI can take minutes, so the next turn must not wait for it. A newer
           // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
           yield* vcsStatus.refreshPullRequestStatus(cwd).pipe(
