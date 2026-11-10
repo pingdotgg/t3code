@@ -144,8 +144,9 @@ describe("gitLabViewerPermissions", () => {
       ],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
       labels: true,
       updateMethods: ["rebase"],
     });
@@ -156,8 +157,9 @@ describe("gitLabViewerPermissions", () => {
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
-      verdicts: ["comment", "approve"],
+      verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
+      maintainerEdits: false,
       labels: false,
     });
   });
@@ -188,16 +190,21 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
-    "%s preserves merge request fields without fetching project settings",
+    "%s preserves merge request fields without fetching project settings or fork permissions",
     (operation) =>
       Effect.gen(function* () {
+        const detailInputs: Array<{ readonly maintainerEdits?: boolean }> = [];
         const provider = yield* make.pipe(
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-              getMergeRequestDetail: () => Effect.succeed(detail),
+              getMergeRequestDetail: (input) => {
+                detailInputs.push(input);
+                return Effect.succeed(detail);
+              },
               getListStates: () => Effect.succeed(new Map()),
 
               listMergeRequestStats: () => Effect.succeed([]),
@@ -209,6 +216,7 @@ describe("getChangeRequest base freshness", () => {
         expect(
           yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 }),
         ).toEqual(detail);
+        expect(detailInputs.map((input) => input.maintainerEdits)).toEqual([false]);
       }),
   );
 
@@ -338,6 +346,7 @@ describe("merge request reads", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
 
   const countingProvider = Effect.gen(function* () {
@@ -531,6 +540,7 @@ describe("optional activity reads", () => {
         checks: [],
         viewerCanMerge: true,
         reviewerIds: [],
+        reviewerUsers: [],
         diffRefs: currentRefs,
       }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
@@ -863,6 +873,7 @@ describe("review decisions", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
+    reviewerUsers: [],
   };
   const providerWith = (
     getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],

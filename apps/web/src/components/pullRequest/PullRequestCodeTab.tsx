@@ -113,7 +113,7 @@ import {
   ReviewThreadCard,
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
-import { pullRequestMentionScope } from "./PullRequestMarkdownTextarea";
+import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import {
   getFileViewedRange,
   isFileDiffCollapsed,
@@ -558,7 +558,7 @@ function PullRequestCodeTab({
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });
-  const mentionScope = pullRequestMentionScope(detail, environmentId, reference);
+  const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
   const hostReview = detail.capabilities.review;
   const review = {
     inlineComment: hostReview.inlineComment && detail.viewerPermissions.comment,
@@ -940,6 +940,11 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
+    // Find may repeat requests before render; only unfold, never toggle.
+    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+      ),
   };
 
   const runThreadCommand = async (
@@ -969,7 +974,7 @@ function PullRequestCodeTab({
       canReact={detail.capabilities.reactions === true}
       environmentId={environmentId}
       reference={reference}
-      mentionScope={mentionScope}
+      completionScope={completionScope}
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
       fixLabel={fixFindingLabel}
@@ -1044,7 +1049,7 @@ function PullRequestCodeTab({
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
-          mentionScope={canCommentOnLines ? mentionScope : null}
+          completionScope={canCommentOnLines ? completionScope : null}
           submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
           {...(canCommentOnLines && onAddToAgentSelection
             ? {
@@ -1564,12 +1569,6 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              // Find may repeat requests before render; only unfold, never toggle.
-              onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-                )
-              }
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>
