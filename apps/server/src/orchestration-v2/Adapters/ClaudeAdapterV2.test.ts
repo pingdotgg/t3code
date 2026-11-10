@@ -8172,9 +8172,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":50000}}}',
       threshold: 467_000,
     },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"}}',
+      threshold: 267_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      environment: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "300000" },
+      threshold: 267_000,
+    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
-    ({ autoCompactWindow, model, threshold, userSettings, projectSettings, launchArgs }) =>
+    ({
+      autoCompactWindow,
+      model,
+      threshold,
+      userSettings,
+      projectSettings,
+      launchArgs,
+      environment,
+    }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -8197,6 +8217,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             homePath: home,
             launchArgs: launchArgs ?? "",
           },
+          ...(environment === undefined ? {} : { environment }),
         });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
