@@ -280,7 +280,7 @@ function slideSidebar(commit: () => void) {
       const contained = element.getBoundingClientRect();
       const x = start.left - contained.left;
       const y = start.top - contained.top;
-      const from = via || insetOffset < 0 ? x + insetOffset : x;
+      const from = via ? x + insetOffset : x;
       element.animate(
         {
           transform: [
