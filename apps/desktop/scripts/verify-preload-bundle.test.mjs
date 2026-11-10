@@ -80,6 +80,18 @@ describe("desktop preload bundle verifier", () => {
     );
   });
 
+  it("runs a preload that reads the page's DOM while loading", () => {
+    assert.doesNotThrow(() =>
+      verifyPreloadBundle(`
+        ${validPreload}
+        const report = () => document.fullscreenElement;
+        report();
+        document.addEventListener("fullscreenchange", report);
+        window.addEventListener("resize", report);
+      `),
+    );
+  });
+
   it("ignores require-like text in strings and comments", () => {
     assert.doesNotThrow(() =>
       verifyPreloadBundle(`
