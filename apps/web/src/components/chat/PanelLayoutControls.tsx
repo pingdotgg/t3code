@@ -135,9 +135,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
 export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
   onToggle,
+  shortcutLabel,
 }: {
   maximized: boolean;
   onToggle: () => void;
+  shortcutLabel: string | null;
 }) {
   const label = maximized ? "Restore panel size" : "Maximize panel";
   return (
@@ -156,7 +158,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">{label}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {label}
+        {shortcutLabel ? ` (${shortcutLabel})` : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 });
@@ -180,6 +185,7 @@ export function WorkspaceTitlebarControls(props: {
   readonly animationsActive: boolean;
   readonly maximized: boolean;
   readonly onToggleMaximized: () => void;
+  readonly maximizeShortcutLabel: string | null;
   readonly children: ReactNode;
 }) {
   return (
@@ -205,6 +211,7 @@ export function WorkspaceTitlebarControls(props: {
           <RightPanelMaximizeControl
             maximized={props.maximized}
             onToggle={props.onToggleMaximized}
+            shortcutLabel={props.maximizeShortcutLabel}
           />
         </span>
       ) : null}
