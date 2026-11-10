@@ -1,4 +1,5 @@
 import {
+  type ModelInfo as ClaudeModelInfo,
   resolveSettings as resolveClaudeSettings,
   type SettingSource,
   type Settings as ClaudeSdkSettings,
@@ -6,13 +7,10 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import { claudeLocalSettingsDirectory } from "./Drivers/ClaudeHome.ts";
-import {
-  type ClaudeCodeReportedModel,
-  type ClaudeModelCatalog,
-  withClaudeCodeModelRoutes,
-} from "./ClaudeModelCatalog.ts";
+import { type ClaudeModelCatalog, withClaudeCodeModelRoutes } from "./ClaudeModelCatalog.ts";
 
 // Env names that pick the backend, its region, or the model a family alias resolves to.
 const MODEL_SETTINGS_ENV_PREFIXES = [
@@ -38,6 +36,11 @@ function claudeModelSettingsKey(settings: ClaudeSdkSettings): string {
 
 const NO_MODEL_SETTINGS_KEY = claudeModelSettingsKey({});
 
+class ClaudeModelSettingsReadError extends Schema.TaggedError<ClaudeModelSettingsReadError>()(
+  "ClaudeModelSettingsReadError",
+  { cause: Schema.Defect() },
+) {}
+
 export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettingsKey")(function* (
   settingSources: ReadonlyArray<SettingSource>,
   cwd: string | null,
@@ -46,53 +49,57 @@ export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettin
   // no routes, when that root file touches model settings.
   const localDirectory = cwd === null ? null : yield* claudeLocalSettingsDirectory(cwd);
   if (localDirectory !== null && localDirectory !== cwd) {
-    const rootLocal = yield* Effect.tryPromise(() =>
-      resolveClaudeSettings({ cwd: localDirectory, settingSources: ["local"] }),
-    ).pipe(
+    const rootLocal = yield* Effect.tryPromise({
+      try: () => resolveClaudeSettings({ cwd: localDirectory, settingSources: ["local"] }),
+      catch: (cause) => new ClaudeModelSettingsReadError({ cause }),
+    }).pipe(
       Effect.map(({ sources }) => sources.find(({ source }) => source === "local")?.settings),
       Effect.orElseSucceed(() => undefined),
     );
     if (claudeModelSettingsKey(rootLocal ?? {}) !== NO_MODEL_SETTINGS_KEY) return undefined;
   }
-  return yield* Effect.tryPromise(() =>
-    resolveClaudeSettings({
-      ...(cwd === null ? {} : { cwd }),
-      settingSources: [...settingSources],
-    }),
-  ).pipe(
+  return yield* Effect.tryPromise({
+    try: () =>
+      resolveClaudeSettings({
+        ...(cwd === null ? {} : { cwd }),
+        settingSources: [...settingSources],
+      }),
+    catch: (cause) => new ClaudeModelSettingsReadError({ cause }),
+  }).pipe(
     Effect.map(({ effective }) => claudeModelSettingsKey(effective)),
     Effect.orElseSucceed(() => undefined),
   );
 });
+
+type ReportedModel = Pick<ClaudeModelInfo, "value" | "resolvedModel">;
 
 /**
  * Claude Code's reported model ids, applied to a turn only where its cwd resolves model settings
  * as the probe's cwd did. `settle` releases turns waiting for the first probe, whatever its outcome.
  */
 export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(function* (
-  catalog: Effect.Effect<ClaudeModelCatalog>,
   settingsKey: (cwd: string | null) => Effect.Effect<string | undefined>,
   probeCwd: string,
 ) {
   const firstProbeSettled = yield* Deferred.make<void>();
   const reported = yield* Ref.make<{
-    readonly models: ReadonlyArray<ClaudeCodeReportedModel>;
+    readonly models: ReadonlyArray<ReportedModel>;
     readonly settingsKey: string | undefined;
   }>({ models: [], settingsKey: undefined });
   return {
     record: Effect.fn("ClaudeCodeModelRoutes.record")(function* (
-      models: ReadonlyArray<ClaudeCodeReportedModel>,
+      models: ReadonlyArray<ReportedModel>,
     ) {
       yield* Ref.set(reported, { models, settingsKey: yield* settingsKey(probeCwd) });
     }),
     settle: Deferred.succeed(firstProbeSettled, undefined).pipe(Effect.asVoid),
-    catalogFor: Effect.fn("ClaudeCodeModelRoutes.catalogFor")(function* (
+    route: Effect.fn("ClaudeCodeModelRoutes.route")(function* (
+      base: ClaudeModelCatalog,
       cwd: string | null,
       launchSettings?: ClaudeSdkSettings,
     ) {
       // Leave room for the sequential version and capability probes before falling back.
       yield* Deferred.await(firstProbeSettled).pipe(Effect.timeoutOption("2 minutes"));
-      const base = yield* catalog;
       if (claudeModelSettingsKey(launchSettings ?? {}) !== NO_MODEL_SETTINGS_KEY) return base;
       const { models, settingsKey: probeKey } = yield* Ref.get(reported);
       const routed = withClaudeCodeModelRoutes(base, models);

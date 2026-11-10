@@ -75,134 +75,34 @@ function withFakeClaudeEnv<A, E, R>(
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
-    const previousPath = process.env.PATH;
-    const previousRejectsNoSessionPersistence =
-      process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
-    const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
-    const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-    const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
-    const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-    const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-    const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-    const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-    const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
-
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
-        process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
-
-        if (input.rejectsNoSessionPersistence) {
-          process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE = "1";
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
-        }
-
-        if (input.exitCode !== undefined) {
-          process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-        }
-
-        if (input.stderr !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDERR = input.stderr;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_STDERR;
-        }
-
-        if (input.argsMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = input.argsMustContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-        }
-
-        if (input.argsMustNotContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-        }
-
-        if (input.stdinMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = input.stdinMustContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-        }
-
-        if (input.cwdMustNotBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE = input.cwdMustNotBe;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
-        }
-
-        if (input.configDirMustBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-        }
-      }),
-      () =>
-        Effect.sync(() => {
-          process.env.PATH = previousPath;
-
-          if (previousRejectsNoSessionPersistence === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE =
-              previousRejectsNoSessionPersistence;
-          }
-
-          if (previousOutput === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_OUTPUT;
-          } else {
-            process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
-          }
-
-          if (previousExitCode === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_EXIT_CODE = previousExitCode;
-          }
-
-          if (previousStderr === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDERR;
-          } else {
-            process.env.T3_FAKE_CLAUDE_STDERR = previousStderr;
-          }
-
-          if (previousArgsMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = previousArgsMustContain;
-          }
-
-          if (previousArgsMustNotContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
-          }
-
-          if (previousStdinMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previousStdinMustContain;
-          }
-
-          if (previousCwdMustNotBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE = previousCwdMustNotBe;
-          }
-
-          if (previousConfigDirMustBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
-          }
-        }),
-    );
+    const hostEnv = yield* HostProcess.Environment;
+    const fakeClaudeEnv: Record<string, string | undefined> = {
+      T3_FAKE_CLAUDE_OUTPUT: input.output,
+      T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence
+        ? "1"
+        : undefined,
+      T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
+      T3_FAKE_CLAUDE_STDERR: input.stderr,
+      T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
+      T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
+      T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
+      T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
+      T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
+    };
+    const environment: NodeJS.ProcessEnv = {
+      ...Object.fromEntries(
+        Object.entries(hostEnv).filter(([name]) => !name.startsWith("T3_FAKE_CLAUDE_")),
+      ),
+      ...Object.fromEntries(
+        Object.entries(fakeClaudeEnv).filter(([, value]) => value !== undefined),
+      ),
+      PATH: `${binDir}${pathDelimiter}${hostEnv.PATH ?? ""}`,
+    };
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
-    const textGeneration = yield* makeClaudeTextGeneration(config, undefined, () =>
+    const textGeneration = yield* makeClaudeTextGeneration(
+      config,
+      environment,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
     return yield* effectFn(textGeneration);
@@ -450,7 +350,33 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
   const apiError = "API Error: 400 Model blocked by guardrail: 4 endpoints excluded";
   const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  const structuredOutputError = "Failed to provide valid structured output after 5 attempts";
+  const structuredOutputFailure = {
+    type: "result",
+    subtype: "error_max_structured_output_retries",
+    is_error: true,
+    errors: [structuredOutputError],
+  };
   it.effect.each([
+    [
+      "the errors list of a result with no result text",
+      JSON.stringify(structuredOutputFailure),
+      structuredOutputError,
+    ],
+    [
+      "the errors list from verbose output",
+      JSON.stringify([{ type: "system", subtype: "init" }, structuredOutputFailure]),
+      structuredOutputError,
+    ],
+    [
+      "the errors list without CLI telemetry",
+      JSON.stringify({
+        ...structuredOutputFailure,
+        subtype: "error_during_execution",
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a", apiError],
+      }),
+      apiError,
+    ],
     [
       "the stdout error over a stderr notice",
       JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
@@ -490,6 +416,27 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
         expect(error.detail).toBe(`Claude CLI command failed: ${expected}`);
       }),
+    ),
+  );
+
+  it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(`Claude CLI command failed: ${structuredOutputError}`);
+        }),
     ),
   );
 });

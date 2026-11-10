@@ -20,12 +20,11 @@ describe("Claude Code model routes", () => {
           model: "claude-haiku-4-5",
         } satisfies ModelSelection;
         const routes = yield* makeClaudeCodeModelRoutes(
-          Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
           () => Effect.succeed("same settings"),
           "/state",
         );
         const early = yield* routes
-          .catalogFor("/project")
+          .route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* routes.record([
           { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
@@ -38,23 +37,21 @@ describe("Claude Code model routes", () => {
 
         // A first check that never reaches the probe still releases waiting turns.
         const unprobed = yield* makeClaudeCodeModelRoutes(
-          Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
           () => Effect.succeed("same settings"),
           "/state",
         );
         const waiting = yield* unprobed
-          .catalogFor("/project")
+          .route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* unprobed.settle;
         assert.strictEqual(yield* Fiber.join(waiting), BUNDLED_CLAUDE_MODEL_CATALOG);
 
         const stuck = yield* makeClaudeCodeModelRoutes(
-          Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
           () => Effect.succeed("same settings"),
           "/state",
         );
         const fallback = yield* stuck
-          .catalogFor("/project")
+          .route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* TestClock.adjust("2 minutes");
         assert.strictEqual(yield* Fiber.join(fallback), BUNDLED_CLAUDE_MODEL_CATALOG);
