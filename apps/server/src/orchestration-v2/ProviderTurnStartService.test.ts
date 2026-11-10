@@ -271,6 +271,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly nativeGoals?: boolean;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -282,6 +283,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -303,6 +305,7 @@ function makeLocalCommandHarness(input: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
+    readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -337,7 +340,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: ProviderDriverKind.make(input.nativeGoals === undefined ? "codex" : "opencode"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -490,6 +493,35 @@ function makeLocalCommandHarness(input: {
       strength: "strong" as const,
     },
   };
+  const parentProviderTurn = (ordinal: number, attemptRunId: RunId) => ({
+    attempt: {
+      ...projection.attempts[0]!,
+      id: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
+      runId: attemptRunId,
+      providerThreadId: parentProviderThread.id,
+      status: "completed" as const,
+    },
+    turn: {
+      id: ProviderTurnId.make(`side-chat-parent-turn-${ordinal}`),
+      providerThreadId: parentProviderThread.id,
+      nodeId: rootNodeId,
+      runAttemptId: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
+      nativeTurnRef: {
+        driver: providerThread.driver,
+        nativeId: `side-chat-parent-native-turn-${ordinal}`,
+        strength: "strong" as const,
+      },
+      ordinal,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: now,
+    },
+  });
+  const parentRolledBackRunId = RunId.make("side-chat-parent-rolled-back-run");
+  const parentTurns = [
+    parentProviderTurn(1, parentRunId),
+    parentProviderTurn(2, parentRolledBackRunId),
+  ];
   const parentRecords = {
     ...projection,
     thread: { ...projection.thread, id: parentThreadId },
@@ -500,8 +532,18 @@ function makeLocalCommandHarness(input: {
         threadId: parentThreadId,
         ordinal: 1,
         providerThreadId: parentProviderThread.id,
-        activeAttemptId: null,
+        activeAttemptId: parentTurns[0]!.attempt.id,
         status: "completed" as const,
+        completedAt: now,
+      },
+      {
+        ...run,
+        id: parentRolledBackRunId,
+        threadId: parentThreadId,
+        ordinal: 2,
+        providerThreadId: parentProviderThread.id,
+        activeAttemptId: parentTurns[1]!.attempt.id,
+        status: "rolled_back" as const,
         completedAt: now,
       },
       ...(input.sideChat?.nativeForkFrom === "busy"
@@ -510,7 +552,7 @@ function makeLocalCommandHarness(input: {
               ...run,
               id: RunId.make("side-chat-parent-busy-run"),
               threadId: parentThreadId,
-              ordinal: 2,
+              ordinal: 3,
               providerThreadId: parentProviderThread.id,
               status: "running" as const,
             },
@@ -518,8 +560,8 @@ function makeLocalCommandHarness(input: {
         : []),
     ],
     providerThreads: [parentProviderThread],
-    attempts: [],
-    providerTurns: [],
+    attempts: parentTurns.map(({ attempt }) => attempt),
+    providerTurns: parentTurns.map(({ turn }) => turn),
     turnItems: [],
   };
   if (input.sideChat !== undefined) {
@@ -528,7 +570,7 @@ function makeLocalCommandHarness(input: {
       ...projection,
       thread: {
         ...projection.thread,
-        runtimeMode: "full-access",
+        runtimeMode: input.sideChat.threadRuntimeMode ?? "full-access",
         lineage: {
           parentThreadId,
           relationshipToParent: "fork",
@@ -611,7 +653,7 @@ function makeLocalCommandHarness(input: {
       ],
     };
   }
-  if ("historyReadFailureAfterFallback" in input) {
+  if ("historyReadFailureAfterFallback" in input || "resumeFailure" in input) {
     const nativeThreadRef = {
       driver: providerThread.driver,
       nativeId: "native-resume-thread",
@@ -718,17 +760,19 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const fallbackEnsureThread = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
       Effect.fail(
-        new ProviderAdapter.ProviderAdapterEventStreamError({
-          driver: providerThread.driver,
-          providerSessionId,
-          cause: "native thread is gone",
-        }),
+        input.resumeFailure ??
+          new ProviderAdapter.ProviderAdapterEventStreamError({
+            driver: providerThread.driver,
+            providerSessionId,
+            cause: "native thread is gone",
+          }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: fallbackEnsureThread,
   };
   const providerSession = {
     id: providerSessionId,
@@ -737,7 +781,13 @@ function makeLocalCommandHarness(input: {
     status: "ready",
     cwd: "/tmp/native-account-command",
     model: null,
-    capabilities: CodexProviderCapabilitiesV2,
+    capabilities: {
+      ...CodexProviderCapabilitiesV2,
+      turns: {
+        ...CodexProviderCapabilitiesV2.turns,
+        ...(input.nativeGoals === undefined ? {} : { supportsNativeGoals: input.nativeGoals }),
+      },
+    },
     createdAt: now,
     updatedAt: now,
     lastError: null,
@@ -751,7 +801,9 @@ function makeLocalCommandHarness(input: {
       strength: "strong" as const,
     },
   };
-  const forkThread = vi.fn(() => Effect.succeed(sideChatThread));
+  const forkThread = vi.fn((_fork: ProviderAdapter.ProviderAdapterV2ForkThreadInput) =>
+    Effect.succeed(sideChatThread),
+  );
   const sideChatSession = {
     driver: providerThread.driver,
     providerSession,
@@ -765,7 +817,7 @@ function makeLocalCommandHarness(input: {
       ? Effect.succeed(sideChatSession as never)
       : input.interruptOpen === true
         ? Effect.interrupt
-        : "historyReadFailureAfterFallback" in input
+        : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
           ? Effect.succeed(resumeFallbackSession as never)
           : "ensureThreadFailure" in input
             ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -974,6 +1026,7 @@ function makeLocalCommandHarness(input: {
     resolveRuntimePolicy,
     createWorktree,
     open,
+    fallbackEnsureThread,
     writeIfRunCurrent,
     startRootRun,
     startTurn,
@@ -1218,16 +1271,22 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect.each([
-  { contextRun: "current", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "failed", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "cancelled", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   {
     contextRun: "failed",
     switchedProvider: true,
-    runtimeMode: "approval-required",
+    runtimeMode: "full-access",
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  {
+    contextRun: "current",
+    threadRuntimeMode: "approval-required",
+    runtimeMode: "approval-required",
+    context: "SIDE_CHAT_CONTEXT",
+  },
 ] as const)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
   ({ runtimeMode, context, ...sideChat }) =>
@@ -1239,7 +1298,6 @@ effectIt.effect.each([
 
       yield* harness.start;
 
-      // The turn that delivers the context is clamped; a later one follows the thread's mode.
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
@@ -1276,6 +1334,10 @@ effectIt.effect.each([
       yield* harness.start;
 
       expect(harness.forkThread).toHaveBeenCalledTimes(forks ? 1 : 0);
+      // The parent's rolled-back turn is gone from its native conversation.
+      expect(
+        harness.forkThread.mock.calls[0]?.[0].sourceProviderTurns?.map((turn) => turn.id),
+      ).toEqual(forks ? ["side-chat-parent-turn-1"] : undefined);
       expect(harness.projection().contextTransfers).toMatchObject([
         { id: "side-chat-fork", status: transferStatus },
       ]);
@@ -1283,6 +1345,23 @@ effectIt.effect.each([
         !forks,
       );
       expect(harness.projection().providerThreads[0]?.handoffIds).toEqual(handoffIds);
+    }),
+);
+
+effectIt.effect.each([false, true])(
+  "OpenCode goal prompts defer switched-provider history only with native support: %s",
+  (nativeGoals) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "/goal all tests pass",
+        nativeGoals,
+        sideChat: { contextRun: "failed", switchedProvider: true },
+      });
+      harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+      yield* harness.start;
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
+        !nativeGoals,
+      );
     }),
 );
 
@@ -1685,6 +1764,40 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.nodes[0]?.status).toBe("pending");
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("fails the run instead of replacing a native thread another client holds", () =>
+  Effect.gen(function* () {
+    const detail = "This conversation is open in another Codex client.";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      resumeFailure: new ProviderAdapter.ProviderAdapterThreadInUseError({
+        driver: ProviderDriverKind.make("codex"),
+        providerThreadId: ProviderThreadId.make("new-provider-thread"),
+        detail,
+        cause: new Error("thread native-resume-thread already has an active writer"),
+      }),
+    });
+
+    const exit = yield* Effect.exit(harness.start);
+
+    expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+    expect(exit._tag).toBe("Success");
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.providerThreads.at(-1)?.nativeThreadRef?.nativeId).toBe(
+      "native-resume-thread",
+    );
+    expect(projection.contextHandoffs).toEqual([]);
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider turn failed to start",
+        failure: { class: "provider_error", message: detail },
+      },
+    ]);
   }),
 );
 
