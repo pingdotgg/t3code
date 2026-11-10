@@ -567,9 +567,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
+  defaultBranchHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1258,7 +1259,7 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1912,11 +1913,19 @@ export const make = Effect.gen(function* () {
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
+    defaultBranch: string | null,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "all");
+    const probe = headBranchProbe(
+      provider,
+      headContext.headSelectors,
+      "all",
+      headContext.headBranch === defaultBranch && headContext.headRepositoryOwnerLogin
+        ? `${headContext.headRepositoryOwnerLogin}:${defaultBranch}`
+        : undefined,
+    );
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
