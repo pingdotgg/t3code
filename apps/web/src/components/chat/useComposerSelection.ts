@@ -54,7 +54,7 @@ interface ComposerSelectionInput {
     SetStateAction<Record<string, boolean>>
   >;
   readonly scheduleComposerFocus: () => void;
-  readonly setThreadRuntimeMode?: (input: {
+  readonly setThreadRuntimeMode: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: {
       readonly threadId: ThreadId;
@@ -103,7 +103,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
-    } else if (activeThread && setThreadRuntimeMode) {
+    } else if (activeThread) {
       void setThreadRuntimeMode({
         environmentId: activeThread.environmentId,
         input: {

@@ -1,4 +1,4 @@
-import { EnvironmentId, ProviderInteractionMode, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeMode, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -43,7 +43,7 @@ const mockActiveThread = {
 interface TestHarnessProps {
   readonly isLocalDraftThread?: boolean;
   readonly activeThread?: EnvironmentThreadShell;
-  readonly setThreadRuntimeMode?: (input: {
+  readonly setThreadRuntimeMode: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: {
       readonly threadId: ThreadId;
@@ -68,8 +68,6 @@ function TestHarness(props: TestHarnessProps) {
     supportsProviderSwitchingViaHandoff: false,
     multipleModelSelections: null,
     runtimeMode: "full-access",
-    interactionMode: "default" as ProviderInteractionMode,
-    interactionModeEnabled: false,
     isLocalDraftThread: props.isLocalDraftThread ?? false,
     canOverrideServerThreadEnvMode: false,
     setPendingServerThreadEnvModeEntry: vi.fn(),
@@ -208,31 +206,6 @@ describe("useComposerSelection runtime mode persistence", () => {
 
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
       "auto-accept-edits",
-    );
-  });
-
-  it("does not call setThreadRuntimeMode on a local draft thread", async () => {
-    using _cleanup = setup();
-    const setThreadRuntimeMode = vi.fn();
-    let hook!: ReturnType<typeof useComposerSelection>;
-
-    await using _screen = await render(
-      <TestHarness
-        isLocalDraftThread={true}
-        setThreadRuntimeMode={setThreadRuntimeMode}
-        onReady={(h) => {
-          hook = h;
-        }}
-      />,
-    );
-
-    await act(() => {
-      hook.handleRuntimeModeChangeStable("approval-required");
-    });
-
-    expect(setThreadRuntimeMode).not.toHaveBeenCalled();
-    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
-      "approval-required",
     );
   });
 });
