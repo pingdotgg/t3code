@@ -492,6 +492,8 @@ export const make = Effect.gen(function* () {
     };
     const ready = () => {
       if (tab.stopWaiting === null) return;
+      // The manager's cleanup for a destroyed guest can still be queued behind another tab's attach.
+      if (webContents.isDestroyed()) return detach(key);
       tab.stopWaiting();
       announce();
     };

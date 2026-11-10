@@ -71,11 +71,13 @@ const makeDebuggee = (
         sendWaiters.shift()?.();
       }),
   });
+  let destroyed = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
     isLoadingMainFrame: () => options.loading === true,
+    isDestroyed: () => destroyed,
   });
   return {
     tab: {
@@ -85,6 +87,9 @@ const makeDebuggee = (
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
     domReady: () => webContents.emit("dom-ready"),
+    destroy: () => {
+      destroyed = true;
+    },
     failLoad: (code: number) =>
       webContents.emit("did-fail-load", {}, code, "Failed", "http://localhost/", true),
     /** Ids of the commands the debugger received, in order. */
@@ -193,20 +198,26 @@ describe("DesktopBrowserHost", () => {
       }),
   );
 
-  it.effect("announces a first page that never comes up, but never a tab closed first", () =>
-    Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
-      const closed = { ...key, tabId: "tab-2" };
-      const reader = yield* takeEvents(host, 1).pipe(Effect.forkScoped);
+  it.effect(
+    "announces a first page that never comes up, but never a tab closed or destroyed first",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const closed = { ...key, tabId: "tab-2" };
+        const destroyed = { ...key, tabId: "tab-3" };
+        const destroyedGuest = makeDebuggee({ loading: true });
+        const reader = yield* takeEvents(host, 1).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
-      host.attach(closed, makeDebuggee({ loading: true }).tab);
-      host.detach(closed);
-      host.attach(key, makeDebuggee({ loading: true }).tab);
-      yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        host.attach(closed, makeDebuggee({ loading: true }).tab);
+        host.detach(closed);
+        host.attach(destroyed, destroyedGuest.tab);
+        destroyedGuest.destroy();
+        host.attach(key, makeDebuggee({ loading: true }).tab);
+        yield* TestClock.adjust("5 seconds");
 
-      expect(yield* Fiber.join(reader)).toEqual([{ type: "attached", ...key }]);
-    }),
+        expect(yield* Fiber.join(reader)).toEqual([{ type: "attached", ...key }]);
+      }),
   );
 
   it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
