@@ -1,5 +1,6 @@
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
@@ -168,6 +169,8 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "linkModels",
         Effect.fn("environment.voice.linkModels")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          // The request names a path on this machine and the result reveals what is there.
+          yield* requireEnvironmentScope(AuthFilesystemReadScope);
           return yield* speech.linkModels(args.payload.path).pipe(mapSpeechError);
         }),
       )

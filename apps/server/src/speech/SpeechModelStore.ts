@@ -254,13 +254,30 @@ const make = Effect.gen(function* () {
           // Pointing at T3 Code's own model folder must not replace a file with a link to itself.
           if ((yield* realPath(file)) === (yield* realPath(finalPath))) continue;
           if (yield* verifiedPath(model, finalPath)) continue;
-          if (!(yield* digestMatches(model, file))) continue;
-          yield* fs.remove(finalPath, { force: true });
+          const hashed = yield* expectedFile(model, file);
+          if (!hashed || !(yield* digestMatches(model, file))) continue;
+          // Staged then renamed, so a failed link never removes the file already installed.
+          const staged = `${finalPath}.${yield* random.uuidV4()}.part`;
           // Windows grants symlinks only to privileged accounts; a hard link also shares the bytes.
-          yield* fs.symlink(file, finalPath).pipe(Effect.catch(() => fs.link(file, finalPath)));
-          const info = yield* fs.stat(finalPath);
+          const hardLinked = yield* fs.symlink(file, staged).pipe(
+            Effect.as(false),
+            Effect.catch(() => fs.link(file, staged).pipe(Effect.as(true))),
+          );
+          const current = yield* expectedFile(model, staged);
+          const marker = identity(model, hashed);
+          if (!current || identity(model, current) !== marker) {
+            yield* fs.remove(staged, { force: true });
+            continue;
+          }
+          yield* fs.rename(staged, finalPath);
+          // A hard link cannot be read back, so its origin is recorded beside it.
+          yield* (
+            hardLinked
+              ? fs.writeFileString(`${finalPath}.source`, file, { mode: 0o600 })
+              : fs.remove(`${finalPath}.source`, { force: true })
+          ).pipe(Effect.ignore);
           yield* fs
-            .writeFileString(`${finalPath}.verified`, identity(model, info), { mode: 0o600 })
+            .writeFileString(`${finalPath}.verified`, marker, { mode: 0o600 })
             .pipe(Effect.ignore);
           linked.push(model.id);
         }
@@ -305,6 +322,7 @@ const make = Effect.gen(function* () {
         if (!complete || !(yield* digestMatches(model, partialPath)))
           return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
         yield* fs.rename(partialPath, finalPath);
+        yield* fs.remove(`${finalPath}.source`, { force: true }).pipe(Effect.ignore);
         // Rename changes file metadata, so record the verified file's final identity.
         const info = yield* fs.stat(finalPath);
         yield* fs
@@ -324,7 +342,10 @@ const make = Effect.gen(function* () {
   return SpeechModelStore.of({
     link,
     linkedFrom: Effect.fn("SpeechModelStore.linkedFrom")((model) =>
-      fs.readLink(modelPath(model)).pipe(Effect.orElseSucceed(() => undefined)),
+      fs.readLink(modelPath(model)).pipe(
+        Effect.catch(() => fs.readFileString(`${modelPath(model)}.source`)),
+        Effect.orElseSucceed(() => undefined),
+      ),
     ),
     isReady: Effect.fn("SpeechModelStore.isReady")((model) =>
       expectedFile(model, modelPath(model)).pipe(
@@ -341,6 +362,7 @@ const make = Effect.gen(function* () {
       const file = modelPath(model);
       yield* fs.remove(file, { force: true });
       yield* fs.remove(`${file}.verified`, { force: true });
+      yield* fs.remove(`${file}.source`, { force: true });
     }),
   });
 });

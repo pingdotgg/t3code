@@ -12,6 +12,7 @@ import {
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
+  AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   CLOUD_SPEECH_LABELS,
   CloudSpeechProvider,
@@ -795,6 +796,7 @@ function SpeechModelBrowser(props: {
   const [sort, setSort] = useState<SpeechModelSort>("recommended");
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [existingPath, setExistingPath] = useState("");
+  const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);
@@ -997,12 +999,12 @@ function SpeechModelBrowser(props: {
                   );
                 })}
               </div>
-              {status.supportsModelLinking ? (
+              {status.supportsModelLinking && canReadFiles ? (
                 <form
                   className="flex items-center gap-2 border-t border-border/60 p-3"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void run("No new supported model found at that path", async () => {
+                    void run("Could not use a model from that path", async () => {
                       await runEnvironmentSpeech(
                         linkEnvironmentSpeechModels(prepared, existingPath),
                       );

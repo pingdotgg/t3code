@@ -229,6 +229,18 @@ effectIt.effect(
         422,
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
+      // Naming a path on the environment needs filesystem access, not only settings access.
+      const link = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/link", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ path: "/models" }),
+          }),
+          context,
+        ),
+      );
+      expect(link.status).toBe(403);
     }).pipe(Effect.scoped),
 );
 
