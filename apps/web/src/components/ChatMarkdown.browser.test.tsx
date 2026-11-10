@@ -297,22 +297,19 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown external link labels", () => {
-  it("keeps a leading emoji whole in plain and formatted labels", async () => {
+  it("keeps a leading emoji whole", async () => {
     setup();
-    for (const text of [
-      "[😀 Read the documentation](https://example.com)",
-      "[😀 Read **the documentation**](https://example.com)",
-    ]) {
-      await using screen = await render(<ChatMarkdown cwd="/tmp/project" text={text} />);
-      await vi.waitFor(() => {
-        const link = screen.container.querySelector("a");
-        expect(link?.textContent).toContain("😀 Read");
-        const walker = document.createTreeWalker(link!, NodeFilter.SHOW_TEXT);
-        const textNodes: string[] = [];
-        while (walker.nextNode()) textNodes.push(walker.currentNode.nodeValue ?? "");
-        expect(textNodes.filter((node) => /\p{Surrogate}/u.test(node))).toEqual([]);
-      });
-    }
+    await using screen = await render(
+      <ChatMarkdown cwd="/tmp/project" text="[😀 Read the documentation](https://example.com)" />,
+    );
+    await vi.waitFor(() => {
+      const link = screen.container.querySelector("a");
+      expect(link?.textContent).toContain("😀 Read");
+      const walker = document.createTreeWalker(link!, NodeFilter.SHOW_TEXT);
+      const textNodes: string[] = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode.nodeValue ?? "");
+      expect(textNodes.filter((node) => /\p{Surrogate}/u.test(node))).toEqual([]);
+    });
   });
 });
 

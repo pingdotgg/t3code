@@ -1152,6 +1152,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const onClick = props.onClick;
       const canOpenInPreview =
         canOperatePreview && Boolean(threadRef && isPreviewAvailableFor(threadRef.environmentId));
+      const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
       const link = (
         <a
           {...props}
@@ -1283,15 +1284,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
             });
           }}
         >
-          <MarkdownLinkContext value>
-            {faviconHost && hasText && !isPullRequestAutolink ? (
-              <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
-                {children}
-              </MarkdownExternalLinkContent>
-            ) : (
-              children
-            )}
-          </MarkdownLinkContext>
+          {faviconHost && hasText && !isPullRequestAutolink ? (
+            <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
+              {linkChildren}
+            </MarkdownExternalLinkContent>
+          ) : (
+            linkChildren
+          )}
         </a>
       );
       if (!faviconHost || !href) {

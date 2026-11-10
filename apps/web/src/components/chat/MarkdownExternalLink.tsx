@@ -90,7 +90,8 @@ export function MarkdownExternalLinkContent({
     );
   }
 
-  const [firstChild, ...restChildren] = Children.toArray(children);
+  const childNodes = Children.toArray(children);
+  const firstChild = childNodes[0];
 
   if (typeof firstChild === "string" && firstChild.length > 0) {
     const leadingLength = leadingExternalLinkTextLength(firstChild);
@@ -101,7 +102,7 @@ export function MarkdownExternalLinkContent({
           {firstChild.slice(0, leadingLength)}
         </span>
         {breakableExternalLinkText(firstChild.slice(leadingLength))}
-        {restChildren}
+        {childNodes.slice(1)}
       </>
     );
   }
@@ -112,7 +113,7 @@ export function MarkdownExternalLinkContent({
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
-      {restChildren}
+      {childNodes.slice(1)}
     </>
   );
 }
