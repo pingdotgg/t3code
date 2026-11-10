@@ -415,6 +415,44 @@ describe("readOpenCodeUsage", () => {
 });
 import * as NodeSqlite from "node:sqlite";
 
+describe("readOpenCodeUsage upstream provider", () => {
+  it.effect("keeps the integration that served the model", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-upstream-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
+      );
+      const sinceMs = 1780000000000;
+      const insert = (id: string, providerID: string) =>
+        db.unsafe("INSERT INTO message (id, session_id, data, time_created) VALUES (?, ?, ?, ?)", [
+          id,
+          "session-1",
+          JSON.stringify({
+            role: "assistant",
+            model: { id: "MiniMax-M3.1-Flash", providerID },
+            time: { created: sinceMs },
+            tokens: { input: 10, output: 5 },
+          }),
+          sinceMs,
+        ]);
+      yield* insert("msg-plan", "minimax-coding-plan");
+      yield* insert("msg-go", "opencode-go");
+
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      const records = result.files.flatMap((file) => file.records);
+      assert.deepStrictEqual(records.map((record) => record.upstreamProvider).sort(), [
+        "minimax-coding-plan",
+        "opencode-go",
+      ]);
+      // The harness stays the provider; only the upstream integration is added.
+      assert.isTrue(records.every((record) => record.provider === "opencode"));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("openCodeUsageReader", () => {
   it.effect("scans canonical instance roots once, including XDG and home defaults", () =>
     Effect.gen(function* () {

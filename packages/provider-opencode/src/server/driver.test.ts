@@ -88,12 +88,21 @@ const layer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
-const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, enabled = true) =>
+const create = (
+  config: Partial<OpenCodeSettings>,
+  http: HttpClient.HttpClient,
+  options: {
+    readonly enabled?: boolean;
+    readonly environment?: NodeJS.ProcessEnv;
+  } = {},
+) =>
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
-    enabled,
+    environment: Object.entries(options.environment ?? {}).flatMap(([name, value]) =>
+      value === undefined ? [] : [{ name, value, sensitive: false }],
+    ),
+    enabled: options.enabled ?? true,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
@@ -326,7 +335,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             return { stdout: "opencode v2.1.2\n", stderr: "", code: 0 };
           }),
       } as OpenCodeRuntime.OpenCodeRuntime["Service"];
-      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, noHttp, false).pipe(
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096" },
+        noHttp,
+        { enabled: false },
+      ).pipe(
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
       );
 
@@ -1270,7 +1283,13 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     () =>
       Effect.gen(function* () {
         versionOutput.current = "1.18.18\n";
-        const instance = yield* create({}, noHttp);
+        // Sandbox HOME so the provider cannot read the developer's own OpenCode
+        // store, whose credentials would send the provider's quota probe out.
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-driver-home-" });
+        const instance = yield* create({}, noHttp, {
+          environment: { HOME: home, XDG_DATA_HOME: home },
+        });
         // Let the startup status check claim the refresh permit, then wait behind it so it
         // cannot probe after the upgrade below.
         yield* Effect.yieldNow;

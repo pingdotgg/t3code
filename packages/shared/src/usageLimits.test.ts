@@ -180,6 +180,32 @@ describe("new thread model fallback", () => {
       ["opencode", "console-custom"],
     ],
     ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+    ["opencode", ["minimax_weekly"], "minimax/MiniMax-M3.1-Flash", true, undefined, undefined],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "minimax/MiniMax-M3.1-Flash",
+      false,
+      undefined,
+      undefined,
+    ],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "minimax-coding-plan/MiniMax-M3",
+      true,
+      undefined,
+      undefined,
+    ],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "opencode-go/big-pickle",
+      false,
+      undefined,
+      undefined,
+    ],
+    ["opencode", ["go_weekly"], "minimax/MiniMax-M3.1-Flash", false, undefined, undefined],
   ] as const)(
     "matches %s pools %s to %s",
     (driver, ids, model, usesFallback, modelIds, providerIds) => {
@@ -208,6 +234,7 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
+
 });
 
 describe("pace", () => {

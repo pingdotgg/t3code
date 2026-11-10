@@ -159,7 +159,11 @@ function UsageModelDialogHost({
   const model =
     selectedKey === null
       ? undefined
-      : models.find((candidate) => `${candidate.provider}:${candidate.model}` === selectedKey);
+      : models.find(
+          (candidate) =>
+            `${candidate.provider}:${candidate.upstreamProvider ?? ""}:${candidate.model}` ===
+            selectedKey,
+        );
   if (model === undefined) return null;
   return (
     <UsageModelDialog
@@ -887,7 +891,7 @@ function UsageOverview({
                 </tr>
               ) : (
                 breakdownModels.map((model, index) => {
-                  const key = `${model.provider}:${model.model}`;
+                  const key = `${model.provider}:${model.upstreamProvider ?? ""}:${model.model}`;
                   const value = metric === "tokens" ? model.totalTokens : model.costUsd;
                   const hasBar = value > 0 && breakdownPeak > 0;
                   const share = modelShare(model, metric === "tokens" ? "tokens" : "cost");
@@ -909,6 +913,11 @@ function UsageOverview({
                         >
                           <ProviderMark provider={model.provider} className="size-3.5" />
                           {model.model}
+                          {model.upstreamProvider ? (
+                            <span className="text-xs text-muted-foreground">
+                              {model.upstreamProvider}
+                            </span>
+                          ) : null}
                         </button>
                         {hasBar ? (
                           <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>

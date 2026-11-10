@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
-export const USAGE_CONTRACT_VERSION = 6 as const;
+export const USAGE_CONTRACT_VERSION = 7 as const;
 
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -55,6 +55,8 @@ export const UsageBucket = Schema.Struct({
   hourStart: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
+  /** The upstream integration that served the model, when the harness knows it. */
+  upstreamProvider: Schema.optional(TrimmedNonEmptyString),
   sourcePath: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,

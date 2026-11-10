@@ -54,6 +54,10 @@ function parseOpenCodeMessage(
   const modelReference = object(message.model);
   const model = text(modelReference.id) || text(modelReference.modelID) || text(message.modelID);
   const providerId = text(modelReference.providerID) || text(message.providerID);
+  // OpenCode fronts several upstreams (OpenCode Go, Zen, MiniMax, ...) behind
+  // one harness, and the integration id is the only thing that says which one
+  // served the model. Keep it so usage is not attributed to the wrong account.
+  const upstreamProvider = providerId || undefined;
   const timestampMs = object(message.time).created ?? fallback.timestampMs;
   if (!model || typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) return null;
   const reasoningTokens = tokens(usage.reasoning);
@@ -71,6 +75,7 @@ function parseOpenCodeMessage(
   const free = OPENCODE_GATEWAYS.has(providerId) && model.endsWith("-free");
   return {
     provider: "opencode",
+    ...(upstreamProvider ? { upstreamProvider } : {}),
     timestampMs,
     model,
     ...(prefix !== undefined && !model.includes("/") ? { rateModel: `${prefix}/${model}` } : {}),

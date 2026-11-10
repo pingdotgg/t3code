@@ -28,6 +28,8 @@ export interface ProviderTotals {
 export interface ModelTotals {
   readonly model: string;
   readonly provider: UsageProviderKind;
+  /** The upstream integration that served the model, when the harness knows it. */
+  readonly upstreamProvider?: string;
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly tokens: UsageTokenTotals;
@@ -131,7 +133,13 @@ function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly 
 }
 
 function bucketKey(bucket: UsageBucket): string {
-  return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
+  return JSON.stringify([
+    bucket.day,
+    bucket.hourStart ?? null,
+    bucket.provider,
+    bucket.upstreamProvider ?? null,
+    bucket.model,
+  ]);
 }
 
 function claimSources(environments: readonly EnvironmentUsage[]): {
@@ -353,6 +361,8 @@ export function mergeUsage(
     string,
     {
       provider: UsageProviderKind;
+      upstreamProvider?: string;
+      model: string;
       costUsd: number;
       totalTokens: number;
       tokens: UsageTokenTotals;
@@ -437,9 +447,11 @@ export function mergeUsage(
       provider.records += bucket.records;
       providerAccumulator.set(bucket.provider, provider);
 
-      const modelKey = `${bucket.provider} ${bucket.model}`;
+      const modelKey = `${bucket.provider} ${bucket.upstreamProvider ?? ""} ${bucket.model}`;
       const model = modelAccumulator.get(modelKey) ?? {
         provider: bucket.provider,
+        ...(bucket.upstreamProvider ? { upstreamProvider: bucket.upstreamProvider } : {}),
+        model: bucket.model,
         costUsd: 0,
         totalTokens: 0,
         tokens: {
@@ -521,9 +533,10 @@ export function mergeUsage(
     .sort((a, b) => b.costUsd - a.costUsd);
 
   const models: ModelTotals[] = [...modelAccumulator.entries()]
-    .map(([key, totals]) => ({
-      model: key.slice(key.indexOf(" ") + 1),
+    .map(([, totals]) => ({
+      model: totals.model,
       provider: totals.provider,
+      ...(totals.upstreamProvider ? { upstreamProvider: totals.upstreamProvider } : {}),
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
       tokens: totals.tokens,

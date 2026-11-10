@@ -66,10 +66,19 @@ export function exhaustedUsageWindow(
       );
       return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
     }
-    case "opencode":
-      return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
-      );
+    case "opencode": {
+      // Each window names the integration that meters it, so a model's limits
+      // come from its own provider instead of whichever plan happens to be
+      // exhausted. The Console budget is metered as "go".
+      const integration = model.split("/")[0] ?? "";
+      const family = (value: string) => value.split("-")[0]!.split("_")[0]!;
+      const target = family(integration);
+      return exhausted.find((window) => {
+        const owner = window.id.split("_")[0]!;
+        if (owner === "go") return integration === "opencode-go";
+        return family(owner) === target;
+      });
+    }
     default:
       return exhausted[0];
   }

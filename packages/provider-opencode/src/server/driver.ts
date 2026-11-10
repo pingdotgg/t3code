@@ -33,7 +33,11 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import {
+  mergeUsageLimits,
+  readOpenCodeGoUsageLimits,
+  readOpenCodeIntegrationUsageLimits,
+} from "./usageLimits.ts";
 import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -474,7 +478,7 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
     );
     let unsupportedUsageVersion: string | undefined;
-    const checkUsageLimits = Effect.gen(function* () {
+    const checkConsoleUsageLimits = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
       const runtime = yield* runtimeProbe.get;
       if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
@@ -496,6 +500,25 @@ export const OpenCodeDriver: ProviderDriver<
           },
         })),
       ),
+    );
+    // A custom provider meters its own plan, so its quota has to be read from
+    // that provider rather than from the OpenCode Console budget.
+    const checkIntegrationUsageLimits = readOpenCodeIntegrationUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    // One probe for the provider's limits, so the recovery that retries a
+    // failed read retries the Console budget and the integration quotas alike.
+    const checkUsageLimits = Effect.zipWith(
+      checkConsoleUsageLimits,
+      checkIntegrationUsageLimits,
+      (usageLimits, integration) => mergeUsageLimits(usageLimits, integration.windows),
+      { concurrent: true },
     );
     const checkProvider = Effect.all(
       {
@@ -523,6 +546,7 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
         usageLimits: checkUsageLimits,
+        integrationUsageLimits: checkIntegrationUsageLimits,
       },
       { concurrency: "unbounded" },
     ).pipe(
