@@ -585,7 +585,7 @@ function LiveActivityContent({
                 ? failedToolIconClassName
                 : highlighted
                   ? "text-foreground"
-                  : "text-muted-foreground",
+                  : "text-dim-foreground",
             )}
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -647,7 +647,7 @@ export function LiveWorkEntryTimelineRow({
       {thoughtLine ? (
         <WorkLogRow
           icon={
-            <span className="flex size-4 items-center justify-center text-icon-muted">
+            <span className="flex size-4 items-center justify-center text-dim-foreground">
               <ToolActivityIconView
                 icon={undefined}
                 fallbackName="brain"
@@ -741,7 +741,10 @@ function WorkGroupHeader(props: {
           <ToolActivityIconView
             icon={props.toolIcon}
             fallbackName={props.iconName}
-            className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
+            className={cn(
+              "size-3.5 shrink-0 stroke-2",
+              props.failed ? "text-muted-foreground" : "text-dim-foreground",
+            )}
             muted
           />
         }
@@ -768,7 +771,7 @@ export function BackgroundActivityTimelineRow({
       aria-label={`${label}: ${summary}`}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.id, row.id)}
-      icon={<BellIcon aria-hidden className="size-3.5 text-muted-foreground" />}
+      icon={<BellIcon aria-hidden className="size-3.5 text-dim-foreground" />}
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-label">{label}</span>
@@ -1325,7 +1328,15 @@ export function SlashCommandTimelineRow({ command }: { command: TimelineSlashCom
   const compacting = command.name === "compact" && !command.skill && command.state === "running";
   return (
     <WorkLogRow
-      icon={<Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />}
+      icon={
+        <Icon
+          aria-hidden="true"
+          className={cn(
+            "size-3.5",
+            command.state === "failed" ? "text-muted-foreground" : "text-dim-foreground",
+          )}
+        />
+      }
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <WorkLogVerb
