@@ -2,7 +2,7 @@
 
 T3 Code can run any coding agent from the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) or any local ACP-compatible command. Built-in providers (Codex, Claude, Cursor, Grok, OpenCode, Pi, Antigravity) are enabled directly in **Settings → Providers** instead.
 
-T3 Code negotiates ACP v2 preview when supported and falls back to ACP v1 automatically. For `claude-agent-acp`, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the instance's environment overrides if you need ACP v1.
+T3 Code negotiates ACP v2 preview when supported and falls back to ACP v1 automatically. On ACP v2, T3 Code follows the agent's reported work state: a turn ends when the agent goes idle, and work the agent starts on its own, such as answering a message sent from another client, appears in the thread. For `claude-agent-acp`, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the instance's environment overrides if you need ACP v1.
 
 ## Add an agent
 
