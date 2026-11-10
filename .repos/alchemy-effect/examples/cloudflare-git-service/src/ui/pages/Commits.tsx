@@ -6,21 +6,10 @@ import { shortOid, subject, timeAgo } from "../format.ts";
 import { href, Link } from "../router.tsx";
 import type { RepoContext } from "./Repo.tsx";
 
-const CommitRow = ({
-  context,
-  commit,
-}: {
-  context: RepoContext;
-  commit: CommitInfo;
-}) => {
+const CommitRow = ({ context, commit }: { context: RepoContext; commit: CommitInfo }) => {
   const [expanded, setExpanded] = useState(false);
   const body = commit.message.split("\n").slice(1).join("\n").trim();
-  const commitHref = href(
-    context.repo.owner,
-    context.repo.name,
-    "commit",
-    commit.oid,
-  );
+  const commitHref = href(context.repo.owner, context.repo.name, "commit", commit.oid);
   return (
     <li className="border-b border-border-muted px-4 py-3 last:border-b-0">
       <div className="flex items-start justify-between gap-4">
@@ -77,9 +66,7 @@ export const CommitsTab = ({ context }: { context: RepoContext }) => {
         limit: 50,
         ...(nextCursor ? { cursor: nextCursor } : {}),
       });
-      setCommits((existing) =>
-        nextCursor ? [...(existing ?? []), ...page.items] : page.items,
-      );
+      setCommits((existing) => (nextCursor ? [...(existing ?? []), ...page.items] : page.items));
       setCursor(page.hasMore ? page.nextCursor : null);
     } catch (cause) {
       setError(cause);
@@ -102,9 +89,7 @@ export const CommitsTab = ({ context }: { context: RepoContext }) => {
           <CommitRow key={commit.oid} context={context} commit={commit} />
         ))}
         {commits.length === 0 && (
-          <li className="px-4 py-8 text-center text-sm text-fg-muted">
-            No commits on {refName}
-          </li>
+          <li className="px-4 py-8 text-center text-sm text-fg-muted">No commits on {refName}</li>
         )}
       </ul>
       {cursor !== null && (
