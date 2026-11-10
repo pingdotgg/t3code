@@ -308,6 +308,11 @@ export function useQueuedRunEdit(input: {
   const saveEdit = async (
     content: QueuedRunEditContent,
     setThreadError: (threadId: ThreadId, error: string | null) => void,
+    // A dictated save may finish while another thread is shown; it passes refs that ignore it then.
+    editor: {
+      readonly promptRef: { current: string };
+      readonly composerRef: RefObject<ChatComposerHandle | null>;
+    } = { promptRef, composerRef },
   ) => {
     if (editing === null || isSaving) return;
     const newAttachments = [...content.images, ...content.files];
@@ -344,10 +349,10 @@ export function useQueuedRunEdit(input: {
     releaseDraftAttachments(newAttachments);
     // The edit was cancelled or begun again while this save ran; its drafts are the newer edit's.
     if (!current) return;
-    promptRef.current = "";
+    editor.promptRef.current = "";
     clearEditDraft(editing.runId);
-    composerRef.current?.resetCursorState();
-    focusComposerSoon();
+    editor.composerRef.current?.resetCursorState();
+    window.requestAnimationFrame(() => editor.composerRef.current?.focusAtEnd());
   };
 
   return {

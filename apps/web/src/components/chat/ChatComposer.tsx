@@ -134,7 +134,10 @@ import {
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
-import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import {
+  type DictationSendDraft,
+  useEnvironmentSpeechInput,
+} from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -459,6 +462,11 @@ export interface ChatComposerProps {
   onInterrupt: () => void;
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
   onAdvanceActivePendingUserInput: () => void;
+  /** The shown question's answer and Next/Submit action, bound for a dictated answer. */
+  bindActivePendingUserInputAnswer: () => {
+    readonly draft: DictationSendDraft;
+    readonly submit: () => void;
+  } | null;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
   onPreviousActivePendingUserInputQuestion: () => void;
   onChangeActivePendingUserInputCustomAnswer: (
@@ -562,6 +570,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onInterrupt,
     onSelectActivePendingUserInputOption,
     onAdvanceActivePendingUserInput,
+    bindActivePendingUserInputAnswer,
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
@@ -2086,17 +2095,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return composerSendState.hasSendableContent;
   };
 
-  const submitComposerRef = useRef<
-    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
-  >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
-    if (voiceInputActive && (activePendingProgress || isEditingQueuedMessage)) {
+    if (voiceInputActive && activePendingProgress) {
+      // The answer binds to this question now and is submitted there once the transcript lands.
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      const answer = bindActivePendingUserInputAnswer();
+      if (!answer) return;
+      const targetKey = composerDraftTargetKey;
+      submitAfterDictation(
+        () => {
+          answer.submit();
+          if (composerDraftTargetKeyRef.current === targetKey) onTypingGuardSend();
+        },
+        { draft: answer.draft, cancel: () => {} },
+      );
       return;
     }
     if (
@@ -2181,10 +2197,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
-  useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
-  }, [submitComposerStable]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
     formRef: composerFormRef,

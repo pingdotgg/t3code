@@ -7,9 +7,24 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import { AsyncResult } from "effect/reactivity";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+
+const responses = vi.hoisted(() => [] as unknown[]);
+
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readEnvironmentScope: () => true,
+}));
+vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useOrchestrationCommand: (() => async (value: unknown) => {
+    responses.push(value);
+    return AsyncResult.success(undefined);
+  }) as never,
+}));
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -264,4 +279,51 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+it("finishes a dictated answer on its own question after another thread is shown", async () => {
+  using _timers = fakeTimers();
+  responses.length = 0;
+  const environmentId = EnvironmentId.make("dictation-environment");
+  const threadA = questionProjection(threadRef.threadId, ["first"]);
+  const threadB = questionProjection(ThreadId.make("other-thread"), ["first"]);
+  await using screen = await render(
+    <PendingRequestsProbe environmentId={environmentId} projection={threadA} />,
+  );
+  const leaveFor = (projection: OrchestrationV2ThreadProjection) =>
+    screen.rerender(<PendingRequestsProbe environmentId={environmentId} projection={projection} />);
+
+  // Next on question 1, then Submit on the last question, each confirmed before the transcript.
+  for (const [index, text] of ["dictated one", "dictated three"].entries()) {
+    const answer = requests.bindActivePendingUserInputAnswer();
+    await leaveFor(threadB);
+    await act(() => {
+      expect(answer?.draft.unchanged()).toBe(true);
+      answer?.draft.commit(text);
+      answer?.submit();
+    });
+    expect(requests.activePendingQuestionIndex).toBe(0);
+    expect(requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBeUndefined();
+    await leaveFor(threadA);
+    if (index === 0) {
+      expect(requests.activePendingQuestionIndex).toBe(1);
+      await act(() => requests.onSelectActivePendingUserInputOption("question-1", "Incremental"));
+      await act(() => requests.onAdvanceActivePendingUserInput());
+    }
+  }
+
+  expect(responses).toEqual([
+    {
+      environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        requestId: RuntimeRequestId.make("first"),
+        answers: {
+          "question-0": "dictated one",
+          "question-1": "Incremental",
+          "question-2": "dictated three",
+        },
+      },
+    },
+  ]);
 });

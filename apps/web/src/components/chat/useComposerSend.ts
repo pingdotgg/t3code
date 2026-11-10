@@ -281,6 +281,9 @@ async function bindDictatedSend(
       resetCursorState: (...args) => {
         if (stillHere()) live.composerRef.current?.resetCursorState(...args);
       },
+      focusAtEnd: () => {
+        if (stillHere()) live.composerRef.current?.focusAtEnd();
+      },
       validateProviderInput: (providerInput) => {
         if (stillHere())
           return live.composerRef.current?.validateProviderInput(providerInput) ?? false;
@@ -669,6 +672,7 @@ export function useComposerSend(input: ComposerSendInput) {
           environmentContexts: composerEnvironmentContexts,
         },
         setThreadError,
+        { promptRef, composerRef },
       );
       return;
     }
