@@ -2773,6 +2773,94 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live(
+    "keeps a Claude session running its background agents when the runtime mode changes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("runtime-mode-keeps-session");
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: "Workflow started" },
+              capturedTurns: yield* Ref.make<ReadonlyArray<CapturedTurn>>([]),
+              backgroundWork: yield* Ref.make(true),
+            }),
+          ]);
+          const modeThreadId = ThreadId.make("thread:runtime-mode-keeps-session");
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:runtime-mode-keeps-session:create"),
+              threadId: modeThreadId,
+              projectId: ProjectId.make("project:runtime-mode-keeps-session"),
+              title: "Runtime mode keeps session",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "auto",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:runtime-mode-keeps-session:send"),
+              threadId: modeThreadId,
+              messageId: MessageId.make("message:runtime-mode-keeps-session:send"),
+              text: "Start the workflow",
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            const session = (yield* waitForIdle(modeThreadId)).providerSessions[0];
+            assert.equal(session?.status, "ready");
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:runtime-mode-keeps-session:mode"),
+              threadId: modeThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* worker.drain();
+            const projection = yield* orchestrator.getThreadProjection(modeThreadId);
+            assert.equal(projection.thread.runtimeMode, "full-access");
+            // Detaching would close the process and end the workflows and agents still running in it.
+            assert.deepEqual(
+              projection.providerSessions.map((candidate) => [candidate.id, candidate.status]),
+              [[session!.id, "ready"]],
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "runtime-mode-keeps-session",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>

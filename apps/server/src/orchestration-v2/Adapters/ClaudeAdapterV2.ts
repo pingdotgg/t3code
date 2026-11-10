@@ -402,7 +402,8 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
-    supportsRuntimeModeSwitchInSession: false,
+    // openQuery applies a new permission mode on the next turn and refuses while background work runs.
+    supportsRuntimeModeSwitchInSession: true,
     pendingRequestsSurviveRestart: false,
   },
   threads: {
