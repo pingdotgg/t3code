@@ -4,6 +4,7 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
+  isListedThreadLineage,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
@@ -34,6 +36,9 @@ import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
+const ONLY_THE_USER_DELETES =
+  "Only the user can delete a project with its threads, from the project's settings in the app. Archive it to keep everything.";
+
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
   const message =
@@ -43,9 +48,34 @@ function projectFailure(error: Project.ProjectServiceError) {
         ? "The project was not found."
         : error._tag === "ProjectConflictError"
           ? "The workspace is already registered to a project."
-          : "The project is not empty; force=true is required to delete it.";
+          : `The project has threads. ${ONLY_THE_USER_DELETES}`;
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
+
+/** Count threads as the app's own removal confirmation does: listed threads, not subagents or side chats. */
+const notEmptyFailure = Effect.fn("mcp.projectNotEmptyFailure")(function* (projectId: ProjectId) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const snapshot = yield* threads.getShellSnapshot({ projectId }).pipe(Effect.option);
+  const listed = Option.isNone(snapshot)
+    ? []
+    : [...snapshot.value.threads, ...snapshot.value.archivedThreads].filter((shell) =>
+        isListedThreadLineage(shell.lineage),
+      );
+  if (listed.length === 0) {
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `The project has threads. ${ONLY_THE_USER_DELETES}`,
+    });
+  }
+  const count = `${listed.length} ${listed.length === 1 ? "thread" : "threads"}`;
+  const pinned = listed.filter(
+    (shell) => shell.pinnedAt !== undefined && shell.pinnedAt !== null,
+  ).length;
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: `The project has ${count}${pinned > 0 ? ` (${pinned} pinned)` : ""}. ${ONLY_THE_USER_DELETES}`,
+  });
+});
 
 /** Require project worktrees so launches cannot target arbitrary host directories. */
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
@@ -364,15 +394,31 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         .pipe(Effect.mapError(projectFailure));
     }),
   ),
+  // Never forced: deleting a project's threads with it is the user's call, in the app.
+  // The scratch check also gives that project a clear refusal, and holds if `force` ever returns.
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      if (yield* folders.isScratchProject(input.projectId)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            '"No project" (the built-in scratch project) cannot be deleted; it holds every thread started without a project.',
+        });
+      }
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {
-        ...input,
         type: "project.delete",
         commandId: yield* newCommandId(),
-      }).pipe(Effect.mapError(projectFailure));
+        projectId: input.projectId,
+      }).pipe(
+        Effect.catch((error) =>
+          error._tag === "ProjectNotEmptyError"
+            ? notEmptyFailure(input.projectId)
+            : Effect.fail(projectFailure(error)),
+        ),
+      );
     }),
   ),
   t3_project_clone: McpToolAccess.writesEnvironment(

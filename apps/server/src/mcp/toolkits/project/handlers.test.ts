@@ -53,6 +53,10 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** The project is the built-in No project scratch project. */
+  readonly scratch?: true;
+  /** The project's threads, as the shell snapshot lists them. */
+  readonly projectThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -95,6 +99,13 @@ const clientLaunchHarness = (input: {
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
+      getShellSnapshot: (options) =>
+        Effect.succeed({
+          schemaVersion: 2,
+          snapshotSequence: 0,
+          threads: options?.projectId === projectId ? (input.projectThreads ?? []) : [],
+          archivedThreads: [],
+        }),
       // A thread exists once a launch started it.
       getThreadShell: (threadId) => {
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
@@ -159,7 +170,10 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratchProject: (id) => Effect.succeed(input.scratch === true && id === projectId),
+    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -662,6 +676,108 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+/** Deletes like ProjectService: a project with threads goes only with `force`. */
+const deleteToolHarness = (input: {
+  readonly scratch?: true;
+  readonly projectThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+}) => {
+  const deleted: Array<ProjectId> = [];
+  const harness = clientLaunchHarness({
+    runtimeModeCeiling: "full-access",
+    launched: [],
+    ...input,
+  });
+  const dependencies = Layer.merge(
+    harness.dependencies,
+    Layer.mergeAll(
+      Layer.mock(Project.ProjectService)({
+        delete: (request) =>
+          request.force === true
+            ? Effect.sync(() => {
+                deleted.push(request.projectId);
+                return {
+                  id: request.projectId,
+                  title: "client-target",
+                  workspaceRoot: "/projects/client-target",
+                  repositoryIdentity: null,
+                  faviconPath: null,
+                  defaultModelSelection: null,
+                  defaultThreadEnvMode: null,
+                  autoPull: false,
+                  projectIcon: null,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                  deletedAt: "2026-01-01T00:00:00.000Z",
+                };
+              })
+            : Effect.fail(new Project.ProjectNotEmptyError({ projectId: request.projectId })),
+      }),
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+    ),
+  );
+  // Agents written against the old tool still send `force: true`.
+  const deleteForced = Effect.gen(function* () {
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const results = yield* toolkit
+      .handle("t3_project_delete", {
+        projectId: harness.projectId,
+        force: true,
+      } as { readonly projectId: ProjectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    return results.at(-1)?.result;
+  });
+  return { deleted, deleteForced };
+};
+
+it.effect("an agent cannot force-delete a project that still has threads", () =>
+  Effect.gen(function* () {
+    const shell = (id: string, pinnedAt: string | null, relationshipToParent?: "subagent") =>
+      ({
+        id,
+        pinnedAt,
+        lineage: { relationshipToParent },
+      }) as unknown as OrchestrationV2ThreadShell;
+    const { deleted, deleteForced } = deleteToolHarness({
+      // Counted as the app's removal confirmation counts them: subagent threads are not listed.
+      projectThreads: [
+        shell("a", "2026-01-01T00:00:00.000Z"),
+        shell("b", null),
+        shell("c", null),
+        shell("a-subagent", null, "subagent"),
+      ],
+    });
+
+    const refused = yield* deleteForced;
+
+    expect(deleted).toEqual([]);
+    expect(refused).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(
+        /^The project has 3 threads \(1 pinned\)\. Only the user can delete a project with its threads/,
+      ),
+    });
+  }),
+);
+
+it.effect("an agent cannot delete the No project scratch project", () =>
+  Effect.gen(function* () {
+    const { deleted, deleteForced } = deleteToolHarness({ scratch: true });
+
+    const refused = yield* deleteForced;
+
+    expect(deleted).toEqual([]);
+    expect(refused).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("cannot be deleted"),
+    });
   }),
 );
 

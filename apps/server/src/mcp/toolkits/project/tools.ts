@@ -97,13 +97,17 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
-  description: "Delete one project. Nonempty needs `force: true`. Folder on disk stays.",
+  description:
+    "Delete one empty project. Folder on disk stays. Only the user deletes a project with threads.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
-    force: Schema.optionalKey(Schema.Boolean),
   }),
-  dependencies: [...shared.dependencies, ProjectCloneTracker.ProjectCloneTracker],
+  dependencies: [
+    ...shared.dependencies,
+    ProjectCloneTracker.ProjectCloneTracker,
+    ManagedProjectFolders.ManagedProjectFolders,
+  ],
 }).annotate(Tool.Destructive, true);
 const ProjectCloneTool = Tool.make("t3_project_clone", {
   ...shared,
