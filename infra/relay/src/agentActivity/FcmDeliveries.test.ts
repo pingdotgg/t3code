@@ -414,6 +414,40 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect.each([
+    { name: "with activity cards off", liveActivitiesEnabled: false, notificationOnly: false },
+    {
+      name: "for a notification-only environment",
+      liveActivitiesEnabled: true,
+      notificationOnly: true,
+    },
+  ])("re-enabling stays silent $name when the replay is consumed first", (config) => {
+    const h = harness();
+    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+    if (config.notificationOnly) h.current.notificationOnlyEnvironments = [other.environmentId];
+    const visible = { ...preferences, liveActivitiesEnabled: config.liveActivitiesEnabled };
+    h.current.target.preferences_json = encodeJson({
+      ...visible,
+      disabledEnvironmentIds: [other.environmentId],
+    });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }];
+      yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
+      h.current.target.preferences_json = encodeJson(visible);
+      yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
+      yield* delivery.process(h.queued[1]);
+      yield* delivery.process(h.queued[0]);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(0);
+
+      h.current.otherStates = [{ ...other, phase: "completed" }];
+      yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
+      yield* delivery.process(h.queued[2]);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it("gives a group a stable retry identity independent of row order", () => {
     const other = {
       ...secondState,

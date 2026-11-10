@@ -28,6 +28,7 @@ import { isExpiredAgentActivityState, notificationForActivity } from "./agentAct
 import {
   alertForActivityRows,
   attentionTransitionRows,
+  environmentEnabledOnDevice,
   hiddenEnvironmentIds,
   sameEnvironmentIds,
   terminalTransitionRows,
@@ -41,6 +42,8 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  // Re-enabling clears the device's hidden list, so a queued job keeps its own.
+  environmentHidden: Schema.optional(Schema.Boolean),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -165,6 +168,12 @@ const make = Effect.gen(function* () {
         };
       }
       const now = yield* DateTime.now;
+      const environmentHidden =
+        input.state !== null &&
+        !environmentEnabledOnDevice(
+          Option.getOrNull(decodePreferences(input.target.preferences_json)),
+          input.state.environmentId,
+        );
       yield* sender
         .send({
           userId: input.target.user_id,
@@ -172,6 +181,7 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(environmentHidden ? { environmentHidden: true } : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -280,6 +290,7 @@ const make = Effect.gen(function* () {
           });
         } else if (
           deliveryUser?.notificationsEnabled &&
+          !job.environmentHidden &&
           state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
           !target.last_hidden_environment_ids?.includes(state.environmentId) &&
