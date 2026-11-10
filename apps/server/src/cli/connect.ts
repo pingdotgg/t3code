@@ -36,6 +36,7 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
@@ -185,6 +186,7 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
 function formatCloudStatus(
   status: CloudCliStatus,
   commands: { readonly link: string; readonly serviceStatus: string },
+  appLinked: boolean,
   options?: { readonly json?: boolean },
 ): string {
   if (options?.json) {
@@ -199,27 +201,28 @@ function formatCloudStatus(
         ? "pending server startup"
         : "not provisioned";
   const publishOnly = status.desired && status.linkMode === "publish_only";
-  const nextStep = !status.authenticated
-    ? `Run \`${commands.link}\` to authorize and enable T3 Connect.`
-    : status.revoked
-      ? `Run \`${commands.link}\` to link this environment again.`
-      : !status.desired
-        ? `Run \`${commands.link}\` to enable T3 Connect.`
-        : !status.linked
-          ? publishOnly
-            ? "Start T3 to provision the environment link."
-            : "Start T3 to provision the environment link and launch its managed tunnel."
-          : undefined;
+  const nextStep =
+    !status.authenticated && !(appLinked && status.linked)
+      ? `Run \`${commands.link}\` to authorize and enable T3 Connect.`
+      : status.revoked
+        ? `Run \`${commands.link}\` to link this environment again.`
+        : !status.desired && !appLinked
+          ? `Run \`${commands.link}\` to enable T3 Connect.`
+          : !status.linked
+            ? publishOnly
+              ? "Start T3 to provision the environment link."
+              : "Start T3 to provision the environment link and launch its managed tunnel."
+            : undefined;
 
   return [
     "T3 Connect",
-    `  Exposure: ${publishOnly ? "publish-only" : status.desired ? "enabled" : "disabled"}`,
+    `  Exposure: ${publishOnly ? "publish-only" : status.desired || appLinked ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired
+    ...(!status.desired && !appLinked
       ? []
       : publishOnly
         ? [
@@ -680,6 +683,7 @@ const connectStatusCommand = Command.make("status", {
           revoked,
           executable,
           linkMode,
+          runtimeConfig,
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
@@ -690,12 +694,14 @@ const connectStatusCommand = Command.make("status", {
             secrets.get(CLOUD_LINK_REVOKED),
             relayClient.resolve,
             CliState.readCliDesiredLinkMode,
+            secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
           ],
           { concurrency: "unbounded" },
         );
+        const appLinked = !desired && Option.isSome(runtimeConfig) && Option.isNone(revoked);
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
-          desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
+          (desired && linkMode === "managed") || appLinked ? yield* checkLiveReachability() : null;
         const status: CloudCliStatus = {
           desired,
           authenticated,
@@ -714,7 +720,7 @@ const connectStatusCommand = Command.make("status", {
           link: yield* resolveHostCliHint("connect link", flags.baseDir),
           serviceStatus: yield* resolveHostCliHint("service status", flags.baseDir),
         };
-        yield* Console.log(formatCloudStatus(status, commands, { json: flags.json }));
+        yield* Console.log(formatCloudStatus(status, commands, appLinked, { json: flags.json }));
       }),
       {
         quietLogs: flags.json,

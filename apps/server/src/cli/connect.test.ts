@@ -19,6 +19,12 @@ import { Command } from "effect/cli";
 import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+  encodeEndpointRuntimeConfigJson,
+  RELAY_URL_SECRET,
+} from "../cloud/config.ts";
+import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
@@ -104,6 +110,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         readonly portFreed?: boolean;
         readonly command?: "unlink" | "status";
         readonly linkMode?: "managed" | "publish_only";
+        readonly linkedBy?: "cli" | "app";
       },
     ) =>
       Effect.gen(function* () {
@@ -142,10 +149,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         });
         if (options?.command === "status") {
           // Status asks the server for reachability only for a managed link.
-          yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
-          yield* fs.writeFileString(
-            `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
-            options.linkMode ?? "managed",
+          const secretsDir = `${baseDir}/userdata/secrets`;
+          yield* fs.makeDirectory(secretsDir, { recursive: true });
+          const linkSecrets =
+            options.linkedBy === "app"
+              ? ([
+                  [CLOUD_LINKED_USER_ID, "user_123"],
+                  [RELAY_URL_SECRET, "https://relay.example.test"],
+                  [
+                    CLOUD_ENDPOINT_RUNTIME_CONFIG,
+                    yield* encodeEndpointRuntimeConfigJson({
+                      providerKind: "cloudflare_tunnel",
+                      connectorToken: "connector-token",
+                      tunnelId: "tunnel-id",
+                    }),
+                  ],
+                ] as const)
+              : ([[CLOUD_CLI_DESIRED_LINK_SECRET, options.linkMode ?? "managed"]] as const);
+          yield* Effect.forEach(linkSecrets, ([name, value]) =>
+            fs.writeFileString(`${secretsDir}/${name}.bin`, value),
           );
         }
 
@@ -228,6 +250,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
         assert.include(printed, "Exposure: publish-only");
         assert.notInclude(printed, "Other devices can reach this machine");
+      }),
+    );
+
+    it.effect("status checks a link the desktop or web app made, which stores no CLI marker", () =>
+      Effect.gen(function* () {
+        const { requests, printed } = yield* runConnect(process.pid, {
+          command: "status",
+          linkedBy: "app",
+        });
+
+        assert.include(printed, "Exposure: enabled");
+        assert.notInclude(printed, "t3 connect link");
+        assert.deepEqual(requests, ["POST /api/connect/reachability"]);
       }),
     );
 
