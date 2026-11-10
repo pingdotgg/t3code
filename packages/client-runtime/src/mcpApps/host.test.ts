@@ -1,3 +1,5 @@
+import { McpAppCallToolInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
@@ -203,10 +205,13 @@ describe("makeMcpAppHost", () => {
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {
+    const encodeForRpc = Schema.encodeUnknownSync(Schema.toCodecJson(McpAppCallToolInput));
+    const received: unknown[] = [];
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
           throw new McpAppHostRefusal({ message: "Declined by the user." });
+        received.push(encodeForRpc({ threadId: "thread-1", itemId: "item-1", ...input }).arguments);
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -217,7 +222,23 @@ describe("makeMcpAppHost", () => {
       method: "tools/call",
       params: { name: "delete_everything", arguments: {} },
     });
+    // postMessage's structured clone keeps undefined properties, which JSON cannot carry.
+    host.receive({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "poll",
+        arguments: { since: undefined, nested: { a: undefined, b: 1 }, list: [1, undefined] },
+      },
+    });
     await flush();
+    expect(sent).toContainEqual({
+      jsonrpc: "2.0",
+      id: 9,
+      result: { content: [], structuredContent: { ok: true } },
+    });
+    expect(received).toStrictEqual([{}, { nested: { b: 1 }, list: [1, null] }]);
     expect(sent).toContainEqual({
       jsonrpc: "2.0",
       id: 7,
