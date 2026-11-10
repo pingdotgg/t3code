@@ -50,7 +50,7 @@ import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
-import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "./AdaptiveWorkspaceLayout";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 import { WorkspaceEmptyDetail } from "./WorkspaceEmptyDetail";
 import { NativeColumnContent as ColumnContent } from "../../native/NativeColumnContent.ios";
@@ -93,6 +93,12 @@ const isPullRequestRoute = (route: Route) =>
   route.name === "PullRequest" ||
   route.name === "PullRequestFile" ||
   route.name === "PullRequestFiles";
+
+// Every step of starting a task, from the project picker to the draft thread itself.
+const isNewTaskRoute = (route: Route) =>
+  route.name.startsWith("NewTask") ||
+  route.name.startsWith("AddProject") ||
+  (route.params !== undefined && "draft" in route.params && Boolean(route.params.draft));
 
 /** Beside the list, the first Settings page shows on one native screen that swaps its content. */
 const SETTINGS_DETAIL_SCREEN = "settings-detail";
@@ -161,13 +167,7 @@ function ColumnScreen(props: {
               options={options}
               canGoBack={!props.primary}
               column={props.primary ? "primary" : "detail"}
-              onCompose={
-                descriptor.route.params &&
-                "draft" in descriptor.route.params &&
-                descriptor.route.params.draft
-                  ? undefined
-                  : props.onCompose
-              }
+              onCompose={isNewTaskRoute(descriptor.route) ? undefined : props.onCompose}
             />
             <ColumnContent
               primary={sidebar}
@@ -209,15 +209,14 @@ function WorkspaceColumns(
 ) {
   const {
     layout,
-    panes,
     setPrimarySidebarVisible,
     toggleAuxiliaryPane,
     startNewTask,
     openWorkspaceTab,
-    sidebarByOrientation,
     nativeInspectorWidth,
     setNativeInspectorWidth,
   } = useAdaptiveWorkspaceLayout();
+  const { panes, sidebarByOrientation } = useWorkspacePaneState();
   const deviceType = useDeviceType();
   const inspectorWidth = nativeInspectorWidth;
   const resizeStartWidth = useRef(inspectorWidth);
