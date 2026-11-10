@@ -24,6 +24,7 @@ describe("projectThreadAwarenessV2", () => {
       Pick<
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
+        | "latestRunBackgroundWake"
         | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
@@ -65,6 +66,44 @@ describe("projectThreadAwarenessV2", () => {
   });
 
   it.each([
+    ["holds a wake run", true, [{ taskId: "watch", kind: "monitor" as const }], "running"],
+    ["completes a wake run once its monitor ends", true, [], "completed"],
+    [
+      "holds a wake run while a monitor remains beside other work",
+      true,
+      [
+        { taskId: "build", kind: "command" as const },
+        { taskId: "watch", kind: "monitor" as const },
+      ],
+      "running",
+    ],
+    [
+      "completes a wake run with only a command pending",
+      true,
+      [{ taskId: "build", kind: "command" as const }],
+      "completed",
+    ],
+    [
+      "completes a run the user started",
+      false,
+      [{ taskId: "watch", kind: "monitor" as const }],
+      "completed",
+    ],
+  ] as const)("%s while a monitor wakes the thread", (_, latestRunBackgroundWake, tasks, phase) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [...tasks],
+        }),
+      })?.phase,
+    ).toBe(phase);
+  });
+
+  it.each([
     ["running", "subagent"],
     ["completed", "subagent"],
     ["failed", "subagent"],
@@ -98,12 +137,21 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
 
-  it.each(["completed", "failed"] as const)("removes settled %s work", (status) => {
+  it.each([
+    ["completed", "completed", false],
+    ["failed", "failed", false],
+    ["monitor-held", "completed", true],
+  ] as const)("removes settled %s work", (_, status, latestRunBackgroundWake) => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
         project,
-        thread: v2Thread({ status, settledOverride: "settled" }),
+        thread: v2Thread({
+          status,
+          settledOverride: "settled",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        }),
       }),
     ).toBeNull();
   });

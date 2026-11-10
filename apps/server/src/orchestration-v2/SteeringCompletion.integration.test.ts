@@ -488,7 +488,9 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   canSteer = true,
   interruptTurn: Effect.Effect<void> = Effect.void,
   steeringAcceptsAttachments = true,
+  nativeGoals?: boolean,
 ) {
+  const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
@@ -501,6 +503,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       supportsActiveSteering: canSteer,
       supportsSteeringByInterruptRestart: canRestart,
       activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
+      ...(nativeGoals === undefined ? {} : { supportsNativeGoals: nativeGoals }),
     },
   };
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -2067,8 +2070,15 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
   ),
 );
 
-const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
-  const harness = yield* nextTurnSelectionHarness(name);
+const goalHarness = Effect.fn("goalHarness")(function* (name: string, nativeGoals?: boolean) {
+  const harness = yield* nextTurnSelectionHarness(
+    name,
+    false,
+    true,
+    Effect.void,
+    true,
+    nativeGoals,
+  );
   const send = (id: string, text: string, delivery: "queue" | "auto", freshContext = false) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2108,26 +2118,34 @@ const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
   return { ...harness, send, read };
 });
 
-it.effect("stops the running turn and starts a goal sent into it next", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { steered, layer, startFirstTurn, send, read } = yield* goalHarness("goal-steer");
-      yield* Effect.gen(function* () {
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = yield* startFirstTurn;
-        yield* send("queued", "queued", "queue");
-        yield* send("goal", "/goal all tests pass", "auto");
-        yield* worker.drain();
+it.effect.each([undefined, false, true])(
+  "goal dispatch stops the active turn only with native support: %s",
+  (nativeGoals) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { steered, layer, startFirstTurn, send, read } = yield* goalHarness(
+          "goal-steer",
+          nativeGoals,
+        );
+        yield* Effect.gen(function* () {
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          yield* send("queued", "queued", "queue");
+          const sending = send("goal", "/goal all tests pass", "auto");
+          if (nativeGoals === false) {
+            yield* Effect.flip(sending);
+          } else yield* sending;
+          yield* worker.drain();
 
-        assert.deepEqual(steered, []);
-        assert.deepEqual(yield* read(threadId), {
-          queue: ["queued"],
-          started: ["first", "/goal all tests pass"],
-          stopRequested: true,
-        });
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
+          assert.deepEqual(steered, []);
+          assert.deepEqual(yield* read(threadId), {
+            queue: ["queued"],
+            started: nativeGoals === false ? ["first"] : ["first", "/goal all tests pass"],
+            stopRequested: nativeGoals !== false,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 it.effect("starts a goal that names no model on the thread's model ahead of a queued pick", () =>

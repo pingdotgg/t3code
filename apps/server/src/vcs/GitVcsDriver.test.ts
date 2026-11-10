@@ -407,6 +407,33 @@ it.effect("checkpoint capture skips an ignored project while keeping its allowed
 );
 
 it.effect.each([
+  { workspace: "the repository root", subdirectory: "" },
+  { workspace: "a subdirectory", subdirectory: "sub" },
+])(
+  "checkpoint capture keeps new files in $workspace when the root .gitignore has a blank CRLF line",
+  ({ subdirectory }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-crlf-ignore-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, parent);
+      yield* fs.writeFileString(path.join(parent, ".gitignore"), "a.txt\r\n\r\nb.txt\r\n");
+      const cwd = path.join(parent, subdirectory);
+      yield* fs.makeDirectory(cwd, { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, "notes.md"), "notes\n");
+      const notesPath = subdirectory === "" ? "notes.md" : `${subdirectory}/notes.md`;
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      assert.include(
+        (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout.split("\n"),
+        notesPath,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
   { tracking: "committed-only", committed: ["committed.txt"], staged: [] },
   { tracking: "staged-only", committed: [], staged: ["staged.txt"] },
   { tracking: "mixed", committed: ["committed.txt"], staged: ["staged.txt"] },
@@ -1007,7 +1034,6 @@ it.effect.each(["committed", "unborn"] as const)(
         "rev-parse",
         "config",
         ...(head === "committed" ? ["read-tree", "ls-files"] : []),
-        "check-ignore",
         "add",
         "write-tree",
         "commit-tree",
@@ -1062,11 +1088,11 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.deepStrictEqual(commands, [
         "rev-parse",
         "rev-parse",
+        "rev-parse",
         "config",
         "rev-parse",
         "read-tree",
         "ls-files",
-        "check-ignore",
         "add",
         "write-tree",
         "commit-tree",
