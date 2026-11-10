@@ -174,7 +174,11 @@ export function PaneNotch({
   }, [isMobile, marksHost, side]);
   return (
     <>
-      <span aria-hidden data-pane-notch-corner={side === "left" ? "" : side} />
+      <span
+        aria-hidden
+        data-pane-notch-corner={side === "left" ? "" : side}
+        data-sidebar-slide-stay={side === "left" ? "" : undefined}
+      />
       <div
         ref={notchRef}
         data-pane-notch={side === "left" ? "" : side}
