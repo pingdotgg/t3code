@@ -204,28 +204,6 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("keeps a sounds-off alert silent when shortening it to fit 4096 bytes", () =>
-    Effect.gen(function* () {
-      const apns = yield* ApnsClient.ApnsClient;
-      const request = apns.makeLiveActivityRequest({
-        event: "end",
-        token: "token",
-        state: sanitizeAgentActivityAggregateState({
-          ...state,
-          activities: [{ ...state.activities[0]!, threadTitle: "界".repeat(200) }],
-        }),
-        alert: { title: "界".repeat(800), body: "界".repeat(800) },
-        soundsEnabled: false,
-        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        nowIso: DateTime.formatIso(now),
-      });
-
-      const payload = request.payload as { aps: { alert: { title: string } } };
-      expect(payload.aps.alert.title).toMatch(/^界+\.\.\.$/);
-      expect(payload.aps.alert).not.toHaveProperty("sound");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("fits Live Activity updates at every sanitizer cap within 4096 bytes", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;

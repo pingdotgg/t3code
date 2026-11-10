@@ -886,7 +886,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.ok).toBe(true);
       expect(requests).toHaveLength(1);
