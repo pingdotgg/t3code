@@ -3,10 +3,15 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveProviderForCwd } from "@t3tools/client-runtime/providerSkills";
+import {
+  resolveProviderForCwd,
+  resolveProviderWorkspaceCwd,
+  shouldPreserveOpenCodeAgent,
+} from "@t3tools/client-runtime/providerSkills";
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProviderOptionDescriptor,
   ProjectId,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -138,20 +143,60 @@ function isDriverDisallowed(config: T3ServerConfig | null | undefined, driver: s
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
+  driver?: string,
+  workspaceOptionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>,
+  modelUnavailable = false,
 ): ModelSelection {
   if (!capabilities) {
+    if (driver === "opencode" && modelUnavailable) return selection;
+    const workspaceAgent = workspaceOptionDescriptors?.find(
+      (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+        descriptor.id === "agent" && descriptor.type === "select",
+    );
+    if (
+      driver === "opencode" &&
+      workspaceAgent &&
+      selection.options?.length
+    ) {
+      const savedAgent = selection.options.find((option) => option.id === "agent");
+      const normalizedAgent =
+        savedAgent &&
+        typeof savedAgent.value === "string" &&
+        workspaceAgent.options.some((option) => option.id === savedAgent.value)
+          ? savedAgent
+          : buildExplicitProviderOptionSelectionsFromDescriptors(
+              [workspaceAgent],
+              selection.options,
+            )?.find((option) => option.id === "agent");
+      if (normalizedAgent) {
+        const options = [...selection.options];
+        const agentIndex = options.findIndex((option) => option.id === "agent");
+        if (agentIndex < 0) options.push(normalizedAgent);
+        else options[agentIndex] = normalizedAgent;
+        return { ...selection, options };
+      }
+    }
     return selection;
   }
   if (!selection.options?.length) {
     return { instanceId: selection.instanceId, model: selection.model };
   }
-  const options = buildExplicitProviderOptionSelectionsFromDescriptors(
-    getProviderOptionDescriptors({
-      caps: capabilities,
-      selections: selection.options,
-    }),
+  const descriptors = getProviderOptionDescriptors({
+    caps: capabilities,
+    selections: selection.options,
+  });
+  const normalizedOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+    descriptors,
     selection.options,
   );
+  const explicitAgent = selection.options.find((option) => option.id === "agent");
+  const options =
+    shouldPreserveOpenCodeAgent({
+      driver: driver ?? "",
+      descriptors: workspaceOptionDescriptors,
+    }) && explicitAgent
+      ? [...(normalizedOptions ?? []).filter((option) => option.id !== "agent"), explicitAgent]
+      : normalizedOptions;
   return options
     ? { ...selection, options }
     : {
@@ -258,13 +303,44 @@ export function resolveSelectableModelSelection(
   ) {
     return null;
   }
-  return cwd === undefined
-    ? selection
-    : normalizeSelectionOptions(
-        selection,
-        resolveProviderForCwd(provider, cwd).models.find((model) => model.slug === selection.model)
-          ?.capabilities ?? null,
-      );
+  if (cwd === undefined) return selection;
+  const workspaceProvider = resolveProviderForCwd(provider, cwd);
+  const model = workspaceProvider.models.find((candidate) => candidate.slug === selection.model);
+  return normalizeSelectionOptions(
+    selection,
+    model?.capabilities ?? null,
+    provider.driver,
+    provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.optionDescriptors,
+    model === undefined,
+  );
+}
+
+export function resolvePendingTaskModelSelection(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null;
+  readonly fallbackSelection: ModelSelection | null;
+  readonly projectId: ProjectId | null;
+  readonly projectCwd: string | null | undefined;
+  readonly workspaceMode: "local" | "worktree";
+  readonly worktreePath: string | null | undefined;
+}): ModelSelection | null {
+  const cwd = resolveNewTaskModelCwd(input);
+  return (
+    resolveSelectableModelSelection(input.config, input.selection, input.projectId, cwd) ??
+    input.fallbackSelection
+  );
+}
+
+export function resolveNewTaskModelCwd(input: {
+  readonly projectCwd: string | null | undefined;
+  readonly workspaceMode: "local" | "worktree";
+  readonly worktreePath: string | null | undefined;
+}): string | null {
+  return resolveProviderWorkspaceCwd({
+    projectCwd: input.projectCwd,
+    mode: input.workspaceMode,
+    worktreePath: input.workspaceMode === "worktree" ? null : input.worktreePath,
+  });
 }
 
 export function resolveDefaultableModelSelection(
@@ -420,6 +496,8 @@ export function buildModelOptions(
             model: model.slug,
           },
           model.capabilities,
+          provider.driver,
+          provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.optionDescriptors,
         ),
       });
     }
@@ -444,7 +522,14 @@ export function buildModelOptions(
         selection:
           existing.providerDriver === "antigravity"
             ? fallbackModelSelection
-            : normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
+            : normalizeSelectionOptions(
+                fallbackModelSelection,
+                existing.capabilities,
+                existing.providerDriver,
+                config?.providers
+                  .find((candidate) => candidate.instanceId === fallbackModelSelection.instanceId)
+                  ?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.optionDescriptors,
+              ),
       });
     } else {
       const provider = config?.providers.find(
@@ -481,7 +566,19 @@ export function buildModelOptions(
           ? { isUnavailable: true }
           : {}),
         capabilities: model?.capabilities ?? null,
-        selection: fallbackModelSelection,
+        selection:
+          providerDriver === "antigravity"
+            ? fallbackModelSelection
+            : normalizeSelectionOptions(
+                fallbackModelSelection,
+                model?.capabilities ?? null,
+                provider?.driver ?? providerDriver,
+                provider?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)
+                  ?.optionDescriptorsPending ?? false,
+                provider?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)
+                  ?.optionDescriptors,
+                model === undefined,
+              ),
       });
     }
   }

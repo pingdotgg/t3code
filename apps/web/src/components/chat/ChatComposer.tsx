@@ -434,6 +434,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  providerAgentCwd: string | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -551,6 +552,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    providerAgentCwd,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -870,13 +872,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
     composerProviderState,
   } = useComposerProviderModel({
-    providerStatuses: providerStatuses.map((provider) => resolveProviderForCwd(provider, gitCwd)),
+    providerStatuses: providerStatuses.map((provider) =>
+      resolveProviderForCwd(provider, providerAgentCwd),
+    ),
     settings,
     activeProjectId,
     threadRef: composerDraftTarget,
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
     promptInjectionState: getComposerPromptInjectionState(prompt),
+    cwd: providerAgentCwd,
     candidateInstanceIds: [
       composerDraft.activeProvider ?? null,
       activeThread?.runtime?.providerInstanceId,
@@ -2451,6 +2456,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}
       providerInstanceEntries={providerInstanceEntries}
+      workspaceOptionDescriptors={
+        selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === providerAgentCwd,
+        )?.optionDescriptors
+      }
+      optionDescriptorsPending={
+        selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === providerAgentCwd,
+        )?.optionDescriptorsPending
+      }
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       terminalOpen={terminalOpen}
@@ -3005,6 +3020,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           reportedModelSelection,
           prompt: promptRef.current,
           cursor: readComposerSnapshotStable().expandedCursor,
+          workspaceOptionDescriptors: selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+            (snapshot) => snapshot.cwd === providerAgentCwd,
+          )?.optionDescriptors,
+          optionDescriptorsPending: selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+            (snapshot) => snapshot.cwd === providerAgentCwd,
+          )?.optionDescriptorsPending,
           direction,
         });
         if (!change) return;

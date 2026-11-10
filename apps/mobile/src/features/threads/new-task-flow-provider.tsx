@@ -29,8 +29,10 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
+  resolveNewTaskModelCwd,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
+  resolvePendingTaskModelSelection,
   resolveSelectableModelSelection,
   serverConfigForCwd,
 } from "../../lib/modelOptions";
@@ -430,11 +432,11 @@ export function NewTaskFlowProvider(
     managedPolicy,
   );
 
-  const modelCwd =
-    (workspaceMode === "worktree"
-      ? selectedProject?.workspaceRoot
-      : ((canChooseWorkspace ? selectedWorktreePath : null) ?? selectedProject?.workspaceRoot)) ||
-    null;
+  const modelCwd = resolveNewTaskModelCwd({
+    projectCwd: selectedProject?.workspaceRoot,
+    workspaceMode,
+    worktreePath: canChooseWorkspace ? selectedWorktreePath : null,
+  });
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model.
   const draftModelSelection = resolveSelectableModelSelection(
@@ -721,17 +723,15 @@ export function NewTaskFlowProvider(
     const text = draft.text.trim();
     const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
     const mode = workspaceSelection.mode;
-    const cwd =
-      mode === "worktree"
-        ? selectedProject.workspaceRoot
-        : (workspaceSelection.worktreePath ?? selectedProject.workspaceRoot);
-    const draftModelSelection =
-      resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
-        draft.modelSelection ?? null,
-        selectedProject.id,
-        cwd,
-      ) ?? selectedModel;
+    const draftModelSelection = resolvePendingTaskModelSelection({
+      config: selectedEnvironmentServerConfig,
+      selection: draft.modelSelection ?? null,
+      fallbackSelection: selectedModel,
+      projectId: selectedProject.id,
+      projectCwd: selectedProject.workspaceRoot,
+      workspaceMode: mode,
+      worktreePath: mode === "worktree" ? null : workspaceSelection.worktreePath,
+    });
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
     }

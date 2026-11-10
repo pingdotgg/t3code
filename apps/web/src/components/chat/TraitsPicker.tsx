@@ -2,6 +2,7 @@ import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
   getTraitSelectChange,
+  preserveExplicitAgentDescriptor,
   replaceDescriptorCurrentValue,
   selectableProviderOptionChoices,
   isReasoningSelect,
@@ -35,6 +36,7 @@ import {
 } from "../ui/menu";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { shouldPreserveOpenCodeAgent } from "@t3tools/client-runtime/providerSkills";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -119,12 +121,14 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   includePlanAgent: boolean | undefined,
+  workspaceOptionDescriptors: ReadonlyArray<{ readonly id: string }> | undefined,
+  optionDescriptorsPending: boolean | undefined,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
   const modelIsUnavailable =
     provider === "opencode" &&
     !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
-  const descriptors = modelIsUnavailable
+  const resolvedDescriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
         includePlanAgent
           ? modelOptions
@@ -134,6 +138,16 @@ function getSelectedTraits(
         caps,
         selections: modelOptions,
       });
+  const descriptors = preserveExplicitAgentDescriptor({
+    descriptors: resolvedDescriptors,
+    selections: modelOptions,
+    preserve: shouldPreserveOpenCodeAgent({
+      driver: provider,
+      descriptors: workspaceOptionDescriptors,
+      optionDescriptorsPending,
+    }),
+    includePlanAgent: includePlanAgent ?? false,
+  });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
@@ -197,6 +211,8 @@ export function getTraitsSectionVisibility(input: {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
+  optionDescriptorsPending?: boolean | undefined;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -206,6 +222,8 @@ export function getTraitsSectionVisibility(input: {
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     input.includePlanAgent,
+    input.workspaceOptionDescriptors,
+    input.optionDescriptorsPending,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -245,6 +263,8 @@ export function getReasoningTraitStep(input: {
   reportedModelSelection: ModelSelection | null | undefined;
   prompt: string;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
+  optionDescriptorsPending?: boolean | undefined;
   direction: 1 | -1;
 }) {
   const selected = getSelectedTraits(
@@ -255,6 +275,8 @@ export function getReasoningTraitStep(input: {
     input.modelOptions,
     true,
     input.includePlanAgent,
+    input.workspaceOptionDescriptors,
+    input.optionDescriptorsPending,
   );
   if (selected.modelIsUnavailable || selected.ultrathinkInBodyText) return null;
   const descriptor = selected.selectDescriptors.find(isReasoningSelect);
@@ -294,6 +316,8 @@ export interface TraitsMenuContentProps {
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
+  optionDescriptorsPending?: boolean | undefined;
   triggerClassName?: string;
 }
 
@@ -311,6 +335,8 @@ export function useTraitsSelection({
   reportedModelSelection,
   allowPromptInjectedEffort = true,
   includePlanAgent,
+  workspaceOptionDescriptors,
+  optionDescriptorsPending,
   triggerClassName: _triggerClassName,
   ...persistence
 }: TraitsSelectionInput) {
@@ -341,6 +367,8 @@ export function useTraitsSelection({
     modelOptions,
     allowPromptInjectedEffort,
     includePlanAgent,
+    workspaceOptionDescriptors,
+    optionDescriptorsPending,
   });
   return {
     ...selected,

@@ -35,6 +35,7 @@ export function useComposerProviderModel(
     readonly threadModelSelection: ModelSelection | null | undefined;
     readonly projectModelSelection: ModelSelection | null | undefined;
     readonly promptInjectionState: ReturnType<typeof getComposerPromptInjectionState>;
+    readonly cwd: string | null;
   },
 ) {
   const {
@@ -45,6 +46,7 @@ export function useComposerProviderModel(
     threadModelSelection,
     projectModelSelection,
     promptInjectionState,
+    cwd,
     candidateInstanceIds,
     lockedProvider,
     lockedInstanceId,
@@ -82,6 +84,12 @@ export function useComposerProviderModel(
     models: selectedProviderModels,
     promptInjectionState,
     modelOptions: modelState.modelOptions?.[selectedInstanceId],
+    workspaceOptionDescriptors: selection.selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+      (snapshot) => snapshot.cwd === cwd,
+    )?.optionDescriptors,
+    optionDescriptorsPending: selection.selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
+      (snapshot) => snapshot.cwd === cwd,
+    )?.optionDescriptorsPending,
   });
   return {
     providerInstanceEntries,

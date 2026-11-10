@@ -116,6 +116,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import { resolveProviderWorkspaceCwd } from "@t3tools/client-runtime/providerSkills";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -1315,6 +1316,13 @@ export default function ChatView(props: ChatViewProps) {
     ? projectScriptCwd({
         project: { cwd: activeProject.workspaceRoot },
         worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const providerAgentCwd = activeProject
+    ? resolveProviderWorkspaceCwd({
+        projectCwd: activeProject.workspaceRoot,
+        mode: draftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+        worktreePath: activeThread?.worktreePath ?? draftThread?.worktreePath ?? null,
       })
     : null;
   const providerInstanceEntries = providerInstanceEntriesFor(
@@ -3699,6 +3707,7 @@ export default function ChatView(props: ChatViewProps) {
                                 keybindings={keybindings}
                                 terminalOpen={Boolean(terminalUiState.terminalOpen)}
                                 gitCwd={gitCwd}
+                                providerAgentCwd={providerAgentCwd}
                                 pullRequestProjectId={
                                   supportsPullRequests ? (activeProject?.id ?? null) : null
                                 }

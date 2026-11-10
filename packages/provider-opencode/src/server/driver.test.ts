@@ -544,37 +544,68 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         serverStarts.length = 0;
         const requested: Array<string> = [];
         let failAgents = false;
+        let emptyAgents = false;
+        let stallAgents = false;
+        let delayAgents = false;
+        let emptyCommands = false;
         const agentDirectories: Array<string | null> = [];
+        const workspaceReads = new Map<string, Set<string>>();
         const server = HttpClient.make((request, url) => {
           const directory = url.searchParams.get("location[directory]");
-          if (url.pathname === "/api/agent") agentDirectories.push(directory);
+          if (directory && ["/api/command", "/api/skill"].includes(url.pathname)) {
+            const reads = workspaceReads.get(directory) ?? new Set<string>();
+            reads.add(url.pathname);
+            workspaceReads.set(directory, reads);
+          }
+          if (url.pathname === "/api/agent") {
+            agentDirectories.push(directory);
+            assert.deepStrictEqual(
+              [...(directory ? (workspaceReads.get(directory) ?? []) : [])].sort(),
+              ["/api/command", "/api/skill"],
+            );
+          }
+          if (url.pathname === "/api/agent" && stallAgents) return Effect.never;
           const responses = {
             ...OPENCODE_2_RESPONSES,
             ...OPENCODE_2_WORKSPACE_RESPONSES,
+            ...(url.pathname === "/api/command" && emptyCommands
+              ? {
+                  "/api/command": {
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ location: { directory }, data: [] }),
+                  },
+                }
+              : {}),
             "/api/agent": {
               status: failAgents ? 500 : 200,
               contentType: "application/json",
               body: JSON.stringify({
                 location: { directory },
-                data: [
-                  { id: "build", mode: "primary", hidden: false },
-                  {
-                    id: directory === "/work" ? "reviewer" : "writer",
-                    mode: "all",
-                    hidden: false,
-                  },
-                  { id: "internal", mode: "primary", hidden: true },
-                  { id: "explore", mode: "subagent", hidden: false },
-                ].map((agent) => ({
-                  ...agent,
-                  name: agent.id,
-                  request: { settings: {}, headers: {}, body: {} },
-                  permissions: [],
-                })),
+                data: emptyAgents
+                  ? []
+                  : [
+                      { id: "build", mode: "primary", hidden: false },
+                      {
+                        id: directory === "/work" ? "reviewer" : "writer",
+                        mode: "all",
+                        hidden: false,
+                      },
+                      { id: "internal", mode: "primary", hidden: true },
+                      { id: "explore", mode: "subagent", hidden: false },
+                    ].map((agent) => ({
+                      ...agent,
+                      name: agent.id,
+                      request: { settings: {}, headers: {}, body: {} },
+                      permissions: [],
+                    })),
               }),
             },
           };
-          return replayOpenCodeServer(responses, "secret", requested).execute(request);
+          const response = replayOpenCodeServer(responses, "secret", requested).execute(request);
+          return url.pathname === "/api/agent" && delayAgents
+            ? Effect.sleep("3 seconds").pipe(Effect.andThen(response))
+            : response;
         });
         const instance = yield* create(
           { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
@@ -609,14 +640,54 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.deepStrictEqual(failed.slashCommands, workspace.slashCommands);
         assert.isUndefined(failed.optionDescriptors);
         assert.deepStrictEqual(failed.models, global.models);
+        assert.deepStrictEqual(yield* instance.snapshot.getSnapshot, global);
 
         failAgents = false;
+        stallAgents = true;
+        const stalledScan = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 seconds");
+        const stalled = yield* Fiber.join(stalledScan);
+        assert.deepStrictEqual(stalled.skills, workspace.skills);
+        assert.deepStrictEqual(stalled.slashCommands, workspace.slashCommands);
+        assert.isUndefined(stalled.optionDescriptors);
+        stallAgents = false;
+
+        delayAgents = true;
+        const slowAgentScan = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        const slowAgents = yield* Fiber.join(slowAgentScan);
+        assert.deepStrictEqual(choices(slowAgents), ["build", "reviewer"]);
+        delayAgents = false;
+
+        emptyAgents = true;
+        const empty = yield* instance.snapshotForCwd!("/work");
+        assert.isUndefined(empty.optionDescriptors);
+        emptyAgents = false;
         assert.deepStrictEqual(choices(yield* instance.snapshotForCwd!("/work")), [
           "build",
           "reviewer",
         ]);
-        assert.deepStrictEqual(agentDirectories, ["/work", "/other", "/work", "/work"]);
-        assert.deepStrictEqual(yield* instance.snapshot.getSnapshot, global);
+        emptyCommands = true;
+        const incompleteScan = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 seconds");
+        const incomplete = yield* Fiber.join(incompleteScan);
+        assert.isUndefined(incomplete.optionDescriptors);
+        assert.includeMembers(
+          incomplete.skills.map((skill) => skill.name),
+          ["plum", "opencode"],
+        );
+        emptyCommands = false;
+        assert.deepStrictEqual(agentDirectories, [
+          "/work",
+          "/other",
+          "/work",
+          "/work",
+          "/work",
+          "/work",
+          "/work",
+          "/work",
+        ]);
         assert.deepStrictEqual(serverStarts, []);
       }).pipe(Effect.scoped),
   );

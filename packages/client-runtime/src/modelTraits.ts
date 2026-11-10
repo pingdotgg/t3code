@@ -1,4 +1,8 @@
-import type { ModelSelection, ProviderOptionDescriptor } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProviderOptionDescriptor,
+  ProviderOptionSelection,
+} from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
@@ -24,6 +28,55 @@ export function isReasoningSelect(
   descriptor: ProviderOptionDescriptor,
 ): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> {
   return descriptor.type === "select" && isReasoningControl(descriptor);
+}
+
+function withoutPlanAgentOption(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  return descriptors.flatMap((descriptor) => {
+    if (descriptor.id !== "agent" || descriptor.type !== "select") return [descriptor];
+    const options = descriptor.options.filter((option) => option.id !== "plan");
+    if (options.length === 0) return [];
+    const currentValue =
+      descriptor.currentValue && options.some((option) => option.id === descriptor.currentValue)
+        ? descriptor.currentValue
+        : (options.find((option) => option.isDefault)?.id ?? options[0]?.id);
+    return [{ ...descriptor, options, ...(currentValue ? { currentValue } : {}) }];
+  });
+}
+
+export function preserveExplicitAgentDescriptor(input: {
+  readonly descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  readonly preserve: boolean;
+  readonly includePlanAgent?: boolean;
+}): ReadonlyArray<ProviderOptionDescriptor> {
+  if (!input.preserve) return input.descriptors;
+  const savedAgent = input.selections?.find((option) => option.id === "agent");
+  if (!savedAgent || typeof savedAgent.value !== "string") return input.descriptors;
+  if (savedAgent.value === "plan" && !input.includePlanAgent) {
+    return withoutPlanAgentOption(input.descriptors);
+  }
+  const existing = input.descriptors.find(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.id === "agent" && descriptor.type === "select",
+  );
+  const agentDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = {
+    ...(existing ?? { id: "agent", label: "Agent", type: "select", options: [] }),
+    options: [
+      ...(existing?.options ?? []).map(({ isDefault: _isDefault, ...option }) => option),
+      ...((existing?.options.some((option) => option.id === savedAgent.value) ?? false)
+        ? []
+        : [{ id: savedAgent.value, label: savedAgent.value }]),
+    ],
+    currentValue: savedAgent.value,
+  };
+  const index = input.descriptors.findIndex((descriptor) => descriptor.id === "agent");
+  return index < 0
+    ? [...input.descriptors, agentDescriptor]
+    : input.descriptors.map((descriptor, descriptorIndex) =>
+        descriptorIndex === index ? agentDescriptor : descriptor,
+      );
 }
 
 export function replaceDescriptorCurrentValue(

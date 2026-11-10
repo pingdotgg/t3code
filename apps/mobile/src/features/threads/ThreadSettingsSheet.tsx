@@ -1,7 +1,9 @@
 import {
   getPromptControlledTraits,
   getTraitSelectChange,
+  preserveExplicitAgentDescriptor,
 } from "@t3tools/client-runtime/model-traits";
+import { shouldPreserveOpenCodeAgent } from "@t3tools/client-runtime/providerSkills";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
@@ -92,6 +94,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -497,6 +500,27 @@ function ThreadSettingsSessionProvider(
         selections: pendingModel.selection.options,
       })
     : props.optionDescriptors;
+  const displayedSelection = pendingModel?.selection ?? props.selectedModel;
+  const displayedProvider = config?.providers.find(
+    (provider) => provider.instanceId === displayedSelection?.instanceId,
+  );
+  const workspaceSnapshot = displayedProvider?.workspaceSnapshots?.find(
+    (snapshot) => snapshot.cwd === props.cwd,
+  );
+  const displayedDescriptors = preserveExplicitAgentDescriptor({
+    descriptors: baseDisplayedDescriptors,
+    selections: displayedSelection?.options,
+    preserve: shouldPreserveOpenCodeAgent({
+      driver: displayedProvider?.driver ?? "",
+      descriptors: workspaceSnapshot?.optionDescriptors,
+    }),
+    includePlanAgent: baseDisplayedDescriptors.some(
+      (descriptor) =>
+        descriptor.id === "agent" &&
+        descriptor.type === "select" &&
+        descriptor.options.some((option) => option.id === "plan"),
+    ),
+  });
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
@@ -1392,6 +1416,8 @@ export function ExistingThreadSettingsRouteScreen({
     modelSelection,
     lockedProviderInstanceId,
     selectedThread.projectId,
+    false,
+    selectedThreadCwd,
   );
   const currentModelOption =
     modelOptions.find(

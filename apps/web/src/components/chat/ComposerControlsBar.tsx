@@ -79,6 +79,8 @@ export function ComposerControlsBar(props: {
   lockedProvider: ChatComposerProps["lockedProvider"];
   lockedContinuationGroupKey: string | null;
   providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
+  optionDescriptorsPending?: boolean | undefined;
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
   terminalOpen: boolean;
@@ -123,6 +125,8 @@ export function ComposerControlsBar(props: {
     lockedProvider,
     lockedContinuationGroupKey,
     providerInstanceEntries,
+    workspaceOptionDescriptors,
+    optionDescriptorsPending,
     keybindings,
     modelOptionsByInstance,
     terminalOpen,
@@ -160,6 +164,8 @@ export function ComposerControlsBar(props: {
     reportedModelSelection,
     promptUltrathink,
     onPromptEdit,
+    workspaceOptionDescriptors,
+    optionDescriptorsPending,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize);
   const restingBlockDefs = showModeBlock

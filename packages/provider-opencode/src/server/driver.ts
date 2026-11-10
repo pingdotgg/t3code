@@ -422,11 +422,6 @@ export const OpenCodeDriver: ProviderDriver<
           return yield* loadOpenCode2Workspace(
             Effect.all(
               {
-                agents: client.agent.list({ location }).pipe(
-                  Effect.timeout("10 seconds"),
-                  Effect.map((list) => list.data),
-                  Effect.orElseSucceed(() => undefined),
-                ),
                 skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
                 commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
               },

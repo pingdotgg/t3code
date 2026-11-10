@@ -16,6 +16,8 @@ import {
   groupByProvider,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
+  resolveNewTaskModelCwd,
+  resolvePendingTaskModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
   type ModelOption,
@@ -568,13 +570,40 @@ describe("mobile model options", () => {
             isCustom: false,
             capabilities: { optionDescriptors: [reasoning, agent("global")] },
           })),
-          workspaceSnapshots: ["reviewer", "writer"].map((name, index) => ({
-            cwd: `/work/${index}`,
-            checkedAt: "2026-01-01T00:00:00.000Z",
-            skills: [],
-            slashCommands: [],
-            optionDescriptors: [agent(name)],
-          })),
+          workspaceSnapshots: [
+            ...["reviewer", "writer"].map((name, index) => ({
+              cwd: `/work/${index}`,
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              skills: [],
+              slashCommands: [],
+              optionDescriptors: [agent(name)],
+            })),
+            {
+              cwd: "/work/pending",
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              skills: [],
+              slashCommands: [],
+              optionDescriptors: [agent("stale")],
+              optionDescriptorsPending: true,
+            },
+            {
+              cwd: "/work/plan-default",
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              skills: [],
+              slashCommands: [],
+              optionDescriptors: [
+                {
+                  id: "agent",
+                  label: "Agent",
+                  type: "select" as const,
+                  options: [
+                    { id: "build", label: "Build" },
+                    { id: "plan", label: "Plan", isDefault: true },
+                  ],
+                },
+              ],
+            },
+          ],
         },
       ],
       settings: {
@@ -625,6 +654,61 @@ describe("mobile model options", () => {
         )
         .toEqual(expectedSelection);
     }
+    for (const cwd of ["/work/new", "/work/pending", null]) {
+      const options = buildModelOptions(config, draft, instanceId, projectId, false, cwd);
+      expect(options[0]?.selection).toEqual(draft);
+      expect(
+        resolveNewTaskModelSelection({
+          draftSelection: draft,
+          projectDefaultSelection: null,
+          stickySelection: null,
+          modelOptions: options,
+        }),
+      ).toEqual(draft);
+      expect(
+        resolveNewTaskModelSelection({
+          draftSelection: null,
+          projectDefaultSelection: draft,
+          stickySelection: null,
+          modelOptions: options,
+        }),
+      ).toEqual(draft);
+    }
+    expect(
+      resolvePendingTaskModelSelection({
+        config,
+        selection: draft,
+        fallbackSelection: null,
+        projectId,
+        projectCwd: "/work/1",
+        workspaceMode: "worktree",
+        worktreePath: "/work/0",
+      }),
+    ).toEqual(draft);
+    expect(
+      resolveNewTaskModelCwd({
+        projectCwd: "/work/1",
+        workspaceMode: "worktree",
+        worktreePath: "/work/0",
+      }),
+    ).toBeNull();
+    const unavailableModel = {
+      ...draft,
+      model: "not-in-catalog",
+      options: [...draft.options, { id: "modelSpecific", value: "opaque" }],
+    };
+    expect(resolveSelectableModelSelection(config, unavailableModel, projectId, "/work/1")).toEqual(
+      unavailableModel,
+    );
+    expect(resolveSelectableModelSelection(config, unavailableModel, projectId, "/work/0")).toEqual(
+      unavailableModel,
+    );
+    expect(
+      resolveSelectableModelSelection(config, unavailableModel, projectId, "/work/pending"),
+    ).toEqual(unavailableModel);
+    expect(
+      resolveSelectableModelSelection(config, unavailableModel, projectId, "/work/plan-default"),
+    ).toEqual(unavailableModel);
     expect(
       buildModelOptions(config, null, instanceId, projectId, true, "/work/1").map(
         (option) => option.selection.model,

@@ -143,6 +143,25 @@ export function resolveProviderForCwd(
   };
 }
 
+export function shouldPreserveOpenCodeAgent(input: {
+  readonly driver: string;
+  readonly descriptors: ReadonlyArray<{ readonly id: string }> | undefined;
+}): boolean {
+  return (
+    input.driver === "opencode" &&
+    !input.descriptors?.some((descriptor) => descriptor.id === "agent")
+  );
+}
+
+export function resolveProviderWorkspaceCwd(input: {
+  readonly projectCwd: string | null | undefined;
+  readonly mode: "local" | "worktree";
+  readonly worktreePath: string | null | undefined;
+}): string | null {
+  if (input.mode === "worktree") return input.worktreePath || null;
+  return input.worktreePath || input.projectCwd || null;
+}
+
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
@@ -247,7 +266,11 @@ function planProviderWorkspaceSnapshotRefresh(
   if (refresh) {
     return { state: { ...state, requestedAt: now }, refresh: true, recheckAt: null };
   }
-  return { state, refresh: false, recheckAt: pending ? retryNotBefore : null };
+  return {
+    state,
+    refresh: false,
+    recheckAt: pending ? retryNotBefore : null,
+  };
 }
 
 /**
@@ -289,7 +312,12 @@ export function isProviderWorkspaceSnapshotScanning(
   );
 }
 
-type WorkspaceSnapshotStatus = "absent" | "pending" | "complete";
+type WorkspaceSnapshotStatus =
+  | "absent"
+  | "commands-pending"
+  | "descriptors-pending"
+  | "both-pending"
+  | "complete";
 
 function resolveWorkspaceSnapshotStatus(
   provider: ServerProvider | undefined,

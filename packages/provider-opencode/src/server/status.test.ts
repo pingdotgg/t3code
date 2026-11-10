@@ -1136,7 +1136,7 @@ it.effect("waits for the scan of a cold OpenCode 2 directory that first lists on
   Effect.gen(function* () {
     const calls: Array<string> = [];
     const reads: Array<OpenCode2Workspace> = [
-      { commands: builtinCommands, skills: builtinSkills },
+      { agents: [], commands: builtinCommands, skills: builtinSkills },
       scanned,
     ];
     const workspace = yield* loadOpenCode2Workspace(

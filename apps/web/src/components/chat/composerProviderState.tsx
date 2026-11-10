@@ -4,6 +4,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
+  type ProviderOptionDescriptor,
   type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import {
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { shouldPreserveOpenCodeAgent } from "@t3tools/client-runtime/providerSkills";
 import {
   getReasoningTraitStep,
   type PromptUltrathink,
@@ -31,6 +33,7 @@ type ComposerProviderStateInput = {
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
 };
 
 type ComposerPromptInjectionState = "none" | "ultrathink";
@@ -57,6 +60,7 @@ type ComposerTraitsTarget = {
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -85,6 +89,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     modelOptions,
     promptInjectionState = "none",
     includePlanAgent,
+    workspaceOptionDescriptors,
   } = input;
   if (provider === "opencode") {
     const normalizedModel = normalizeModelSlug(model, provider);
@@ -119,13 +124,23 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     promptInjectionState === "ultrathink";
 
+  const dispatchOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+    descriptors,
+    selections,
+  );
+  const preserveAgent = shouldPreserveOpenCodeAgent({
+    driver: provider,
+    descriptors: workspaceOptionDescriptors,
+  });
+  const explicitAgent = modelOptions?.find((option) => option.id === "agent");
+  const modelOptionsForDispatch =
+    preserveAgent && explicitAgent && (includePlanAgent || explicitAgent.value !== "plan")
+      ? [...(dispatchOptions ?? []).filter((option) => option.id !== "agent"), explicitAgent]
+      : dispatchOptions;
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
-      selections,
-    ),
+    modelOptionsForDispatch,
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",
@@ -147,6 +162,7 @@ export function getComposerReasoningStep(input: {
   prompt: string;
   cursor: number;
   includePlanAgent?: boolean | undefined;
+  workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
   direction: 1 | -1;
 }): {
   prompt: string;
@@ -170,6 +186,7 @@ export function getComposerReasoningStep(input: {
     reportedModelSelection: input.reportedModelSelection,
     prompt,
     includePlanAgent: input.includePlanAgent,
+    workspaceOptionDescriptors: input.workspaceOptionDescriptors,
     direction: input.direction,
   });
   if (!step) return null;
