@@ -469,12 +469,35 @@ describe("DesktopUpdates", () => {
 
   // regression: #19291 an install that did apply was still flagged as not applied
   // regression: #32554 the downloaded copy of the applied build stayed in the updater cache
-  it.effect("does not flag an install that applied", () => {
+  it.effect.each([
+    {
+      name: "macOS",
+      platform: "darwin",
+      env: {},
+      updaterCacheDirName: "t3code-updater",
+      pending: (home: string) => `${home}/Library/Caches/t3code-updater/pending`,
+    },
+    {
+      name: "Windows",
+      platform: "win32",
+      env: { LOCALAPPDATA: "/win/AppData/Local" },
+      updaterCacheDirName: "t3code-updater",
+      pending: () => "/win/AppData/Local/t3code-updater/pending",
+    },
+    {
+      name: "a blank updaterCacheDirName",
+      platform: "darwin",
+      env: {},
+      updaterCacheDirName: "  ",
+      pending: undefined,
+    },
+  ] as const)("does not flag an install that applied ($name)", (row) => {
     const harness = makeHarness({
+      platform: row.platform,
+      env: row.env,
       installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
-      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+      appUpdateYml: `provider: github\nupdaterCacheDirName: ${row.updaterCacheDirName}\n`,
     });
-    const updaterCacheDir = `${harness.homeDirectory}/Library/Caches/t3code-updater`;
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -482,14 +505,12 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
         assert.isUndefined((yield* updates.getState).notAppliedVersion);
         assert.isUndefined(harness.previousInstallRecord());
-        assert.deepInclude(
-          harness.removedPaths,
-          { path: `${updaterCacheDir}/pending`, recursive: true },
-          "the applied build's pending download was not removed",
+        const removedDownloads = harness.removedPaths.filter(
+          (removed) => removed.path.endsWith("/pending") || removed.path.endsWith("/update.zip"),
         );
-        assert.notInclude(
-          harness.removedPaths.map((removed) => removed.path),
-          `${updaterCacheDir}/update.zip`,
+        assert.deepEqual(
+          removedDownloads,
+          row.pending ? [{ path: row.pending(harness.homeDirectory), recursive: true }] : [],
         );
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

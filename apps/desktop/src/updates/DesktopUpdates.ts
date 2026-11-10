@@ -282,8 +282,9 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
   const entries: Record<string, string> = {};
   for (const line of raw.split("\n")) {
     const match = line.match(/^(\w+):\s*(.+)$/);
-    if (match?.[1] && match[2]) {
-      entries[match[1]] = match[2].trim();
+    const value = match?.[2]?.trim();
+    if (match?.[1] && value) {
+      entries[match[1]] = value;
     }
   }
 
