@@ -208,7 +208,7 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
-const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh"]);
+const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
 
 export function buildEnvironmentCaptureCommand(
   shell: string,
@@ -253,9 +253,9 @@ export function buildEnvironmentCaptureCommand(
     .join("; ");
 
   // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
-  // Only shells that survive `trap - DEBUG`: OpenBSD ksh (loksh, oksh) exits on it.
+  // OpenBSD ksh (also its /bin/sh) exits on `trap - DEBUG`, so try it in a subshell first.
   return DEBUG_TRAP_SHELLS.has(executableName)
-    ? `trap - DEBUG 2>/dev/null || true; ${capture}`
+    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${capture}`
     : capture;
 }
 
