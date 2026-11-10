@@ -117,6 +117,18 @@ export function resolveUserMessagePresentation(message: {
   };
 }
 
+/** A steer the provider queued until it reads it; `unread` means its turn ended first. */
+export type SteerDelivery = "waiting" | "unread";
+
+export const STEER_DELIVERY_COPY = {
+  read: { label: "Steer", description: "Steered the active turn" },
+  waiting: {
+    label: "Steer waiting",
+    description: "Waiting for the agent to read this at its next step",
+  },
+  unread: { label: "Steer not read", description: "The turn ended before the agent read this" },
+} satisfies Record<SteerDelivery | "read", { label: string; description: string }>;
+
 type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
 };

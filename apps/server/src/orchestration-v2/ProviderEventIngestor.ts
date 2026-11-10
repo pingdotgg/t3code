@@ -7,6 +7,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  type MessageId,
   type ModelSelection,
   ProviderInstanceId,
   ProviderSessionId,
@@ -338,6 +339,51 @@ export const layer: Layer.Layer<
       },
     );
 
+    const settleWaitingSteers = Effect.fn("ProviderEventIngestor.settleWaitingSteers")(function* (
+      input: ProviderEventIngestInput,
+      threadId: ThreadId,
+      settle: { readonly messageId: MessageId } | { readonly providerTurnId: ProviderTurnId },
+    ) {
+      const turnItems = yield* projections
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["user_message"],
+          turnItemStatuses: ["waiting"],
+        })
+        .pipe(
+          Effect.map((records) => records.turnItems),
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed([]) }),
+        );
+      const now = yield* DateTime.now;
+      const events: Array<OrchestrationV2DomainEvent> = [];
+      for (const item of turnItems) {
+        if (item.type !== "user_message") continue;
+        const delivered = "messageId" in settle;
+        if (
+          delivered
+            ? item.messageId !== settle.messageId
+            : item.providerTurnId !== settle.providerTurnId
+        ) {
+          continue;
+        }
+        events.push(
+          yield* makeDomainEvent(input, {
+            type: "turn-item.updated",
+            threadId,
+            nodeId: item.nodeId,
+            runId: item.runId,
+            payload: {
+              ...item,
+              // A turn that ends before the provider reads a steer leaves it unread.
+              status: delivered ? "completed" : "cancelled",
+              completedAt: now,
+              updatedAt: now,
+            },
+          }),
+        );
+      }
+      return events;
+    });
+
     /** Providers may reveal native subagent models late; lock full-row updates against concurrent thread commands. */
     const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
       function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
@@ -616,6 +662,10 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "user_message.delivered":
+              return yield* settleWaitingSteers(input, input.event.threadId, {
+                messageId: input.event.messageId,
+              });
             case "background_work.updated":
               return [];
             case "command_output.delta":
@@ -623,7 +673,12 @@ export const layer: Layer.Layer<
               // The session manager serves these to clients before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = [
+                ...(yield* dismissNativeUserInputs(input, input.event.providerTurnId)),
+                ...(yield* settleWaitingSteers(input, input.threadId, {
+                  providerTurnId: input.event.providerTurnId,
+                })),
+              ];
               if (input.event.status !== "failed") {
                 return dismissed;
               }

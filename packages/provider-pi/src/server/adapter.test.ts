@@ -5094,6 +5094,71 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  // regression: #33776 a steer behind a running tool reads as delivered only once Pi starts it
+  it.effect("reports a steer delivered when Pi starts it, not when it queues", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      const providerTurnId =
+        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "Hello pi" }] },
+      });
+      const steerMessageId = "message:thread-pi-test:steer-behind-tool" as never;
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: providerTurnId!,
+        message: {
+          messageId: steerMessageId,
+          text: "Also say PINEAPPLE",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_sleep",
+        toolName: "bash",
+        args: { command: "sleep 90" },
+      });
+      const beforeRead = yield* takeEvent(
+        (event) =>
+          event.type === "user_message.delivered" ||
+          (event.type === "turn_item.updated" && event.turnItem.type === "command_execution"),
+      );
+      assert.equal(beforeRead.type, "turn_item.updated");
+
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "Also say PINEAPPLE" }] },
+      });
+      const delivered = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(delivered, {
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        messageId: steerMessageId,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps working after a settle probe fails before detached compaction", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

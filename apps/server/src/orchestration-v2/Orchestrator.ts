@@ -5271,6 +5271,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly providerThreadId: OrchestrationV2ProviderThread["id"];
         readonly providerInstanceId: ProviderInstanceId;
         readonly modelSwitch?: OrchestrationV2ModelSwitch | undefined;
+        readonly awaitsDelivery?: boolean;
       }) {
         const message: OrchestrationV2ConversationMessage = {
           createdBy: input.createdBy,
@@ -5313,10 +5314,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nativeItemRef: null,
           parentItemId: null,
           ordinal: yield* nextTurnItemOrdinal(input.projection),
-          status: "completed",
+          status: messageInput.awaitsDelivery === true ? "waiting" : "completed",
           title: null,
           startedAt: now,
-          completedAt: now,
+          completedAt: messageInput.awaitsDelivery === true ? null : now,
           updatedAt: now,
           type: "user_message",
           messageId: input.messageId,
@@ -5403,6 +5404,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerTurnId: providerTurn.id,
         providerThreadId: providerThread.id,
         providerInstanceId: targetRun.providerInstanceId,
+        awaitsDelivery:
+          session.providerSession.capabilities.turns.activeSteeringReportsDelivery === true,
       });
       yield* Ref.update(input.effects, (existing) => [
         ...existing,

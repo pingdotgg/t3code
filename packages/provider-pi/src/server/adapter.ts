@@ -7,6 +7,7 @@ import * as Predicate from "effect/Predicate";
 import {
   ProviderDriverKind,
   type ChatAttachment,
+  type MessageId,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -117,6 +118,7 @@ const PiProviderCapabilitiesV2 = {
     emitsTurnCompleted: true,
     supportsInterrupt: true,
     supportsActiveSteering: true,
+    activeSteeringReportsDelivery: true,
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
@@ -374,6 +376,9 @@ interface ActivePiTurn {
   failure: ReturnType<typeof makeProviderFailure> | null;
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
+  /** Steers Pi queued but has not started, oldest first. */
+  readonly unreadSteers: Array<{ readonly messageId: MessageId; readonly text: string }>;
+  sawUserMessage: boolean;
 }
 
 interface PiTurnTreeRefs {
@@ -623,6 +628,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
+      const emitSteerDelivered = (turn: ActivePiTurn, messageId: MessageId) =>
+        emit({
+          type: "user_message.delivered",
+          driver: PI_PROVIDER,
+          threadId: turn.turnInput.threadId,
+          runId: turn.turnInput.runId,
+          messageId,
+        });
 
       const updateProviderSession =
         /* Provider events include streaming deltas; avoid a span for each update. */
@@ -1930,10 +1943,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           case "message_start": {
-            if (turn !== null && recordString(event["message"], "role") === "assistant") {
+            if (turn === null) return;
+            const role = recordString(event["message"], "role");
+            if (role === "assistant") {
               turn.sawAgentActivity = true;
               turn.messageOrdinal += 1;
+              return;
             }
+            if (role !== "user") return;
+            // Pi starts a queued steer as a user message with its text, as Pi's own queue matches it.
+            // An expanded prompt template no longer matches, so after the turn's prompt take the oldest.
+            const text = contentText(recordField(event["message"], "content"));
+            const matched = turn.unreadSteers.findIndex((steer) => steer.text === text);
+            const index = matched === -1 && turn.sawUserMessage ? 0 : matched;
+            turn.sawUserMessage = true;
+            const [steer] = index === -1 ? [] : turn.unreadSteers.splice(index, 1);
+            if (steer !== undefined) yield* emitSteerDelivered(turn, steer.messageId);
             return;
           }
           case "message_update": {
@@ -2795,6 +2820,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               activeProviderRetry: null,
               failure: null,
               rejectedPromptFailure: null,
+              unreadSteers: [],
+              sawUserMessage: false,
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
             yield* Effect.gen(function* () {
@@ -2917,7 +2944,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
                   });
+                  yield* emitSteerDelivered(turn, steerInput.message.messageId);
                 } else if (payload !== null) {
+                  turn.unreadSteers.push({
+                    messageId: steerInput.message.messageId,
+                    text: payload.message,
+                  });
                   yield* sendPrompt({
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",

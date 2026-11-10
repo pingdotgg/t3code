@@ -126,6 +126,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
+  /** The provider read a steer it had queued; see `activeSteeringReportsDelivery`. */
+  Schema.Struct({
+    type: Schema.Literal("user_message.delivered"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    runId: RunId,
+    messageId: MessageId,
+  }),
   // Start before the root terminal; clear only after the final covered projection.
   // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.
   Schema.Struct({

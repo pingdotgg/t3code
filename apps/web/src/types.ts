@@ -23,6 +23,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { videoMimeType } from "@t3tools/shared/video";
+import type { SteerDelivery } from "@t3tools/client-runtime/user-message";
 
 export { videoMimeType } from "@t3tools/shared/video";
 
@@ -87,6 +88,7 @@ export interface ChatMessage {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
+  readonly steerDelivery?: SteerDelivery | undefined;
 }
 
 export interface ProposedPlan {

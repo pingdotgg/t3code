@@ -32,6 +32,7 @@ import {
   workEntryHiddenByToolCallVisibility,
 } from "@t3tools/client-runtime/work-log/presentation";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
+import type { SteerDelivery } from "@t3tools/client-runtime/user-message";
 import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
@@ -134,6 +135,7 @@ export interface ThreadFeedMessage {
   readonly runId: RunId | null;
   readonly streaming: boolean;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
+  readonly steerDelivery?: SteerDelivery;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
@@ -2310,6 +2312,8 @@ export function buildThreadFeed(
           ...(item.type === "user_message"
             ? {
                 inputIntent: item.inputIntent,
+                ...(item.status === "waiting" ? { steerDelivery: "waiting" as const } : {}),
+                ...(item.status === "cancelled" ? { steerDelivery: "unread" as const } : {}),
                 createdBy: item.createdBy,
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),

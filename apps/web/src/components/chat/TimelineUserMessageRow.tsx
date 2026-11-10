@@ -8,7 +8,11 @@ import {
   type ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  resolveUserMessagePresentation,
+  STEER_DELIVERY_COPY,
+  type SteerDelivery,
+} from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -296,7 +300,10 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
     <div className="group flex flex-col items-end gap-1" data-user-message-attribution="automation">
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
-        <UserMessageIntentMarker intent={row.message.inputIntent} />
+        <UserMessageIntentMarker
+          intent={row.message.inputIntent}
+          delivery={row.message.steerDelivery}
+        />
       ) : null}
       <div
         className={cn(
@@ -845,7 +852,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {(row.message.inputIntent === "steer" ||
         row.message.inputIntent === "promoted_queued_to_steer") &&
       !row.continuesSteer ? (
-        <UserMessageIntentMarker intent={row.message.inputIntent} />
+        <UserMessageIntentMarker
+          intent={row.message.inputIntent}
+          delivery={row.message.steerDelivery}
+        />
       ) : null}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
@@ -1048,8 +1058,10 @@ const ACTIONS_REVEAL_CLASS_NAME =
 
 function UserMessageIntentMarker({
   intent,
+  delivery,
 }: {
   readonly intent: "steer" | "promoted_queued_to_steer";
+  readonly delivery: SteerDelivery | undefined;
 }) {
   return (
     <Tooltip>
@@ -1062,12 +1074,12 @@ function UserMessageIntentMarker({
         }
       >
         <Redo2Icon aria-hidden="true" className="size-3" />
-        Steer
+        {STEER_DELIVERY_COPY[delivery ?? "read"].label}
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {intent === "promoted_queued_to_steer"
+        {delivery === undefined && intent === "promoted_queued_to_steer"
           ? "Originally queued, then promoted to steer the active turn"
-          : "Steered the active turn"}
+          : STEER_DELIVERY_COPY[delivery ?? "read"].description}
       </TooltipPopup>
     </Tooltip>
   );

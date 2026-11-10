@@ -596,7 +596,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           : {}),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
-        ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
+        ...(item.type === "user_message"
+          ? {
+              inputIntent: item.inputIntent,
+              ...(item.status === "waiting" ? { steerDelivery: "waiting" as const } : {}),
+              ...(item.status === "cancelled" ? { steerDelivery: "unread" as const } : {}),
+            }
+          : {}),
       };
       committedMessageIds.add(message.id);
       entries.push({
