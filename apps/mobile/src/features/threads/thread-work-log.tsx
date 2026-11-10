@@ -25,6 +25,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -36,6 +37,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text as RNText,
   useAnimatedValue,
   View,
 } from "react-native";
@@ -54,6 +56,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
+import { highlightCommand, type HighlightedLines } from "../../lib/highlights";
+import {
+  commandHighlightLanguage,
+  withVisibleControlCharacters,
+} from "@t3tools/client-runtime/work-log/command-label";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
@@ -807,6 +814,31 @@ function ToolCodeText({
   readonly theme: "light" | "dark";
 }) {
   const lines = useMarkdownCodeHighlight({ code, language, theme, enabled: true });
+  return <HighlightedCodeText code={code} lines={lines} />;
+}
+
+function CommandCodeText({
+  command,
+  theme,
+}: {
+  readonly command: string;
+  readonly theme: "light" | "dark";
+}) {
+  const code = withVisibleControlCharacters(command.trim());
+  const lines = useMemo(
+    () => highlightCommand(code, commandHighlightLanguage(code), theme),
+    [code, theme],
+  );
+  return <HighlightedCodeText code={code} lines={lines} />;
+}
+
+function HighlightedCodeText({
+  code,
+  lines,
+}: {
+  readonly code: string;
+  readonly lines: HighlightedLines | null;
+}) {
   let offset = 0;
   const highlighted = lines?.flatMap((line, lineIndex) => {
     const separator = lineIndex > 0 ? "\n" : "";
@@ -816,10 +848,11 @@ function ToolCodeText({
       ...line.map((token) => {
         const start = offset;
         offset += token.content.length;
+        // Plain RN Text inherits the mono font; AppText would reset it to sans.
         return (
-          <Text key={start} style={token.color ? { color: token.color } : undefined}>
+          <RNText key={start} style={token.color ? { color: token.color } : undefined}>
             {token.content}
-          </Text>
+          </RNText>
         );
       }),
     ];
@@ -1179,7 +1212,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               props.renderReasoning(reasoning.text)
             ) : call ? (
               [
-                call.command,
+                call.command ? (
+                  <CommandCodeText
+                    key="command"
+                    command={call.command}
+                    theme={props.themeAppearance}
+                  />
+                ) : null,
                 ...(call.args ?? []).map(([key, value]) => {
                   const language =
                     key === "html"

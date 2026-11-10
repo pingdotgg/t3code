@@ -86,7 +86,6 @@
     "sql.js": "1.15.0",
     "tailwind-merge": "^3.4.0",
     "tiff": "7.1.3",
-    "unbash": "^5.0.0",
     "unified": "catalog:",
     "use-sync-external-store": "^1.6.0",
     "vfile": "^6.0.3",
