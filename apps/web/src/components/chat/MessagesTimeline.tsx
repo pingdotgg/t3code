@@ -22,6 +22,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
+import { flushSync } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
@@ -979,7 +980,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         : TIMELINE_MAINTAIN_SCROLL_AT_END;
   // Legend animates every end pin of an animated list and queues a resize pin behind a running
   // one, so a viewport resize (terminal drawer) would push the live end out of view for a beat.
-  // Runs from Legend's onLayout, after it has measured the new viewport length.
+  // Runs from Legend's onLayout, after it has measured the new viewport length. scrollToEnd
+  // commits through a React update, so flush it to scroll before this frame paints.
   const listViewportHeightRef = useRef<number | null>(null);
   const pinEndOnViewportResize = useStableCallback(
     (event: { nativeEvent: { layout: { height: number } } }) => {
@@ -987,9 +989,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       const previousHeight = listViewportHeightRef.current;
       listViewportHeightRef.current = height;
       if (previousHeight === null || previousHeight === height) return;
-      const list = listRef.current;
       if (maintainScrollAtEnd !== TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) return;
-      if (list?.getState().isFollowingEnd) void list.scrollToEnd({ animated: false });
+      const list = listRef.current;
+      if (!list?.getState().isFollowingEnd) return;
+      flushSync(() => void list.scrollToEnd({ animated: false }));
     },
   );
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {

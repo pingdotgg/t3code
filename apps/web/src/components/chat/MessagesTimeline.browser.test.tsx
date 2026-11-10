@@ -336,8 +336,17 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() =>
       expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" })),
     );
-    // Shrinks by more than the new viewport while that smooth pin runs.
-    container.style.height = "200px";
+    // Shrinks by more than the new viewport while that smooth pin runs. Observers run in creation
+    // order before paint, so this one reads the position the resized frame paints with.
+    const distanceWhenPainted = new Promise<number>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve(distanceFromEnd());
+      });
+      observer.observe(viewport);
+      container.style.height = "200px";
+    });
+    expect(await distanceWhenPainted).toBeLessThan(2);
     await pinnedEnd("instant");
 
     await screen.rerender(
