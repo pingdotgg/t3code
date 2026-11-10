@@ -494,15 +494,22 @@ function AdaptiveWorkspaceLayoutContent(
     if (primarySidebarPinned) {
       return;
     }
-    if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
+    if (
+      !panes.primarySidebarVisible &&
+      (panes.primarySidebarSuppressedByAuxiliary ||
+        (Platform.OS === "android" && panes.auxiliaryPaneVisible))
+    ) {
       setFileInspectorPreferredVisible(false);
-      setPrimarySidebarPreferredVisible(true);
+      setPrimarySidebarVisible(true);
       return;
     }
     setPrimarySidebarVisible(!preferredSidebarVisible);
   };
   const revealPrimarySidebar = () => {
-    if (panes.primarySidebarSuppressedByAuxiliary) {
+    if (
+      panes.primarySidebarSuppressedByAuxiliary ||
+      (Platform.OS === "android" && panes.auxiliaryPaneVisible)
+    ) {
       setFileInspectorPreferredVisible(false);
     }
     setPrimarySidebarVisible(true);
