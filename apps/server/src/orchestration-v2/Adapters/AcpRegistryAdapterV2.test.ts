@@ -2175,6 +2175,18 @@ describe("AcpRegistryAdapterV2", () => {
       assert.lengthOf(session.offers, 1, "Droid's Task completion must offer a continuation run");
       yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
       yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const lateTask = (yield* session.until(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "task-1",
+      )).at(-1);
+      if (lateTask?.type !== "turn_item.updated") throw new Error("Missing late Task completion");
+      assert.deepInclude(lateTask.turnItem, {
+        runId: session.turnInput(2).runId,
+        status: "completed",
+        title: "Task",
+        input: { subagent_type: "explorer", prompt: "sleep 20; ls /tmp | head -3" },
+        output: { type: "Text", text: "The command ran and exited with code 0." },
+      });
       const taskSettled = yield* Effect.forkScoped(session.terminal);
       yield* TestClock.adjust("3 seconds");
       assert.include(yield* Fiber.join(taskSettled), { runOrdinal: 2, status: "completed" });

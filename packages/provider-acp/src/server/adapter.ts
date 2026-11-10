@@ -1367,6 +1367,8 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
+  /** The previous completed run's tools, so a sparse late update keeps the tool's identity. */
+  readonly settledTools: ActiveAcpTurn["tools"] | undefined;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
@@ -2208,6 +2210,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        const settledRunTools = yield* Ref.make<{
+          readonly sessionId: string;
+          readonly tools: ActiveAcpTurn["tools"];
+        } | null>(null);
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -3879,7 +3885,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (context.reasoning.current?.sourceMessageId == null)
             yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "user");
-          const previous = context.tools.get(incoming.toolCallId);
+          const previous =
+            context.tools.get(incoming.toolCallId) ??
+            context.settledTools?.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
@@ -7152,6 +7160,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
                 yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
                 yield* Ref.set(carryoverSubagents, null);
+                yield* Ref.set(settledRunTools, null);
                 yield* Ref.set(suppressPostSettleMonitorPrompt, false);
                 yield* Ref.set(lastTurnRoute, null);
               }),
@@ -7627,6 +7636,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
+              yield* Ref.set(settledRunTools, null);
               yield* Ref.set(lastTurnRoute, null);
             }),
           );
@@ -7793,6 +7803,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          yield* Ref.set(
+            settledRunTools,
+            postSettleContinuationEnabled && settledStatus === "completed" && !directStopQuarantine
+              ? { sessionId: context.nativeThreadId, tools: context.tools }
+              : null,
+          );
           yield* Ref.set(activeTurn, null);
           steerInjections.clear();
           if (
@@ -8195,6 +8211,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            const settled = yield* Ref.getAndSet(settledRunTools, null);
             const context: ActiveAcpTurn = {
               input: turnInput,
               providerTurnId,
@@ -8213,6 +8230,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              settledTools: settled?.sessionId === requestedSessionId ? settled.tools : undefined,
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),
