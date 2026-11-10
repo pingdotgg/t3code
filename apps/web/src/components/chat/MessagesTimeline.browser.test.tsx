@@ -1607,6 +1607,7 @@ describe("MessagesTimeline citations", () => {
       attemptOrdinal: ordinal,
       rootNodeId: `node-${id}` as never,
       status,
+      startedAt: null,
       completedAt: null,
     });
     const superseded = attempt("attempt-1", 1, "superseded");
