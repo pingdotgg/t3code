@@ -1145,13 +1145,6 @@ export const enMessages = {
   "settings.system.about.licensesDescription":
     "Notices for dependencies, assets, and optional tools used by T3 Code.",
   "settings.system.about.viewLicenses": "View licenses",
-  "settings.system.legacy.title": "Legacy",
-  "settings.system.legacy.planMode.title": "Plan mode (legacy)",
-  "settings.system.legacy.planMode.description":
-    "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode.",
-  "settings.system.legacy.contextWindow.title": "Context window indicator (legacy)",
-  "settings.system.legacy.contextWindow.description":
-    "Shows context window usage as a circular indicator in the composer.",
   "settings.system.maintenance.updatesTitle": "Updates",
   "settings.system.maintenance.providerChecks.title": "Provider update checks",
   "settings.system.maintenance.providerChecks.description":
@@ -2453,12 +2446,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.about.licensesTitle": "开源许可证",
   "settings.system.about.licensesDescription": "T3 Code 使用的依赖、素材和可选工具的声明。",
   "settings.system.about.viewLicenses": "查看许可证",
-  "settings.system.legacy.title": "旧版功能",
-  "settings.system.legacy.planMode.title": "Plan 模式（旧版）",
-  "settings.system.legacy.planMode.description":
-    "恢复 Build/Plan、/plan、/default 和 Shift+Tab。关闭后使用 build 模式。",
-  "settings.system.legacy.contextWindow.title": "上下文窗口指示器（旧版）",
-  "settings.system.legacy.contextWindow.description": "在输入框中以环形指示器显示上下文窗口用量。",
   "settings.system.maintenance.updatesTitle": "更新",
   "settings.system.maintenance.providerChecks.title": "提供商更新检查",
   "settings.system.maintenance.providerChecks.description":

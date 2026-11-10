@@ -149,7 +149,6 @@ export const enMessages = {
   "appB.threadChip.unreadable":
     "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
   "appB.threadChip.open": "Open thread",
-  "appB.threadChip.unavailable": "Thread no longer available",
   "appB.notify.completed": "Thread completed",
   "appB.notify.approval": "Approval needed",
   "appB.notify.limited": "Usage limit reached",
@@ -478,7 +477,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "appB.threadChip.unreadable":
     "此会话位于另一台机器上，当前机器的智能体无法读取。移除它或切换回原机器后再发送。",
   "appB.threadChip.open": "打开会话",
-  "appB.threadChip.unavailable": "会话已不可用",
   "appB.notify.completed": "会话已完成",
   "appB.notify.approval": "需要批准",
   "appB.notify.limited": "已达到用量限制",
