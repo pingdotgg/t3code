@@ -20,7 +20,8 @@ const LIST_TIMEOUT_SECONDS = 40;
 const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 // The hub passes numeric display IDs that Xcode 26 rejects; iOS 27 needs them for multiple displays.
-const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
+const runsOnXcode26Runtime = (version: string) =>
+  Number(/^(?:iOS|watchOS) (\d+)/.exec(version)?.[1]) <= 26;
 const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
 trap 'rm -f "$f"' 0
 xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"`;

@@ -48,7 +48,7 @@ const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBoo
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
 it.effect.each([400, 500])(
-  "retries a hub-rejected (%s) screenshot with simctl only on iOS 26 and older",
+  "retries a hub-rejected (%s) screenshot with simctl only on iOS and watchOS 26 and older",
   (status) =>
     Effect.gen(function* () {
       const operations = makeDeviceHubOperations({
@@ -77,6 +77,12 @@ it.effect.each([400, 500])(
         failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
       });
       expect(yield* screenshot("iOS 26.3")).toMatchObject({
+        success: new Uint8Array([137, 80, 78, 71]),
+      });
+      expect(yield* screenshot("watchOS 27.2")).toMatchObject({
+        failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+      expect(yield* screenshot("watchOS 26.2")).toMatchObject({
         success: new Uint8Array([137, 80, 78, 71]),
       });
     }),
