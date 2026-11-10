@@ -711,12 +711,11 @@ function startAnnotation(
     voice.shortcuts.some((shortcut) =>
       matchesKeybindingShortcut(event, shortcut, navigator.platform),
     );
-  for (const button of [voiceButton, voiceFinish, voiceCancel, voiceSkip]) {
-    button.addEventListener("pointerdown", (event) => event.preventDefault());
-  }
-  // Page scripts cannot reach the closed shadow root, and a synthetic click never counts.
+  const voiceControls = [voiceButton, voiceFinish, voiceCancel, voiceSkip];
+  // Clicks the window listener redelivers from real input; page script cannot forge these.
+  const overlayClicks = new WeakSet<Event>();
   voiceButton.addEventListener("click", (event) => {
-    if (!event.isTrusted) return;
+    if (!overlayClicks.has(event)) return;
     if (voiceSettings) {
       sendVoice("settings");
       return;
@@ -725,15 +724,15 @@ function startAnnotation(
     sendVoice(voicePhase === "recording" ? "stop" : "start");
   });
   voiceFinish.addEventListener("click", (event) => {
-    if (event.isTrusted) sendVoice("stop");
+    if (overlayClicks.has(event)) sendVoice("stop");
   });
   voiceCancel.addEventListener("click", (event) => {
-    if (!event.isTrusted) return;
+    if (!overlayClicks.has(event)) return;
     pendingVoiceSubmission = null;
     sendVoice("cancel");
   });
   voiceSkip.addEventListener("click", (event) => {
-    if (event.isTrusted) sendVoice("skip");
+    if (overlayClicks.has(event)) sendVoice("skip");
   });
   const onVoiceState = (
     _event: Electron.IpcRendererEvent,
@@ -1497,7 +1496,11 @@ function startAnnotation(
       // Page script can dispatch on the host; only real input may reach the closed overlay.
       if (!event.isTrusted) return;
       pressTarget = shadowRoot.elementFromPoint(event.clientX, event.clientY);
-      if (pressTarget && dragHandle.contains(pressTarget)) onEditorPointerDown(event);
+      if (!pressTarget) return;
+      if (dragHandle.contains(pressTarget)) onEditorPointerDown(event);
+      // Voice controls keep focus in the comment field they dictate into.
+      else if (voiceControls.some((control) => control.contains(pressTarget)))
+        event.preventDefault();
       return;
     }
     if (event.button !== 0) return;
@@ -1588,7 +1591,9 @@ function startAnnotation(
       event.stopPropagation();
       if (!event.isTrusted) return;
       // The trusted click already ran native activation; a plain Event only reaches listeners.
-      overlayClickTarget(event)?.dispatchEvent(new Event("click", { bubbles: true }));
+      const click = new Event("click", { bubbles: true });
+      overlayClicks.add(click);
+      overlayClickTarget(event)?.dispatchEvent(click);
       return;
     }
     event.preventDefault();
