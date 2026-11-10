@@ -4,6 +4,7 @@ import { memo, type CSSProperties, useRef, useState, useEffect, useLayoutEffect 
 
 import "./SplitChatWorkspace.css";
 
+import { ComposerHandleContext, useComposerHandleContext } from "../../composerHandleContext";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { cn } from "../../lib/utils";
 import { threadTargetKey, useSplitChatStore } from "../../splitChatStore";
@@ -32,6 +33,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   modalOpen,
 }: SplitChatWorkspaceProps) {
   const navigate = useNavigate();
+  const composerHandle = useComposerHandleContext();
   const animations = usePanelAnimationSettings();
   const store = useSplitChatStore();
   const {
@@ -105,6 +107,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
             ];
 
   const bounds = layoutBounds(count);
+  const activeIndex = Math.min(activePaneIndex, count - 1);
 
   const navigatePrimary = (target: ThreadRouteTarget) => {
     setPendingPrimary({ previousKey: primaryKey, target });
@@ -411,18 +414,19 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                   ) : null
                 }
               >
-                <SplitChatPaneActiveContext
-                  value={count < 2 || Math.min(activePaneIndex, count - 1) === index}
-                >
-                  <ThreadRouteView
-                    target={target}
-                    asPane
-                    ownsRoute={index === 0}
-                    background={modalOpen}
-                    onTargetUnavailable={
-                      count > 1 ? () => close(threadTargetKey(target)) : undefined
-                    }
-                  />
+                <SplitChatPaneActiveContext value={index === activeIndex}>
+                  {/* The app-wide composer handle belongs to the active pane only. */}
+                  <ComposerHandleContext value={index === activeIndex ? composerHandle : null}>
+                    <ThreadRouteView
+                      target={target}
+                      asPane
+                      ownsRoute={index === 0}
+                      background={modalOpen}
+                      onTargetUnavailable={
+                        count > 1 ? () => close(threadTargetKey(target)) : undefined
+                      }
+                    />
+                  </ComposerHandleContext>
                 </SplitChatPaneActiveContext>
               </SplitChatPaneControlsContext>
             </div>
