@@ -1405,7 +1405,7 @@ it.effect("GitVcsDriver reports no repository when old Git answers false before 
     });
 
     assert.equal(yield* driver.detectRepository(globalThis.process.cwd()), null);
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("GitVcsDriver fails a checkpoint ref lookup when git cannot read its object", () =>
@@ -1421,7 +1421,7 @@ it.effect("GitVcsDriver fails a checkpoint ref lookup when git cannot read its o
       driver.checkpoints.hasCheckpointRef({ cwd: globalThis.process.cwd(), checkpointRef }),
     );
     assert.isTrue(Exit.isFailure(exit), "an unreadable checkpoint object is not an absent ref");
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("GitVcsDriver reads no repository through GIT_TRACE output", () =>
@@ -1437,7 +1437,7 @@ it.effect("GitVcsDriver reads no repository through GIT_TRACE output", () =>
     });
 
     assert.equal(yield* driver.detectRepository(globalThis.process.cwd()), null);
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("GitVcsDriver reads an absent checkpoint ref as absent despite a Git warning", () =>

@@ -131,7 +131,7 @@ describe("VcsDriverRegistry", () => {
   );
   const makeFailingLayer = (detectOutput: VcsProcess.VcsProcessOutput) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
