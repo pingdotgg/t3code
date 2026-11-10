@@ -1529,8 +1529,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
 }
 
+/* Dark chrome paints the Orbital Sunrise vector itself, in its colors. The chrome's own
+   color lies over it, strongest where the tabs and thread list sit and thinning toward the
+   window's foot, so the sky reads as the app's chrome and the horizon rises under the UI.
+   Sized past cover and set 8vh low so the horizon clears the list. */
 :root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
+  --chrome-art-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 0%,
+      color-mix(in srgb, var(--app-chrome-background) 76%, transparent) 50%,
+      color-mix(in srgb, var(--app-chrome-background) 48%, transparent) 80%,
+      color-mix(in srgb, var(--app-chrome-background) 14%, transparent) 100%
+    ),
+    url("./assets/chrome/art-nightly-sunrise-color.svg") center calc(100% + 8vh) / max(100vw, 192vh)
+      auto no-repeat;
 }
 
 [data-chrome-art="nightly"] {
@@ -1737,6 +1750,39 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   > [data-chrome-art-layer="dev"]
   :is([data-bp-sidebar], [data-bp-at="pane-left"]) {
   transition: translate var(--panel-animation-duration) ease-out;
+}
+
+[data-slot="sidebar-slide-frame"] {
+  --sidebar-slide-corner: 14px;
+
+  & > [data-corner] {
+    position: absolute;
+    right: 100%;
+    width: var(--sidebar-slide-corner);
+    height: var(--sidebar-slide-corner);
+    background: inherit;
+    mask: radial-gradient(
+      circle var(--sidebar-slide-corner) at var(--sidebar-slide-corner-center),
+      transparent var(--sidebar-slide-corner),
+      #000 calc(var(--sidebar-slide-corner) + 0.5px)
+    );
+  }
+
+  & > [data-corner="top"] {
+    --sidebar-slide-corner-center: 0 100%;
+  }
+
+  & > [data-corner="bottom"] {
+    --sidebar-slide-corner-center: 0 0;
+    translate: 0 -100%;
+  }
+}
+
+[data-chrome-art] [data-slot="sidebar-slide-frame"],
+[data-chrome-art] [data-slot="sidebar-slide-frame"] > [data-corner] {
+  background: var(--chrome-art-paint);
+  background-attachment: fixed;
+  background-blend-mode: var(--chrome-art-blend, normal);
 }
 
 /* Over the art the sidebar goes transparent and its secondary text takes the
