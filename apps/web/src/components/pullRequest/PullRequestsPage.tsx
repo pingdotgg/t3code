@@ -1024,7 +1024,14 @@ export function PullRequestsPage() {
   const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) {
+      setMaximized((value) => !value);
+      return;
+    }
+    // A closed panel opens straight into maximized.
+    if (!rightPanelAvailable) return;
+    toggleRightPanel();
+    setMaximized(true);
   };
   const onGuideShown = () => setMaximized(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked pull request in the right panel store
@@ -1439,7 +1446,7 @@ export function PullRequestsPage() {
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen && !rightPanelAvailable) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
