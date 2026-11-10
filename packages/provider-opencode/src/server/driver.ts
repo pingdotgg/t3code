@@ -491,6 +491,7 @@ export const OpenCodeDriver: ProviderDriver<
             serverUrl,
             environment: processEnv,
           }).pipe(
+            Effect.ensuring(openCode2Server.forget),
             Effect.mapError(
               (cause) =>
                 new ProviderDriverError({
