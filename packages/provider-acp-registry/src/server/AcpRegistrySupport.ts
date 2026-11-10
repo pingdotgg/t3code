@@ -21,7 +21,6 @@ import {
   resolveSpawnCommand,
   SpawnExecutableResolution,
 } from "@t3tools/shared/shell";
-import * as NodePath from "node:path";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -643,13 +642,6 @@ function searchRank(agent: AcpRegistryAgent, query: string): number | undefined 
   return undefined;
 }
 
-function absoluteSpawnPath(filePath: string): string {
-  if (NodePath.win32.isAbsolute(filePath) || NodePath.posix.isAbsolute(filePath)) return filePath;
-  // A drive-relative path such as C:dsh.cmd has no slash. Keep it on that drive.
-  if (/^[A-Za-z]:/u.test(filePath)) return NodePath.win32.resolve(filePath);
-  return NodePath.resolve(filePath);
-}
-
 export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(function* (
   input: AcpRegistryCatalogOptions,
 ): Effect.fn.Return<
@@ -669,6 +661,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     digester.digest(Digest.sha256, data).pipe(Effect.map(Hex.encode), Effect.orDie);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const absoluteSpawnPath = (filePath: string) =>
+    path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
   const httpClient = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { settings: hostSettings } = yield* ProviderHost.ProviderHost;

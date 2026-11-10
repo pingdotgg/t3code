@@ -1,4 +1,3 @@
-import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -323,8 +322,8 @@ describe("AcpRegistrySupport", () => {
           "",
         ].join("\n"),
       );
-      const relativeShim = NodePath.relative(process.cwd(), shimPath);
-      const environment = { PATH: [decoyDir, shimDir].join(path.delimiter), PATHEXT: ".EXE;.CMD" };
+      const relativeShim = path.relative(process.cwd(), shimPath);
+      const environment = { PATH: [decoyDir, shimDir].join(";"), PATHEXT: ".EXE;.CMD" };
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
@@ -345,13 +344,13 @@ describe("AcpRegistrySupport", () => {
       const spawnCommand = resolved.spawn.command.replaceAll("\\", "/");
       const scriptArg = String(resolved.spawn.args[0]).replaceAll("\\", "/");
       expect(
-        NodePath.isAbsolute(resolved.spawn.command) || /^[A-Za-z]:/u.test(resolved.spawn.command),
+        path.isAbsolute(resolved.spawn.command) || /^[A-Za-z]:/u.test(resolved.spawn.command),
       ).toBe(true);
       expect(spawnCommand.endsWith("/node.exe")).toBe(true);
       expect(spawnCommand.includes("/decoy/")).toBe(false);
       expect(scriptArg.endsWith("/node_modules/@deepseek-ai/dsh/lib/bin.js")).toBe(true);
       expect(
-        NodePath.isAbsolute(String(resolved.spawn.args[0])) ||
+        path.isAbsolute(String(resolved.spawn.args[0])) ||
           /^[A-Za-z]:/u.test(String(resolved.spawn.args[0])),
       ).toBe(true);
     }).pipe(
