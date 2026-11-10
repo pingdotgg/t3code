@@ -506,9 +506,10 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 // A replacement manager registers a default Directory shell verb; stock Windows
 // uses "none". Explorer needs its /select argument passed verbatim through
 // PowerShell because Node's argument quoting changes how Explorer parses it.
+// [char]34 keeps double quotes out of the plain -Command text for the same reason.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,' + [char]34 + ${literal} + [char]34) }`;
 }
 
 function powerShellFileManagerLaunch(
