@@ -17,6 +17,34 @@ export interface ThreadPullRequestIdentityFilter {
   readonly url?: string | undefined;
 }
 
+const LIST_PULL_REQUEST_NUMBER = /^#?(\d+)$/;
+const LIST_PULL_REQUEST_REPO_NUMBER = /^([\w.-]+\/[\w.-]+)#(\d+)$/;
+/** GitHub `/pull/n`, Azure `/pullrequest/n`, GitLab `/-/merge_requests/n`. */
+const LIST_PULL_REQUEST_URL = /^\S*\/(?:pulls?|pullrequest|-\/merge_requests)\/\d+(?:[/?#]\S*)?$/i;
+const LIST_PULL_REQUEST_STATES = new Set<PullRequestState>(["open", "closed", "merged"]);
+
+/** Parses `t3_thread_list`'s `pullRequest` string: state, `#n` / `n`, `owner/repo#n`, or a pull URL. */
+export function parseThreadListPullRequestFilter(value: string): {
+  readonly pullRequestStates?: ReadonlyArray<PullRequestState>;
+  readonly pullRequest?: ThreadPullRequestIdentityFilter;
+} | null {
+  const trimmed = value.trim();
+  const state = trimmed.toLowerCase();
+  if (LIST_PULL_REQUEST_STATES.has(state as PullRequestState)) {
+    return { pullRequestStates: [state as PullRequestState] };
+  }
+  const numberMatch = LIST_PULL_REQUEST_NUMBER.exec(trimmed);
+  if (numberMatch !== null) return { pullRequest: { number: Number(numberMatch[1]) } };
+  const repoNumberMatch = LIST_PULL_REQUEST_REPO_NUMBER.exec(trimmed);
+  if (repoNumberMatch !== null) {
+    return {
+      pullRequest: { repository: repoNumberMatch[1], number: Number(repoNumberMatch[2]) },
+    };
+  }
+  if (LIST_PULL_REQUEST_URL.test(trimmed)) return { pullRequest: { url: trimmed } };
+  return null;
+}
+
 const DIGIT = /\d/;
 
 /** A pasted link may continue past the stored URL: ".../pull/22889/files". */
@@ -126,9 +154,7 @@ export function threadPullRequestSearchTerms(thread: {
 
 const PULL_REQUEST_NUMBER_QUERY = /^#?\d+$/;
 const PULL_REQUEST_REPO_NUMBER_QUERY = /^[\w.-]+\/[\w.-]+#\d+$/;
-/** GitHub `/pull/n`, Azure `/pullrequest/n`, GitLab `/-/merge_requests/n`. */
-const PULL_REQUEST_URL_NUMBER =
-  /^\S*\/(?:pulls?|pullrequest|-\/merge_requests)\/\d+(?:[/?#]\S*)?$/i;
+const PULL_REQUEST_URL_NUMBER = LIST_PULL_REQUEST_URL;
 /** Same floor as palette reference matching: short URL prefixes hit too many threads. */
 const PULL_REQUEST_REFERENCE_PREFIX_MIN = 8;
 /** Same stripping as palette field queries for numbered pull-request lookups. */
