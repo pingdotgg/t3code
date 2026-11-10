@@ -50,7 +50,7 @@ import {
 
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSelection";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
@@ -1458,12 +1458,12 @@ function ScheduledTaskEditorForm({
               activeEntry.models,
               activeSelection.model,
               activeEntry.driverKind,
-              settings.planModeEnabled,
+              selectsPlanAgent(activeSelection.options),
             ),
             activeSelection.options,
           ),
           allowPromptInjectedEffort: false,
-          planModeEnabled: settings.planModeEnabled,
+          includePlanAgent: selectsPlanAgent(activeSelection.options),
           // Writes the whole selection, so a change made on the default model pins that model too.
           onModelOptionsChange: (options) =>
             setDraft((current) => ({

@@ -671,11 +671,7 @@ export function ComposerPickerFooter(props: {
   const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
   const speed =
     props.traits && visibility && !visibility.modelIsUnavailable
-      ? splitSpeed(
-          props.traits.provider,
-          visibility.selectDescriptors,
-          visibility.booleanDescriptors,
-        )
+      ? splitSpeed(visibility.selectDescriptors, visibility.booleanDescriptors)
       : null;
   if (!speed?.speedSelect && !speed?.fastToggle && !speed?.ultracodeToggle && !props.permissions)
     return null;
