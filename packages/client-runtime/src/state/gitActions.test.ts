@@ -48,7 +48,10 @@ describe("git action copy", () => {
     expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push & create PR");
     expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("View PR");
     const [, , prItem] = buildMenuItems(status(), false);
-    expect(prItem?.label).toBe("Create PR");
+    expect(prItem?.label).toBe("Commit, push & create PR");
+    expect(buildMenuItems(status(), false).find((item) => item.id === "commit")?.disabled).toBe(
+      false,
+    );
     expect(
       getGitActionDisabledReason({
         item: prItem!,
@@ -68,7 +71,10 @@ describe("git action copy", () => {
     ).toBe("Commit, push & MR");
     expect(resolveQuickAction(status({ ...gitLab, pr: openPr }), false).label).toBe("View MR");
     const [, , prItem] = buildMenuItems(status(gitLab), false);
-    expect(prItem?.label).toBe("Create MR");
+    expect(prItem?.label).toBe("Commit, push & create MR");
+    expect(buildMenuItems(status(gitLab), false).find((item) => item.id === "push")?.label).toBe(
+      "Commit & push",
+    );
     expect(
       getGitActionDisabledReason({
         item: prItem!,

@@ -93,7 +93,11 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
     });
 
     const items = buildMenuItems(syncedFeature, false);
-    assert.equal(items.find((item) => item.id === "pr")?.disabled, false);
+    assert.deepInclude(
+      items.find((item) => item.id === "pr"),
+      { disabled: false, label: "Commit, push & create PR" },
+    );
+    assert.equal(items.find((item) => item.id === "push")?.label, "Commit & push");
 
     const dirtyFeature = { ...syncedFeature, aheadOfDefaultCount: 0, hasWorkingTreeChanges: true };
     assert.deepInclude(
@@ -228,7 +232,10 @@ describe("when: the ref is on GitLab", () => {
       resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
       "Commit",
     );
-    assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
+    assert.equal(
+      buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label,
+      "Commit, push & create MR",
+    );
 
     const copy = resolveDefaultBranchActionDialogCopy({
       action: "create_pr",
@@ -449,7 +456,8 @@ describe("when: HEAD is detached and there are no local changes", () => {
         );
         assert.equal(items[0]?.id, "branch");
         assert.isFalse(items[0]?.disabled);
-        assert.equal(items.find((item) => item.id === "commit")?.disabled, !hasWorkingTreeChanges);
+        assert.isFalse(items.find((item) => item.id === "commit")?.disabled);
+        assert.isFalse(items.find((item) => item.id === "commit_dialog")?.disabled);
         for (const id of ["push", "pr"]) {
           assert.deepInclude(
             items.find((item) => item.id === id),
@@ -465,7 +473,7 @@ describe("commit menu actions", () => {
   it("offers direct commit and the dialog on feature refs, including local-only repositories", () => {
     for (const hasPrimaryRemote of [true, false]) {
       const items = buildMenuItems(
-        status({ hasWorkingTreeChanges: true, hasPrimaryRemote }),
+        status({ hasWorkingTreeChanges: false, hasPrimaryRemote }),
         false,
         hasPrimaryRemote,
       );
@@ -499,10 +507,10 @@ describe("commit menu actions", () => {
     }
   });
 
-  it("disables both actions while busy or when the worktree is clean", () => {
+  it("disables both actions only while busy, including clean worktrees", () => {
     for (const { hasWorkingTreeChanges, isBusy } of [
       { hasWorkingTreeChanges: true, isBusy: true },
-      { hasWorkingTreeChanges: false, isBusy: false },
+      { hasWorkingTreeChanges: false, isBusy: true },
     ]) {
       const items = buildMenuItems(status({ hasWorkingTreeChanges }), isBusy);
       assert.isTrue(items.find((item) => item.id === "commit")?.disabled);

@@ -65,7 +65,7 @@ export function buildMenuItems(
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
-  const canCommit = !isBusy && hasChanges;
+  const canCommit = !isBusy;
   const canPush =
     !isBusy &&
     hasOriginRemote &&
@@ -108,7 +108,7 @@ export function buildMenuItems(
     },
     {
       id: "push",
-      label: hasChanges ? "Commit & push" : "Push",
+      label: "Commit & push",
       action: "commit_push",
       ...(needsFeatureBranch ? { featureBranch: true } : {}),
       disabled: !canPush,
@@ -126,9 +126,7 @@ export function buildMenuItems(
         }
       : {
           id: "pr",
-          label: hasChanges
-            ? `Commit, push & create ${terminology.shortLabel}`
-            : `Create ${terminology.shortLabel}`,
+          label: `Commit, push & create ${terminology.shortLabel}`,
           action: "commit_push_pr",
           ...(needsFeatureBranch ? { featureBranch: true } : {}),
           disabled: !canCreatePr,
