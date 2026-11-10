@@ -3503,6 +3503,40 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "commit_push_pr refuses to commit or push on the default branch when origin/HEAD is missing",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "main", "develop"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        const readRemoteDevelop = runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/develop",
+        ]).pipe(Effect.map((output) => output.stdout));
+        const remoteBefore = yield* readRemoteDevelop;
+        const localBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+        const { manager } = yield* makeManager({
+          providerScenario: { defaultBranch: "develop", prListSequence: [[], []] },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        }).pipe(Effect.result);
+
+        expect(yield* readRemoteDevelop).toBe(remoteBefore);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(localBefore);
+        expect(Result.isFailure(result)).toBe(true);
+      }),
+  );
+
   it.effect("create_pr reports a created PR when the lookup after creation fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
