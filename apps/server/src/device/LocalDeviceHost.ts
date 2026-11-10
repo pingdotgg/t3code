@@ -806,6 +806,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeout: Duration.millis(options?.timeoutMs ?? 20_000),
         timeoutBehavior: "timedOutResult",
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(options?.maxOutputBytes === undefined
+          ? {}
+          : { maxOutputBytes: options.maxOutputBytes }),
       })
       .pipe(
         Effect.map((result) => ({
@@ -823,9 +826,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       origin: running.hub.origin,
       http: httpClient,
       run,
-      androidAvailable: platformAvailability("android").pipe(
-        Effect.map((availability) => availability.available),
-      ),
+      platformAvailable: (platform) =>
+        platformAvailability(platform).pipe(Effect.map((availability) => availability.available)),
     }),
     nodePath: running.hub.nodePath,
     run,
