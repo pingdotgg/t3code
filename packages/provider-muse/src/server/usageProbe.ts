@@ -164,7 +164,7 @@ export const refreshMuseUsage = Effect.fn("MuseUsageProbe.refresh")(function* (i
         latestUsage,
         provider: {
           ...provider,
-          auth: museUsageAuth(provider.auth, latestUsage?.usage.tier),
+          auth: latestUsage ? museUsageAuth(provider.auth, latestUsage.usage.tier) : provider.auth,
           usageLimits,
           ...(message
             ? {

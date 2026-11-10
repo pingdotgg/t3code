@@ -241,13 +241,14 @@ export const MuseDriver: ProviderDriver<
         // The probe may have advanced the generation before publishing its new account.
         if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity) return;
         const now = yield* DateTime.now;
+        const authLabel = museUsageAuth(auth, usage.tier).label;
         yield* snapshot.applyUsageLimits({
           windows: museUsageWindows(usage, DateTime.toEpochMillis(now)),
           checkedAt: DateTime.formatIso(DateTime.makeUnsafe(usage.observedAtMs)),
           // A report is the account's whole state, so a window that has reset
           // since loses its old reset time instead of keeping it.
-          replace: true,
-          authLabel: museUsageAuth(auth, usage.tier).label,
+          complete: true,
+          ...(authLabel !== undefined ? { authLabel } : {}),
         });
       }, usagePermit.withPermits(1)),
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),

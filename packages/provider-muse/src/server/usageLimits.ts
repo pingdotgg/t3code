@@ -177,5 +177,5 @@ export function museUsageAuth(
 ): ServerProviderAuth {
   if (auth.type === "accountLogin" && !auth.email) return auth;
   const label = tier?.trim();
-  return label ? { ...auth, label } : auth;
+  return { ...auth, label: label || undefined };
 }

@@ -182,6 +182,7 @@ describe("Muse usage limits", () => {
     });
     expect(museUsageAccount(apiKey)).toBeUndefined();
     expect(museUsageAuth(login, "tier-1")).toEqual({ ...login, label: "tier-1" });
+    expect(museUsageAuth({ ...login, label: "tier-1" }, " ").label).toBeUndefined();
     const labelOnly = { status: "authenticated", type: "accountLogin", label: "Team A" } as const;
     expect(museUsageAuth(labelOnly, "tier-1")).toBe(labelOnly);
     const other = nextMuseUsageAccount(named, { ...login, email: "b@example.com" });
