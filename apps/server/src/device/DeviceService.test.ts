@@ -1776,10 +1776,22 @@ describe("agent session release on close", () => {
       const other = ThreadId.make("other");
       const session = yield* openClaim(service, threadId);
       yield* openClaim(service, other, session.deviceId);
-      yield* service.close(
-        { threadId, deviceId: session.deviceId },
-        { when: Effect.succeed(false) },
-      );
+      const locked = yield* Deferred.make<void>();
+      const unlock = yield* Deferred.make<void>();
+      const holder = yield* service
+        .withLifecycleLock(
+          Deferred.succeed(locked, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(locked);
+      let reengaged = false;
+      const closing = yield* service
+        .close({ threadId, deviceId: session.deviceId }, { when: Effect.sync(() => !reengaged) })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      reengaged = true;
+      yield* Deferred.succeed(unlock, undefined);
+      yield* Fiber.join(closing);
+      yield* Fiber.join(holder);
       expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([
         threadId,
         other,
