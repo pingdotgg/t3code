@@ -105,7 +105,14 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
 
 export function assistantCitationLabel(citation: AssistantCitation): string {
   const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
-  return preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  if (preview.length <= 64) return preview;
+  let end = 64;
+  const previous = preview.charCodeAt(end - 1);
+  const next = preview.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${preview.slice(0, end)}…`;
 }
 
 export function serializeAssistantCitation(citation: AssistantCitation): string {
