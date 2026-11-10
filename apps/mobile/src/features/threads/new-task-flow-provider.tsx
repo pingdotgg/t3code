@@ -597,7 +597,7 @@ export function NewTaskFlowProvider(
     setSwitchingToEnvironmentId(environmentId);
     // A triage draft takes its session along: the playbook and context files
     // exist only on the machine that prepared them.
-    const draftKey = readFlow().draftKey;
+    const { draftKey, projectKey } = readFlow();
     const triage =
       draftKey !== null && isTriagePrompt(getComposerDraftSnapshot(draftKey).text)
         ? await prepareTriage(environmentId)
@@ -607,6 +607,8 @@ export function NewTaskFlowProvider(
     if (latestSwitchRef.current !== request) return false;
     latestSwitchRef.current = null;
     setSwitchingToEnvironmentId(null);
+    // A project picked while this waited stands.
+    if (readFlow().projectKey !== projectKey) return false;
     if (result._tag === "Success") {
       if (triage?._tag === "Success" && draftKey !== null && readFlow().draftKey === draftKey) {
         // Read now, so text typed while the machine prepared the session is kept.
