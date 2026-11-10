@@ -1,4 +1,6 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import type { ThreadPendingApproval } from "@t3tools/client-runtime/state/thread-requests";
+import type { EnvironmentId, RuntimeRequestId, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +80,33 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+export function approvalsForComposerRedirect(input: {
+  readonly approvals: ReadonlyArray<ThreadPendingApproval>;
+  readonly shownApprovalIds: ReadonlyArray<RuntimeRequestId>;
+  readonly dispatchMode: ComposerDispatchMode;
+  readonly sameThread: boolean;
+}) {
+  if (!input.sameThread || input.dispatchMode === "queue") return [];
+  return input.approvals.filter((approval) => input.shownApprovalIds.includes(approval.requestId));
+}
+
+export function composerDraftChangedSinceSend(input: {
+  readonly pendingAttachments: boolean;
+  readonly prompt: string;
+  readonly sentPrompts: ReadonlyArray<string>;
+  readonly attachmentIds: ReadonlyArray<string>;
+  readonly sentAttachmentIds: ReadonlyArray<string>;
+  readonly annotationImageId: string | undefined;
+}): boolean {
+  if (input.pendingAttachments) return true;
+  const sameIds = (ids: ReadonlyArray<string>) =>
+    ids.length === input.attachmentIds.length &&
+    ids.every((id, index) => id === input.attachmentIds[index]);
+  const attachmentsUnchanged =
+    sameIds(input.sentAttachmentIds) ||
+    (input.annotationImageId !== undefined &&
+      sameIds(input.sentAttachmentIds.filter((id) => id !== input.annotationImageId)));
+  return !input.sentPrompts.includes(input.prompt) || !attachmentsUnchanged;
 }
