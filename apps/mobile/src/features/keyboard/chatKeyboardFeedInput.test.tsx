@@ -134,14 +134,18 @@ function renderFeed(
   };
 }
 
-const liftBehaviors: LiftBehavior[] = ["whenAtEnd", "always", "never", "persistent"];
-
-it.each(liftBehaviors)(
-  "returns the feed to its offset when hiding the keyboard for a covered input away from the end (%s)",
-  (behavior) => {
+// Lifting behaviors lift by the keyboard; the others reveal just the input.
+it.each([
+  { behavior: "whenAtEnd" as const, opened: 742 },
+  { behavior: "never" as const, opened: 742 },
+  { behavior: "always" as const, opened: 800 },
+  { behavior: "persistent" as const, opened: 800 },
+])(
+  "returns the feed to its offset when hiding the keyboard for a covered input away from the end ($behavior)",
+  ({ behavior, opened }) => {
     using feed = renderFeed(500, 500, behavior);
 
-    expect([feed.open(), feed.hide()]).toEqual([742, 500]);
+    expect([feed.open(), feed.hide()]).toEqual([opened, 500]);
   },
 );
 
@@ -168,6 +172,13 @@ it.each([
   expect([feed.open(), feed.hide()]).toEqual(row.expected);
 });
 
+it("lifts the whole end above the keyboard for an input on a card at the end", () => {
+  // Card actions sit below the input and must stay above the composer.
+  using feed = renderFeed(1402, 468);
+
+  expect([feed.open(), feed.hide()]).toEqual([1702, 1402]);
+});
+
 it("returns the feed to its offset when focus moves from an unlifted composer to a feed input", () => {
   using feed = renderFeed(500, 500);
 
@@ -177,7 +188,7 @@ it("returns the feed to its offset when focus moves from an unlifted composer to
 it("undoes the feed input shift before lifting for the composer at the end", () => {
   using feed = renderFeed(1322, 500);
 
-  expect([feed.open(), feed.open(COMPOSER_TAG), feed.hide()]).toEqual([1564, 1622, 1322]);
+  expect([feed.open(), feed.open(COMPOSER_TAG), feed.hide()]).toEqual([1622, 1622, 1322]);
 });
 
 it("lifts for the composer and returns to the end after a feed input moved the feed down", () => {
