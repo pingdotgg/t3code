@@ -1,12 +1,11 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-export class SandboxContainer extends Cloudflare.Container<
-  SandboxContainer,
-  {}
->()("SandboxContainer") {}
+export class SandboxContainer extends Cloudflare.Container<SandboxContainer, {}>()(
+  "SandboxContainer",
+) {}
 
 export const SandboxLive = /* @__PURE__ */ SandboxContainer.make(
   Stack.useSync((stack) => ({
@@ -24,9 +23,7 @@ export const SandboxLive = /* @__PURE__ */ SandboxContainer.make(
   Effect.gen(function* () {
     return SandboxContainer.of({
       fetch: Effect.succeed(
-        HttpServerResponse.text(
-          `Hello from Sandbox container! GREETING=${process.env.GREETING}`,
-        ),
+        HttpServerResponse.text(`Hello from Sandbox container! GREETING=${process.env.GREETING}`),
       ),
     });
   }),
