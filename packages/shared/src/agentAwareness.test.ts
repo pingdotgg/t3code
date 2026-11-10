@@ -121,12 +121,21 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
 
-  it.each(["completed", "failed"] as const)("removes settled %s work", (status) => {
+  it.each([
+    ["completed", "completed", false],
+    ["failed", "failed", false],
+    ["monitor-held", "completed", true],
+  ] as const)("removes settled %s work", (_, status, latestRunBackgroundWake) => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
         project,
-        thread: v2Thread({ status, settledOverride: "settled" }),
+        thread: v2Thread({
+          status,
+          settledOverride: "settled",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        }),
       }),
     ).toBeNull();
   });
