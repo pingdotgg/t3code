@@ -345,7 +345,7 @@ export const make = Effect.gen(function* () {
           const key = `${provider}\0${directory}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          pending.push({ provider, dir: directory, volumeId: "", files: null, refreshing });
+          pending.push({ provider, dir: directory, volumeId: "", files: [], refreshing });
           continue;
         }
         const sourceKey = provider + "\0" + directory;

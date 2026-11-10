@@ -1208,6 +1208,9 @@ describe("UsageService", () => {
       const museStarted = yield* Deferred.make<void>();
       const museReady = yield* Deferred.make<MuseSdk.MuseSdkHost>();
       const museHome = NodePath.join(home, "muse");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(museHome, "sessions"), { recursive: true }),
+      );
       using _create = vi
         .spyOn(MuseSdk, "createMuseSdkHostEffect")
         .mockImplementation(() =>
@@ -1216,7 +1219,7 @@ describe("UsageService", () => {
       const museSources = (summary: UsageSummary) =>
         summary.sources
           .filter((source) => source.fingerprint.provider === "muse")
-          .map((source) => [source.fingerprint.resolvedHomePath, source.refreshing]);
+          .map((source) => [source.fingerprint.resolvedHomePath, source.status, source.refreshing]);
       const [pending, refreshed] = yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
         const read = yield* Effect.forkChild(service.readSummary(WINDOW));
@@ -1251,9 +1254,9 @@ describe("UsageService", () => {
         ),
       );
       assert.strictEqual(totalOutputTokens(pending), 5);
-      assert.deepStrictEqual(museSources(pending), [["muse", true]]);
+      assert.deepStrictEqual(museSources(pending), [["muse", "ok", true]]);
       assert.deepStrictEqual(museSources(refreshed), [
-        [NodePath.join(museHome, "sessions"), undefined],
+        [NodePath.join(museHome, "sessions"), "ok", undefined],
       ]);
     }).pipe(Effect.scoped),
   );
