@@ -116,6 +116,8 @@ function enrichedStyle(
             property: "#79c0ff",
             tag: "#7ee787",
             attribute: "#79c0ff",
+            inserted: "#3fb950",
+            deleted: "#f85149",
           }
         : {
             keyword: "#cf222e",
@@ -128,6 +130,8 @@ function enrichedStyle(
             property: "#0550ae",
             tag: "#116329",
             attribute: "#0550ae",
+            inserted: "#1a7f37",
+            deleted: "#d1242f",
           },
     },
     blockquote: {
