@@ -1,14 +1,18 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
   ProviderInstanceId,
   SourceControlProviderKind,
   ThreadId,
+  type ChangeRequest,
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -22,8 +26,18 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitManager from "../git/GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -34,6 +48,93 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventId } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
+
+// A real GitManager over a local repository whose branch is pushed to a bare remote. The
+// GitHub host is a fake that records each pull request list request it receives.
+const makeHostBackedGitManager = (
+  branch: string,
+  pullRequest: Omit<ChangeRequest, "provider" | "state" | "updatedAt">,
+) =>
+  Effect.gen(function* () {
+    const kind = SourceControlProviderKind.make("github");
+    const hostRequests: Array<string> = [];
+    const unused = () => Effect.die("not used by pull request discovery");
+    const host: SourceControlProvider["Service"] = {
+      kind,
+      listChangeRequests: (input) =>
+        Effect.sync(() => {
+          hostRequests.push(input.headSelector);
+          return input.headSelector.endsWith(pullRequest.headRefName)
+            ? [{ ...pullRequest, provider: kind, state: "open" as const, updatedAt: Option.none() }]
+            : [];
+        }),
+      getChangeRequest: unused,
+      createChangeRequest: unused,
+      getRepositoryCloneUrls: unused,
+      createRepository: unused,
+      getDefaultBranch: unused,
+      checkoutChangeRequest: unused,
+    };
+    const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+    const stores = yield* Layer.build(
+      Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+      ),
+    );
+    const services = yield* Layer.build(
+      Layer.mergeAll(
+        Layer.mock(TextGeneration.TextGeneration)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+        ServerSettings.ServerSettingsService.layerTest(),
+        Layer.succeed(
+          SourceControlProviderRegistry.SourceControlProviderRegistry,
+          SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+            resolveLink: () => undefined,
+            get: () => Effect.succeed(host),
+            resolveHandle: () => Effect.succeed({ provider: host, context: null }),
+            resolve: () => Effect.succeed(host),
+            discover: Effect.succeed([]),
+          }),
+        ),
+      ).pipe(
+        Layer.provideMerge(
+          GitVcsDriver.layer.pipe(
+            Layer.provideMerge(VcsProcess.layer),
+            Layer.provideMerge(platform),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-thread-pr-test-" }),
+            ),
+          ),
+        ),
+        Layer.provideMerge(platform),
+      ),
+    );
+    const workspaceRoot = yield* Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const vcs = yield* GitVcsDriver.GitVcsDriver;
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        vcs.execute({ operation: "ThreadPullRequestService.test.git", cwd, args });
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-pr-" });
+      const repository = path.join(root, "project");
+      const remote = path.join(root, "remote.git");
+      yield* fileSystem.makeDirectory(repository);
+      yield* git(root, ["init", "--bare", remote]);
+      yield* git(repository, ["init", "--initial-branch=main"]);
+      yield* git(repository, ["config", "user.email", "test@example.com"]);
+      yield* git(repository, ["config", "user.name", "Test User"]);
+      yield* git(repository, ["commit", "--allow-empty", "-m", "initial"]);
+      yield* git(repository, ["checkout", "-b", branch]);
+      yield* git(repository, ["remote", "add", "origin", remote]);
+      yield* git(repository, ["push", "-u", "origin", branch]);
+      return repository;
+    }).pipe(Effect.provideContext(services));
+    const manager = yield* GitManager.make.pipe(
+      Effect.provideContext(Context.merge(services, stores)),
+    );
+    return { workspaceRoot, git: manager, hostRequests };
+  });
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it("rejects a pull-request result when the project root changes before dispatch", () => {
@@ -195,7 +296,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       ],
     },
     {
-      commit: "a rollback",
+      commit: "rolling back one turn",
+      // Rollback marks the turn's checkpoints stale and ends with one update per rolled-back run.
       events: [
         { type: "checkpoint.captured", payload: { status: "stale" } },
         { type: "checkpoint.captured", payload: { status: "stale" } },
@@ -205,22 +307,33 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   ])("reads the branch pull request from the host once for $commit", ({ events }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const thread = { ...threadShell("turn-thread"), branch: "feature/turn" };
+        const { workspaceRoot, git, hostRequests } = yield* makeHostBackedGitManager(
+          "feature/turn",
+          {
+            number: 7,
+            title: "Turn work",
+            url: "https://github.com/acme/project/pull/7",
+            baseRefName: "main",
+            headRefName: "feature/turn",
+          },
+        );
+        let thread: OrchestrationV2ThreadShell = {
+          ...threadShell("turn-thread"),
+          branch: "feature/turn",
+        };
         const project: OrchestrationProjectShell = {
           id: thread.projectId,
           title: "Project",
-          workspaceRoot: "/workspace/project",
+          workspaceRoot,
           defaultModelSelection: null,
           scripts: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z",
         };
         const activation = yield* Deferred.make<void>();
-        const startupLookup = yield* Deferred.make<void>();
+        const startupLinked = yield* Deferred.make<void>();
         const startupDrained = yield* Deferred.make<void>();
         const commitDelivered = yield* Deferred.make<void>();
-        // A refreshed lookup skips the cache and reads the host; a cached one does not.
-        const hostReads: Array<string> = [];
         const dependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.unwrap(
@@ -241,26 +354,26 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               ),
             ),
             getPullRequestSnapshot: () =>
-              Effect.succeed({
+              Effect.sync(() => ({
                 schemaVersion: 2,
                 snapshotSequence: 1,
                 threads: [thread],
                 archivedThreads: [],
+              })),
+            dispatch: (command) =>
+              Effect.gen(function* () {
+                if (command.type === "thread.pull-request.sync") {
+                  thread = { ...thread, branchPullRequest: command.branchPullRequest };
+                  yield* Deferred.succeed(startupLinked, undefined);
+                }
+                return { sequence: 2, storedEvents: [] };
               }),
           }),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             listShells: () => Effect.succeed([project]),
             getShell: () => Effect.succeedSome(project),
           }),
-          Layer.mock(GitManager.GitManager)({
-            branchPullRequest: (input, options) =>
-              options?.refresh === true
-                ? Effect.sync(() => {
-                    hostReads.push(input.branch);
-                    return null;
-                  })
-                : Deferred.succeed(startupLookup, undefined).pipe(Effect.as(null)),
-          }),
+          Layer.succeed(GitManager.GitManager, git),
           Layer.mock(PullRequestService.PullRequestService)({}),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
@@ -292,13 +405,21 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
-          yield* Deferred.await(startupLookup);
+          // The startup sweep finds the pull request with one cold lookup and links it.
+          yield* Deferred.await(startupLinked);
           yield* service.drain;
+          const oneLookup = hostRequests.splice(0);
+          expect(oneLookup.length).toBeGreaterThan(0);
+
           yield* Deferred.succeed(startupDrained, undefined);
           yield* Deferred.await(commitDelivered);
           yield* service.drain;
 
-          expect(hostReads).toEqual([thread.branch]);
+          expect(hostRequests).toEqual(oneLookup);
+          expect(thread.branchPullRequest).toMatchObject({
+            number: 7,
+            url: "https://github.com/acme/project/pull/7",
+          });
         }).pipe(Effect.provide(dependencies));
       }),
     ),
