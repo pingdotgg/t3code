@@ -3875,128 +3875,8 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  it.effect("a delivery its run already answered is not sent again when the run is cut", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      const name = "delivery-answered-cut";
-      const threadId = ThreadId.make(`thread:${name}`);
-      const runId = RunId.make(`run:${name}`);
-      const taskId = NodeId.make(`node:${name}-task`);
-      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
-      const answerId = MessageId.make(`message:${name}:answer`);
-      const deliveryRunId = RunId.make(`run:${name}:delivery`);
-      yield* seedParentWithTerminalTask({
-        threadId,
-        projectId: ProjectId.make(`project:${name}`),
-        runId,
-        rootNodeId: NodeId.make(`node:${name}-root`),
-        taskId,
-        deliveryState: "claimed",
-        completionWake: "always",
-        deliveryTaskIds: [taskId],
-        now,
-      });
-      yield* eventSink.writeWithEffects({
-        commandId: reconcileCommandId(name),
-        events: [
-          {
-            id: EventId.make(`event:${name}:delivery-message`),
-            type: "message.updated",
-            threadId,
-            runId: deliveryRunId,
-            occurredAt: now,
-            payload: {
-              id: messageId,
-              threadId,
-              runId: deliveryRunId,
-              nodeId: null,
-              role: "user",
-              text: `Delegated task ${taskId} reached a terminal state.`,
-              attachments: [],
-              streaming: false,
-              createdBy: "agent",
-              creationSource: "server",
-              createdAt: now,
-              updatedAt: now,
-              delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
-            },
-          },
-          {
-            id: EventId.make(`event:${name}:answer-message`),
-            type: "message.updated",
-            threadId,
-            runId: deliveryRunId,
-            occurredAt: now,
-            payload: {
-              id: answerId,
-              threadId,
-              runId: deliveryRunId,
-              nodeId: null,
-              role: "assistant",
-              text: "The child finished; I merged its findings.",
-              attachments: [],
-              streaming: false,
-              createdBy: "agent",
-              creationSource: "provider",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-          {
-            id: EventId.make(`event:${name}:answer-item`),
-            type: "turn-item.updated",
-            threadId,
-            runId: deliveryRunId,
-            occurredAt: now,
-            payload: {
-              id: TurnItemId.make(`item:${name}:answer`),
-              threadId,
-              runId: deliveryRunId,
-              nodeId: null,
-              providerThreadId: parentProviderThreadId(threadId),
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 1,
-              status: "completed",
-              title: null,
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-              type: "assistant_message",
-              messageId: answerId,
-              text: "The child finished; I merged its findings.",
-              streaming: false,
-            },
-          },
-          runEvent({
-            threadId,
-            runId: deliveryRunId,
-            ordinal: 2,
-            status: "cancelled",
-            now,
-            providerThreadId: parentProviderThreadId(threadId),
-            userMessageId: messageId,
-          }),
-        ],
-        effects: [],
-      });
-
-      yield* orchestrator.recoverDelegatedTasks;
-
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        projection.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
-        "delivered",
-        "a cut delivery run that already answered should not offer the result again",
-      );
-      assert.isNull(projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery);
-    }),
-  );
-
   it.effect.each([
+    { item: "reply", state: "delivered" },
     { item: "provider_native subagent", state: "delivered" },
     { item: "app_owned subagent", state: "claimed" },
     { item: "question", state: "delivered" },
@@ -4068,26 +3948,33 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               startedAt: now,
               completedAt: null,
               updatedAt: now,
-              ...(input.item === "question"
+              ...(input.item === "reply"
                 ? {
-                    type: "user_input_request" as const,
-                    requestId: RuntimeRequestId.make(`request:${name}`),
-                    questions: [],
-                    responseMode: "message" as const,
+                    type: "assistant_message" as const,
+                    messageId: MessageId.make(`message:${name}:reply`),
+                    text: "The child finished; I merged its findings.",
+                    streaming: false,
                   }
-                : {
-                    type: "subagent" as const,
-                    subagentId: NodeId.make(`node:${name}-launched`),
-                    origin:
-                      input.item === "provider_native subagent"
-                        ? ("provider_native" as const)
-                        : ("app_owned" as const),
-                    driver,
-                    providerInstanceId: modelSelection.instanceId,
-                    childThreadId: null,
-                    prompt: "Check the merged findings.",
-                    result: null,
-                  }),
+                : input.item === "question"
+                  ? {
+                      type: "user_input_request" as const,
+                      requestId: RuntimeRequestId.make(`request:${name}`),
+                      questions: [],
+                      responseMode: "message" as const,
+                    }
+                  : {
+                      type: "subagent" as const,
+                      subagentId: NodeId.make(`node:${name}-launched`),
+                      origin:
+                        input.item === "provider_native subagent"
+                          ? ("provider_native" as const)
+                          : ("app_owned" as const),
+                      driver,
+                      providerInstanceId: modelSelection.instanceId,
+                      childThreadId: null,
+                      prompt: "Check the merged findings.",
+                      result: null,
+                    }),
             },
           },
           runEvent({
