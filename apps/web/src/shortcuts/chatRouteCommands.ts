@@ -8,7 +8,11 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
-import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
+import {
+  createNewThreadHandler,
+  readLastUsedProjectKey,
+  resolveDefaultProjectRef,
+} from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -17,6 +21,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
+import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { readEnvironmentScope } from "../state/session";
@@ -59,6 +64,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       : false;
   };
   const readThreadContext = () => {
+    const lastUsedProjectKey = readLastUsedProjectKey();
     const target = readRouteTarget();
     const drafts = useComposerDraftStore.getState();
     const activeThread = target?.kind === "server" ? readThreadShell(target.threadRef) : null;
@@ -73,6 +79,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       defaultProjectRef: resolveDefaultProjectRef(
         readProjects(),
         useUiStateStore.getState().projectOrder,
+        lastUsedProjectKey,
+        appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
       ),
       handleNewThread,
     };
@@ -123,10 +131,9 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        const { legacySidebarEnabled, newThreadInCurrentProject } = getClientSettings();
+        const { newThreadInCurrentProject } = getClientSettings();
         const groups = readProjectGroups();
         if (
-          !legacySidebarEnabled &&
           !newThreadInCurrentProject &&
           !shouldCreateNewThreadInCurrentProject(
             false,
