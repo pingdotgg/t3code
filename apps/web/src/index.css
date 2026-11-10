@@ -4695,6 +4695,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --command-input-fill: var(--style-container-fill);
   --command-footer-fill: var(--style-container-fill);
   --table-header-fill: var(--style-container-fill);
+  --bubble-fill: var(--style-container-fill) !important;
 }
 
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
@@ -4729,6 +4730,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     [data-surface-style="aqua-blue"]
   )
   [data-app-sidebar] {
+  --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
   --well-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
