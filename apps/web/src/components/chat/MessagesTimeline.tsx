@@ -793,7 +793,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const showsEmptyState =
-    rows.length === 0 &&
+    stableRows.length === 0 &&
     unmatchedPendingApprovals.length === 0 &&
     !isWorking &&
     parentThreadLink === null &&

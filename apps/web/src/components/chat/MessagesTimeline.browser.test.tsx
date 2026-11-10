@@ -1480,6 +1480,12 @@ describe("MessagesTimeline agent messages", () => {
       />,
     );
     await vi.waitFor(() => expect(screen.text()).toContain("drops the index"));
+
+    await screen.rerender(
+      <MessagesTimeline {...baseProps()} timelineEntries={entries.slice(0, 1) as Entry[]} />,
+    );
+    await vi.waitFor(() => expect(screen.text()).not.toContain("drops the index"));
+    expect(screen.text()).not.toContain("Send a message to start the conversation.");
   });
 });
 
