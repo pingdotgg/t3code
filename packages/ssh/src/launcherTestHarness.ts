@@ -103,6 +103,12 @@ Date.now = () => Number(fs.readFileSync(process.env.HOME + '/clock', 'utf8'));
       `
 case "\${2:-}" in
   */server-runtime.json)
+    # A started server publishes its runtime record, which the launch waits for.
+    if [ -e "$HOME/started-server" ]; then
+      printf 'record %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
+      printf '%s 5999' "$(cat "$HOME/started-server")"
+      exit 0
+    fi
     NOW="$(cat "$HOME/clock")"
     printf 'runtime %s\\n' "$NOW" >> "$HOME/events"
     if [ "$NOW" -ge "$TEST_READY_AT" ] || [ -e "$2" ]; then printf '%s %s' "$TEST_SERVER_PID" 4888
@@ -138,7 +144,7 @@ if [ -n "$TEST_CLOCK_JUMP" ] && [ ! -e "$HOME/jumped" ]; then
   touch "$HOME/jumped"
 fi`,
     );
-    executable("nohup", ":");
+    executable("nohup", 'printf "%s" "$$" > "$HOME/started-server"');
     if (options.recordedKind) {
       const state = NodePath.join(home, ".t3/ssh-launch/test-target");
       NodeFS.mkdirSync(state, { recursive: true });
