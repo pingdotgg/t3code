@@ -41,7 +41,7 @@ export function DiffHideFilePatternsSettings() {
   return (
     <SettingsRow
       {...searchableSetting("diff-hide-file-patterns")}
-      description="Extend Hide test files with additional paths, such as stories or benchmarks. Enter one RE2 regular expression per line, without / delimiters. Patterns search full file paths using / separators and are case-sensitive by default. Lookaround and backreferences are unsupported. Saved when you leave the field."
+      description="Extend Hide test files with one RE2 pattern per line, without / delimiters. Searches full paths using /; case-sensitive by default. No lookaround or backreferences. Saves when you leave the field."
       resetAction={
         settings.diffHideFilePatterns !== "" ? (
           <SettingResetButton
