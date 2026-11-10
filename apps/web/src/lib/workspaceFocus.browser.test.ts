@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
+import { applyThemePalette } from "~/themePalette";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -317,7 +318,14 @@ describe("workspace area focus", () => {
     const style = document.createElement("style");
     style.textContent = appCss;
     document.head.append(style);
-    using _style = { [Symbol.dispose]: () => style.remove() };
+    const rootStyle = document.documentElement.style.cssText;
+    applyThemePalette("light", "light");
+    using _style = {
+      [Symbol.dispose]: () => {
+        style.remove();
+        document.documentElement.style.cssText = rootStyle;
+      },
+    };
     const sidebar = fixture.area("sidebar", 0);
     const home = fixture.append(
       '<main data-workspace-area="home" data-workspace-order="1" tabindex="-1" style="height: 200px"></main>',
