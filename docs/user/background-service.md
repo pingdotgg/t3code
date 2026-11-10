@@ -88,9 +88,10 @@ boot and keeps running after logout. If this needs administrator permission,
 setup prints a recovery command before changing the service.
 
 macOS starts the service when you log in and stops it when you log out. Keep the
-Mac logged in and awake for unattended remote access. Installing over SSH while
-nobody is logged in at the Mac's screen can fail at the final start step; the
-service is still installed and will start at the next login.
+Mac logged in for unattended remote access, and see
+[Keep a Mac awake](#keep-a-mac-awake) so it does not sleep. Installing over SSH
+while nobody is logged in at the Mac's screen can fail at the final start step;
+the service is still installed and will start at the next login.
 
 Windows starts the service when you log in and stops it when you sign out. It
 runs without a window as the `t3code-<domain>-<user name>` task in Task Scheduler, and Task
@@ -101,6 +102,22 @@ the service is still installed and will start at the next sign-in.
 
 `t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
+
+## Keep a Mac awake
+
+A sleeping Mac pauses its agents and cannot be reached from another device. In
+**Settings > Maintenance**, set **Keep computer awake** for that Mac:
+
+- **While agents are working** holds off sleep until the last agent finishes,
+  including one that is waiting for your approval.
+- **Always** holds off sleep for as long as T3 Code runs. Use it when you start
+  work on the Mac from your phone or another computer.
+
+The setting works the same in the desktop app, under `t3`, and for the
+background service, and it applies on battery too. It only prevents the Mac from
+sleeping when idle: the display still turns off, and closing the lid or logging
+out still stops agents. Linux and Windows hosts do not have this setting yet;
+change their sleep settings in the operating system.
 
 ## Keep the server responsive when agents use all memory
 
