@@ -544,6 +544,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed",
   "signed out",
   "signed out, fallback failed",
+  "probe failed",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -600,10 +601,13 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         enabled: true,
         snapshot: {
           getSnapshot: Effect.succeed({ ...snapshot, installed: false, usageLimits: undefined }),
-          ensureReady: Effect.sync(() => {
-            discovered.add(instanceId);
-            return snapshot;
-          }),
+          ensureReady:
+            primaryState === "probe failed" && instanceId === primary
+              ? Effect.die("probe failed")
+              : Effect.sync(() => {
+                  discovered.add(instanceId);
+                  return snapshot;
+                }),
         } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
@@ -651,7 +655,8 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     expect(calls).toEqual([
       primaryState === "ready" ||
       primaryState === "pending" ||
-      primaryState === "signed out, fallback failed"
+      primaryState === "signed out, fallback failed" ||
+      primaryState === "probe failed"
         ? selection
         : {
             instanceId: fallback,
@@ -659,10 +664,14 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
           },
     ]);
-    // The primary is always discovered; others only when the primary cannot be used.
-    expect([...discovered]).toEqual(
-      primaryState === "ready" || primaryState === "pending" ? [primary] : [primary, fallback],
-    );
+    // The primary is always probed; others only when the primary cannot be used.
+    // A failed probe falls back to the stored snapshot.
+    const expectedDiscovered = {
+      ready: [primary],
+      pending: [primary],
+      "probe failed": [],
+    }[primaryState as string] ?? [primary, fallback];
+    expect([...discovered]).toEqual(expectedDiscovered);
   }),
 );
 
