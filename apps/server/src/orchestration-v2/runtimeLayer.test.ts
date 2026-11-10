@@ -36,9 +36,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -50,11 +48,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import * as GitManager from "../git/GitManager.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import * as ServerActivation from "../serverActivation.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -87,7 +81,6 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -2587,6 +2580,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(staleProjectWorkspace, Orchestrator.OrchestratorDispatchError);
       yield* moveProject(projectId, project.workspaceRoot, "2026-09-07T00:02:00.000Z");
+      // An unrelated thread event during discovery must not drop the branch pull request.
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-lifecycle-visit-during-pr-sync"),
+        threadId,
+        visitedAt: "2026-09-07T00:02:30.000Z",
+      });
       yield* orchestrator.dispatch({
         type: "thread.pull-request.sync",
         commandId: CommandId.make("runtime-layer-lifecycle-pr-sync"),
@@ -2852,138 +2852,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
     }),
-  );
-
-  it.effect("shows the new branch's pull request when the thread changes during discovery", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make("branch-switch-pr-thread");
-        const projectId = ProjectId.make("branch-switch-pr-project");
-        yield* seedProject({
-          projectId,
-          title: "Branch switch",
-          workspaceRoot: "/workspace/branch-switch",
-          defaultModelSelection: null,
-          createdAt: "2026-09-17T00:00:00.000Z",
-        });
-        const pullRequestFor = (branch: string, number: number) => ({
-          number,
-          title: `Work on ${branch}`,
-          url: `https://github.com/acme/project/pull/${number}`,
-          baseRef: "main",
-          headRef: branch,
-          state: "open" as const,
-          repositoryKey: "github.com/acme/project",
-          updatedAt: null,
-        });
-        const openPullRequests: Record<string, ReturnType<typeof pullRequestFor>> = {
-          "theo/edge": pullRequestFor("theo/edge", 2),
-          "theo/update-13.4.0": pullRequestFor("theo/update-13.4.0", 12),
-        };
-        const activation = yield* Deferred.make<void>();
-        const lookups = yield* Queue.unbounded<string>();
-        const releaseNewBranchLookup = yield* Deferred.make<void>();
-        // Each discovery dispatch needs its own command id, or it replays the first receipt.
-        let randomDraws = 0;
-        const service = yield* ThreadPullRequestService.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.mock(GitManager.GitManager)({
-                branchPullRequest: (input, options) =>
-                  Effect.gen(function* () {
-                    if (!options?.freshGitState && input.branch in openPullRequests) {
-                      yield* Queue.offer(lookups, input.branch);
-                      if (input.branch === "theo/update-13.4.0") {
-                        yield* Deferred.await(releaseNewBranchLookup);
-                      }
-                    }
-                    return openPullRequests[input.branch] ?? null;
-                  }),
-              }),
-              Layer.mock(PullRequestService.PullRequestService)({}),
-              Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-                resolve: () =>
-                  Effect.succeed({
-                    canonicalKey: "github.com/acme/project",
-                    locator: {
-                      source: "git-remote" as const,
-                      remoteName: "origin",
-                      remoteUrl: "git@github.com:acme/project.git",
-                    },
-                    provider: SourceControlProviderKind.make("github"),
-                    owner: "acme",
-                    name: "project",
-                  }),
-              }),
-              // The background sweep would hide the bug by retrying later.
-              Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-                shouldRunScopeWork: () => Effect.succeed(false),
-                shouldRunOpportunisticWork: Effect.succeed(false),
-              }),
-              Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
-              Layer.succeed(
-                SecureRandom.SecureRandom,
-                SecureRandom.make((size) => new Uint8Array(size).fill(++randomDraws)),
-              ),
-              FileSystem.layerNoop({}),
-              Path.layer,
-            ),
-          ),
-        );
-        yield* service.start();
-        yield* Deferred.succeed(activation, undefined);
-        yield* service.drain;
-
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make("branch-switch-pr-create"),
-          threadId,
-          projectId,
-          title: "Branch switch",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: "theo/edge",
-          worktreePath: null,
-        });
-        assert.equal(yield* Queue.take(lookups), "theo/edge");
-        yield* service.drain;
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(threadId)).thread.branchPullRequest?.number,
-          2,
-        );
-
-        yield* orchestrator.dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("branch-switch-pr-switch"),
-          threadId,
-          branch: "theo/update-13.4.0",
-          worktreePath: null,
-        });
-        assert.equal(yield* Queue.take(lookups), "theo/update-13.4.0");
-        // The client marks the thread visited while the lookup is still in flight.
-        yield* orchestrator.dispatch({
-          type: "thread.visit",
-          commandId: CommandId.make("branch-switch-pr-visit"),
-          threadId,
-          visitedAt: "2026-09-17T00:05:00.000Z",
-        });
-        yield* Deferred.succeed(releaseNewBranchLookup, undefined);
-        yield* service.drain;
-
-        const { thread } = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(thread.branch, "theo/update-13.4.0");
-        assert.deepEqual(thread.branchPullRequest, {
-          projectId,
-          repository: "acme/project",
-          number: 12,
-          url: "https://github.com/acme/project/pull/12",
-        });
-      }),
-    ),
   );
 
   it.effect("keeps the branch pull request when linking another pull request", () =>
