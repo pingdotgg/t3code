@@ -748,9 +748,10 @@ describe("PreviewManager", () => {
         const preview = makeFaviconWebContents();
         const goBack = vi.fn();
         const goForward = vi.fn();
+        let canGoBack = false;
         Object.assign(preview.webContents, {
           navigationHistory: {
-            canGoBack: () => true,
+            canGoBack: () => canGoBack,
             canGoForward: () => true,
             goBack,
             goForward,
@@ -769,6 +770,12 @@ describe("PreviewManager", () => {
           return preventDefault;
         };
 
+        // At the start of tab history the press is still swallowed, or the host app goes back instead.
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+
+        canGoBack = true;
         expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
         expect(goBack).not.toHaveBeenCalled();
         expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
