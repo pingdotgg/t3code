@@ -9,14 +9,18 @@ import { cn } from "~/lib/utils";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 export function PullRequestMarkdownEditor({
   value,
   cwd,
   environmentId,
+  completionScope,
   threadRef = null,
   placeholder,
   label,
@@ -29,6 +33,7 @@ export function PullRequestMarkdownEditor({
   readonly value: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly completionScope: PullRequestCompletionScope | null;
   readonly threadRef?: ScopedThreadRef | null;
   readonly placeholder?: string | undefined;
   readonly label: string;
@@ -41,9 +46,6 @@ export function PullRequestMarkdownEditor({
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
-  // React keeps a component instance wherever the same position and key come round again, so an
-  // editor opened on one remark can be handed another's words without being rebuilt — and saving
-  // would then write the first remark's text onto the second.
   const [seed, setSeed] = useState(value);
   if (seed !== value) {
     setSeed(value);
@@ -105,14 +107,15 @@ export function PullRequestMarkdownEditor({
           )}
         </div>
       ) : (
-        <Textarea
+        <PullRequestMarkdownTextarea
           autoFocus
           disabled={saving}
+          completionScope={completionScope}
           value={draft}
           rows={6}
           placeholder={placeholder}
           aria-label={label}
-          onChange={(event) => setDraft(event.target.value)}
+          onValueChange={setDraft}
         />
       )}
       <div className="flex justify-end gap-2">

@@ -1,7 +1,8 @@
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -15,13 +16,10 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  /**
-   * When false, the credential is minted without the "preview" capability so
-   * the user's choice to withhold agent browser access holds everywhere the
-   * token is honored (#7083). Defaults to full access.
-   */
+  /** False omits the preview capability wherever the token is honored. Defaults to full access. */
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
+  readonly subagent?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -79,7 +77,8 @@ const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
@@ -91,15 +90,15 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
-    crypto
-      .digest("SHA-256", new TextEncoder().encode(token))
+    digest
+      .digest(Digest.sha256, new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-      const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
+      const providerSessionId = yield* random.uuidV4();
+      const rawToken = yield* random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
       const scope: McpInvocationContext.McpThreadInvocationScope = {
@@ -109,6 +108,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: ThreadId.make(request.threadId),
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+          subagent: request.subagent === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([
@@ -214,12 +214,6 @@ export const layer = Layer.effect(McpSessionRegistry, make);
 
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
-
-const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
-
-const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
 export const __testing = {
   make: makeWithOptions,

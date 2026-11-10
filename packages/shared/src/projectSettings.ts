@@ -7,6 +7,7 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   resolveProjectProviderInstanceEnabled,
+  resolveTextGenerationSelectionEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
   type T3ProjectFile,
@@ -38,19 +39,13 @@ export function hasProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
 ): boolean {
   for (const entry of Object.values(settings.projectSettingsOverrides)) {
-    // A forward-compatible decode can leave an unknown value as a present
-    // undefined; that is not an override.
+    // Forward-compatible decoding can leave a present undefined, which is not an override.
     if (Object.values(entry).some((value) => value !== undefined)) return true;
   }
   return false;
 }
 
-/**
- * The project aggregate's own model and workspace fields. They remain the
- * source of truth until the server has folded them into the override record;
- * after the fold the record alone decides, so a reset there cannot be undone
- * by a stale aggregate value.
- */
+/** Legacy aggregate fields apply only until folded into overrides, so stale values cannot undo later resets. */
 export interface LegacyProjectSettingsFields {
   readonly defaultModelSelection?: ModelSelection | null | undefined;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
@@ -139,18 +134,17 @@ function resolveProjectOverrides(
   for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
     if (!Object.hasOwn(overrides, key)) continue;
     const value = overrides[key];
-    // A forward-compatible decode leaves an unknown value as a present
-    // undefined; that is not an override.
+    // Forward-compatible decoding can leave a present undefined, which is not an override.
     if (value === undefined) continue;
     if (
       (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&
       value !== null &&
-      !resolveProjectProviderInstanceEnabled(
-        settings,
-        projectId,
-        (value as ModelSelection).instanceId,
-      )
+      !(
+        key === "textGenerationModelSelection"
+          ? resolveTextGenerationSelectionEnabled
+          : resolveProjectProviderInstanceEnabled
+      )(settings, projectId, (value as ModelSelection).instanceId)
     ) {
       continue;
     }
@@ -158,7 +152,7 @@ function resolveProjectOverrides(
     sources[key] = "project";
   }
   const textGeneration = effective.textGenerationModelSelection as ModelSelection;
-  if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
+  if (!resolveTextGenerationSelectionEnabled(settings, projectId, textGeneration.instanceId)) {
     const fallback = fallbackTextGenerationModelSelection(
       settings.providerInstances,
       (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
@@ -172,12 +166,7 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
-/**
- * A project the environment made from just a name (a folder directly inside
- * `ServerConfig.newProjectsRoot`) has only its first commit, so until it has a
- * thread, a new thread works in the project checkout even when the environment
- * default is a new worktree.
- */
+/** New name-only projects use their checkout until the first thread, even when the default is worktree. */
 export function resolveNewThreadEnvMode(input: {
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;

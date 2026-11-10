@@ -12,7 +12,6 @@ const ChipGlass = withUniwind(GlassView, {
   tintColor: { fromClassName: "tintColorClassName", styleProperty: "accentColor" },
 });
 
-/** Compact labels and filter triggers. Menu owners can wrap the non-pressable form. */
 export function Chip(props: {
   readonly label: string;
   readonly selected?: boolean;

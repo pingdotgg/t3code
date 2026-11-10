@@ -22,6 +22,8 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
+import { museUsageReader } from "./usage.ts";
+import type * as MuseUsageHome from "./MuseUsageHome.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -53,9 +55,14 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
+export const MuseDriver: ProviderDriver<
+  MuseSettings,
+  MuseDriverEnv,
+  Path.Path | MuseUsageHome.MuseUsageHome
+> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
+  usage: museUsageReader,
   configSchema: MuseSettings,
   defaultConfig: () => decodeMuseSettings({}),
   create: Effect.fn("MuseDriver.create")(function* ({
@@ -114,12 +121,13 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const capabilities = yield* resolveInstallation(options);
       // The maintenance runner requests fresh capabilities around an explicit update
       // and needs the native target version to verify that the command actually upgraded.
-      const latestVersion = options?.fresh
-        ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          )
-        : undefined;
+      const latestVersion =
+        options?.fresh && !capabilities.lookupLatestVersion
+          ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+            )
+          : undefined;
       return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
     });
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({

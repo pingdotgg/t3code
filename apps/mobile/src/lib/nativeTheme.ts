@@ -1,7 +1,6 @@
 import type { MaterialColors } from "@expo/ui/jetpack-compose";
 import { flattenThemeColor, type MobileThemeVariables } from "./mobileTheme";
 
-/** Native controls use the same resolved palette as RN, without generating new hues. */
 export function createNativeThemeColors(colors: MobileThemeVariables): MaterialColors {
   const roles = {
     primary: colors["--color-primary"],

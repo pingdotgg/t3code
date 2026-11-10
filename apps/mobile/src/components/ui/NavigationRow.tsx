@@ -7,7 +7,6 @@ import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-/** Shared geometry for Material navigation and selection lists. Group rows in one card. */
 export function NavigationRow({
   title,
   titleClassName,

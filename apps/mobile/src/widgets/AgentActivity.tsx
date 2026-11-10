@@ -1,12 +1,15 @@
 import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
+  accessibilityElement,
+  accessibilityLabel,
   activityBackgroundTint,
   font,
   foregroundStyle,
   frame,
   layoutPriority,
   lineLimit,
+  minimumScaleFactor,
   padding,
   resizable,
   widgetURL,
@@ -48,26 +51,21 @@ export interface AgentActivityProps {
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
 }
 
-// This function is serialized into the widget extension's JS bundle, so it
-// must stay self-contained: no references to module-scope helpers, only the
-// imported view/modifier factories.
-export function AgentActivity(
+// Widget serialization excludes module helpers; use only imported view/modifier factories.
+function AgentActivity(
   props: AgentActivityProps,
   environment: LiveActivityEnvironment,
 ): LiveActivityLayout {
   "widget";
 
-  // Hierarchical styles inherit the system's foreground treatment, including
-  // tinted and vibrant presentations, rather than resolving to a label color.
+  // Hierarchical foregrounds inherit system tint and vibrancy.
   type Foreground = Parameters<typeof foregroundStyle>[0];
   const primaryForeground = { type: "hierarchical", style: "primary" } as const;
   const secondaryForeground = { type: "hierarchical", style: "secondary" } as const;
   const monochrome =
     environment.widgetRenderingMode === "accented" || environment.widgetRenderingMode === "vibrant";
 
-  // On iPhone the LA sits on a dark material, but macOS (iPhone Mirroring /
-  // Mac notification center) renders it on a light one — so pick the web
-  // palette's light (-600) or dark (-300) variant off the color scheme.
+  // iPhone uses dark Live Activity material, macOS light; choose the web palette variant by color scheme.
   const isLightScheme = environment.colorScheme === "light";
   const phaseTint = (phase: AgentActivityPhase | undefined): Foreground => {
     if (environment.isLuminanceReduced) {
@@ -100,9 +98,7 @@ export function AgentActivity(
     if (phase === "running" || phase === "starting") return 2;
     return 3;
   };
-  // Past the stale date the system stops vouching for the content, so every
-  // in-flight row degrades to "stale" rather than claiming an agent is still
-  // working.
+  // Mark in-flight rows stale after expiry so they cannot claim agents still work.
   const activities: ReadonlyArray<AgentActivityRowProps> = environment.isStale
     ? props.activities.map((row) =>
         row.phase === "completed" || row.phase === "failed"
@@ -149,10 +145,10 @@ export function AgentActivity(
     : environment.isStale
       ? "Out of date"
       : `${props.activeCount} active`;
+  const showCompactGlyph = !attentionRow && !failedRow && !allDone && !environment.isStale;
   const summary = attentionSuffix || activeLabel;
 
-  // Any registered scheme variant routes back to this app; taps are delivered
-  // to the widget's containing app, so the prod scheme is safe for all builds.
+  // Widget taps target the containing app, so its production scheme is safe in every build.
   const deepLinkRow = attentionRow ?? row0;
   const deepLink =
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
@@ -177,7 +173,8 @@ export function AgentActivity(
         return "clock.arrow.circlepath";
       case "running":
       default:
-        return "arrow.triangle.2.circlepath";
+        // Matches the thread list's Working indicator.
+        return "circle.dashed";
     }
   };
 
@@ -207,10 +204,7 @@ export function AgentActivity(
       >
         {row.threadTitle}
       </Text>
-      {/* No layoutPriority and no frame on the project: two bare texts take
-          their ideal width when it fits and shrink proportionally only when it
-          doesn't — so short rows never truncate, and long title + long project
-          truncate together. */}
+      {/* Bare texts share shrinkage proportionally; project frames or layoutPriority would prevent balanced truncation. */}
       <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
         {row.projectTitle}
       </Text>
@@ -326,11 +320,27 @@ export function AgentActivity(
       </VStack>
     ),
     compactLeading: renderLogo(14, tint, linkModifiers),
-    compactTrailing: (
+    // While agents are only working, stay quiet: the thread list's Working
+    // glyph marks the activity without a count. Labels appear only for
+    // attention or outcomes.
+    compactTrailing: showCompactGlyph ? (
+      <HStack
+        modifiers={[
+          padding({ trailing: 2 }),
+          accessibilityElement("ignore"),
+          accessibilityLabel(agentsLabel),
+          ...linkModifiers,
+        ]}
+      >
+        {renderGlyph(phaseSymbol(heroRow?.phase ?? "running"), 14, tint)}
+      </HStack>
+    ) : (
       <Text
         modifiers={[
           font({ weight: "semibold", size: 11 }),
           foregroundStyle(tint),
+          lineLimit(1),
+          minimumScaleFactor(0.5),
           ...linkModifiers,
         ]}
       >
@@ -338,13 +348,14 @@ export function AgentActivity(
           ? attentionRow.phase === "waiting_for_approval"
             ? "Approval"
             : "Input"
-          : activeLabel}
+          : failedRow
+            ? "Failed"
+            : activeLabel}
       </Text>
     ),
-    minimal:
-      (attentionRow || failedRow || allDone) && heroRow
-        ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
-        : renderLogo(11, tint, linkModifiers),
+    minimal: heroRow
+      ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
+      : renderLogo(11, tint, linkModifiers),
     expandedLeading: (
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}

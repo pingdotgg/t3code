@@ -2,7 +2,7 @@ import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   result: null as { readonly agents: ReadonlyArray<AcpRegistrySearchAgent> } | null,
@@ -46,7 +46,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   useAtomCommand: (() => state.prepare) as never,
 }));
 
-import { AcpRegistrySearchStep } from "./AcpRegistrySearchStep";
+import { AcpRegistrySearchStep, useAcpRegistrySearch } from "./AcpRegistrySearchStep";
 
 const environmentId = EnvironmentId.make("remote-device");
 const gemini: AcpRegistrySearchAgent = {
@@ -63,15 +63,20 @@ const gemini: AcpRegistrySearchAgent = {
   integrity: "registry",
 };
 
-function step(options?: {
+function Step({
+  configured = false,
+  onPrepared = vi.fn(),
+}: {
   readonly configured?: boolean;
   readonly onPrepared?: (agent: AcpRegistrySearchAgent) => void;
 }) {
+  const registry = useAcpRegistrySearch(environmentId, true);
   return (
     <AcpRegistrySearchStep
       environmentId={environmentId}
+      registry={registry}
       providerInstances={
-        options?.configured
+        configured
           ? {
               acpRegistry_gemini: {
                 driver: ProviderDriverKind.make("acpRegistry"),
@@ -80,18 +85,10 @@ function step(options?: {
             }
           : {}
       }
-      onPrepared={options?.onPrepared ?? vi.fn()}
+      onPrepared={onPrepared}
       onManualConfiguration={vi.fn()}
     />
   );
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 function setup() {
@@ -111,7 +108,7 @@ it("rechecks the grant before preparing an agent", async () => {
   setup();
   state.result = { agents: [gemini] };
   const onPrepared = vi.fn();
-  await using _screen = await render(step({ onPrepared }));
+  await using _screen = await render(<Step onPrepared={onPrepared} />);
   state.canManage = false;
 
   await page.getByRole("button", { name: "Add Gemini CLI" }).click();
@@ -120,22 +117,11 @@ it("rechecks the grant before preparing an agent", async () => {
   expect(onPrepared).not.toHaveBeenCalled();
 });
 
-it("ignores prepare completion after unmount", async () => {
+it("leaves out Registry agents that T3 Code supports as their own providers", async () => {
   setup();
-  const pending = deferred<unknown>();
-  state.prepare.mockReturnValueOnce(pending.promise);
-  state.result = { agents: [gemini] };
-  const onPrepared = vi.fn();
-  await using screen = await render(step({ onPrepared }));
+  state.result = { agents: [gemini, { ...gemini, id: "codex-acp", name: "Codex" }] };
+  await using _screen = await render(<Step />);
 
-  await page.getByRole("button", { name: "Add Gemini CLI" }).click();
-  await screen.unmount();
-  await act(async () =>
-    pending.resolve({
-      _tag: "Success",
-      value: { agentId: "gemini", version: "1.2.3", distribution: "npx", prepared: true },
-    }),
-  );
-
-  expect(onPrepared).not.toHaveBeenCalled();
+  expect(page.getByRole("button", { name: "Add Gemini CLI" }).query()).not.toBeNull();
+  expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
 });

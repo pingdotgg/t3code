@@ -28,6 +28,7 @@ const EMPTY_LEGACY_TERMINAL_SESSION_STATE: LegacyTerminalSessionState = {
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;
+  readonly materializeBuffer?: boolean;
 }): LegacyTerminalSessionState {
   const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
   const canOperate = useEnvironmentScope(input.environmentId, AuthTerminalOperateScope);
@@ -55,9 +56,9 @@ export function useAttachedTerminalSession(input: {
         }),
   );
   const output = attach.data?.output ?? EMPTY_TERMINAL_BUFFER_STATE.output;
-  // Installed native binaries still accept initialBuffer. Keep materialization
-  // at this mobile boundary until the native streaming API is released.
-  const buffer = useMemo(() => terminalOutputText(output), [output]);
+  const materializeBuffer = input.materializeBuffer ?? true;
+  // Older installed binaries and the text fallback still need initialBuffer.
+  const buffer = materializeBuffer ? terminalOutputText(output) : "";
 
   return useMemo(() => {
     if (input.environmentId === null || input.terminal === null) {
