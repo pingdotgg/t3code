@@ -5280,6 +5280,76 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each(["show", "pause", "clear"] as const)(
+    "a delayed /goal %s response cannot finish its replacement turn",
+    (control) =>
+      Effect.gen(function* () {
+        const operation = control === "show" ? "rpc.call" : "session.command";
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(control === "show"
+              ? []
+              : [
+                  out("command.list", "<any>"),
+                  reply("command.list", {
+                    location: { directory: WORK },
+                    data: [{ name: "goal" }],
+                  }),
+                  out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+                  reply("message.list", { data: [], cursor: {} }),
+                ]),
+            out(operation, "<any>"),
+            event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
+            out("session.prompt", "<any>"),
+            promptAccepted,
+            reply(operation, control === "show" ? { output: nativeGoal("paused") } : null),
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_replacement",
+              ordinal: 0,
+              text: "Replacement still tracked",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { version: "2.2.5" },
+        );
+        const interrupted = yield* Deferred.make<void>();
+        const events = yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            e.type === "turn.terminal" && e.status === "interrupted"
+              ? Deferred.succeed(interrupted, undefined)
+              : Effect.void,
+          ),
+          Stream.takeUntil((e) => e.type === "turn.terminal" && e.status === "completed"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const input = turnInput(thread);
+        const starting = yield* runtime
+          .startTurn({
+            ...input,
+            message: { ...input.message, text: control === "show" ? "/goal" : `/goal ${control}` },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interrupted);
+        yield* runtime.startTurn({
+          ...input,
+          attemptId: RunAttemptId.make("replacement"),
+          providerTurnOrdinal: 2,
+        });
+        yield* Fiber.join(starting);
+        const collected = yield* Fiber.join(events);
+        assert.isTrue(
+          collected.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "assistant_message" &&
+              e.turnItem.text === "Replacement still tracked",
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["show", "pause", "clear"] as const)(
     "settles OpenCode /goal %s without waiting for an execution",
     (control) =>
       Effect.gen(function* () {

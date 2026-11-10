@@ -3467,6 +3467,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.unsent = false;
         return true;
       };
+      const finishControl = lock.withPermit(
+        Effect.suspend(() =>
+          state.active === turn ? finishTurn(state, { status: "completed" }) : Effect.void,
+        ),
+      );
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       const id = turnPromptId(sessionId, turnInput.attemptId);
@@ -3474,7 +3479,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (goalCommand?.type === "show") {
         if (!sending()) return;
         yield* readGoal(state);
-        return yield* lock.withPermit(finishTurn(state, { status: "completed" }));
+        return yield* finishControl;
       }
       if (bare && text === "/compact") {
         if (!sending()) return;
@@ -3495,7 +3500,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (!sending()) return;
           yield* client.session.command({ sessionID, ...command });
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
-            yield* lock.withPermit(finishTurn(state, { status: "completed" }));
+            yield* finishControl;
           }
           return;
         }
