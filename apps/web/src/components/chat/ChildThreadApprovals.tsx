@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
+import { ShieldQuestionIcon } from "lucide-react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -23,7 +24,13 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       aria-label={`Approval from ${entry.title}`}
       className="rounded-lg border border-border bg-background p-3 text-xs"
     >
-      <p className="mb-2 font-medium">Approval needed from {entry.title}</p>
+      <div className="mb-2 flex items-start gap-2">
+        <ShieldQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+        <div className="min-w-0">
+          <p className="font-medium">Your approval is needed</p>
+          <p className="text-muted-foreground wrap-anywhere">{entry.title}</p>
+        </div>
+      </div>
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
         {approval.detail || approval.requestKind}
       </pre>
@@ -39,9 +46,9 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {fullAccessOverrideExplanation(approval.fullAccessOverride)}
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <ComposerPendingApprovalActions
-          presentation="inline"
+          presentation="card"
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}

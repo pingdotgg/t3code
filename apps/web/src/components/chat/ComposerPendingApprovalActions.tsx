@@ -11,7 +11,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
-  presentation?: "composer" | "inline";
+  presentation?: "composer" | "inline" | "card";
   requestId: RuntimeRequestId;
   isResponding: boolean;
   canRespond: boolean;
@@ -61,7 +61,15 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         const content = (
           <>
             {option.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-            <span className={presentation === "inline" ? "whitespace-normal" : "max-w-40 truncate"}>
+            <span
+              className={
+                presentation === "inline"
+                  ? "whitespace-normal"
+                  : presentation === "card"
+                    ? "max-w-40 whitespace-normal wrap-anywhere"
+                    : "max-w-40 truncate"
+              }
+            >
               {option.label}
             </span>
           </>
@@ -79,7 +87,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             <Button
               key={option.decision}
               {...buttonProps}
-              size="xs"
+              size={presentation === "card" ? "sm-multiline" : "xs"}
               variant={option.decision === "accept" ? "default" : "outline"}
             >
               {content}
