@@ -28,6 +28,7 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
+import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -199,6 +200,15 @@ export function useDesktopUpdateEverything(state: DesktopUpdateState | null) {
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
+  const checkProviderUpdates = useCheckProviderUpdates();
+  const [isCheckingProviders, setIsCheckingProviders] = useState(false);
+
+  const confirm = () => {
+    setIsConfirming(true);
+    // Machines that still cache an older latest version add their rows while the dialog is open.
+    setIsCheckingProviders(true);
+    void checkProviderUpdates({ quiet: true }).finally(() => setIsCheckingProviders(false));
+  };
 
   const runEverything = async () => {
     const bridge = window.desktopBridge;
@@ -236,7 +246,7 @@ export function useDesktopUpdateEverything(state: DesktopUpdateState | null) {
     everything,
     runsEverything: everything.hasUpdates && state?.status !== "downloading",
     isPending,
-    confirm: () => setIsConfirming(true),
+    confirm,
     dialog: (
       <UpdateEverythingDialog
         open={isConfirming}
@@ -245,6 +255,7 @@ export function useDesktopUpdateEverything(state: DesktopUpdateState | null) {
         providerCount={everything.providerCount}
         rows={everything.rows}
         restarts={everything.restarts}
+        checking={isCheckingProviders}
         onConfirm={() => void runEverything()}
       />
     ),
@@ -260,6 +271,7 @@ function SidebarUpdateControl() {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
+  const [isCheckingProviders, setIsCheckingProviders] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -294,11 +306,12 @@ function SidebarUpdateControl() {
     confirm: confirmEverything,
     dialog: confirmDialog,
   } = useDesktopUpdateEverything(state);
+  const checkProviderUpdates = useCheckProviderUpdates();
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
-    isChecking: state?.status === "checking",
+    isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
@@ -389,7 +402,7 @@ function SidebarUpdateControl() {
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    void bridge
+    const appCheck = bridge
       .checkForUpdate()
       .then((result) => {
         if (result.checked) return;
@@ -412,14 +425,16 @@ function SidebarUpdateControl() {
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      })
-      .finally(() => setIsActionPending(false));
+      });
+    setIsCheckingProviders(true);
+    const providersChecked = checkProviderUpdates().finally(() => setIsCheckingProviders(false));
+    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
   };
 
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking",
+        isChecking: state?.status === "checking" || isCheckingProviders,
         prefersReducedMotion,
       }),
     );
