@@ -42,7 +42,8 @@ leaves the thread on Kiro's current agent.
 
 Kiro threads load the MCP servers in your Kiro configuration. To use one that signs in with OAuth,
 sign in to it once with `kiro-cli` on the machine running the T3 Code server (`/mcp`, then
-re-authenticate). Kiro threads in T3 Code reuse that sign-in.
+re-authenticate). Kiro threads in T3 Code reuse that sign-in but never change it, so when it
+expires, sign in again with `kiro-cli`.
 
 ## Permission Modes
 

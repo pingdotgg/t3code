@@ -309,6 +309,12 @@ const kiroSecretResponse = (method: string, result: unknown): Frame => ({
   frame: { kind: "response", method, result },
 });
 
+const kiroSecretRejection = (method: string): Frame => ({
+  type: "expect_outbound",
+  label: `${method}.error`,
+  frame: { kind: "response", method, error: "<any>" },
+});
+
 /**
  * A temp KIRO_HOME whose `secrets.json` holds `secrets`, the flat map kiro-cli
  * keeps there. HOME points elsewhere so only KIRO_HOME can find the file.
@@ -852,7 +858,7 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("advertises secret storage and serves Kiro's secrets from its secrets file", () =>
+  it.effect("advertises secret storage, reads Kiro's secrets file and never writes it", () =>
     Effect.gen(function* () {
       const kiroHome = yield* makeKiroHome({ [MCP_TOKENS_KEY]: MCP_TOKENS });
       const refreshed = JSON.stringify({ access_token: "refreshed", token_type: "Bearer" });
@@ -881,10 +887,11 @@ describe("KiroAdapterV2", () => {
           kiroSecretResponse("_kiro/secret/get", { value: MCP_TOKENS }),
           kiroSecretRequest("_kiro/secret/get", { key: "kiro.mcp.missing.tokens" }),
           kiroSecretResponse("_kiro/secret/get", { value: null }),
+          // kiro-cli rewrites this file unlocked, so T3 never writes it.
           kiroSecretRequest("_kiro/secret/store", { key: otherKey, value: refreshed }),
-          kiroSecretResponse("_kiro/secret/store", { success: true }),
+          kiroSecretRejection("_kiro/secret/store"),
           kiroSecretRequest("_kiro/secret/delete", { key: MCP_TOKENS_KEY }),
-          kiroSecretResponse("_kiro/secret/delete", { success: true }),
+          kiroSecretRejection("_kiro/secret/delete"),
           answer("session/new", sessionSetup([modeOption])),
           ...closeSession,
         ],
@@ -892,7 +899,7 @@ describe("KiroAdapterV2", () => {
       });
       const fileSystem = yield* FileSystem.FileSystem;
       assert.deepStrictEqual(JSON.parse(yield* fileSystem.readFileString(kiroHome.secretsPath)), {
-        [otherKey]: refreshed,
+        [MCP_TOKENS_KEY]: MCP_TOKENS,
       });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
