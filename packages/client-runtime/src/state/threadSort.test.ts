@@ -13,9 +13,7 @@ import {
   type ThreadSortInput,
 } from "./threadSort.ts";
 
-type TestThread = { readonly id: string } & ThreadSortInput & {
-    readonly latestUserAuthoredMessageAt?: string | null;
-  };
+type TestThread = { readonly id: string } & ThreadSortInput;
 
 function makeThread(overrides: Partial<TestThread> = {}): TestThread {
   return {
