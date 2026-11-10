@@ -1,4 +1,3 @@
-import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import type { AnyRouter } from "@tanstack/react-router";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -6,7 +5,7 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { fakeTimers, stubGlobal } from "../../test/render";
+import { stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -107,6 +106,7 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
+  pendingRequestId: "request-1",
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
@@ -145,9 +145,9 @@ function toV2ThreadShell(input: typeof thread) {
           ? "failed"
           : "running",
     pendingRuntimeRequest: input.hasPendingUserInput
-      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      ? { id: input.pendingRequestId, kind: "user_input", createdAt: SHELL_NOW }
       : input.hasPendingApprovals
-        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
+        ? { id: input.pendingRequestId, kind: "command", createdAt: SHELL_NOW }
         : null,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
@@ -241,24 +241,30 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
-it("holds a completion through a continuation gap and notifies once it settles", async () => {
+it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+  "notifies again when a new %s request replaces the pending one in the same run",
+  async (flag) => {
+    await using app = setup();
+    app.start();
+    state.shells.set("one", shell({ [flag]: true, pendingRequestId: "request-1" }));
+    state.shells.set("one", shell({ [flag]: true, pendingRequestId: "request-2" }));
+    const title = flag === "hasPendingApprovals" ? "Approval needed" : "Input needed";
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([title, title]);
+  },
+);
+
+it("presents completion notifications and sound as soon as the shell completes", async () => {
   await using app = setup();
+  state.mode = "notifications-and-sound";
   app.start();
-  using _timers = fakeTimers();
-  const finished = (turnId: string, completedAt: string) => ({
-    latestTurn: { turnId, state: "completed", completedAt },
-  });
-  state.shells.set("one", shell(finished("turn-1", "2026-09-13T07:00:01.000Z")));
   state.shells.set(
     "one",
-    shell({ latestTurn: { turnId: "turn-2", state: "running", completedAt: null } }),
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
   );
-  state.shells.set("one", shell(finished("turn-2", "2026-09-13T07:00:02.000Z")));
-  expect(TestNotification.sent).toEqual([]);
-  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS - 1);
-  expect(TestNotification.sent).toEqual([]);
-  await vi.advanceTimersByTimeAsync(1);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
+  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
@@ -277,7 +283,6 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     };
     state.shells.set("one", shell({ id: "working" }, { id: "asking" }, { id: "offline" }, done));
     app.start();
-    using _timers = fakeTimers();
     state.shells.set("one", shell({ id: "working" }, asking, { id: "offline" }, done));
     state.shells.set("one", {
       ...shell({ id: "working" }, asking, { id: "offline" }, done),
@@ -296,37 +301,31 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
 
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
+      "Thread completed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
     ]);
-    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
     state.shells.set("one", shell(completed, asking, offline, done));
-    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
-      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
       "Thread completed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
     ]);
   },
 );
 
 it.each([false, true])(
-  "rechecks a pending completion after reconnect (continued: %s)",
+  "does not replay a notified completion after reconnect (continued: %s)",
   async (continued) => {
     await using app = setup();
     app.start();
-    using _timers = fakeTimers();
     const completed = shell({
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
     });
     state.shells.set("one", completed);
     state.shells.set("one", { ...completed, status: "cached" });
-    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-    expect(TestNotification.sent).toEqual([]);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
     state.shells.set("one", continued ? shell() : completed);
-    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-    expect(TestNotification.sent.map(({ title }) => title)).toEqual(
-      continued ? [] : ["Thread completed"],
-    );
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
