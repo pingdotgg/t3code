@@ -43,7 +43,8 @@ vi.mock("../../keyboard/hardwareKeyboardCommands", () => ({
   useHardwareKeyboardCommand: () => {},
 }));
 vi.mock("../AdaptiveWorkspaceLayout", () => ({
-  useAdaptiveWorkspaceLayout: () => ({ layout: {}, panes: {}, togglePrimarySidebar: () => {} }),
+  useAdaptiveWorkspaceLayout: () => ({ layout: {}, togglePrimarySidebar: () => {} }),
+  useWorkspacePaneState: () => ({ panes: {} }),
 }));
 vi.mock("../../settings/components/SettingsEnvironmentFilterHeader", () => ({
   useSettingsEnvironmentMenu: () => ({ title: "", icon: "", items: [] }),
