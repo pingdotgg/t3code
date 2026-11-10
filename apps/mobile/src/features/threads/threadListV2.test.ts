@@ -1584,6 +1584,30 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
 
+  it("ages a read row from its latest reply", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: BASE_MS });
+    const label = (latestUserMessageAt: string, completedAt: string) => {
+      const thread = makeThread({
+        id: ThreadId.make("stamp-read"),
+        title: "stamp read",
+        latestUserMessageAt,
+        lastVisitedAt: isoAt(BASE_MS),
+        latestRun: {
+          runId: RunId.make("stamp-read-run"),
+          status: "completed",
+          requestedAt: latestUserMessageAt,
+          startedAt: latestUserMessageAt,
+          completedAt,
+          assistantMessageId: null,
+        },
+      });
+      const row = buildTickList([thread], BASE_MS, [])[0]!;
+      return row.type === "v2-thread" ? row.timeLabel : null;
+    };
+    expect(label(isoAt(BASE_MS - 40 * MINUTE_MS), isoAt(BASE_MS - 2 * MINUTE_MS))).toBe("2m");
+  });
+
   it("stamps queued outbox messages onto the matching row and notices removal", () => {
     const queued = buildTickList([readyThread, settledThread], BASE_MS, [], {
       queuedThreadKeys: new Set([`${environmentId}:stamp-ready`]),
