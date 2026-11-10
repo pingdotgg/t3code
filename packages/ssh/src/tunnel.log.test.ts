@@ -7,12 +7,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { remoteStateKey } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import { buildRemoteLogTailScript, launchOrReuseRemoteServer } from "./tunnel.ts";
+
+const isSshCommandError = Schema.is(SshCommandError);
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "reports only the current SSH launch log in node and archive modes",
@@ -98,7 +101,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           Effect.result,
         );
         assert.isTrue(Result.isFailure(result));
-        if (!Result.isFailure(result) || !(result.failure instanceof SshCommandError)) {
+        if (!Result.isFailure(result) || !isSshCommandError(result.failure)) {
           return yield* Effect.die("Expected the failed launch's SSH diagnostic");
         }
         const { stderr, exitCode } = result.failure;
