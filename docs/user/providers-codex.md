@@ -107,6 +107,14 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+## Review changes with Codex
+
+In a Codex thread, send `/review` to have Codex review your uncommitted changes.
+Use `/review branch main` to review the current branch against `main`,
+`/review commit <sha>` to review one commit, or `/review` followed by your own
+instructions. A review cannot be steered while it runs. Stop it and send a new
+`/review` instead.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

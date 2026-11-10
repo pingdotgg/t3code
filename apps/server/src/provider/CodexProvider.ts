@@ -880,6 +880,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         input: { hint: "Objective, or pause, resume, clear" },
       },
       {
+        name: "review",
+        description: "Ask Codex to review your uncommitted changes, a base branch or a commit",
+        input: { hint: "branch <base>, commit <sha>, or instructions (optional)" },
+      },
+      {
         name: "feedback",
         description: "Send this thread and Codex logs to OpenAI",
         input: { hint: "Describe the issue (optional)" },
