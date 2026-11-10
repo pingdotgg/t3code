@@ -28,6 +28,8 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
+// macOS adds a titled ~66x20 indicator window to an app while another app captures it.
+const MAC_MIN_CONTENT_WINDOW_SIZE = 100;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -114,7 +116,12 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
   const visible = lookup.windows.filter(
-    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
+    (window) =>
+      window.alpha > 0 &&
+      window.bounds.width > 0 &&
+      window.bounds.height > 0 &&
+      (window.bounds.width >= MAC_MIN_CONTENT_WINDOW_SIZE ||
+        window.bounds.height >= MAC_MIN_CONTENT_WINDOW_SIZE),
   );
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {

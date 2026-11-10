@@ -128,6 +128,18 @@ it.each([
       { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
     ],
   },
+  {
+    name: "the screen-sharing indicator",
+    helpers: [
+      { id: 90, title: "Window", bounds: { x: 723, y: 33, width: 66, height: 20 } },
+      { id: 91, title: "", bounds: { x: 0, y: 0, width: 1_512, height: 32 }, alpha: 0 },
+    ],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
 ])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
   stubMacLookup(macLookup([...helpers, content, ...background]));
 
