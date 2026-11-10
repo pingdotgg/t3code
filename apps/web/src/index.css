@@ -1072,24 +1072,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 /* Fill and rim can also paint a feature-owned pair of pseudo-elements. */
 @utility surface-tint-fill {
-  background: var(
-      --surface-tint-fill,
-      linear-gradient(
-        180deg,
-        color-mix(
-          in srgb,
-          var(--surface-tint, var(--muted-foreground)) var(--tint-fill-top, calc(38 / 255 * 100%)),
-          var(--tint-fill-base, transparent)
-        ),
-        color-mix(
-          in srgb,
-          var(--surface-tint, var(--muted-foreground))
-            var(--tint-fill-bottom, calc(18 / 255 * 100%)),
-          var(--tint-fill-base, transparent)
+  background:
+    var(--tint-overlay, none) padding-box,
+    var(
+        --surface-tint-fill,
+        linear-gradient(
+          180deg,
+          color-mix(
+            in srgb,
+            var(--surface-tint, var(--muted-foreground)) var(--tint-fill-top, calc(38 / 255 * 100%)),
+            var(--tint-fill-base, transparent)
+          ),
+          color-mix(
+            in srgb,
+            var(--surface-tint, var(--muted-foreground))
+              var(--tint-fill-bottom, calc(18 / 255 * 100%)),
+            var(--tint-fill-base, transparent)
+          )
         )
       )
-    )
-    padding-box;
+      padding-box;
 }
 @utility surface-tint-rim {
   padding: 1px;
@@ -1101,12 +1103,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         180deg,
         color-mix(
           in srgb,
-          var(--surface-tint, var(--muted-foreground)) calc(102 / 255 * 100%),
+          var(--surface-tint, var(--muted-foreground)) var(--tint-rim-top, calc(102 / 255 * 100%)),
           transparent
         ),
         color-mix(
           in srgb,
-          var(--surface-tint, var(--muted-foreground)) calc(26 / 255 * 100%),
+          var(--surface-tint, var(--muted-foreground)) var(--tint-rim-bottom, calc(26 / 255 * 100%)),
           transparent
         )
       )
@@ -1169,10 +1171,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* In-flow surfaces. Cards carry no rim; panels (approvals, questions) add
    the popover rim and a short shadow. */
 @utility surface-card {
-  background: var(--card-fill);
+  background: var(--card-background, var(--card-fill));
 }
 @utility surface-card-settings {
-  background: var(--card-settings-fill);
+  background: var(--card-settings-background, var(--card-settings-fill));
 }
 @utility surface-card-settings-rim {
   border: 1px solid transparent;
@@ -1262,10 +1264,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility surface-floating {
   @apply shadow-sm;
   border-color: var(
-    --floating-stroke,
-    color-mix(in oklab, var(--contrast-border) 60%, transparent)
+    --floating-border,
+    var(--floating-stroke, color-mix(in oklab, var(--contrast-border) 60%, transparent))
   );
-  background: var(--floating-fill, var(--background));
+  background: var(--floating-background, var(--floating-fill, var(--background)));
   --tw-shadow: var(--floating-shadow, var(--shadow-sm));
 }
 @utility surface-neutral-pill {
@@ -1291,7 +1293,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 @utility surface-floating-hover {
-  border-color: var(--floating-stroke, var(--contrast-border));
+  background: var(--floating-hover-background, var(--floating-fill, var(--background)));
+  border-color: var(--floating-hover-border, var(--floating-stroke, var(--contrast-border)));
+  --tw-shadow: var(--floating-hover-shadow, var(--floating-shadow, var(--shadow-sm)));
 }
 @utility surface-command-input {
   background: var(--command-input-fill, transparent);
@@ -1357,7 +1361,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Glossy fills with a hard split at half height: checked controls, the
    switch thumb when on, and the switch thumb when off. */
 @utility surface-sidebar-row-hover {
-  background: var(--sidebar-row-hover);
+  background: var(--sidebar-style-hover, var(--sidebar-row-hover));
 }
 @utility surface-sidebar-row-selected {
   background: var(--sidebar-row-selected-fill);
@@ -1374,7 +1378,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @utility surface-gloss-on {
-  background: var(--gloss-on-fill);
+  background: var(--gloss-on-background, var(--gloss-on-fill));
   box-shadow: var(--gloss-on-highlight, 0 0 #0000), var(--lit-shadow);
 }
 @utility surface-gloss-thumb {
@@ -2150,10 +2154,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 
   /* The rail is a well and the filled part a primary bar (pen DKf8H). */
   .settings-slider {
-    --settings-slider-bar: linear-gradient(
-      180deg,
-      var(--primary),
-      color-mix(in srgb, var(--primary) 80%, black)
+    --settings-slider-bar: var(
+      --slider-bar-fill,
+      linear-gradient(180deg, var(--primary), color-mix(in srgb, var(--primary) 80%, black))
     );
   }
 
@@ -2163,18 +2166,14 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     background:
       var(--settings-slider-bar) 0 0 / var(--settings-slider-fill-position) 100% no-repeat,
       var(--well-fill);
-    box-shadow:
-      inset 0 1px 1px rgb(0 0 0 / 30%),
-      var(--well-shadow);
+    box-shadow: var(--slider-track-highlight, inset 0 1px 1px rgb(0 0 0 / 30%)), var(--well-shadow);
   }
 
   .settings-slider::-moz-range-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: var(--well-fill);
-    box-shadow:
-      inset 0 1px 1px rgb(0 0 0 / 30%),
-      var(--well-shadow);
+    box-shadow: var(--slider-track-highlight, inset 0 1px 1px rgb(0 0 0 / 30%)), var(--well-shadow);
   }
 
   .settings-slider::-moz-range-progress {
@@ -2191,7 +2190,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     border: 0;
     border-radius: 9999px;
     background: var(--slider-thumb-fill, var(--gloss-off-thumb-fill));
-    box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+    box-shadow: var(--slider-thumb-shadow, 0 1px 3px rgb(0 0 0 / 40%));
     transition:
       transform 120ms ease,
       box-shadow 120ms ease;
@@ -2203,7 +2202,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     border: 0;
     border-radius: 9999px;
     background: var(--slider-thumb-fill, var(--gloss-off-thumb-fill));
-    box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+    box-shadow: var(--slider-thumb-shadow, 0 1px 3px rgb(0 0 0 / 40%));
     transition:
       transform 120ms ease,
       box-shadow 120ms ease;
@@ -3397,6 +3396,21 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --floating-background: initial;
+  --floating-hover-background: initial;
+  --floating-border: initial;
+  --floating-hover-border: initial;
+  --floating-hover-shadow: initial;
+  --gloss-on-background: initial;
+  --slider-bar-fill: initial;
+  --slider-track-highlight: initial;
+  --slider-thumb-shadow: initial;
+  --sidebar-style-hover: initial;
+  --card-background: initial;
+  --card-settings-background: initial;
+  --tint-overlay: initial;
+  --tint-rim-top: initial;
+  --tint-rim-bottom: initial;
   --composer-pill-fill: initial;
   --composer-pill-rim: initial;
   --composer-pill-shadow: initial;
@@ -4115,6 +4129,45 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    and accent, so they hold in light, dark, black chrome and named themes.
    :where() keeps this block at the specificity of the per-style blocks, so a
    style can still override a shared role. */
+
+:root[data-surface-style]:not(
+    :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  )
+  > body,
+[data-surface-preview]:not(
+  :where([data-surface-preview="gradient-rim"], [data-surface-preview="flat"])
+),
+:root.black-chrome[data-surface-style]:not(
+    :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  )
+  [data-chrome-scope] {
+  --ss-hover: color-mix(in srgb, var(--appearance-contrast-target) 6%, transparent);
+  --ss-hover-layer: linear-gradient(var(--ss-hover), var(--ss-hover)) padding-box;
+  --floating-background:
+    var(--raised-fill) padding-box, var(--raised-rim) border-box, var(--raised-fill) border-box;
+  --floating-hover-background:
+    var(--raised-hover-fill) padding-box, var(--raised-hover-rim) border-box,
+    var(--raised-hover-fill) border-box;
+  --floating-border: transparent;
+  --floating-hover-border: transparent;
+  --floating-shadow: var(--raised-shadow);
+  --floating-hover-shadow: var(--raised-hover-shadow);
+  --gloss-on-background:
+    var(--lit-fill) padding-box, var(--lit-rim) border-box, var(--lit-fill) border-box;
+  --slider-bar-fill: var(--lit-fill);
+  --slider-track-highlight: 0 0 #0000;
+  --slider-thumb-shadow: var(--raised-shadow);
+  --sidebar-style-hover: var(--ghost-hover-fill);
+  --error-alert-fill: initial !important;
+  --error-alert-rim: initial !important;
+  --warning-alert-fill: initial !important;
+  --warning-alert-rim: initial !important;
+  --info-alert-fill: initial !important;
+  --info-alert-rim: initial !important;
+  --button-pill-fill: var(--pill-fill);
+  --button-pill-rim: var(--pill-rim, var(--raised-rim));
+  --button-pill-shadow: var(--pill-shadow);
+}
 
 :root[data-surface-style]:not(:where([data-surface-style="gradient-rim"])) > body,
 [data-surface-preview]:not(:where([data-surface-preview="gradient-rim"])),

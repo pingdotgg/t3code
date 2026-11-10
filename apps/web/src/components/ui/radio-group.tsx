@@ -24,7 +24,7 @@ function Radio({ className, ...props }: RadioPrimitive.Root.Props) {
       {...props}
     >
       <RadioPrimitive.Indicator
-        className="-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground in-aria-invalid:[box-shadow:inset_0_0_0_1px_var(--error),var(--lit-shadow)]! data-unchecked:hidden data-checked:surface-gloss-on sm:size-4 sm:before:size-1.5 in-[[data-slot=radio]:focus-visible]:outline-2 in-[[data-slot=radio]:focus-visible]:outline-solid in-[[data-slot=radio]:focus-visible]:-outline-offset-2 in-[[data-slot=radio]:focus-visible]:outline-inherit"
+        className="-inset-px absolute flex border border-transparent size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground in-aria-invalid:[box-shadow:inset_0_0_0_1px_var(--error),var(--lit-shadow)]! data-unchecked:hidden data-checked:surface-gloss-on sm:size-4 sm:before:size-1.5 in-[[data-slot=radio]:focus-visible]:outline-2 in-[[data-slot=radio]:focus-visible]:outline-solid in-[[data-slot=radio]:focus-visible]:-outline-offset-2 in-[[data-slot=radio]:focus-visible]:outline-inherit"
         data-slot="radio-indicator"
       />
     </RadioPrimitive.Root>
