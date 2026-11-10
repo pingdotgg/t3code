@@ -3937,7 +3937,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"] {
   --ss-background: var(--background);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.56) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -4001,7 +4001,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
   --ss-background: oklch(from var(--background) max(l, 0.195734) c h);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.56) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -4214,6 +4214,21 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     oklch(from var(--ss-background) calc(l + 0.065) c h)
   ) !important;
   --composer-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22) !important;
+}
+
+:root.dark[data-surface-style]:not(
+    :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  )
+  > body,
+:root.dark
+  [data-surface-preview]:not(
+    :where([data-surface-preview="gradient-rim"], [data-surface-preview="flat"])
+  ),
+:root.black-chrome[data-surface-style]:not(
+    :where([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+  )
+  [data-chrome-scope] {
+  --destructive-foreground: oklch(from var(--destructive) max(l, 0.8) c h);
 }
 
 /* Named light palettes already pair action and hover colors with their label. */
