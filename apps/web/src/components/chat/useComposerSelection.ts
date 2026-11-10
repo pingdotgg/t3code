@@ -174,6 +174,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         shownSelection.instanceId === instanceId &&
         shownSelection.model === resolvedModel)
     ) {
+      // Re-picking the shown model keeps its options and saves it again if that save failed.
+      if (resolvedModel && !isLocalDraftThread) applyThreadModelPick(threadRef);
       if (options?.focusComposer !== false) scheduleComposerFocus();
       return;
     }

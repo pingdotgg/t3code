@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
@@ -9,12 +10,44 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
+const mocks = vi.hoisted(() => ({
+  setModelSelection: null as ((value: unknown) => Promise<AtomCommandResult<void, unknown>>) | null,
+}));
+
+vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useOrchestrationCommand: (() => (value: unknown) => mocks.setModelSelection?.(value)) as never,
+}));
+
+vi.mock(import("../../state/threads"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      threadShellAtom: ((ref: { threadId: string }) => shellAtom(ref.threadId)) as never,
+    },
+  };
+});
+
 import { render } from "../../../test/render";
 import { deriveEffectiveComposerModelState, useComposerDraftStore } from "../../composerDraftStore";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useComposerSelection } from "./useComposerSelection";
+
+// Kept alive so a shell set before the hook mounts is still there when it saves a pick.
+const shellAtom = Atom.family((_threadId: string) => Atom.make<unknown>(null).pipe(Atom.keepAlive));
+
+function setup() {
+  const setModelSelection = vi.fn<(value: unknown) => Promise<AtomCommandResult<void, unknown>>>();
+  mocks.setModelSelection = setModelSelection;
+  return { setModelSelection };
+}
 
 const environmentId = EnvironmentId.make("environment-local");
 const cursor = ProviderInstanceId.make("cursor");
@@ -44,6 +77,7 @@ function cursorThread(id: string) {
 function Picker(props: {
   thread: EnvironmentThreadShell;
   runtime: Parameters<typeof useComposerSelection>[0]["activeRuntime"];
+  model?: string;
 }) {
   const { onProviderModelSelectStable } = useComposerSelection({
     environmentId,
@@ -65,8 +99,11 @@ function Picker(props: {
     scheduleComposerFocus: () => {},
   });
   return (
-    <button type="button" onClick={() => onProviderModelSelectStable(cursor, stored.model)}>
-      Pick the stored model
+    <button
+      type="button"
+      onClick={() => onProviderModelSelectStable(cursor, props.model ?? stored.model)}
+    >
+      Pick the model
     </button>
   );
 }
@@ -74,7 +111,7 @@ function Picker(props: {
 it("keeps a Cursor thread's stored model and options when the user re-picks its unavailable row", async () => {
   const thread = cursorThread("thread-cursor");
   await using _screen = await render(<Picker thread={thread} runtime={null} />);
-  await page.getByRole("button", { name: "Pick the stored model" }).click();
+  await page.getByRole("button", { name: "Pick the model" }).click();
 
   await vi.waitFor(() => {
     const draft = useComposerDraftStore
@@ -90,7 +127,7 @@ it("switches back to the thread's stored model while the session runs on another
     typeof useComposerSelection
   >[0]["activeRuntime"];
   await using _screen = await render(<Picker thread={thread} runtime={runtime} />);
-  await page.getByRole("button", { name: "Pick the stored model" }).click();
+  await page.getByRole("button", { name: "Pick the model" }).click();
 
   await vi.waitFor(() => {
     const draft = useComposerDraftStore
@@ -109,4 +146,30 @@ it("switches back to the thread's stored model while the session runs on another
       }),
     ).toEqual({ selectedModel: stored.model, modelOptions: { [cursor]: stored.options } });
   });
+});
+
+it("saves a re-picked model again when its first save failed", async () => {
+  const { setModelSelection } = setup();
+  setModelSelection
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("offline"))))
+    .mockResolvedValue(AsyncResult.success(undefined));
+  const thread = cursorThread("thread-cursor-retry");
+  appAtomRegistry.set(shellAtom(thread.id), thread);
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <Picker thread={thread} runtime={null} model="auto-smart" />
+    </AppAtomRegistryProvider>,
+  );
+  const pick = page.getByRole("button", { name: "Pick the model" });
+  await pick.click();
+  await vi.waitFor(() => expect(setModelSelection).toHaveBeenCalledTimes(1));
+  await pick.click();
+
+  const autoSave = expect.objectContaining({
+    input: {
+      threadId: thread.id,
+      modelSelection: expect.objectContaining({ instanceId: cursor, model: "auto-smart" }),
+    },
+  });
+  await vi.waitFor(() => expect(setModelSelection.mock.calls).toEqual([[autoSave], [autoSave]]));
 });
