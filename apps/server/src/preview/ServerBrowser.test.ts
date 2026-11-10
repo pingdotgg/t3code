@@ -2046,6 +2046,47 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("the tab the desktop shows is visible and picked for agents without a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const openDesktopTab = Effect.fn("openDesktopTab")(function* (url: string) {
+        desktopRendersNext = true;
+        const opened = yield* manager.open({
+          threadId: scope.thread.threadId,
+          url,
+          runtime: "server",
+        });
+        const tabId = PreviewTabId.make(opened.tabId);
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        return tabId;
+      });
+      const recentTab = yield* openDesktopTab("http://localhost:5173/recent");
+      const shownTab = yield* openDesktopTab("http://localhost:5173/shown");
+      // Opened first and used last, so recency or insertion order alone picks it.
+      yield* broker.invoke({ scope, tabId: recentTab, operation: "status", input: {} });
+
+      shownDesktopTabs.add(shownTab);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-b"),
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        tabId: shownTab,
+        visible: true,
+        tabs: [
+          expect.objectContaining({ tabId: recentTab, visible: false }),
+          expect.objectContaining({ tabId: shownTab, visible: true }),
+        ],
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("agents read a human's tab with no arguments and act on it only while nobody drives", () =>
   Effect.scoped(
     Effect.gen(function* () {
