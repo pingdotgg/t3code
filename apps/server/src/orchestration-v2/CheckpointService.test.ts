@@ -139,6 +139,8 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
       const baseline = yield* checkpoints.materializeBaselineCheckpoint({
         scope,
         ordinalWithinScope: 0,
+        nodeId: scope.nodeId,
+        capturedAt: scope.createdAt,
       });
       const turn = yield* checkpoints.capture({
         scope,
