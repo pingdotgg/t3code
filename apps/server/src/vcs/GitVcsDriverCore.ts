@@ -563,8 +563,9 @@ function statusFetchRefs(
       }
     }
   }
-  for (const branch of defaultBranch === null ? DEFAULT_BASE_BRANCH_CANDIDATES : [defaultBranch]) {
-    wanted.add(branch);
+  // `<remote>/HEAD` goes stale when the remote renames its default branch; status falls back to these.
+  for (const branch of [defaultBranch, ...DEFAULT_BASE_BRANCH_CANDIDATES]) {
+    if (branch !== null) wanted.add(branch);
   }
   // `git config --null --get-regexp` prints `<key>\n<value>\0`.
   for (const entry of baseConfigStdout.split("\0")) {
