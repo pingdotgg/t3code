@@ -67,6 +67,17 @@ export function newestPullRequestSummary(
   return compareSummaries(current, observed) > 0 ? observed : current;
 }
 
+/** A stored snapshot carries no edit, so a shared summary dated the same wins over it. */
+export function newestDisplayedPullRequestSummary(
+  detail: PullRequestSummary | null,
+  fromSnapshot: boolean,
+  shared: PullRequestSummary | null,
+): PullRequestSummary | null {
+  return fromSnapshot
+    ? newestPullRequestSummary(shared, detail)
+    : newestPullRequestSummary(detail, shared);
+}
+
 export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
   return {
     provider: entry.provider,

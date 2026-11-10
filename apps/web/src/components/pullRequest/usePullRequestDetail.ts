@@ -13,6 +13,7 @@ import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
+  newestDisplayedPullRequestSummary,
   newestPullRequestSummary,
   pullRequestEnvironment,
   pullRequestListEntryToSummary,
@@ -115,8 +116,9 @@ export function usePullRequestDetail(
   // `detail` would cost it its cache scope.
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
   // The row can come from the page's stored snapshot, which no answer has published yet.
-  const sharedSummary = newestPullRequestSummary(
+  const sharedSummary = newestDisplayedPullRequestSummary(
     resolvedCoreDetail,
+    liveDetail === null,
     newestPullRequestSummary(observedSummary, listSummary),
   );
   const coreDetail =
