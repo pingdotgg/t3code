@@ -30,6 +30,7 @@ import {
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { resolveBackgroundThreadRequest } from "./backgroundThreadAnnouncement";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {
   isSideChatNotificationQuiet,
@@ -263,14 +264,16 @@ export function startThreadNotifications(
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const attention =
+      const needsAttention =
         status === "input" ||
         status === "request" ||
         status === "approval" ||
         status === "failed" ||
-        status === "limited"
-          ? `${thread.latestRun?.runId ?? ""}:${status}`
-          : null;
+        status === "limited";
+      const requestId = needsAttention ? resolveBackgroundThreadRequest(thread).requestId : null;
+      const attention = needsAttention
+        ? `${thread.latestRun?.runId ?? ""}:${status}:${requestId ?? ""}`
+        : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const settled = status === "ready" && thread.latestRun?.status === "completed";
       const state = {
@@ -279,6 +282,7 @@ export function startThreadNotifications(
         thread,
         status,
         attention,
+        requestId,
         settled,
         completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
       };

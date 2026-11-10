@@ -107,6 +107,7 @@ import { ChatSyncSection } from "./ChatSyncSettings";
 import { KnowledgeMapSection } from "./KnowledgeMapSettings";
 import { CourseSettingsSection } from "./CourseSettings";
 import { hasSideChatSettings } from "./sideChatSettingsSupport";
+import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -146,6 +147,7 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
+  const checkProviderUpdates = useCheckProviderUpdates();
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   // The desktop updates this machine, whose policy the primary environment reports.
@@ -213,6 +215,7 @@ function AboutVersionSection() {
     }
 
     if (typeof bridge.checkForUpdate !== "function") return;
+    void checkProviderUpdates();
     void bridge
       .checkForUpdate()
       .then((result) => {
