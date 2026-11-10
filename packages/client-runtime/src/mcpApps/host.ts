@@ -247,10 +247,16 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           fail(id, -32602, "tools/call needs a tool name and object arguments.");
           return;
         }
+        let jsonArgs: Record<string, unknown>;
+        try {
+          // postMessage keeps undefined and other non-JSON values the RPC encoding rejects.
+          jsonArgs = JSON.parse(JSON.stringify(args));
+        } catch {
+          fail(id, -32602, "tools/call arguments must be JSON.");
+          return;
+        }
         answer(id, () =>
-          options
-            .callTool({ name, arguments: args as Record<string, unknown> })
-            .then(normalizeMcpAppToolResult),
+          options.callTool({ name, arguments: jsonArgs }).then(normalizeMcpAppToolResult),
         );
         return;
       }

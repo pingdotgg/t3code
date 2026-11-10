@@ -203,8 +203,10 @@ describe("makeMcpAppHost", () => {
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {
+    const calls: Array<unknown> = [];
     const { host, sent } = setup({
       callTool: async (input) => {
+        calls.push(input.arguments);
         if (input.name === "delete_everything")
           throw new McpAppHostRefusal({ message: "Declined by the user." });
         return { content: [], structuredContent: { ok: true } };
@@ -217,7 +219,14 @@ describe("makeMcpAppHost", () => {
       method: "tools/call",
       params: { name: "delete_everything", arguments: {} },
     });
+    host.receive({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name: "refresh", arguments: { since: undefined, limit: 5 } },
+    });
     await flush();
+    expect(calls.at(-1)).toStrictEqual({ limit: 5 });
     expect(sent).toContainEqual({
       jsonrpc: "2.0",
       id: 7,
