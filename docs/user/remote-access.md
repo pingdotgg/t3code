@@ -203,8 +203,10 @@ reachable or convert HTTP to HTTPS.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. When you add an environment, a host entered
-without a scheme uses HTTP if it is an IP address, `localhost`, or a `.local` name,
-and HTTPS otherwise. Include `https://` when such a server uses HTTPS.
+without a scheme uses HTTP if it is a private or Tailscale IP address, `localhost`,
+or a `.local` name, and HTTPS otherwise. Type the scheme yourself when the default
+is wrong, such as `https://` for a local server behind TLS or `http://` for a
+public IP address.
 
 ## Desktop-managed SSH
 
