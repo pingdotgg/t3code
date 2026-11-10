@@ -138,8 +138,9 @@ const DEVICE_DEFAULT_ENTRIES: readonly DeviceDefaultEntry[] = [
     id: "voice-input",
     label: "Voice input order",
     isDefault: (preferences) => {
-      const current = microphoneOrder(preferences.microphones).map(microphoneEntryKey);
-      const defaults = microphoneOrder([]).map(microphoneEntryKey);
+      // Restore is Android-only, so compare against the Android default order.
+      const current = microphoneOrder(preferences.microphones, "android").map(microphoneEntryKey);
+      const defaults = microphoneOrder([], "android").map(microphoneEntryKey);
       return (
         current.length === defaults.length && current.every((key, index) => key === defaults[index])
       );

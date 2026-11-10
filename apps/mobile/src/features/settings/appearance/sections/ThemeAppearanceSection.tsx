@@ -8,7 +8,7 @@ import { mixThemePreviewBase, THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared
 import { SymbolView } from "../../../../components/ui/AppSymbol";
 import { AppText as Text } from "../../../../components/ui/AppText";
 import { SettingResetButton } from "../../../../components/ui/SettingResetButton";
-import { DEFAULT_BASE_FONT_SIZE } from "../../../lib/appearancePreferences";
+import { DEFAULT_BASE_FONT_SIZE } from "../../../../lib/appearancePreferences";
 import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemePreviewColors,

@@ -224,7 +224,7 @@ export function SettingsVoiceRouteScreen() {
   const isDefaultOrder = AsyncResult.isSuccess(preferencesResult)
     ? (() => {
         const current = entries.map(microphoneEntryKey);
-        const defaults = microphoneOrder([]).map(microphoneEntryKey);
+        const defaults = deviceMicrophoneOrder([]).map(microphoneEntryKey);
         return (
           current.length === defaults.length &&
           current.every((key, index) => key === defaults[index])
