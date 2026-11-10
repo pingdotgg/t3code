@@ -15,10 +15,16 @@ function buildFormatters(timeZone: string) {
   };
 }
 
+// Reading the zone builds a formatter (tens of µs), so feed rows share one read per second.
+const ZONE_RECHECK_MS = 1_000;
 let formatters: ReturnType<typeof buildFormatters> | null = null;
+let zoneCheckedAt = 0;
 function currentFormatters() {
+  const now = Date.now();
+  if (formatters && Math.abs(now - zoneCheckedAt) < ZONE_RECHECK_MS) return formatters;
+  zoneCheckedAt = now;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (formatters?.timeZone !== timeZone) formatters = buildFormatters(timeZone);
+  if (!formatters || formatters.timeZone !== timeZone) formatters = buildFormatters(timeZone);
   return formatters;
 }
 
