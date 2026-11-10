@@ -83,6 +83,22 @@ export function isLoopbackRequestUrl(requestUrl: string): boolean {
   return isLoopbackHostname(new URL(requestUrl).hostname);
 }
 
+/**
+ * Whether clients should offer to turn on T3 Connect over this session: only the desktop app's
+ * own bootstrap session, from any address (WSL answers on a distro IP), never through a proxy.
+ * A loopback address alone does not count, since SSH port forwards look like loopback too.
+ */
+export function canLinkHere(
+  request: HttpServerRequest.HttpServerRequest,
+  subject: string,
+): boolean {
+  return (
+    subject === "desktop-bootstrap" &&
+    requestAbsoluteUrl(request) !== null &&
+    !hasForwardedAuthorityHeaders(request)
+  );
+}
+
 export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
