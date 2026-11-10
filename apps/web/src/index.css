@@ -3531,7 +3531,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --success-foreground: oklch(from var(--success) min(l, 0.48) c h);
   --warning-foreground: oklch(from var(--warning) min(l, 0.48) c h);
   --kbd-on-destructive-foreground: var(--foreground);
-  --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+  --flat-primary: oklch(from var(--primary) calc(l + 0.018) c h);
+  --lit-fill: linear-gradient(var(--flat-primary), var(--flat-primary)) !important;
   --lit-hover-fill: linear-gradient(
     color-mix(in srgb, var(--primary) 90%, var(--background)),
     color-mix(in srgb, var(--primary) 90%, var(--background))
@@ -3589,7 +3590,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark[data-surface-style="flat"] > body,
 :root.dark [data-surface-preview="flat"],
 :root.black-chrome[data-surface-style="flat"] [data-chrome-scope] {
-  --flat-high: oklch(from var(--background) calc(l + 0.073) c h);
+  --flat-primary: oklch(from var(--primary) calc(l - 0.012) c h);
+  --flat-high: oklch(from var(--background) max(calc(l + 0.073), 0.268734) c h);
   --flat-middle: oklch(from var(--background) calc(l + 0.026) c h);
   --flat-banner: oklch(from var(--background) calc(l + 0.048) c h);
   --flat-pill: oklch(from var(--background) calc(l - 0.037) c h);
@@ -4404,11 +4406,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --well-fill: var(--raised-fill) !important;
   --well-rim: var(--ss-none) !important;
   --well-shadow: 0 0 #0000 !important;
-  /* An off switch sits on cards the same fill as controls, so its track steps further. */
-  --well-switch-fill: linear-gradient(
-    color-mix(in srgb, var(--flat-high) 86%, var(--foreground)),
-    color-mix(in srgb, var(--flat-high) 86%, var(--foreground))
-  ) !important;
+  --well-switch-fill: var(--raised-fill) !important;
   --well-switch-rim: var(--ss-none) !important;
   --gloss-on-fill: var(--lit-fill) !important;
   --gloss-on-highlight: 0 0 #0000 !important;
@@ -4417,8 +4415,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     var(--primary-foreground)
   ) !important;
   --gloss-off-thumb-fill: linear-gradient(
-    var(--muted-foreground),
-    var(--muted-foreground)
+    oklch(from var(--muted-foreground) 0.58 c h),
+    oklch(from var(--muted-foreground) 0.58 c h)
   ) !important;
   --slider-thumb-fill: var(--lit-fill);
   --bubble-fill: var(--raised-fill) !important;
