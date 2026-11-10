@@ -92,15 +92,6 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [
-          {
-            id: resultTransferId,
-            type: "subagent_result",
-            sourceThreadId: childThreadId,
-            targetThreadId: parentThreadId,
-            sourcePoint: { runId: childRunId },
-          },
-        ],
         subagents: [
           {
             id: taskId,
@@ -132,7 +123,15 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: resultTransferId,
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         messages: [
           {
             id: MessageId.make("message:mcp-ack-result"),
@@ -161,6 +160,7 @@ describe("OrchestratorMcpService", () => {
                 return hasNestedWork
                   ? {
                       ...childProjection,
+                      contextTransfers: [],
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
@@ -170,7 +170,6 @@ describe("OrchestratorMcpService", () => {
               const snapshot = hasNestedWork
                 ? {
                     ...parentProjection,
-                    contextTransfers: [],
                     subagents: parentProjection.subagents.map((task) => ({
                       ...task,
                       result: null,
