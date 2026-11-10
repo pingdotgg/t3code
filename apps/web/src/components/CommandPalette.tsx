@@ -963,13 +963,39 @@ function OpenCommandPaletteDialog(props: {
     (item) => projectJumpItems.get(item.value) ?? item,
   );
 
+  const submenuGroups =
+    currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
+      ? [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: projectThreadItems }]
+      : currentView?.groups[0]?.value === "themes"
+        ? changeThemeItem.groups
+        : currentView?.groups[0]?.value === "appearance"
+          ? changeAppearanceItem.groups
+          : currentView?.groups;
+  const searchesAllThreads =
+    deferredQuery.trim().length > 0 &&
+    !isActionsOnly &&
+    (currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP ||
+      currentView?.groups[0]?.value === `sources:${addProjectEnvironmentId}` ||
+      submenuGroups === undefined ||
+      filterCommandPaletteGroups({
+        activeGroups: submenuGroups,
+        query: deferredQuery,
+        isInSubmenu: true,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      }).length === 0);
+
   const {
     threadItems: allThreadItems,
     recentThreadItems,
     threadMessageItems,
     now: searchNow,
     isSearchPending: isThreadSearchPending,
-  } = useCommandPaletteThreadItems({ activeThread: activeThread ?? null, threadSearchQuery });
+  } = useCommandPaletteThreadItems({
+    activeThread: activeThread ?? null,
+    threadSearchQuery,
+    includeAllThreads: searchesAllThreads,
+  });
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
