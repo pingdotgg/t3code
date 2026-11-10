@@ -2221,7 +2221,7 @@ it.effect("updates cached labels after successful edits without rereading the ho
           host: "github.example.com",
         },
       };
-      const detail = atoms.detail(target);
+      const detail = atoms.detail({ ...target, input: { ...target.input, allowStale: false } });
       const candidates = atoms.labelCandidates(target);
       registry.mount(detail);
       const unmountCandidates = registry.mount(candidates);

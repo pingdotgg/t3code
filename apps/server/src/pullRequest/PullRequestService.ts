@@ -47,6 +47,7 @@ import {
   type PullRequestFilterOptions,
   type PullRequestFilterOptionsInput,
   type PullRequestActor,
+  type PullRequestReferenceCandidate,
   type PullRequestLabel,
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
@@ -57,6 +58,7 @@ import {
   type PullRequestRoutingIdentityResult,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
+  type PullRequestReviewerCandidatesInput,
   type PullRequestReviewerRequestInput,
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
@@ -273,7 +275,7 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReactionInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly reviewerCandidates: (
-      input: PullRequestRef,
+      input: PullRequestReviewerCandidatesInput,
     ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestError>;
     readonly requestReviewers: (
       input: PullRequestReviewerRequestInput,
@@ -624,6 +626,14 @@ function withRateLimitBackoff(
             api.searchRepositoryAuthors,
           ),
         }),
+    ...(api.searchRepositoryReferences === undefined
+      ? {}
+      : {
+          searchRepositoryReferences: interactive(
+            "searchRepositoryReferences",
+            api.searchRepositoryReferences,
+          ),
+        }),
     replyToThread: interactive("replyToThread", api.replyToThread),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
@@ -645,6 +655,8 @@ function rankFilterOptions<A>(
     readonly query: string | undefined;
     readonly keyOf: (item: A) => string;
     readonly textsOf: (item: A) => ReadonlyArray<string | null>;
+    /** Ties keep the hosts' order instead of sorting by key. */
+    readonly hostOrder?: boolean;
   },
 ): { readonly items: ReadonlyArray<A>; readonly truncated: boolean } {
   const query = input.query?.trim().toLowerCase() ?? "";
@@ -671,7 +683,9 @@ function rankFilterOptions<A>(
     .toSorted(
       (left, right) =>
         left.score - right.score ||
-        left.key.localeCompare(right.key, undefined, { sensitivity: "base" }),
+        (input.hostOrder === true
+          ? 0
+          : left.key.localeCompare(right.key, undefined, { sensitivity: "base" })),
     );
   return {
     items: ranked.slice(0, FILTER_OPTIONS_LIMIT).map(({ item }) => item),
@@ -1199,7 +1213,6 @@ export const make = Effect.gen(function* () {
       { concurrency: REPOSITORY_CONCURRENCY },
     );
 
-  // Only the host can filter checks; listed rows have no check state.
   const matchesRowFilters = (
     item: ProviderChangeRequest,
     filters: PullRequestListFilters | undefined,
@@ -1215,6 +1228,9 @@ export const make = Effect.gen(function* () {
         (filters.review === "none"
           ? item.reviewDecision === null
           : item.reviewDecision === filters.review)) &&
+      (filters.checks === undefined ||
+        item.checksState === undefined ||
+        item.checksState === filters.checks) &&
       (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
       (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
       (filters.author === undefined ||
@@ -2513,6 +2529,7 @@ export const make = Effect.gen(function* () {
                         repository: project.repository,
                         host: project.host,
                         number: input.number,
+                        query: input.query,
                       })
                       .pipe(Effect.mapError(toPullRequestError("reviewerCandidates")))
                   : Effect.fail(
@@ -2605,7 +2622,19 @@ export const make = Effect.gen(function* () {
         keyOf: (label) => label.name,
         textsOf: (label) => [label.name],
       });
-      return { labels: items, authors: [], truncated };
+      return { labels: items, authors: [], references: [], truncated };
+    }
+    if (input.kind === "references") {
+      const pages = yield* gather<PullRequestReferenceCandidate>((project) =>
+        project.api.searchRepositoryReferences?.({ ...refOf(project), sigil: input.sigil }),
+      );
+      const { items, truncated } = rankFilterOptions(pages, {
+        query: input.query,
+        keyOf: (candidate) => candidate.reference,
+        textsOf: (candidate) => [String(candidate.number), candidate.title],
+        hostOrder: true,
+      });
+      return { labels: [], authors: [], references: items, truncated };
     }
     const pages = yield* gather<PullRequestActor>((project) =>
       project.api.searchRepositoryAuthors?.(refOf(project)),
@@ -2615,7 +2644,7 @@ export const make = Effect.gen(function* () {
       keyOf: (author) => author.login,
       textsOf: (author) => [author.login, author.name],
     });
-    return { labels: [], authors: items, truncated };
+    return { labels: [], authors: items, references: [], truncated };
   });
 
   const labelCandidates: PullRequestService["Service"]["labelCandidates"] = (input) =>

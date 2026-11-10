@@ -1022,7 +1022,8 @@ export const make = Effect.gen(function* () {
         resource: "items",
         routeParameters: repositoryRoute(input.location),
         queryParameters: [
-          `path=${toItemPath(input.path)}`,
+          // `az devops invoke` does not escape query values, so `#` or `&` in a path would truncate it.
+          `path=${encodeURIComponent(toItemPath(input.path))}`,
           "versionDescriptor.versionType=commit",
           `versionDescriptor.version=${input.commit}`,
           "includeContent=true",
