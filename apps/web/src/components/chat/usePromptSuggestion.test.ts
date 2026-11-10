@@ -54,6 +54,16 @@ describe("offeredPromptSuggestion", () => {
     const stopped = run(RunId.make("run-2"), 2, "cancelled");
     expect(offeredPromptSuggestion(suggestion, summary(stopped), [turn, stopped])).toBeNull();
 
+    // Several never-started runs in a row still fall back to the turn that ran.
+    const removed = run(RunId.make("run-3"), 3, "cancelled", false);
+    expect(offeredPromptSuggestion(suggestion, summary(removed), [turn, steered, removed])).toBe(
+      suggestion,
+    );
+
+    // A newer turn that completed behind the cancelled run owns the suggestion slot.
+    const next = run(RunId.make("run-2"), 2, "completed");
+    expect(offeredPromptSuggestion(suggestion, summary(removed), [turn, next, removed])).toBeNull();
+
     // Cached detail that predates the shell's cancelled run cannot vouch for what ran in between.
     const unseen = run(RunId.make("run-3"), 3, "cancelled", false);
     expect(offeredPromptSuggestion(suggestion, summary(unseen), [turn])).toBeNull();
