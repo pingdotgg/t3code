@@ -15,11 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 // Claude Code uses this model for local placeholders that never reached the API.
 export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 
-/**
- * T3 Code writes one record per assistant *content block*, and every one of those records repeats
- * the same complete `usage` object for the parent message. Summing them overcounts by roughly
- * 2.4x on a real workload, so the caller must drop repeats by `dedupeKey` and keep the first.
- */
+/** Claude content blocks repeat cumulative message usage; callers keep the fullest snapshot. */
 export function parseClaudeLine(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
@@ -56,6 +52,12 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const outputTokens = tokenCount(usageRecord["output_tokens"]);
+  const outputDetails = usageRecord["output_tokens_details"];
+  const thinkingTokens =
+    typeof outputDetails === "object" && outputDetails !== null
+      ? tokenCount((outputDetails as Record<string, unknown>)["thinking_tokens"])
+      : 0;
 
   const executor: UsageRecord = {
     provider: "claude",
@@ -66,9 +68,9 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
       uncachedInputTokens: tokenCount(usageRecord["input_tokens"]),
       cachedInputTokens: tokenCount(usageRecord["cache_read_input_tokens"]),
       cacheCreationTokens: tokenCount(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: tokenCount(usageRecord["output_tokens"]),
-      // Anthropic folds thinking tokens into output and does not break them out.
-      reasoningTokens: 0,
+      outputTokens,
+      // Thinking is already included in output.
+      reasoningTokens: Math.min(outputTokens, thinkingTokens),
     },
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",

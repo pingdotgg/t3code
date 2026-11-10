@@ -113,6 +113,34 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(1);
   });
 
+  it("rolls thinking into every view once, including when environments share history", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/a" };
+    const usage = summary(
+      [
+        bucket({
+          hourStart: "2026-08-07T09:00:00.000Z",
+          totals: { ...bucket().totals, reasoningTokens: 20 },
+        }),
+        bucket({
+          hourStart: "2026-08-07T09:00:00.000Z",
+          totals: { ...bucket().totals, reasoningTokens: 100 },
+        }),
+      ],
+      [source],
+    );
+    const merged = mergeUsage(
+      [environment("env-a", usage), environment("env-b", usage)],
+      USAGE_CONTRACT_VERSION,
+    );
+    const totals = { costUsd: 20, totalTokens: 2320, reasoningTokens: 70 };
+    expect(merged).toMatchObject({ ...totals, outputTokens: 100 });
+    expect(merged.providers[0]).toMatchObject(totals);
+    expect(merged.daily[0]?.byProvider.get("claude")).toEqual(totals);
+    expect(merged.hourly[0]?.byProvider.get("claude")).toEqual(totals);
+    expect(merged.models[0]?.tokens).toMatchObject({ outputTokens: 100, reasoningTokens: 70 });
+    expect(merged.duplicateSources).toHaveLength(1);
+  });
+
   it("counts a shared transcript directory once", () => {
     const shared = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
     const merged = mergeUsage(

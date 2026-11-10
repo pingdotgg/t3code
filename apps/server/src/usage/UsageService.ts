@@ -47,6 +47,7 @@ import {
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
+  cachedFileRecords,
   decodeScanCache,
   dedupeWithinFile,
   LEGACY_SCAN_CACHE_FILE_NAMES,
@@ -172,6 +173,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((fileName) =>
+    path.join(config.stateDir, fileName),
+  );
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -385,20 +389,55 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
-      let document = yield* readDocument(scanCachePath);
-      for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
-        if (document !== null) break;
-        document = yield* readDocument(path.join(config.stateDir, fileName));
-        cacheDirty = document !== null;
-      }
-      if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
-        fileCache.set(path, entry);
-      }
-      const sources = decodeCachedSources(document);
-      if (Option.isSome(sources)) {
-        for (const [key, source] of Object.entries(sources.value.sources))
-          sourceCache.set(key, source);
+      // Current format wins ties, but every supported cache can hold deleted history.
+      for (const filePath of [scanCachePath, ...legacyScanCachePaths]) {
+        const document = yield* readDocument(filePath);
+        if (document === null) continue;
+        for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
+          const previous = fileCache.get(path);
+          let selected =
+            previous === undefined || entry.mtimeMs > previous.mtimeMs ? entry : previous;
+          if (previous?.provider === "claude" && entry.provider === "claude") {
+            const older = selected === entry ? previous : entry;
+            const reconcile = (
+              records: readonly UsageRecord[],
+              candidates: readonly UsageRecord[],
+            ) => {
+              const snapshots = new Map(
+                dedupeWithinFile([...records, ...candidates])
+                  .filter((record) => record.dedupeKey !== null)
+                  .map((record) => [record.dedupeKey, record]),
+              );
+              return records.map((record) =>
+                record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
+              );
+            };
+            const records = reconcile(selected.records, older.records);
+            const tailRecords = reconcile(selected.tailRecords, [
+              ...older.records,
+              ...older.tailRecords,
+            ]);
+            if (
+              records.some((record, index) => record !== selected.records[index]) ||
+              tailRecords.some((record, index) => record !== selected.tailRecords[index])
+            ) {
+              selected = { ...selected, records, tailRecords };
+            }
+          }
+          if (selected !== previous) {
+            fileCache.set(path, selected);
+            if (filePath !== scanCachePath) cacheDirty = true;
+          }
+        }
+        const sources = decodeCachedSources(document);
+        if (Option.isSome(sources)) {
+          for (const [key, source] of Object.entries(sources.value.sources)) {
+            if (!sourceCache.has(key)) {
+              sourceCache.set(key, source);
+              if (filePath !== scanCachePath) cacheDirty = true;
+            }
+          }
+        }
       }
     }),
   );
@@ -464,10 +503,7 @@ export const make = Effect.gen(function* () {
       cached.provider === provider
     ) {
       return {
-        records:
-          cached.tailRecords.length === 0
-            ? cached.records
-            : [...cached.records, ...cached.tailRecords],
+        records: cachedFileRecords(cached),
         malformedRecords: cached.malformedRecords,
       };
     }
@@ -484,7 +520,7 @@ export const make = Effect.gen(function* () {
     // (size, mtime) would silently drop the file's usage until it changes.
     if (parsed === null)
       return {
-        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        records: cached?.provider === provider ? cachedFileRecords(cached) : [],
         malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
         failed: true,
       };
@@ -517,25 +553,19 @@ export const make = Effect.gen(function* () {
       }
     }
     const base = parsed.resumed && cached !== undefined ? cached.records : [];
-    const seen = new Set<string>();
-    const records = dedupeWithinFile([...base, ...parsed.records], seen);
-    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-
-    return {
-      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+    const entry = {
+      size,
+      mtimeMs,
+      provider,
+      records: dedupeWithinFile([...base, ...parsed.records]),
+      tailRecords: dedupeWithinFile(parsed.tailRecords),
       malformedRecords: parsed.malformedRecords,
-      update: {
-        entry: {
-          size,
-          mtimeMs,
-          provider,
-          records,
-          tailRecords,
-          malformedRecords: parsed.malformedRecords,
-          position: parsed.position,
-        },
-        replaces: cached,
-      },
+      position: parsed.position,
+    };
+    return {
+      records: cachedFileRecords(entry),
+      malformedRecords: parsed.malformedRecords,
+      update: { entry, replaces: cached },
     };
   });
 
@@ -748,7 +778,7 @@ export const make = Effect.gen(function* () {
           continue;
         retainedFiles.push({
           path: filePath,
-          records: [...entry.records, ...entry.tailRecords],
+          records: cachedFileRecords(entry),
           malformedRecords: entry.malformedRecords,
         });
       }

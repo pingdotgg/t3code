@@ -1,4 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { useResolveClassNames } from "uniwind";
+import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
@@ -40,6 +42,17 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
     pi: "#4d9f8a",
     muse: "#0866ff",
   };
+}
+
+export function useProviderThinkingColors(): Record<UsageProviderKind, string> {
+  const colors = useProviderColors();
+  const { backgroundColor: surface } = useResolveClassNames("bg-grouped-card");
+  if (typeof surface !== "string") return colors;
+  const thinking = { ...colors };
+  for (const provider of PROVIDER_ORDER) {
+    thinking[provider] = flattenThemeColor(themeColorWithAlpha(colors[provider], 0.45), surface);
+  }
+  return thinking;
 }
 
 export function useUsageMixColors() {

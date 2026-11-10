@@ -479,6 +479,11 @@ function ChartCard(props: {
           ))}
         </View>
       </View>
+      {metric === "tokens" ? (
+        <Text className="text-xs text-foreground-muted">
+          Lighter segments show recorded thinking tokens. Unreported thinking stays in output.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -568,6 +573,9 @@ function ProviderSection(props: {
               {metric === "cost"
                 ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
                 : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+              {metric === "tokens" && (provider.reasoningTokens ?? 0) > 0
+                ? ` · ${formatTokens(provider.reasoningTokens ?? 0)} thinking`
+                : null}
             </Text>
           </View>
         );
@@ -623,8 +631,14 @@ function TotalsSection(props: {
         <MetricCell
           columns={props.columns}
           label="Output"
-          value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
+          value={formatTokens(merged.outputTokens - merged.reasoningTokens)}
+          detail="Excludes recorded thinking"
+        />
+        <MetricCell
+          columns={props.columns}
+          label="Thinking"
+          value={formatTokens(merged.reasoningTokens)}
+          detail="Only separately recorded tokens"
         />
         <MetricCell
           columns={props.columns}
@@ -793,6 +807,12 @@ function ModelsSection(props: {
                   ? "Unpriced"
                   : formatUsd(model.costUsd)}
             </Text>
+            {metric === "tokens" && model.tokens.reasoningTokens > 0 ? (
+              <Text className="text-xs text-foreground-muted">
+                {formatTokens(model.tokens.outputTokens - model.tokens.reasoningTokens)} output ·{" "}
+                {formatTokens(model.tokens.reasoningTokens)} thinking
+              </Text>
+            ) : null}
           </View>
         ))}
       </View>

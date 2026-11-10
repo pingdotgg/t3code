@@ -783,7 +783,12 @@ function UsageOverview({
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+        <div
+          className={cn(
+            "grid grid-cols-2 gap-x-6 gap-y-4 py-1",
+            merged.reasoningTokens > 0 ? "md:grid-cols-6" : "md:grid-cols-5",
+          )}
+        >
           <Metric
             loading={loadingPartial}
             label="Processed tokens"
@@ -802,8 +807,15 @@ function UsageOverview({
           <Metric
             loading={loadingPartial}
             label="Output"
-            value={formatTokens(merged.outputTokens)}
+            value={formatTokens(merged.outputTokens - merged.reasoningTokens)}
           />
+          {merged.reasoningTokens > 0 ? (
+            <Metric
+              loading={loadingPartial}
+              label="Thinking"
+              value={formatTokens(merged.reasoningTokens)}
+            />
+          ) : null}
           <Metric
             loading={loadingPartial}
             label="Cache savings"

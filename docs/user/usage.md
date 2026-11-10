@@ -15,7 +15,12 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
-Totals depend on the history available on each server. Grok turns without a saved completed-turn
+**Tokens** shows recorded **Thinking** separately, in a lighter shade of each provider's color.
+Thinking is part of output, so this does not change totals or cost. Thinking a provider does not
+report separately stays in **Output**.
+
+Totals depend on the history available on each server. Recovering fuller Claude Code usage from
+saved history can raise past totals and estimated costs. Grok turns without a saved completed-turn
 record are missing from the totals.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.

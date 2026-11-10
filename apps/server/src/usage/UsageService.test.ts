@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeZlib from "node:zlib";
 
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -79,6 +79,7 @@ function claudeLine(
   outputTokens: number,
   model = "claude-fable-5",
   sessionId = "session-1",
+  thinkingTokens?: number,
 ): string {
   return `${JSON.stringify({
     type: "assistant",
@@ -88,7 +89,13 @@ function claudeLine(
     message: {
       id: `msg_${id}`,
       model,
-      usage: { input_tokens: 10, output_tokens: outputTokens },
+      usage: {
+        input_tokens: 10,
+        output_tokens: outputTokens,
+        ...(thinkingTokens === undefined
+          ? {}
+          : { output_tokens_details: { thinking_tokens: thinkingTokens } }),
+      },
     },
   })}\n`;
 }
@@ -2531,12 +2538,113 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("reconciles a growing transcript without committing its replaceable tail", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const committed = claudeLine(1, 100);
+      const tail = claudeLine(1, 160, "claude-fable-5", "session-1", 40).trimEnd();
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, tail));
+
+      const check = (summary: UsageSummary, output: number, thinking: number, records: number) => {
+        expect.soft(totalOutputTokens(summary)).toBe(output);
+        expect
+          .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0))
+          .toBe(thinking);
+        expect.soft(summary.buckets.reduce((sum, bucket) => sum + bucket.records, 0)).toBe(records);
+        expect
+          .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0))
+          .toBeCloseTo(records * 10 * 1e-5 + output * 5e-5, 12);
+      };
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+        }).pipe(Effect.scoped);
+
+        // A v5 scan of a tail-only file could retain A without a duplicate committed row.
+        const legacy = yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { r: unknown[][]; t: unknown[][] }>;
+          };
+          const file = document.files[transcript]!;
+          assert.strictEqual(file.r.length, 0);
+          assert.strictEqual(file.t.length, 1);
+          file.t[0]![7] = 0;
+          return encodeUnknownJsonString({ ...document, version: 5 });
+        });
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + tail));
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+
+          // Preserve the committed prefix and grow the file, so this resumes from the tail.
+          const replacement = claudeLine(2, 200)
+            .trimEnd()
+            .replace('"message":', '"padding":"' + "x".repeat(256) + '","message":');
+          yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + replacement));
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+        }).pipe(Effect.scoped);
+
+        // Import the obsolete A tail only after the current cache has persisted tail B.
+        yield* Effect.promise(() => NodeFSP.writeFile(legacyPath, legacy));
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+        }).pipe(Effect.scoped);
+        yield* Effect.promise(() => NodeFSP.rm(legacyPath));
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              "\n" + claudeLine(1, 180, "claude-fable-5", "session-1", 60).trimEnd(),
+            ),
+          );
+          check(yield* service.readSummary(WINDOW), 380, 60, 2);
+        }).pipe(Effect.scoped);
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 380, 60, 2);
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              "\n" + claudeLine(1, 180, "claude-fable-5", "session-1", 80),
+            ),
+          );
+          check(yield* service.readSummary(WINDOW), 380, 80, 2);
+        }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-grow-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
       Effect.gen(function* () {
         const { transcript, settings, home } = yield* setup;
-        const large = claudeLine(1, 9900).replace(
+        const large = claudeLine(1, 9900, "claude-fable-5", "session-1", 3900).replace(
           '"message":',
           '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
         );
@@ -2545,6 +2653,7 @@ describe("UsageService", () => {
           const service = yield* UsageService.make;
           const first = yield* service.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(first), 9900);
+          assert.strictEqual(first.buckets[0]?.totals.reasoningTokens, 3900);
           assert.closeTo(
             first.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
             0.4951,
@@ -2552,9 +2661,25 @@ describe("UsageService", () => {
           );
           const warm = yield* service.readSummary(WINDOW);
           assert.deepStrictEqual(warm.buckets, first.buckets);
-          yield* Effect.promise(() => NodeFSP.appendFile(transcript, large + claudeLine(2, 100)));
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              large +
+                claudeLine(1, 10000, "claude-fable-5", "session-1", 4000) +
+                claudeLine(2, 100, "claude-fable-5", "session-1", 30),
+            ),
+          );
           const appended = yield* service.readSummary(WINDOW);
-          assert.strictEqual(totalOutputTokens(appended), 10000);
+          assert.strictEqual(totalOutputTokens(appended), 10100);
+          assert.strictEqual(
+            appended.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0),
+            4030,
+          );
+          assert.closeTo(
+            appended.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            0.5052,
+            1e-12,
+          );
           assert.strictEqual(
             appended.buckets.reduce((sum, bucket) => sum + bucket.totals.uncachedInputTokens, 0),
             20,
@@ -2685,7 +2810,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2805,6 +2930,184 @@ describe("UsageService", () => {
             settings,
             ratesDocument: {
               "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: 1 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("upgrades live usage and retains deleted history from current, v5 and v4 caches", () =>
+    Effect.gen(function* () {
+      const { home, settings, transcript } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const rollout = (sessionId: string, outputTokens: number) =>
+        [
+          { type: "session_meta", payload: { id: sessionId } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+          {
+            type: "event_msg",
+            payload: {
+              type: "thread_settings_applied",
+              thread_settings: { service_tier: "ultrafast" },
+            },
+          },
+          {
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+            },
+          },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") + "\n";
+      const live = NodePath.join(sessions, "live.jsonl");
+      const deleted = NodePath.join(sessions, "deleted.jsonl");
+      const legacyOnly = NodePath.join(sessions, "legacy-only.jsonl");
+      const newerOnly = NodePath.join(sessions, "newer-only.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(live, rollout("live", 10));
+        await NodeFSP.writeFile(deleted, rollout("deleted", 20));
+        await NodeFSP.writeFile(legacyOnly, rollout("legacy-only", 30));
+        await NodeFSP.writeFile(newerOnly, rollout("newer-only", 40));
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 100) + claudeLine(1, 160, "claude-fable-5", "session-1", 40).trimEnd(),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+        const v5Path = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        yield* Effect.gen(function* () {
+          const first = yield* UsageService.make;
+          yield* first.readSummary(WINDOW);
+        }).pipe(Effect.scoped);
+
+        const legacy = yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<
+              string,
+              {
+                m: number;
+                p: string;
+                r: unknown[][];
+                t: unknown[][];
+                cs: { speed?: unknown } | null;
+              }
+            >;
+          };
+          for (const file of Object.values(document.files)) {
+            file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
+            file.t = file.t.map((row) => [...row.slice(0, 10), 0]);
+            if (file.cs !== null) delete file.cs.speed;
+            if (file.p === "claude") {
+              file.r[0]![6] = 100;
+              file.r[0]![7] = 0;
+              file.t[0]![7] = 0;
+            }
+          }
+          const newerEntry = document.files[newerOnly]!;
+          delete document.files[newerOnly];
+          const v4 = encodeUnknownJsonString({ ...document, version: 4 });
+          document.files[newerOnly] = newerEntry;
+          await NodeFSP.writeFile(legacyPath, v4);
+          delete document.files[legacyOnly];
+          document.files[deleted]!.m -= 1000;
+          document.files[deleted]!.r[0]![6] = 10;
+          delete document.files[live];
+          for (const file of Object.values(document.files)) {
+            if (file.cs !== null) file.cs.speed = "standard";
+          }
+          const v5 = encodeUnknownJsonString({ ...document, version: 5 });
+          await NodeFSP.writeFile(v5Path, v5);
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.rm(deleted);
+          await NodeFSP.rm(legacyOnly);
+          await NodeFSP.rm(newerOnly);
+          return { v4, v5 };
+        });
+
+        const check = (summary: UsageSummary) => {
+          expect.soft(totalOutputTokens(summary)).toBe(260);
+          expect
+            .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0))
+            .toBe(40);
+          expect.soft(summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0)).toBe(310);
+        };
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+
+        // A downgrade can add history after the current cache has already been written.
+        yield* Effect.promise(async () => {
+          const v5 = decodeUnknownJsonString(legacy.v5) as { files: Record<string, unknown> };
+          delete v5.files[newerOnly];
+          legacy.v5 = encodeUnknownJsonString(v5);
+          await NodeFSP.writeFile(v5Path, legacy.v5);
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { m: number; r: unknown[][] }>;
+          };
+          delete document.files[legacyOnly];
+          document.files[deleted]!.m -= 1000;
+          document.files[deleted]!.r[0]![6] = 10;
+          await NodeFSP.writeFile(cachePath, encodeUnknownJsonString(document));
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+        // A downgrade's newer tail must retain thinking saved only in the v6 tail.
+        yield* Effect.promise(async () => {
+          const current = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { m: number }>;
+          };
+          const v5 = decodeUnknownJsonString(legacy.v5) as {
+            files: Record<string, { m: number }>;
+          };
+          v5.files[transcript]!.m = current.files[transcript]!.m + 1000;
+          legacy.v5 = encodeUnknownJsonString(v5);
+          await NodeFSP.writeFile(v5Path, legacy.v5);
+          await NodeFSP.rm(transcript);
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+          legacy.v4,
+        );
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(v5Path, "utf8")),
+          legacy.v5,
+        );
+
+        // Imported deleted history must survive even when only the new cache remains.
+        yield* Effect.promise(async () => {
+          await NodeFSP.rm(legacyPath);
+          await NodeFSP.rm(v5Path);
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-v4-upgrade-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 0, output_cost_per_token: 1 },
+              "gpt-6-astra": {
+                input_cost_per_token: 0,
+                output_cost_per_token: 1,
+                input_cost_per_token_ultrafast: 0,
+                output_cost_per_token_ultrafast: 6,
+              },
             },
           }),
         ),

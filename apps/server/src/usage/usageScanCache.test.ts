@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
+  dedupeWithinFile,
   makeScanCacheWriter,
   type CachedFile,
   type ScanCache,
@@ -218,15 +219,12 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(
-        version >= 10
-          ? original.get("/gone.jsonl")
-          : {
-              ...original.get("/gone.jsonl"),
-              size: -1,
-              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-            },
-      );
+      // Every listed version predates v12's fuller Claude snapshots.
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-codex.jsonl")).toEqual({
         ...original.get("/gone-codex.jsonl"),
         size: -1,
@@ -323,5 +321,26 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TEST_FORMAT_MAP);
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("dedupeWithinFile", () => {
+  it("keeps the first Claude record's attribution with its fullest usage snapshot", () => {
+    const first = record({ totals: { ...record().totals, outputTokens: 1 } });
+    const output = record({
+      timestampMs: first.timestampMs + 500,
+      totals: { ...first.totals, outputTokens: 100 },
+      reportedCostUsd: 0.25,
+    });
+    const thinking = record({
+      ...output,
+      totals: { ...output.totals, reasoningTokens: 40 },
+    });
+    const other = record({ dedupeKey: "msg_2:" });
+    const kept = dedupeWithinFile([first, output, thinking, first, thinking, other]);
+
+    expect(kept).toEqual([{ ...first, totals: thinking.totals, reportedCostUsd: 0.25 }, other]);
+    expect(first.totals.outputTokens).toBe(1);
+    expect(output.totals.reasoningTokens).toBe(0);
   });
 });

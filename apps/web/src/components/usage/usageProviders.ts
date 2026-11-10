@@ -49,6 +49,10 @@ export const PROVIDER_PRESENTATION = {
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
+export function providerThinkingColor(provider: UsageProviderKind): string {
+  return `color-mix(in oklab, ${PROVIDER_PRESENTATION[provider].color} 55%, var(--background))`;
+}
+
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
 
 export function providersWithUsage(
