@@ -30,6 +30,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
+import { sha256 } from "@noble/hashes/sha2";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -59,6 +60,7 @@ import {
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
+  buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
   getDiffLineStat,
@@ -184,6 +186,7 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 type DiffModel = {
   readonly parsedSlices: ReadonlyArray<RenderablePatch | null>;
   readonly loadedFiles: ReadonlyArray<Extract<RenderablePatch, { kind: "files" }>["files"][number]>;
+  readonly binaryFileKeys: ReadonlySet<string>;
   readonly sourceFileStats: ReadonlyMap<string, ReturnType<typeof getDiffLineStat>>;
 };
 const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
@@ -212,6 +215,11 @@ function diffModel(
     loadedFiles: orderDiffFilesLikeTree(
       parsedSlices.flatMap((parsed) =>
         parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+      ),
+    ),
+    binaryFileKeys: new Set(
+      parsedSlices.flatMap((parsed) =>
+        parsed?.kind === "files" ? [...parsed.binaryFileKeys] : [],
       ),
     ),
     sourceFileStats: new Map(
@@ -570,7 +578,7 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+  const { parsedSlices, loadedFiles, binaryFileKeys, sourceFileStats } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
@@ -911,16 +919,35 @@ function PullRequestCodeTab({
       const withheld = omittedFileStats.get(path);
       if (withheld) ({ additions, deletions } = withheld);
     }
+    const binary = binaryFileKeys.has(buildFileDiffIdentityKey(item.fileDiff));
+    const host = sourceControlClients.get(detail.provider);
+    const fileUrl =
+      binary && detail.provider === "github"
+        ? `${detail.url}/files#diff-${Array.from(sha256(new TextEncoder().encode(path)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+        : detail.url;
     return (
       <FileViewedToggle
         fileKey={item.id}
         path={path}
         stat={
-          <PullRequestDiffStat
-            additions={additions}
-            deletions={deletions}
-            className="font-mono text-2xs"
-          />
+          binary ? (
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Binary file</span>
+              <Button
+                size="micro"
+                variant="link"
+                render={<a href={fileUrl} target="_blank" rel="noopener noreferrer" />}
+              >
+                View on {host.label}
+              </Button>
+            </span>
+          ) : (
+            <PullRequestDiffStat
+              additions={additions}
+              deletions={deletions}
+              className="font-mono text-2xs"
+            />
+          )
         }
       />
     );

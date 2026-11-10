@@ -12,6 +12,64 @@ import {
 } from "./diffRendering";
 
 describe("getRenderablePatch", () => {
+  it("retains explicit binary markers without classifying other hunkless files as binary", () => {
+    const patch = [
+      "diff --git a/added.png b/added.png",
+      "new file mode 100644",
+      "index 0000000..1234567",
+      "Binary files /dev/null and b/added.png differ",
+      'diff --git "a/old image.png" "b/new image.png"',
+      "similarity index 50%",
+      "rename from old image.png",
+      "rename to new image.png",
+      'Binary files "a/old image.png" and "b/new image.png" differ',
+      "diff --git a/deleted.png b/deleted.png",
+      "deleted file mode 100644",
+      "Binary files a/deleted.png and /dev/null differ",
+      "diff --git a/payload.bin b/payload.bin",
+      "GIT binary patch",
+      "literal 3",
+      "KcmZQzWC8#H2mk;8",
+      "diff --git a/empty.txt b/empty.txt",
+      "new file mode 100644",
+      "index 0000000..e69de29",
+      "diff --git a/old.txt b/new.txt",
+      "similarity index 100%",
+      "rename from old.txt",
+      "rename to new.txt",
+      "diff --git a/omitted.txt b/omitted.txt",
+      "index 1111111..2222222 100644",
+      "diff --git a/lfs.png b/lfs.png",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/lfs.png",
+      "@@ -0,0 +1,3 @@",
+      "+version https://git-lfs.github.com/spec/v1",
+      "+oid sha256:1234567890",
+      "+size 123",
+      "diff --git a/marker.txt b/marker.txt",
+      "--- a/marker.txt",
+      "+++ b/marker.txt",
+      "@@ -1 +1 @@",
+      "-Binary files a/fake.png and b/fake.png differ",
+      "+GIT binary patch",
+      "",
+    ].join("\n");
+    for (const ignoreWhitespace of [false, true]) {
+      const parsed = getRenderablePatch(patch, "pr-page-1", {
+        ignoreWhitespace,
+        compactPartialHunkOffsets: true,
+      });
+      expect(parsed?.kind).toBe("files");
+      if (parsed?.kind !== "files") return;
+      expect(parsed.files).toHaveLength(9);
+      expect(parsed.files.slice(0, 7).every((file) => file.hunks.length === 0)).toBe(true);
+      expect(parsed.binaryFileKeys).toEqual(
+        new Set(parsed.files.slice(0, 4).map(buildFileDiffIdentityKey)),
+      );
+    }
+  });
+
   it("hides indentation changes around inserted JSX without moving review lines", () => {
     const patch = [
       "diff --git a/item.tsx b/item.tsx",

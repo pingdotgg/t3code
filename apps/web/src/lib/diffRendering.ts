@@ -1,4 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { parsePatchFiles, processFile } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
@@ -44,6 +44,7 @@ export type RenderablePatch =
       kind: "files";
       files: FileDiffMetadata[];
       sourceFiles: FileDiffMetadata[];
+      binaryFileKeys: ReadonlySet<string>;
     }
   | {
       kind: "raw";
@@ -171,7 +172,16 @@ export function getRenderablePatch(
       return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
     });
     if (files.length > 0) {
-      return { kind: "files", files, sourceFiles };
+      const binaryFileKeys = new Set<string>();
+      // Pierre discards binary markers, so retain them before handing its metadata to the viewer.
+      for (const section of patch.split(/(?=^diff --git )/m)) {
+        if (!section.startsWith("diff --git ")) continue;
+        const header = section.split("\n@@ ", 1)[0]!;
+        if (!/^(?:Binary files .+ and .+ differ|GIT binary patch)\r?$/m.test(header)) continue;
+        const file = processFile(header);
+        if (file) binaryFileKeys.add(buildFileDiffIdentityKey(file));
+      }
+      return { kind: "files", files, sourceFiles, binaryFileKeys };
     }
 
     return {
