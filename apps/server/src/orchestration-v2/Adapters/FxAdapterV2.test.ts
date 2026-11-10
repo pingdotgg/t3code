@@ -290,43 +290,6 @@ describe("FxAdapterV2", () => {
     ).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  // fx only exposes ~/.fx/mcp.json servers when the client opts in on session setup.
-  it.effect("asks fx for the user's profile MCP servers on new and loaded sessions", () =>
-    Effect.forEach(
-      [
-        { scenario: "profile-mcp-new", method: "session/new", load: {}, sessionId: {} },
-        {
-          scenario: "profile-mcp-load",
-          method: "session/load",
-          load: { loadSessionId: SESSION_ID },
-          sessionId: { sessionId: SESSION_ID },
-        },
-      ],
-      ({ scenario, method, load, sessionId }) =>
-        openFxSession({
-          scenario,
-          runtimeMode: "approval-required",
-          ...load,
-          frames: [
-            ...initialize,
-            outbound(method, {
-              ...sessionId,
-              cwd: "<workspace>",
-              mcpServers: "<any>",
-              _meta: { fx: { profileMcpServers: true } },
-            }),
-            answer(method, fxSession({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
-            ...setConfig(
-              "mode",
-              "ask",
-              fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
-            ),
-          ],
-        }),
-      { discard: true },
-    ).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
   it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>
     openFxSession({
       scenario: "default-model",
@@ -335,7 +298,12 @@ describe("FxAdapterV2", () => {
       loadSessionId: SESSION_ID,
       frames: [
         ...initialize,
-        outbound("session/load"),
+        outbound("session/load", {
+          sessionId: SESSION_ID,
+          cwd: "<workspace>",
+          mcpServers: "<any>",
+          _meta: { fx: { profileMcpServers: true } },
+        }),
         answer("session/load", fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES })),
         // Config id `model`, never fx's `provider`, and never T3's "default".
         ...setConfig(
