@@ -3646,6 +3646,13 @@ describe("PiAdapterV2", () => {
         [["scout", "running"]],
       );
       assert.deepEqual(work, [true]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(
+        yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
+          includeSubagents: true,
+        }),
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
       const paused = yield* subagentRowsBefore(fake, collectEvent, "paused", [
         notice("dispatch", [{ workflowKey: "a", agent: "scout", status: "paused" }]),
         notice("dispatch", [{ workflowKey: "a", agent: "scout", status: "running" }]),
@@ -3669,6 +3676,7 @@ describe("PiAdapterV2", () => {
       ]);
       assert.deepEqual(unknown, []);
       assert.deepEqual(work, [true, false, true, false]);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       const late = yield* subagentRowsBefore(fake, collectEvent, "unknown-widget", [
         asyncStatusWidget(1, [
           {

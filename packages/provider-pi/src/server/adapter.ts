@@ -2695,10 +2695,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        hasPendingBackgroundWorkForThread: (providerThread) =>
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || subagents.pendingOwners().size > 0,
+        ),
+        hasPendingBackgroundWorkForThread: (providerThread, options) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (options?.includeSubagents === true &&
+                [...subagents.pendingOwners()].some(
+                  (owner) => owner.turnInput.providerThread.id === providerThread.id,
+                )),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
