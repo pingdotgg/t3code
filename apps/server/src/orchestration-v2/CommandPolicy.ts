@@ -69,6 +69,14 @@ export function isNativeMaintenanceCommand(message: {
   );
 }
 
+/** A message that only invokes a slash command, such as `/context all`, not a path like `/src/a.ts`. */
+export function isSlashCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && /^\/[\w:-]+(?:\s|$)/u.test(message.text.trim());
+}
+
 /**
  * A goal command sent into active work stops that work when it starts or
  * replaces goal work, or ends a goal that is driving the run.
@@ -90,6 +98,25 @@ export function goalCommandStopsActiveRun(
 }
 
 export function resolveMessageDispatchIntent(
+  projection: OrchestrationV2ThreadProjection,
+  message: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "dispatchMode" | "deliveryIntent" | "text" | "attachments"
+  >,
+): MessageDispatchMode {
+  const mode = resolveActiveRunDispatchIntent(
+    projection,
+    message.dispatchMode,
+    message.deliveryIntent,
+  );
+  // A provider runs a steered command in place of the turn's task, so commands wait.
+  return mode.type === "steer_active" && isSlashCommand(message)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+/** How a message joins active work when it is free to steer. */
+export function resolveActiveRunDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",

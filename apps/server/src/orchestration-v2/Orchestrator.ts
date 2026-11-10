@@ -109,6 +109,8 @@ import {
   goalCommandStopsActiveRun,
   isActiveRun,
   isNativeMaintenanceCommand,
+  isSlashCommand,
+  resolveActiveRunDispatchIntent,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
@@ -5156,6 +5158,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
       });
     }
+    // An explicit restart already gives up the turn, so only steering holds commands back.
+    if (!input.forceRestart && isSlashCommand(input)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause:
+          "Commands must run as a separate turn. Queue it or wait for the active turn to finish.",
+      });
+    }
     const targetMessage = input.projection.messages.find(
       (message) => message.id === targetRun.userMessageId,
     );
@@ -6062,11 +6073,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(
-      projection,
-      command.dispatchMode,
-      command.deliveryIntent,
-    );
+    // Native goal commands must not steer an existing turn.
+    const parsedGoalCommand = parseGoalCommand(command);
+    const goalCommand =
+      parsedGoalCommand === null ||
+      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
+        ? null
+        : parsedGoalCommand;
+    // A goal command keeps the run it was sent at; the goal handling below queues it.
+    let dispatchMode =
+      goalCommand === null
+        ? resolveMessageDispatchIntent(projection, command)
+        : resolveActiveRunDispatchIntent(projection, command.dispatchMode, command.deliveryIntent);
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -6116,13 +6134,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // Native goal commands must not steer an existing turn.
-    const parsedGoalCommand = parseGoalCommand(command);
-    const goalCommand =
-      parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
-        ? null
-        : parsedGoalCommand;
     let goalStopRunId: RunId | undefined;
     if (goalCommand !== null) {
       // A goal command never joins a running turn. One that starts or ends goal
@@ -10117,8 +10128,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A message that starts a fresh session can't steer the current turn.",
       });
     }
-    if (goalCommand !== null) {
-      yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+    // A steered command replaces the turn's task, so promoting one only moves it first.
+    if (goalCommand !== null || isSlashCommand(queuedMessage)) {
+      if (goalCommand !== null) {
+        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      }
       const goal = projection.providerThreads.find(
         (candidate) => candidate.id === target?.providerThreadId,
       )?.goal;
@@ -10132,6 +10146,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...queuedRun, queuePosition: 1 },
       });
       const stops =
+        goalCommand !== null &&
         target !== undefined &&
         isLiveRun(target) &&
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
@@ -12306,7 +12321,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
   );
 
-  /** Puts a queued goal command first and, given a target, stops the run in its way. */
+  /** Puts a queued command first and, given a target, stops the run in its way. */
   const stopRunForQueuedCommand = Effect.fn("Orchestrator.stopRunForQueuedCommand")(
     function* (input: {
       readonly command: Extract<

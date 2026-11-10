@@ -719,7 +719,7 @@ it.effect("keeps native maintenance commands out of steering and restart message
           attachments: [],
           dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
         });
-        if (scenario.name.startsWith("steer-")) {
+        if (scenario.mode === "steer_active") {
           yield* dispatch;
           const queued = (yield* threads.getThreadProjection(launched.threadId)).runs[1];
           assert.equal(queued?.status, "queued");
