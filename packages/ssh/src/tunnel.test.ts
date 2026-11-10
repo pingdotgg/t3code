@@ -627,7 +627,7 @@ esac
           ),
         );
         yield* Deferred.await(tunnelSpawned);
-        yield* TestClock.adjust(Duration.minutes(2));
+        yield* TestClock.adjust(Duration.minutes(5));
         const result = yield* Fiber.join(ensure);
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result)) {
