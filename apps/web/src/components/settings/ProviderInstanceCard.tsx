@@ -1139,7 +1139,7 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="relative flex h-5 shrink-0 items-center gap-1">
+        <span className="pointer-events-none relative flex h-5 shrink-0 items-center gap-1 *:pointer-events-auto">
           {projectOverride?.value !== undefined ? (
             <span className="flex items-center">
               <ProjectOverrideInheritance
