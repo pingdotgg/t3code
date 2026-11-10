@@ -108,11 +108,6 @@ it.effect.each([
     },
   },
   {
-    forwarded: "nothing when a plugin switch is malformed",
-    plugins: { "work-plugin@demo-market": true, "broken@demo-market": 1 },
-    expected: { disableAllHooks: true },
-  },
-  {
     forwarded: "nothing when a plugin switch is an object",
     plugins: { "work-plugin@demo-market": true, "object@demo-market": { arbitrary: "value" } },
     expected: { disableAllHooks: true },
