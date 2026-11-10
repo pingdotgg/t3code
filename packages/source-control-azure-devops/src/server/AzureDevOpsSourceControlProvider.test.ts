@@ -30,6 +30,15 @@ it("reads the signed-in Azure account and says when az is signed out", () => {
     ).status,
     "unauthenticated",
   );
+  assert.deepStrictEqual(
+    parseAuth(processOutput("https://tfs.example.com/DefaultCollection/_apis/projects/1\n")),
+    {
+      status: "authenticated",
+      account: Option.none(),
+      host: Option.some("tfs.example.com"),
+      detail: Option.none(),
+    },
+  );
   assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
 });
 

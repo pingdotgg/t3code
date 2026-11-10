@@ -24,6 +24,12 @@ function parseAzureAuth(input: SourceControlAuthProbeInput) {
     });
   }
 
+  // `authRetryArgs` prints a project URL on the collection the extension's credential reached.
+  const projectUrl = account === undefined ? null : URL.parse(account);
+  if (projectUrl?.protocol === "https:" || projectUrl?.protocol === "http:") {
+    return providerAuth({ status: "authenticated", host: projectUrl.host });
+  }
+
   if (account !== undefined && account.length > 0) {
     return providerAuth({
       status: "authenticated",
@@ -46,6 +52,18 @@ export const discovery = {
   executable: "az",
   versionArgs: ["--version"],
   authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  // `az devops login` tokens (the only sign-in Azure DevOps Server takes) leave no `az login` account.
+  authRetryArgs: [
+    "devops",
+    "project",
+    "list",
+    "--top",
+    "1",
+    "--query",
+    "value[0].url",
+    "-o",
+    "tsv",
+  ],
   // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
