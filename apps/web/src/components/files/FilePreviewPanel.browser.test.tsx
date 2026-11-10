@@ -2,7 +2,6 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -179,418 +178,173 @@ describe("rendered Markdown task saves", () => {
   });
 });
 
+function seedFile(relativePath: string, contents: string) {
+  state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+}
+
+function storeComment(
+  target: typeof threadRef,
+  input: { id: string; line: number; text: string; contents: string },
+) {
+  const comment = buildFileReviewComment({
+    id: input.id,
+    filePath: "config.ts",
+    startLine: input.line,
+    endLine: input.line,
+    text: input.text,
+    contents: input.contents,
+  });
+  const store = useComposerDraftStore.getState();
+  store.addReviewComment(target, comment);
+  return { comment, [Symbol.dispose]: () => store.removeReviewComment(target, comment.id) };
+}
+
+function fileEditor(container: HTMLElement) {
+  const shadowRoot = () => container.querySelector("diffs-container")?.shadowRoot;
+  const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
+  const lineStart = (lineNumber: number) =>
+    document
+      .createTreeWalker(
+        shadowRoot()!.querySelector(`[data-line="${lineNumber}"]`)!,
+        NodeFilter.SHOW_TEXT,
+      )
+      .nextNode()!;
+  const dispatch = (event: Event) => act(async () => content()!.dispatchEvent(event));
+  const isMac = isMacPlatform(navigator.platform);
+  return {
+    ready: () => vi.waitFor(() => expect(content()?.isContentEditable).toBe(true)),
+    select: async (fromLine: number, toLine = fromLine) => {
+      content()!.focus();
+      const selectionSynced = new Promise((resolve) =>
+        document.addEventListener("selectionchange", resolve, { once: true }),
+      );
+      document.getSelection()!.setBaseAndExtent(lineStart(fromLine), 0, lineStart(toLine), 0);
+      await selectionSynced;
+    },
+    input: (inputType: string, data: string | null = null) =>
+      dispatch(
+        new InputEvent("beforeinput", {
+          inputType,
+          data,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      ),
+    undo: () =>
+      dispatch(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          code: "KeyZ",
+          metaKey: isMac,
+          ctrlKey: !isMac,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      ),
+  };
+}
+
 describe("file view comments", () => {
+  const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+
   it("shows a comment already in the composer draft when the file view mounts", async () => {
     using _settings = setup();
-    const contents = "export const one = 1;\nexport const two = 2;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
-    const comment = buildFileReviewComment({
-      id: "file-comment-1",
-      filePath: "config.ts",
-      startLine: 2,
-      endLine: 2,
-      text: "Repro note on line two",
-      contents,
-    });
-    const store = useComposerDraftStore.getState();
-    store.addReviewComment(threadRef, comment);
-    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
+    seedFile("config.ts", contents);
+    using _comment = storeComment(threadRef, { id: "c1", line: 2, text: "About b", contents });
 
     await using screen = await render(filePreview("config.ts"));
 
-    const inlineComment = screen.getByText("Repro note on line two");
+    const inlineComment = screen.getByText("About b");
     await expect.element(inlineComment).toBeVisible();
     expect(inlineComment.element().closest("[slot]")?.getAttribute("slot")).toBe("annotation-2");
   });
 
-  it("shows only the current thread's comments when the thread changes under a mounted file view", async () => {
+  it("shows only the current thread's comments when the thread changes", async () => {
     using _settings = setup();
-    const contents = "export const one = 1;\nexport const two = 2;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
+    seedFile("config.ts", contents);
     const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
-    const store = useComposerDraftStore.getState();
-    const comments = [
-      { target: threadRef, id: "file-comment-a", line: 1, text: "Note from thread A" },
-      { target: otherThreadRef, id: "file-comment-b", line: 2, text: "Note from thread B" },
-    ];
-    for (const { target, id, line, text } of comments) {
-      store.addReviewComment(
-        target,
-        buildFileReviewComment({
-          id,
-          filePath: "config.ts",
-          startLine: line,
-          endLine: line,
-          text,
-          contents,
-        }),
-      );
-    }
-    using _comments = {
-      [Symbol.dispose]: () => {
-        for (const { target, id } of comments) store.removeReviewComment(target, id);
-      },
-    };
+    using _a = storeComment(threadRef, { id: "a", line: 1, text: "From thread A", contents });
+    using _b = storeComment(otherThreadRef, { id: "b", line: 2, text: "From thread B", contents });
 
     await using screen = await render(filePreview("config.ts"));
-    await expect.element(screen.getByText("Note from thread A")).toBeVisible();
+    await expect.element(screen.getByText("From thread A")).toBeVisible();
 
     await screen.rerender(filePreview("config.ts", otherThreadRef));
 
-    await expect.element(screen.getByText("Note from thread B")).toBeVisible();
-    expect(screen.getByText("Note from thread A").query()).toBeNull();
-  });
-
-  it("does not replay another thread's comment when undoing after a thread change", async () => {
-    using _settings = setup();
-    const contents = "export const one = 1;\nexport const two = 2;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
-    const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
-    const store = useComposerDraftStore.getState();
-    store.addReviewComment(
-      threadRef,
-      buildFileReviewComment({
-        id: "file-comment-a",
-        filePath: "config.ts",
-        startLine: 2,
-        endLine: 2,
-        text: "Note from thread A",
-        contents,
-      }),
-    );
-    using _comments = {
-      [Symbol.dispose]: () => {
-        for (const target of [threadRef, otherThreadRef]) {
-          store.removeReviewComment(target, "file-comment-a");
-        }
-      },
-    };
-
-    await using screen = await render(filePreview("config.ts"));
-    await expect.element(screen.getByText("Note from thread A")).toBeVisible();
-    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
-    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
-
-    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
-    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
-    content()!.focus();
-    const selectionSynced = new Promise((resolve) =>
-      document.addEventListener("selectionchange", resolve, { once: true }),
-    );
-    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
-    await selectionSynced;
-    await act(async () => {
-      content()!.dispatchEvent(
-        new InputEvent("beforeinput", {
-          inputType: "insertParagraph",
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    });
-    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
-
-    await screen.rerender(filePreview("config.ts", otherThreadRef));
-    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
-    content()!.focus();
-    const isMac = isMacPlatform(navigator.platform);
-    await act(async () => {
-      content()!.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "z",
-          code: "KeyZ",
-          metaKey: isMac,
-          ctrlKey: !isMac,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    });
-
-    const otherDraft = useComposerDraftStore.getState().getComposerDraft(otherThreadRef);
-    expect(otherDraft?.reviewComments ?? []).toEqual([]);
-    expect(screen.getByText("Note from thread A").query()).toBeNull();
+    await expect.element(screen.getByText("From thread B")).toBeVisible();
+    expect(screen.getByText("From thread A").query()).toBeNull();
   });
 
   it("drops a comment removed from the composer and does not re-add it on the next edit", async () => {
     using _settings = setup();
-    const contents = "export const one = 1;\nexport const two = 2;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
-    const store = useComposerDraftStore.getState();
-    const comment = buildFileReviewComment({
-      id: "file-comment-removed",
-      filePath: "config.ts",
-      startLine: 2,
-      endLine: 2,
-      text: "Removed from the composer",
-      contents,
-    });
-    store.addReviewComment(threadRef, comment);
-    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
+    seedFile("config.ts", contents);
+    using stored = storeComment(threadRef, { id: "gone", line: 2, text: "Removed", contents });
 
     await using screen = await render(filePreview("config.ts"));
-    await expect.element(screen.getByText("Removed from the composer")).toBeVisible();
-    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
-    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+    await expect.element(screen.getByText("Removed")).toBeVisible();
+    const editor = fileEditor(screen.container);
+    await editor.ready();
 
-    await act(async () => store.removeReviewComment(threadRef, comment.id));
-    await expect.element(screen.getByText("Removed from the composer")).not.toBeInTheDocument();
-
-    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
-    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
-    content()!.focus();
-    const selectionSynced = new Promise((resolve) =>
-      document.addEventListener("selectionchange", resolve, { once: true }),
+    await act(async () =>
+      useComposerDraftStore.getState().removeReviewComment(threadRef, stored.comment.id),
     );
-    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
-    await selectionSynced;
-    await act(async () => {
-      content()!.dispatchEvent(
-        new InputEvent("beforeinput", {
-          inputType: "insertParagraph",
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    });
+    await expect.element(screen.getByText("Removed")).not.toBeInTheDocument();
+
+    await editor.select(1);
+    await editor.input("insertParagraph");
     await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
 
     const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
     expect(draft?.reviewComments ?? []).toEqual([]);
-    expect(screen.getByText("Removed from the composer").query()).toBeNull();
+    expect(screen.getByText("Removed").query()).toBeNull();
   });
 
-  it("deleting a commented line neither moves nor rewrites its comment, and Undo restores it", async () => {
+  it("deleting a commented line keeps its stored comment, and Undo shows it again", async () => {
     using _settings = setup();
-    const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
-    const store = useComposerDraftStore.getState();
-    const comment = buildFileReviewComment({
-      id: "file-comment-deleted-line",
-      filePath: "config.ts",
-      startLine: 2,
-      endLine: 2,
-      text: "This is about b",
-      contents,
-    });
-    store.addReviewComment(threadRef, comment);
-    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
-
-    await using screen = await render(filePreview("config.ts"));
-    await expect.element(screen.getByText("This is about b")).toBeVisible();
-    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
-    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
-    const firstText = (lineNumber: number) =>
-      document
-        .createTreeWalker(
-          shadowRoot()!.querySelector(`[data-line="${lineNumber}"]`)!,
-          NodeFilter.SHOW_TEXT,
-        )
-        .nextNode()!;
-    const input = (inputType: string, data: string | null = null) =>
-      act(async () => {
-        content()!.dispatchEvent(
-          new InputEvent("beforeinput", {
-            inputType,
-            data,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-      });
-    const isMac = isMacPlatform(navigator.platform);
-    const undo = () =>
-      act(async () => {
-        content()!.dispatchEvent(
-          new KeyboardEvent("keydown", {
-            key: "z",
-            code: "KeyZ",
-            metaKey: isMac,
-            ctrlKey: !isMac,
-            bubbles: true,
-            composed: true,
-            cancelable: true,
-          }),
-        );
-      });
+    seedFile("config.ts", contents);
+    using stored = storeComment(threadRef, { id: "c1", line: 2, text: "About b", contents });
     const storedComment = () =>
       useComposerDraftStore
         .getState()
         .getComposerDraft(threadRef)
-        ?.reviewComments.find(({ id }) => id === comment.id);
+        ?.reviewComments.find(({ id }) => id === stored.comment.id);
 
-    content()!.focus();
-    const selectionSynced = new Promise((resolve) =>
-      document.addEventListener("selectionchange", resolve, { once: true }),
-    );
-    document.getSelection()!.setBaseAndExtent(firstText(2), 0, firstText(3), 0);
-    await selectionSynced;
-    await input("deleteContentBackward");
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("About b")).toBeVisible();
+    const editor = fileEditor(screen.container);
+    await editor.ready();
+
+    await editor.select(2, 3);
+    await editor.input("deleteContentBackward");
     await vi.waitFor(() => expect(state.optimistic?.contents).toBe("const a = 1;\nconst c = 3;\n"));
-    await expect.element(screen.getByText("This is about b")).not.toBeInTheDocument();
+    await expect.element(screen.getByText("About b")).not.toBeInTheDocument();
     // The caret stays at the start of the line that moved up.
-    await input("insertText", "x");
+    await editor.input("insertText", "x");
     await vi.waitFor(() =>
       expect(state.optimistic?.contents).toBe("const a = 1;\nxconst c = 3;\n"),
     );
-    expect(screen.getByText("This is about b").query()).toBeNull();
-    expect(storedComment()).toEqual(comment);
+    expect(screen.getByText("About b").query()).toBeNull();
+    expect(storedComment()).toEqual(stored.comment);
 
-    await undo();
+    await editor.undo();
     await vi.waitFor(() => expect(state.optimistic?.contents).toBe("const a = 1;\nconst c = 3;\n"));
-    await undo();
+    await editor.undo();
     await vi.waitFor(() => expect(state.optimistic?.contents).toBe(contents));
-    await expect.element(screen.getByText("This is about b")).toBeVisible();
-    expect(storedComment()).toEqual(comment);
+    await expect.element(screen.getByText("About b")).toBeVisible();
+    expect(storedComment()).toEqual(stored.comment);
   });
 
-  it("undoing an earlier edit keeps a comment added after it", async () => {
+  it("reveals the linked line again when the thread changes under the file view", async () => {
     using _settings = setup();
-    const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
-    state.file = {
-      relativePath: "config.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
-    const store = useComposerDraftStore.getState();
-    const comment = buildFileReviewComment({
-      id: "file-comment-earlier",
-      filePath: "config.ts",
-      startLine: 2,
-      endLine: 2,
-      text: "This is about b",
-      contents,
-    });
-    store.addReviewComment(threadRef, comment);
-    using _comments = {
-      [Symbol.dispose]: () => {
-        const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-        for (const { id } of draft?.reviewComments ?? []) store.removeReviewComment(threadRef, id);
-      },
-    };
-
-    await using screen = await render(filePreview("config.ts"));
-    await expect.element(screen.getByText("This is about b")).toBeVisible();
-    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
-    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
-
-    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
-    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
-    content()!.focus();
-    const selectionSynced = new Promise((resolve) =>
-      document.addEventListener("selectionchange", resolve, { once: true }),
+    seedFile(
+      "long.ts",
+      Array.from({ length: 400 }, (_, index) => `export const line${index + 1} = ${index};`).join(
+        "\n",
+      ),
     );
-    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
-    await selectionSynced;
-    await act(async () => {
-      content()!.dispatchEvent(
-        new InputEvent("beforeinput", {
-          inputType: "insertParagraph",
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    });
-    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
-
-    const lineNumber = shadowRoot()!.querySelector<HTMLElement>('[data-column-number="4"]')!;
-    const { left, top, width, height } = lineNumber.getBoundingClientRect();
-    const point = {
-      clientX: left + width / 2,
-      clientY: top + height / 2,
-      pointerId: 1,
-      pointerType: "mouse",
-      button: 0,
-      bubbles: true,
-      composed: true,
-      cancelable: true,
-    };
-    await act(async () => {
-      lineNumber.dispatchEvent(new PointerEvent("pointerdown", point));
-      document.dispatchEvent(new PointerEvent("pointerup", point));
-    });
-    await userEvent.fill(screen.getByRole("textbox", { name: "Comment on lines L4" }), "About c");
-    await userEvent.click(screen.getByRole("button", { name: "Comment", exact: true }));
-    await expect.element(screen.getByText("About c")).toBeVisible();
-    const commentIds = () =>
-      useComposerDraftStore
-        .getState()
-        .getComposerDraft(threadRef)
-        ?.reviewComments.map(({ id }) => id)
-        .toSorted();
-    expect(commentIds()).toHaveLength(2);
-    const ids = commentIds();
-
-    content()!.focus();
-    const isMac = isMacPlatform(navigator.platform);
-    await act(async () => {
-      content()!.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "z",
-          code: "KeyZ",
-          metaKey: isMac,
-          ctrlKey: !isMac,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    });
-    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(contents));
-
-    expect(commentIds()).toEqual(ids);
-    await expect.element(screen.getByText("This is about b")).toBeVisible();
-  });
-
-  it("keeps a linked line revealed when the thread changes under the file view", async () => {
-    using _settings = setup();
-    const contents = Array.from(
-      { length: 400 },
-      (_, index) => `export const line${index + 1} = ${index + 1};`,
-    ).join("\n");
-    state.file = {
-      relativePath: "long.ts",
-      contents,
-      byteLength: contents.length,
-      truncated: false,
-    };
     const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
-
     // Tailwind is not loaded in browser tests; give the scroller a height so it can scroll.
     const style = document.head.appendChild(document.createElement("style"));
     style.textContent = ".file-preview-virtualizer { height: 300px; overflow: auto; }";
