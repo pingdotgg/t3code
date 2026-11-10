@@ -10864,7 +10864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: input.command.commandId,
         });
       const dying = [...input.dying];
-      const childThreadIds = input.childThreadIds;
+      const { childThreadIds } = input;
       for (const { projection, subagent } of dying) {
         const ended = yield* endOrphanedNativeSubagent({
           projection,
@@ -12479,20 +12479,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* markStoppedRun({ command, events, thread: projection.thread, run, now });
     }
     // Record and item are written together, so an active record without a live item lost its end.
-    const staleNative: Array<DyingNativeSubagent["subagent"]> = [];
-    for (const subagent of target === undefined ? projection.subagents : []) {
-      if (
-        subagent.origin !== "provider_native" ||
-        subagent.runId === null ||
-        !isOrchestrationV2WorkActive(subagent.status) ||
-        projection.turnItems.some(
+    const staleNative = (target === undefined ? projection.subagents : []).filter(
+      (subagent) =>
+        subagent.origin === "provider_native" &&
+        subagent.runId !== null &&
+        isOrchestrationV2WorkActive(subagent.status) &&
+        !projection.turnItems.some(
           (item) => item.type === "subagent" && item.subagentId === subagent.id,
-        )
-      ) {
-        continue;
-      }
-      staleNative.push(nativeSubagentRef(subagent));
-    }
+        ),
+    );
     if (staleNative.length > 0) {
       const { nodes } = yield* projectionStore
         .getThreadRecords(command.threadId, ["nodes"])
@@ -12505,7 +12500,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* endNativeSubagentTrees({
         command,
         events,
-        dying: staleNative.map((subagent) => ({ projection: threadProjection, subagent })),
+        dying: staleNative.map((subagent) => ({
+          projection: threadProjection,
+          subagent: nativeSubagentRef(subagent),
+        })),
         childThreadIds: new Set(),
         now,
       });
