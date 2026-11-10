@@ -103,6 +103,7 @@ interface HarnessOptions {
   readonly gitDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly isLive?: ProviderSessionManager.ProviderSessionManagerV2["Service"]["isLive"];
   readonly otherThreadWorktreePaths?: ReadonlyArray<string>;
+  readonly onRefreshStatus?: Effect.Effect<void>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
@@ -262,7 +263,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
       workingTree: { files: [], insertions: 0, deletions: 0 },
     }),
   );
-  const refreshStatus = vi.fn((_: string) => Effect.die("refreshStatus stub"));
+  const refreshStatus = vi.fn((_: string) =>
+    (options.onRefreshStatus ?? Effect.void).pipe(Effect.andThen(Effect.die("refreshStatus stub"))),
+  );
   const runForThread = vi.fn((input: { readonly worktreePath: string }) => {
     switch (options.setupScript ?? "started") {
       case "no-script":
@@ -948,6 +951,27 @@ describe("t3_worktree_release", () => {
       );
       expect(harness.localStatus).not.toHaveBeenCalled();
       expect(harness.removeWorktree).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a worktree another thread binds to while the session winds down", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-rebound-" });
+      const sharingPaths: Array<string> = [];
+      const refreshed = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/rebound" },
+        otherThreadWorktreePaths: sharingPaths,
+        isLive: () => Effect.sync(() => sharingPaths.push(worktreePath)).pipe(Effect.as(false)),
+        onRefreshStatus: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+      });
+
+      const result = yield* runRelease(harness, { deleteBranch: true });
+      expect(result.removal).toBe("scheduled");
+      yield* Deferred.await(refreshed);
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
