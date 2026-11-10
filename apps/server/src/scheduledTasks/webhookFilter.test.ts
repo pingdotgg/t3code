@@ -16,6 +16,28 @@ const issueComment: WebhookRequest = {
 };
 
 describe("findFailedWebhookFilter", () => {
+  it("matches exists on wildcard object values", () => {
+    assert.isNull(
+      findFailedWebhookFilter([{ path: "body.issue.labels[]", op: "exists" }], issueComment),
+    );
+    assert.isNull(
+      findFailedWebhookFilter([{ path: "body.issues[].labels", op: "exists" }], {
+        ...issueComment,
+        bodyText: JSON.stringify({ issues: [{ labels: [] }] }),
+      }),
+    );
+  });
+
+  it("rejects exists when wildcard values are all null or missing", () => {
+    assert.deepEqual(
+      findFailedWebhookFilter([{ path: "body.issues[].labels", op: "exists" }], {
+        ...issueComment,
+        bodyText: JSON.stringify({ issues: [{ labels: null }, {}] }),
+      }),
+      { index: 0, path: "body.issues[].labels" },
+    );
+  });
+
   it("matches a wildcard path when any element matches", () => {
     assert.isNull(
       findFailedWebhookFilter(

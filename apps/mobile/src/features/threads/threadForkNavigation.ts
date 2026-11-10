@@ -1,26 +1,20 @@
-const DEFAULT_TIMEOUT_MS = 2_000;
-const DEFAULT_POLL_INTERVAL_MS = 40;
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
-export async function waitForThreadShellReady(input: {
-  readonly read: () => boolean;
-  readonly timeoutMs?: number;
-  readonly pollIntervalMs?: number;
-  readonly now?: () => number;
-  readonly delay?: (durationMs: number) => Promise<void>;
-}): Promise<boolean> {
-  const now = input.now ?? Date.now;
-  const delay =
-    input.delay ??
-    ((durationMs: number) =>
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, durationMs);
-      }));
-  const deadline = now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentThreadShells } from "../../state/threads";
 
-  while (!input.read() && now() < deadline) {
-    await delay(Math.min(pollIntervalMs, deadline - now()));
+const TIMEOUT_MS = 2_000;
+const POLL_INTERVAL_MS = 40;
+
+/** Resolves true once a thread this client just created, such as a fork, reaches its state. */
+export async function waitForThreadShell(ref: ScopedThreadRef): Promise<boolean> {
+  const atom = environmentThreadShells.threadShellAtom(ref);
+  const read = () => appAtomRegistry.get(atom) !== null;
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (!read() && Date.now() < deadline) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
+    });
   }
-
-  return input.read();
+  return read();
 }
