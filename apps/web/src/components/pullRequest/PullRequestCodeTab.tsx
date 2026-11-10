@@ -947,6 +947,11 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
+    // Find may repeat requests before render; only unfold, never toggle.
+    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+      ),
   };
 
   const runThreadCommand = async (
@@ -1611,12 +1616,6 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              // Find may repeat requests before render; only unfold, never toggle.
-              onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-                )
-              }
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>

@@ -106,7 +106,7 @@ export const enMessages = {
   "voice.settings.unload.hour1": "After 1 hour",
   "voice.settings.browser.unsupported": "This environment can’t transcribe audio: {reason}.",
   "voice.settings.browser.hint":
-    "Pick languages to see models that support all of them. Accuracy is word or character error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on Handy’s benchmark GPU.",
+    "Pick languages to see models that support all of them. Accuracy is word or character error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on Handy’s benchmark {device}.",
   "voice.settings.browser.languages": "Languages",
   "voice.settings.browser.searchLanguages": "Search languages",
   "voice.settings.browser.browseAria": "Browse models by language",
@@ -165,18 +165,14 @@ export const enMessages = {
   "voice.settings.dictionary.sharedDescription":
     "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project.",
   "voice.settings.cleanupModel.title": "Cleanup model",
-  "voice.settings.cleanupModel.descriptionDedicated":
-    "Drafts on {env} use this model for cleanup instead of the environment’s text generation model.",
-  "voice.settings.cleanupModel.descriptionDefault":
-    "Cleanup currently uses the text generation model on {env}. Pick another model if you want a cheaper or faster one.",
-  "voice.settings.cleanupModel.thisEnvironment": "this environment",
-  "voice.settings.cleanupModel.reset": "cleanup model",
+  "voice.settings.cleanupModel.description":
+    "Model for transcript cleanup, such as a cheaper or faster one. When disabled, use the text generation model configured for this environment.",
   "voice.settings.cleanupModel.notSaved": "Cleanup model not saved",
   "voice.settings.cleanupModel.connectFirst": "Connect an environment first.",
-  "voice.settings.cleanupModel.noProviders": "No providers available.",
-  "voice.settings.cleanup.enableTitle": "Clean up transcripts with a provider",
+  "voice.settings.cleanupModel.separateAria": "Use a separate cleanup model",
+  "voice.settings.cleanup.enableTitle": "Clean up transcripts",
   "voice.settings.cleanup.enableDescription":
-    "Sends the transcript and nearby draft text to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Sends text only; off by default.",
+    "Fixes punctuation, numbers, and spoken corrections with the cleanup model on the draft’s environment. Sends the transcript and nearby draft text, never audio.",
   "voice.settings.instructions.title": "Cleanup instructions",
   "voice.settings.instructions.description": "Use the built-in instructions or write your own.",
   "voice.settings.instructions.builtIn": "Built-in",
@@ -186,6 +182,7 @@ export const enMessages = {
   "voice.settings.cue.description":
     "The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint.",
   "voice.settings.benchmark.notBenchmarked": "not benchmarked",
+  "voice.settings.benchmark.updateServer": "update server",
   "voice.settings.benchmark.error": "({percent}% error)",
   "voice.settings.benchmark.speed": "Speed: ",
 } as const;
@@ -289,7 +286,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.settings.unload.hour1": "1 小时后",
   "voice.settings.browser.unsupported": "这个环境无法转写音频：{reason}。",
   "voice.settings.browser.hint":
-    "选择语言，只显示支持全部所选语言的模型。准确率指字词错误率，越低越好。速度是在 Handy 的测试基准 GPU 上转写 30 秒音频所需的时间。",
+    "选择语言，只显示支持全部所选语言的模型。准确率指字词错误率，越低越好。速度是在 Handy 的测试基准 {device} 上转写 30 秒音频所需的时间。",
   "voice.settings.browser.languages": "语言",
   "voice.settings.browser.searchLanguages": "搜索语言",
   "voice.settings.browser.browseAria": "按语言浏览模型",
@@ -346,18 +343,14 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.settings.dictionary.sharedDescription":
     "保存在环境中，该环境下的所有项目都会用到，同时每个人还可以有自己的词典。在上方选择某个项目，就能把这些词限制在一个项目内。",
   "voice.settings.cleanupModel.title": "整理模型",
-  "voice.settings.cleanupModel.descriptionDedicated":
-    "{env} 上的草稿使用这个模型做整理，而不是该环境的文本生成模型。",
-  "voice.settings.cleanupModel.descriptionDefault":
-    "整理目前使用 {env} 上的文本生成模型。想要更便宜或更快的模型，可以另选一个。",
-  "voice.settings.cleanupModel.thisEnvironment": "此环境",
-  "voice.settings.cleanupModel.reset": "整理模型",
+  "voice.settings.cleanupModel.description":
+    "用于整理转写结果的模型，比如更便宜或更快的模型。关闭时使用这个环境配置的文本生成模型。",
   "voice.settings.cleanupModel.notSaved": "整理模型未保存",
   "voice.settings.cleanupModel.connectFirst": "请先连接一个环境。",
-  "voice.settings.cleanupModel.noProviders": "没有可用的提供商。",
-  "voice.settings.cleanup.enableTitle": "由提供商整理转写结果",
+  "voice.settings.cleanupModel.separateAria": "使用单独的整理模型",
+  "voice.settings.cleanup.enableTitle": "整理转写结果",
   "voice.settings.cleanup.enableDescription":
-    "把转写结果和附近的草稿文本发送给草稿所在环境的文本生成提供商，用来修正标点、数字和口头更正。只发送文本，默认关闭。",
+    "用草稿所在环境的整理模型修正标点、数字和口头更正。会发送转写结果和附近的草稿文本，从不发送音频。",
   "voice.settings.instructions.title": "整理指令",
   "voice.settings.instructions.description": "使用内置指令，也可以自己写。",
   "voice.settings.instructions.builtIn": "内置",
@@ -367,6 +360,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.settings.cue.description":
     "你用来标记更正的字词，比如“sorry”或“scratch that”。整理只会在确实需要更正的地方做修改，并把这个词当作提示。",
   "voice.settings.benchmark.notBenchmarked": "未测试",
+  "voice.settings.benchmark.updateServer": "请更新服务器",
   "voice.settings.benchmark.error": "（错误率 {percent}%）",
   "voice.settings.benchmark.speed": "速度：",
 };

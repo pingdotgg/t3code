@@ -8,6 +8,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
+  ProviderInstanceId,
   PullRequestListInput,
   ServerProvider,
   ThreadId,
@@ -43,6 +44,9 @@ import {
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { matchComposerModelItems } from "./composerModelMentions";
+import type { ModelEsque } from "./providerIconUtils";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -65,7 +69,6 @@ export function useComposerMenuItems({
   pullRequestProjectId,
   pullRequestRepository,
   threadPullRequests,
-  planModeUiEnabled,
   sideChatAvailable,
   sideChatDisabledReason,
   freshSessionAvailable,
@@ -76,6 +79,7 @@ export function useComposerMenuItems({
   showSkillsInSlashMenu,
   workspaceSkillsScanning,
   questionAttachmentTarget,
+  modelMentions,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
@@ -85,7 +89,6 @@ export function useComposerMenuItems({
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
-  readonly planModeUiEnabled: boolean;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
   readonly freshSessionAvailable: boolean;
@@ -96,6 +99,10 @@ export function useComposerMenuItems({
   readonly showSkillsInSlashMenu: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
+  readonly modelMentions: {
+    readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+    readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+  };
 }) {
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
@@ -208,6 +215,11 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
+        ...matchComposerModelItems({
+          instanceEntries: modelMentions.instanceEntries,
+          modelOptionsByInstance: modelMentions.modelOptionsByInstance,
+          query: composerTrigger.query,
+        }),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -228,24 +240,6 @@ export function useComposerMenuItems({
           label: "/model",
           description: translateNow("chat.composer.menuSwitchModel"),
         },
-        ...(planModeUiEnabled
-          ? ([
-              {
-                id: "slash:plan",
-                type: "slash-command",
-                command: "plan",
-                label: "/plan",
-                description: translateNow("chat.composer.menuPlanMode"),
-              },
-              {
-                id: "slash:default",
-                type: "slash-command",
-                command: "default",
-                label: "/default",
-                description: translateNow("chat.composer.menuBuildMode"),
-              },
-            ] as const)
-          : []),
         ...(sideChatAvailable
           ? ([
               {

@@ -1,3 +1,4 @@
+import { isLocalEditorFileUrl } from "@t3tools/contracts";
 import { fileBasename, isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
   inlineCodeFilePathCandidate,
@@ -37,6 +38,14 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   if (!href) return null;
   const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
   return target ? `${target.path}${target.hash}` : null;
+}
+
+export function isLocalEditorFileHref(href: string): boolean {
+  try {
+    return isLocalEditorFileUrl(new URL(href));
+  } catch {
+    return false;
+  }
 }
 
 export function resolveInlineCodeFileLinkMeta(

@@ -234,32 +234,32 @@ export const enMessages = {
   "settings.code.sc.providers": "Source control providers",
   "settings.code.scWriting.mode.repo.label": "Repository conventions",
   "settings.code.scWriting.mode.repo.description":
-    "In each project, matches recent change descriptions and change request titles.",
+    "Commit messages and pull request titles and descriptions match each project's history.",
   "settings.code.scWriting.mode.conventional.label": "Conventional Commits",
   "settings.code.scWriting.mode.conventional.description":
-    "Use Conventional Commit prefixes and keep change request text concise.",
+    "Conventional Commit prefixes, with short pull request titles and descriptions.",
   "settings.code.scWriting.mode.custom.label": "Custom instructions",
   "settings.code.scWriting.mode.custom.description":
-    "Use your instructions for change descriptions and change requests in every project.",
-  "settings.code.scWriting.title": "Writing & review",
-  "settings.code.scWriting.style.title": "Source control writing style",
-  "settings.code.scWriting.style.resetLabel": "source control writing style",
+    "Your instructions shape commit messages and pull request titles and descriptions.",
+  "settings.code.scWriting.title": "Commits & pull requests",
+  "settings.code.scWriting.style.title": "Commit and pull request writing",
+  "settings.code.scWriting.style.resetLabel": "commit and pull request writing",
   "settings.code.scWriting.allInstructionsAria":
-    "Custom source control instructions for all selected environments",
+    "Custom commit and pull request instructions for all selected environments",
   "settings.code.scWriting.allInstructionsPlaceholder":
     "Write the instructions each selected environment should use.",
   "settings.code.scWriting.applyToAll": "Apply instructions to all",
   "settings.code.scWriting.writeForAll": "Write custom instructions for all",
   "settings.code.scWriting.customPlaceholder":
-    "Keep titles concise. Use short bullet points in descriptions.",
-  "settings.code.scWriting.customAria": "Custom source control writing instructions",
+    "Keep commit subjects under 60 characters. Keep pull request descriptions short and plain.",
+  "settings.code.scWriting.customAria": "Custom commit and pull request instructions",
   "settings.code.scWriting.guides.title": "Review guides (beta)",
   "settings.code.scWriting.guides.description":
     "Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review.",
   "settings.code.scWriting.guides.a11y": "Review guides",
   "settings.code.scWriting.guideModel.title": "Review guide model",
   "settings.code.scWriting.guideModel.description":
-    "Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model.",
+    "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.",
   "settings.code.scWriting.guideModel.connect":
     "Connect an environment to choose its review guide model.",
   "settings.code.scWriting.guideModel.notSaved": "Review guide model not saved",
@@ -272,13 +272,13 @@ export const enMessages = {
     "Mixed. Enter instructions to apply to all selected targets.",
   "settings.code.scWriting.guideInstructions.placeholder":
     "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences.",
-  "settings.code.scWriting.templates.title": "Follow change request templates",
+  "settings.code.scWriting.templates.title": "Follow pull request templates",
   "settings.code.scWriting.templates.description":
-    "Use the repository's template for change request descriptions when available.",
-  "settings.code.scWriting.templates.resetLabel": "change request templates",
+    "Use the repository's pull request template when it has one.",
+  "settings.code.scWriting.templates.resetLabel": "pull request templates",
   "settings.code.scWriting.writerModel.title": "Source control writer model",
   "settings.code.scWriting.writerModel.description":
-    "Model for source control text and branch or bookmark names. When disabled, use the text generation model configured for this environment.",
+    "Model for commit messages, pull request text, and branch or bookmark names. When disabled, use the text generation model configured for this environment.",
   "settings.code.scWriting.writerModel.connect":
     "Connect an environment to choose its source control writer model.",
   "settings.code.scWriting.writerModel.noProviders": "No text generation providers available.",
@@ -782,6 +782,10 @@ export const enMessages = {
   "settings.code.tasks.destinationNew":
     "Each run starts a new thread with the workspace and model below.",
   "settings.code.tasks.threadFallback": "Thread {id}",
+  "settings.code.tasks.startedByFirstRun": "Started by the first run",
+  "settings.code.tasks.destinationThread": "Destination thread",
+  "settings.code.tasks.searchAllThreads": "Search all threads...",
+  "settings.code.tasks.noThreads": "No threads found.",
   "settings.code.tasks.destinationExisting":
     "Each run continues this conversation, in its workspace and with its current model.",
   "settings.code.tasks.incomplete": "Scheduled task is incomplete",
@@ -1167,29 +1171,30 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.sc.providers": "源代码管理提供商",
   "settings.code.scWriting.mode.repo.label": "仓库惯例",
   "settings.code.scWriting.mode.repo.description":
-    "在每个项目中，沿用最近的改动描述和变更请求标题风格。",
+    "提交信息以及拉取请求的标题和描述会沿用每个项目的历史风格。",
   "settings.code.scWriting.mode.conventional.label": "Conventional Commits",
   "settings.code.scWriting.mode.conventional.description":
-    "使用 Conventional Commit 前缀，并保持变更请求文字简洁。",
+    "使用 Conventional Commit 前缀，拉取请求的标题和描述保持简短。",
   "settings.code.scWriting.mode.custom.label": "自定义指令",
   "settings.code.scWriting.mode.custom.description":
-    "在每个项目中，按你的指令撰写改动描述和变更请求。",
-  "settings.code.scWriting.title": "撰写与审查",
-  "settings.code.scWriting.style.title": "源代码管理写作风格",
-  "settings.code.scWriting.style.resetLabel": "源代码管理写作风格",
-  "settings.code.scWriting.allInstructionsAria": "所有已选环境的自定义源代码管理指令",
+    "按你的指令撰写提交信息以及拉取请求的标题和描述。",
+  "settings.code.scWriting.title": "提交与拉取请求",
+  "settings.code.scWriting.style.title": "提交和拉取请求的写作",
+  "settings.code.scWriting.style.resetLabel": "提交和拉取请求的写作",
+  "settings.code.scWriting.allInstructionsAria": "所有已选环境的自定义提交和拉取请求指令",
   "settings.code.scWriting.allInstructionsPlaceholder": "写下每个已选环境应使用的指令。",
   "settings.code.scWriting.applyToAll": "将指令应用到全部",
   "settings.code.scWriting.writeForAll": "为全部环境编写自定义指令",
-  "settings.code.scWriting.customPlaceholder": "标题保持简洁，描述中使用简短的要点。",
-  "settings.code.scWriting.customAria": "自定义源代码管理写作指令",
+  "settings.code.scWriting.customPlaceholder":
+    "提交标题控制在 60 个字符以内。拉取请求描述保持简短直白。",
+  "settings.code.scWriting.customAria": "自定义提交和拉取请求指令",
   "settings.code.scWriting.guides.title": "审查指南（测试版）",
   "settings.code.scWriting.guides.description":
     "在 Pull Request 中添加「指南」标签页。由智能体解释这些改动，并指出需要审查的决策。",
   "settings.code.scWriting.guides.a11y": "审查指南",
   "settings.code.scWriting.guideModel.title": "审查指南模型",
   "settings.code.scWriting.guideModel.description":
-    "阅读 Pull Request 并撰写审查指南的模型。它会分多步阅读改动本身，因此更强的模型更有帮助。关闭时使用源代码管理撰写模型。",
+    "必须是编程智能体：它会分多步阅读拉取请求。关闭时使用撰写模型；如果该模型是文本生成器，则使用 Codex 或 Claude。",
   "settings.code.scWriting.guideModel.connect": "连接一个环境，即可选择它的审查指南模型。",
   "settings.code.scWriting.guideModel.notSaved": "审查指南模型未保存",
   "settings.code.scWriting.guideModel.separate": "使用单独的审查指南模型",
@@ -1201,12 +1206,12 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
     "不一致。输入指令即可应用到所有已选目标。",
   "settings.code.scWriting.guideInstructions.placeholder":
     "先展示服务接口，再展示实现。除非测试文件改变了行为，否则跳过测试文件。摘要保持在两句话以内。",
-  "settings.code.scWriting.templates.title": "遵循变更请求模板",
-  "settings.code.scWriting.templates.description": "如果仓库有模板，变更请求描述就使用该模板。",
-  "settings.code.scWriting.templates.resetLabel": "变更请求模板",
+  "settings.code.scWriting.templates.title": "遵循拉取请求模板",
+  "settings.code.scWriting.templates.description": "如果仓库有拉取请求模板，就使用该模板。",
+  "settings.code.scWriting.templates.resetLabel": "拉取请求模板",
   "settings.code.scWriting.writerModel.title": "源代码管理撰写模型",
   "settings.code.scWriting.writerModel.description":
-    "用于生成源代码管理文字以及分支或书签名称的模型。关闭时，使用此环境配置的文本生成模型。",
+    "用于生成提交信息、拉取请求文字以及分支或书签名称的模型。关闭时，使用此环境配置的文本生成模型。",
   "settings.code.scWriting.writerModel.connect": "连接一个环境，即可选择它的源代码管理撰写模型。",
   "settings.code.scWriting.writerModel.noProviders": "没有可用的文本生成提供商。",
   "settings.code.scWriting.writerModel.notSaved": "源代码管理撰写模型未保存",
@@ -1685,6 +1690,10 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.tasks.destination": "目标",
   "settings.code.tasks.destinationNew": "每次运行都会用下面的工作位置和模型新开一个会话。",
   "settings.code.tasks.threadFallback": "会话 {id}",
+  "settings.code.tasks.startedByFirstRun": "由第一次运行创建",
+  "settings.code.tasks.destinationThread": "目标会话",
+  "settings.code.tasks.searchAllThreads": "搜索所有会话...",
+  "settings.code.tasks.noThreads": "没有找到会话。",
   "settings.code.tasks.destinationExisting":
     "每次运行都会在这个会话里继续，沿用它的工作位置和当前模型。",
   "settings.code.tasks.incomplete": "计划任务还没填完整",

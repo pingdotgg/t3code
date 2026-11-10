@@ -80,7 +80,7 @@ export const enMessages = {
   "settings.threads.textGeneration.title": "Text generation",
   "settings.threads.textGenerationModel.title": "Text generation model",
   "settings.threads.textGenerationModel.description":
-    "Used for thread titles and other generated text on connected devices with this provider. Source control can override it.",
+    "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
   "settings.threads.textGenerationModel.resetLabel": "text generation model",
   "settings.threads.textGenerationModel.connectEnvironment":
     "Connect an environment to choose its text generation model.",
@@ -209,7 +209,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.threads.textGeneration.title": "文本生成",
   "settings.threads.textGenerationModel.title": "文本生成模型",
   "settings.threads.textGenerationModel.description":
-    "在已连接、装有这个提供商的设备上，用来生成会话标题等文字。源代码管理可以另设。",
+    "用于会话标题和其他生成的文字。源代码管理有单独的设置。提供商中的文本生成器也会显示在这里。",
   "settings.threads.textGenerationModel.resetLabel": "文本生成模型",
   "settings.threads.textGenerationModel.connectEnvironment":
     "先连接一个环境，才能选择它的文本生成模型。",

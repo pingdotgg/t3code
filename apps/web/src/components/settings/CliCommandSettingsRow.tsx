@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { useT } from "../../hooks/useI18n";
 
 import {
@@ -13,14 +14,20 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-export function CliCommandSettingsRow() {
+const FAILURE_TITLES = {
+  install: "settings.providers.cli.installError",
+  uninstall: "settings.providers.cli.removeError",
+  addToPath: "settings.providers.cli.addToPathError",
+} as const satisfies Record<string, MessageKey>;
+
+/** The desktop `t3` command's state, and its actions with a toast on failure. */
+export function useDesktopCliCommand() {
   const t = useT();
   const bridge = getDesktopCliCommandBridge();
   const query = useEnvironmentQuery(bridge ? desktopCliCommandStateAtom : null);
-  const state = query.data;
   const [pending, setPending] = useState(false);
 
-  const change = (action: "install" | "uninstall") => {
+  const run = (action: keyof typeof FAILURE_TITLES) => {
     if (!bridge || pending) return;
     setPending(true);
     void bridge[action]()
@@ -29,10 +36,7 @@ export function CliCommandSettingsRow() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title:
-              action === "install"
-                ? t("settings.providers.cli.installError")
-                : t("settings.providers.cli.removeError"),
+            title: t(FAILURE_TITLES[action]),
             description:
               error instanceof Error ? error.message : t("settings.providers.cli.genericError"),
           }),
@@ -41,7 +45,18 @@ export function CliCommandSettingsRow() {
       .finally(() => setPending(false));
   };
 
-  if (!bridge || !state?.supported) return null;
+  return {
+    state: bridge ? query.data : undefined,
+    busy: pending || query.isPending,
+    run,
+  };
+}
+
+export function CliCommandSettingsRow() {
+  const t = useT();
+  const { state, busy, run } = useDesktopCliCommand();
+
+  if (!state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
     ? t("settings.providers.cli.shadowed", { path: state.shadowedBy })
@@ -49,7 +64,14 @@ export function CliCommandSettingsRow() {
       ? t("settings.providers.cli.notInstalled")
       : state.onPath
         ? t("settings.providers.cli.installedOnPath", { path: state.installedPath ?? "" })
-        : t("settings.providers.cli.installedNotOnPath", { path: state.installedPath ?? "" });
+        : state.pathSetup?.added
+          ? t("settings.providers.cli.installedAddedToPath", {
+              path: state.installedPath ?? "",
+              file: state.pathSetup.file,
+            })
+          : `${t("settings.providers.cli.installedNotOnPath", { path: state.installedPath ?? "" })}${
+              state.pathSetup ? "" : t("settings.providers.cli.addFolderToPath")
+            }`;
 
   return (
     <SettingsRow
@@ -57,14 +79,21 @@ export function CliCommandSettingsRow() {
       title={t("settings.providers.cli.title")}
       description={description}
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending || query.isPending || (!installed && Boolean(state.shadowedBy))}
-          onClick={() => change(installed ? "uninstall" : "install")}
-        >
-          {installed ? t("settings.providers.cli.remove") : t("settings.providers.cli.install")}
-        </Button>
+        <div className="flex gap-2">
+          {state.pathSetup && !state.pathSetup.added ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+              {t("settings.providers.cli.addToPath")}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || (!installed && Boolean(state.shadowedBy))}
+            onClick={() => run(installed ? "uninstall" : "install")}
+          >
+            {installed ? t("settings.providers.cli.remove") : t("settings.providers.cli.install")}
+          </Button>
+        </div>
       }
     />
   );

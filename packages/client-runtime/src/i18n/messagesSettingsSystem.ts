@@ -10,8 +10,25 @@ export const enMessages = {
   "settings.system.dbNotice.title": "Database",
   "settings.system.dbNotice.reclaim.title": "Reclaim freed database space",
   "settings.system.dbNotice.reclaim.description":
-    "These databases still hold space freed by history cleanup. Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment.",
-  "settings.system.dbNotice.row.title": "{size} GiB on {label}",
+    "These databases still hold space freed by history cleanup.",
+  "settings.system.dbNotice.reclaim.manualSteps":
+    " Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment.",
+  "settings.system.dbNotice.row.title": "{size} on {label}",
+  "settings.system.dbNotice.reclaimRow.successTitle": "Reclaiming {amount} on {label}",
+  "settings.system.dbNotice.reclaimRow.successDescription":
+    "T3 Code there restarts and is back in about {minutes} min.",
+  "settings.system.dbNotice.reclaimRow.failureTitle": "Could not reclaim space on {label}",
+  "settings.system.dbNotice.reclaimRow.error": "An error occurred.",
+  "settings.system.dbNotice.reclaimRow.offline":
+    "Restarts T3 Code there. It will be offline for about {minutes} min.",
+  "settings.system.dbNotice.reclaimRow.lastFailed": "The last attempt failed: {reason}",
+  "settings.system.dbNotice.reclaimRow.restarting": "Restarting…",
+  "settings.system.dbNotice.reclaimRow.reclaim": "Reclaim",
+  "settings.system.dbNotice.reclaimRow.confirmTitle": "Reclaim {amount} on {label}?",
+  "settings.system.dbNotice.reclaimRow.confirmDescription":
+    "T3 Code on {label} stops, rebuilds its database, and starts again. It will be offline for about {minutes} min. Running agents stop when it restarts.",
+  "settings.system.dbNotice.reclaimRow.cancel": "Cancel",
+  "settings.system.dbNotice.reclaimRow.confirm": "Restart and reclaim",
   "settings.system.dbNotice.copyCommand": "Copy command",
   "settings.system.dbNotice.dismiss": "Dismiss",
   "settings.system.envIcon.lockDisconnected": "Connect to this environment to change its icon.",
@@ -71,7 +88,7 @@ export const enMessages = {
     "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
   "settings.system.labs.boringMultiline.title": "Two-line folder rows",
   "settings.system.labs.boringMultiline.description":
-    "In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent.",
+    "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
   "settings.system.labs.guestLinks.title": "Guest links",
   "settings.system.labs.guestLinks.signInDescription":
     "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
@@ -82,6 +99,8 @@ export const enMessages = {
   "settings.system.labs.linkedEnvs.description":
     "Let agents here work on your other machines, and theirs here. Turn it on for each machine, then link them in <link>Connections</link>. While off, nothing new starts over a link; running tasks finish.",
   "settings.system.labs.toolCalls.aria": "Tool calls in chat",
+  "settings.system.labs.toolCalls.resetLabel": "tool calls in chat",
+  "settings.chat.activity.title": "Activity",
   "settings.system.labs.toolCalls.description":
     "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "settings.system.labs.toolCalls.showAll": "Show all",
@@ -1263,8 +1282,8 @@ export const enMessages = {
   "settings.search.items.source-control": "Source control",
   "settings.search.items.git-fetch-interval": "Git fetch interval",
   "settings.search.items.worktree-branch-naming": "Worktree branch naming",
-  "settings.search.items.source-control-writing-style": "Source control writing style",
-  "settings.search.items.follow-change-request-templates": "Follow change request templates",
+  "settings.search.items.source-control-writing-style": "Commit and pull request writing",
+  "settings.search.items.follow-change-request-templates": "Follow pull request templates",
   "settings.search.items.source-control-writer-model": "Source control writer model",
   "settings.search.items.review-guides": "Review guides (beta)",
   "settings.search.items.review-guide-model": "Review guide model",
@@ -1350,9 +1369,24 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.about.copyVersion": "复制版本号",
   "settings.system.dbNotice.title": "数据库",
   "settings.system.dbNotice.reclaim.title": "回收已释放的数据库空间",
-  "settings.system.dbNotice.reclaim.description":
-    "历史清理后，这些数据库仍占用已释放的空间。在每台机器上运行该命令即可回收空间。此操作会重启后台服务。如果桌面应用正在托管该环境，请先退出应用。",
-  "settings.system.dbNotice.row.title": "{label} 上的 {size} GiB",
+  "settings.system.dbNotice.reclaim.description": "历史清理后，这些数据库仍占用已释放的空间。",
+  "settings.system.dbNotice.reclaim.manualSteps":
+    "在每台机器上运行该命令即可回收空间。此操作会重启后台服务。如果桌面应用正在托管该环境，请先退出应用。",
+  "settings.system.dbNotice.row.title": "{label} 上的 {size}",
+  "settings.system.dbNotice.reclaimRow.successTitle": "正在回收 {label} 上的 {amount}",
+  "settings.system.dbNotice.reclaimRow.successDescription":
+    "该处的 T3 Code 会重启，大约 {minutes} 分钟后恢复。",
+  "settings.system.dbNotice.reclaimRow.failureTitle": "无法回收 {label} 上的空间",
+  "settings.system.dbNotice.reclaimRow.error": "出现错误。",
+  "settings.system.dbNotice.reclaimRow.offline": "会重启该处的 T3 Code，大约离线 {minutes} 分钟。",
+  "settings.system.dbNotice.reclaimRow.lastFailed": "上次尝试失败：{reason}",
+  "settings.system.dbNotice.reclaimRow.restarting": "正在重启…",
+  "settings.system.dbNotice.reclaimRow.reclaim": "回收",
+  "settings.system.dbNotice.reclaimRow.confirmTitle": "回收 {label} 上的 {amount}？",
+  "settings.system.dbNotice.reclaimRow.confirmDescription":
+    "{label} 上的 T3 Code 会停止、重建数据库并重新启动，大约离线 {minutes} 分钟。重启时正在运行的智能体会停止。",
+  "settings.system.dbNotice.reclaimRow.cancel": "取消",
+  "settings.system.dbNotice.reclaimRow.confirm": "重启并回收",
   "settings.system.dbNotice.copyCommand": "复制命令",
   "settings.system.dbNotice.dismiss": "忽略",
   "settings.system.envIcon.lockDisconnected": "连接到该环境后才能更改图标。",
@@ -1410,7 +1444,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
     "把侧边栏里的会话归入项目文件夹。置顶会话保持在最上方，稍后提醒和已收起的会话留在文件夹下方。",
   "settings.system.labs.boringMultiline.title": "双行文件夹条目",
   "settings.system.labs.boringMultiline.description":
-    "在朴素侧边栏中，文件夹里的会话显示为两行：先是标题，再是分支、Pull Request 和智能体。",
+    "文件夹里的会话显示为两行：先是标题，再是分支、Pull Request 和智能体。",
   "settings.system.labs.guestLinks.title": "访客链接",
   "settings.system.labs.guestLinks.signInDescription":
     "把会话分享给访客，访客可在浏览器中实时查看，并发送需要你批准的消息。登录 T3 Connect 后即可使用访客链接。",
@@ -1421,6 +1455,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.labs.linkedEnvs.description":
     "让这里的智能体在你的其他机器上工作，也让它们的智能体在这里工作。请在每台机器上开启，然后在<link>连接</link>中把它们链接起来。关闭后，不会再通过链接启动新任务；正在运行的任务会跑完。",
   "settings.system.labs.toolCalls.aria": "会话中的工具调用",
+  "settings.system.labs.toolCalls.resetLabel": "会话中的工具调用",
+  "settings.chat.activity.title": "活动",
   "settings.system.labs.toolCalls.description":
     "隐藏智能体执行的命令、编辑和搜索。隐藏成功项会保留失败项。禅模式只显示最终回答。审批、提问和错误始终显示。",
   "settings.system.labs.toolCalls.showAll": "全部显示",
@@ -2551,8 +2587,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.search.items.source-control": "源代码管理",
   "settings.search.items.git-fetch-interval": "Git 获取间隔",
   "settings.search.items.worktree-branch-naming": "工作树分支命名",
-  "settings.search.items.source-control-writing-style": "源代码管理写作风格",
-  "settings.search.items.follow-change-request-templates": "遵循变更请求模板",
+  "settings.search.items.source-control-writing-style": "提交和拉取请求的写作",
+  "settings.search.items.follow-change-request-templates": "遵循拉取请求模板",
   "settings.search.items.source-control-writer-model": "源代码管理写作模型",
   "settings.search.items.review-guides": "审查指南（beta）",
   "settings.search.items.review-guide-model": "审查指南模型",

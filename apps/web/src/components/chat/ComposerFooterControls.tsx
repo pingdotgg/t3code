@@ -1,22 +1,14 @@
 import { useT } from "../../hooks/useI18n";
-import type {
-  ModelSelection,
-  ProviderInstanceId,
-  ProviderInteractionMode,
-  RuntimeMode,
-} from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { BotIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
-import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { runtimeModeConfig } from "./runtimeModeConfig";
@@ -31,8 +23,6 @@ const supervisedRuntimeModeOption: RuntimeModeOption = {
   ...runtimeModeConfig["approval-required"],
 };
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
-  showInteractionModeToggle: boolean;
-  interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   size?: "sm" | "xs";
@@ -41,7 +31,6 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   accessDisplay?: "label" | "icon" | "hidden";
   /** Draw the icon in the label color, not muted (the mode differs from the user's default). */
   emphasized?: boolean;
-  onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const t = useT();
@@ -54,52 +43,6 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     supervisedRuntimeModeOption;
   const RuntimeModeIcon = runtimeModeOption.icon;
-  const interactionModeTooltip =
-    props.interactionMode === "plan"
-      ? t("chat.footer.planModeTooltip")
-      : t("chat.footer.defaultModeTooltip");
-
-  const interactionModeToggle = props.showInteractionModeToggle ? (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ComposerControl
-            size={size}
-            className="shrink-0 whitespace-nowrap"
-            aria-pressed={props.interactionMode === "plan"}
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            aria-label={interactionModeTooltip}
-          />
-        }
-      >
-        {props.interactionMode === "plan" ? (
-          <ComposerControlIcon
-            icon={PencilRulerIcon}
-            size={size}
-            className="text-current opacity-100"
-          />
-        ) : (
-          <ComposerControlIcon
-            icon={BotIcon}
-            size={size}
-            opticalSize={size === "xs" ? "default" : "large"}
-          />
-        )}
-        {/* The compacted row (xs) keeps this icon-only, like the other controls there. */}
-        <span
-          data-composer-control-label
-          className={size === "xs" ? "sr-only" : "sr-only sm:not-sr-only"}
-        >
-          {props.interactionMode === "plan"
-            ? t("chat.footer.modePlan")
-            : t("chat.footer.modeBuild")}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
-    </Tooltip>
-  ) : null;
-
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = t("chat.footer.permissionsTooltip", {
     label: t(runtimeModeOption.labelKey),
@@ -157,12 +100,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     </Menu>
   );
 
-  return (
-    <>
-      {accessDisplay === "hidden" ? null : permissionsChip}
-      {interactionModeToggle}
-    </>
-  );
+  return accessDisplay === "hidden" ? null : permissionsChip;
 });
 
 /**
@@ -261,9 +199,6 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
-  activeContextWindow: ContextWindowSnapshot | null;
-  reserveContextWindowMeter: boolean;
-  activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -277,8 +212,6 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
   alternateShortcutLabel: string | null;
-  showPlanFollowUpPrompt: boolean;
-  promptHasText: boolean;
   voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
@@ -291,28 +224,12 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
-  onCompactContext?: (() => void) | undefined;
-  compactDisabled: boolean;
-  compactDisabledReason: string | null;
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
 }) {
   return (
     <>
-      {props.activeContextWindow ? (
-        <ContextWindowMeter
-          usage={props.activeContextWindow}
-          modelDisplayName={props.activeThreadModelDisplayName}
-          onCompact={props.onCompactContext}
-          compactDisabled={props.compactDisabled}
-          compactDisabledReason={props.compactDisabledReason}
-        />
-      ) : props.reserveContextWindowMeter ? (
-        <ContextWindowMeterPlaceholder />
-      ) : null}
-      {props.children}
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -322,8 +239,6 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}
-        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
-        promptHasText={props.promptHasText}
         voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
@@ -337,11 +252,12 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
-        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
         compactBeforeSendTokens={props.compactBeforeSendTokens}
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-      />
+      >
+        {props.children}
+      </ComposerPrimaryActions>
     </>
   );
 });

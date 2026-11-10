@@ -202,6 +202,7 @@ function OpenContentSearchDialog(props: {
         disabled: !search.canReadFiles,
         placeholder: t("review.search.placeholder", { project: target.projectName }),
         onKeyDown: (event) => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "ArrowDown" && matches.length > 0) {
             event.preventDefault();
             setSelectedIndex((current) => (current + 1) % matches.length);

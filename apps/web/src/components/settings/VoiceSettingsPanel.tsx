@@ -22,6 +22,7 @@ import {
   type ProjectId,
   ProviderDriverKind,
   type SpeechAcceleration,
+  type SpeechBenchmarkTier,
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
   type VoiceShortcutMode,
@@ -61,7 +62,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { providerInstanceEntriesFor } from "../../providerInstances";
+import { useTextGenerationTargets } from "../../textGenerators";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -112,7 +113,6 @@ import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
 import { AdvancedSettings } from "./AdvancedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSearchTarget,
@@ -162,6 +162,7 @@ const spellingsOf = (words: SpeechCustomWords) =>
 type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
+  readonly benchmarkTier: SpeechBenchmarkTier;
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly onDownload: () => void;
@@ -220,6 +221,7 @@ function ModelCard(props: ModelCardProps) {
         <ModelBenchmarks
           model={model}
           languages={props.comparisonLanguages}
+          tier={props.benchmarkTier}
           facts={[
             ...(model.languages.length > 1
               ? [t("voice.settings.model.languageCount", { count: model.languages.length })]
@@ -480,10 +482,18 @@ function CleanupModelRow() {
     (environment?.serverConfig
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const textGenerationProviders = providers.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
-  const instanceEntries = providerInstanceEntriesFor(textGenerationProviders, settings, null);
+  const targets = useTextGenerationTargets({
+    environmentId: environment?.environmentId ?? null,
+    settings,
+    providers: providers.filter((provider) => provider.supportsTextGeneration !== false),
+    projectId: null,
+    selections: [
+      settings.speechPostProcessingModelSelection,
+      settings.textGenerationModelSelection,
+    ],
+  });
+  const textGenerationProviders = targets.providers;
+  const instanceEntries = targets.entries;
   const hasProvider = instanceEntries.some((entry) => entry.enabled && entry.isAvailable);
   const dedicated = settings.speechPostProcessingModelSelection !== null;
   const selection = resolveAppModelSelectionState(
@@ -522,58 +532,62 @@ function CleanupModelRow() {
       settingKeys={["speechPostProcessingModelSelection"]}
       {...searchableSetting("speech-post-processing-model")}
       title={t("voice.settings.cleanupModel.title")}
-      description={
-        dedicated
-          ? t("voice.settings.cleanupModel.descriptionDedicated", {
-              env: environment?.label ?? t("voice.settings.cleanupModel.thisEnvironment"),
-            })
-          : t("voice.settings.cleanupModel.descriptionDefault", {
-              env: environment?.label ?? t("voice.settings.cleanupModel.thisEnvironment"),
-            })
-      }
-      resetAction={
-        dedicated ? (
-          <SettingResetButton
-            label={t("voice.settings.cleanupModel.reset")}
-            onClick={() => updateSettings({ speechPostProcessingModelSelection: null })}
-          />
-        ) : null
-      }
+      description={t("voice.settings.cleanupModel.description")}
       control={
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">
             {t("voice.settings.cleanupModel.connectFirst")}
           </span>
-        ) : !hasProvider || !instanceEntry ? (
-          <span className="text-sm text-muted-foreground">
-            {t("voice.settings.cleanupModel.noProviders")}
-          </span>
         ) : (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            <ProviderModelPicker
-              environmentId={environment?.environmentId ?? null}
-              activeInstanceId={selection.instanceId}
-              model={selection.model}
-              lockedProvider={null}
-              instanceEntries={instanceEntries}
-              modelOptionsByInstance={modelOptionsByInstance}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              getModelDisabledReason={modelDisabledReason}
-              onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {dedicated && (!hasProvider || !instanceEntry) ? (
+              <span className="text-sm text-muted-foreground">
+                {t("settings.threads.textGenerationModel.noProviders")}
+              </span>
+            ) : null}
+            {dedicated && hasProvider && instanceEntry ? (
+              <>
+                <ProviderModelPicker
+                  environmentId={environment?.environmentId ?? null}
+                  activeInstanceId={selection.instanceId}
+                  model={selection.model}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  getModelDisabledReason={modelDisabledReason}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setModel(createModelSelection(instanceId, model))
+                  }
+                />
+                <TraitsPicker
+                  provider={instanceEntry.driverKind}
+                  models={instanceEntry.models}
+                  model={selection.model}
+                  modelOptions={selection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setModel(createModelSelection(selection.instanceId, selection.model, options))
+                  }
+                />
+              </>
+            ) : null}
+            <Switch
+              checked={dedicated}
+              disabled={!dedicated && !hasProvider}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  speechPostProcessingModelSelection: checked
+                    ? createModelSelection(
+                        settings.textGenerationModelSelection.instanceId,
+                        settings.textGenerationModelSelection.model,
+                        settings.textGenerationModelSelection.options,
+                      )
+                    : null,
+                })
               }
-            />
-            <TraitsPicker
-              provider={instanceEntry.driverKind}
-              models={instanceEntry.models}
-              model={selection.model}
-              modelOptions={selection.options ?? []}
-              allowPromptInjectedEffort={false}
-              planModeEnabled={settings.planModeEnabled}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              onModelOptionsChange={(options) =>
-                setModel(createModelSelection(selection.instanceId, selection.model, options))
-              }
+              aria-label={t("voice.settings.cleanupModel.separateAria")}
             />
           </div>
         )
@@ -828,6 +842,7 @@ function SpeechModelBrowser(props: {
     downloadedOnly,
     sort,
     accuracyLanguage,
+    benchmarkTier: status?.supported ? status.benchmarkTier : "accelerated",
   });
   const activeModel = models.find((model) => model.active);
   const renderedModels =
@@ -848,7 +863,9 @@ function SpeechModelBrowser(props: {
       {status?.supported ? (
         <>
           <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-            {t("voice.settings.browser.hint")}
+            {t("voice.settings.browser.hint", {
+              device: status.benchmarkTier === "cpu" ? "CPU" : "GPU",
+            })}
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
@@ -979,6 +996,7 @@ function SpeechModelBrowser(props: {
                     busy: controlsDisabled,
                     canCancel,
                     comparisonLanguages: selectedLanguages,
+                    benchmarkTier: status.benchmarkTier,
                     onDownload: () =>
                       void run(
                         t("voice.settings.error.download"),

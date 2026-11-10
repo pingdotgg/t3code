@@ -16,13 +16,14 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
-  type ProviderInteractionMode,
   type RuntimeMode,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
 import { resolveComposerTraitsInput } from "./composerProviderState";
+import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   ComposerEffortColumn,
   ComposerPickerFooter,
@@ -52,16 +53,12 @@ export function ComposerControlsBar(props: {
   reportedModelSelection: ChatComposerProps["reportedModelSelection"];
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
-  planModeEnabled: boolean;
-  planModeUiEnabled: boolean;
   effortDisplay: EffortDisplay;
   /** The strip under a new thread names the permissions, so the row does not repeat them. */
   permissionsShownInStrip: boolean;
-  interactionMode: ProviderInteractionMode;
   compatibleRuntimeMode: RuntimeMode;
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
-  toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   composerControlsCollapsed: boolean;
   composerControlsHidden: boolean;
@@ -103,13 +100,9 @@ export function ComposerControlsBar(props: {
     reportedModelSelection,
     promptUltrathink,
     onPromptEdit,
-    planModeEnabled,
-    planModeUiEnabled,
-    interactionMode,
     compatibleRuntimeMode,
     defaultRuntimeMode,
     compatibleRuntimeModeOptions,
-    toggleInteractionMode,
     handleRuntimeModeChange,
     composerControlsCollapsed,
     composerControlsHidden,
@@ -149,15 +142,18 @@ export function ComposerControlsBar(props: {
     pickerOwnsModeShortcut,
   } = resolveComposerControlsOwnership({
     matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
-    planModeUiEnabled,
     collapsed: composerControlsCollapsed,
     measuredHiddenBlockCount,
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
+  const applyThreadModelPick = useApplyThreadModelPick();
+  const applyRouteThreadModelPick = useStableCallback(() => applyThreadModelPick(routeThreadRef));
   const traitsInput = resolveComposerTraitsInput({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "server"
+      ? { threadRef: routeThreadRef, onDraftModelOptionsChange: applyRouteThreadModelPick }
+      : {}),
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
@@ -165,7 +161,6 @@ export function ComposerControlsBar(props: {
     reportedModelSelection,
     promptUltrathink,
     onPromptEdit,
-    planModeEnabled,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize);
   const restingBlockDefs = showModeBlock
@@ -174,15 +169,12 @@ export function ComposerControlsBar(props: {
           id: "mode",
           content: (
             <ComposerFooterModeControls
-              showInteractionModeToggle={planModeUiEnabled}
-              interactionMode={interactionMode}
               runtimeMode={compatibleRuntimeMode}
               runtimeModeOptions={compatibleRuntimeModeOptions}
               size={controlSize}
               hidden={composerControlsHidden || restingHiddenBlockCount > 0}
               accessDisplay={accessDisplay}
               emphasized={!accessMatchesDefault}
-              onToggleInteractionMode={toggleInteractionMode}
               onRuntimeModeChange={handleRuntimeModeChange}
             />
           ),
@@ -307,15 +299,12 @@ export function ComposerControlsBar(props: {
           )}
         >
           <CompactComposerControlsMenu
-            interactionMode={interactionMode}
             runtimeMode={compatibleRuntimeMode}
             runtimeModeOptions={compatibleRuntimeModeOptions}
             size={controlSize}
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.length > 0}
             // Permissions join the overflow only when their normal home is in it.
             showPermissions={overflowShowsPermissions}
-            onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
         </div>

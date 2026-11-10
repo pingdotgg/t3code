@@ -23,7 +23,12 @@ export const enMessages = {
   "settings.providers.cli.notInstalled": "Run T3 Code's CLI as `t3` from any terminal.",
   "settings.providers.cli.installedOnPath": "Installed at {path}. Open a new terminal to use it.",
   "settings.providers.cli.installedNotOnPath":
-    "Installed at {path}, which is not on your PATH yet. Add its folder to your PATH to run `t3`.",
+    "Installed at {path}, which is not on your PATH yet.",
+  "settings.providers.cli.addFolderToPath": " Add its folder to your PATH to run `t3`.",
+  "settings.providers.cli.installedAddedToPath":
+    "Installed at {path} and added to PATH in {file}. Open a new terminal to use it.",
+  "settings.providers.cli.addToPath": "Add to PATH",
+  "settings.providers.cli.addToPathError": "Could not add t3 to PATH",
   "settings.providers.cli.install": "Install",
   "settings.providers.cli.remove": "Remove",
   "settings.providers.multipleAccounts.note":
@@ -1060,8 +1065,12 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
     "{path} 处的另一个 t3 会在新终端中优先运行。移除它即可使用 T3 Code 的 t3。",
   "settings.providers.cli.notInstalled": "在任意终端中以 `t3` 运行 T3 Code 的 CLI。",
   "settings.providers.cli.installedOnPath": "已安装在 {path}。打开新终端即可使用。",
-  "settings.providers.cli.installedNotOnPath":
-    "已安装在 {path}，但它还不在你的 PATH 中。把它所在的文件夹加入 PATH 即可运行 `t3`。",
+  "settings.providers.cli.installedNotOnPath": "已安装在 {path}，但它还不在你的 PATH 中。",
+  "settings.providers.cli.addFolderToPath": "把它所在的文件夹加入 PATH 即可运行 `t3`。",
+  "settings.providers.cli.installedAddedToPath":
+    "已安装在 {path}，并已在 {file} 中加入 PATH。打开新终端即可使用。",
+  "settings.providers.cli.addToPath": "加入 PATH",
+  "settings.providers.cli.addToPathError": "无法把 t3 加入 PATH",
   "settings.providers.cli.install": "安装",
   "settings.providers.cli.remove": "移除",
   "settings.providers.multipleAccounts.note": "我们不建议在 T3 Code 中管理多个 {provider} 账号。",

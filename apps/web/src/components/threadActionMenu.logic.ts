@@ -237,12 +237,12 @@ export function buildThreadActionMenuItems(
             children: [
               {
                 id: "auto-settle:enabled" as const,
-                label: t("appB.threadMenu.enabled"),
+                label: t("appB.threadMenu.followSettings"),
                 checked: state.autoSettleEnabled,
               },
               {
                 id: "auto-settle:disabled" as const,
-                label: t("appB.threadMenu.disabled"),
+                label: t("appB.threadMenu.never"),
                 checked: !state.autoSettleEnabled,
               },
             ],

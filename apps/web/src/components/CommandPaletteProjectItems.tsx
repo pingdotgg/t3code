@@ -74,7 +74,9 @@ export function buildProjectSearchItems(input: ProjectItemsInput) {
 }
 
 /** Projects as targets of the "New thread in..." submenu. */
-export function buildNewThreadInProjectItems(input: ProjectItemsInput) {
+export function buildNewThreadInProjectItems(
+  input: ProjectItemsInput & { readonly currentProjectKey: string | null },
+) {
   return buildProjectActionItems({
     projects: input.projects,
     valuePrefix: "new-thread-in",
@@ -90,6 +92,7 @@ export function buildNewThreadInProjectItems(input: ProjectItemsInput) {
       <ProjectLocationDescription
         location={input.locationByEnvironmentId.get(project.environmentId)}
         workspaceRoot={project.workspaceRoot}
+        current={input.currentProjectKey === `${project.environmentId}:${project.id}`}
       />
     ),
     icon: projectFaviconIcon,
@@ -101,6 +104,7 @@ export function buildNewThreadInProjectItems(input: ProjectItemsInput) {
 function ProjectLocationDescription(props: {
   readonly location: CommandPaletteProjectLocation | undefined;
   readonly workspaceRoot: string;
+  readonly current?: boolean;
 }) {
   const t = useT();
   const location = props.location ?? {
@@ -109,6 +113,12 @@ function ProjectLocationDescription(props: {
   };
   return (
     <span className="flex min-w-0 items-center gap-1">
+      {props.current ? (
+        <>
+          <span className="shrink-0">Current</span>
+          <CommandPaletteMetaDot />
+        </>
+      ) : null}
       <span className="inline-flex min-w-0 items-center gap-1">
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
@@ -120,7 +130,7 @@ function ProjectLocationDescription(props: {
         <span className="truncate">{location.label}</span>
       </span>
       <CommandPaletteMetaDot />
-      <span className="truncate">{props.workspaceRoot}</span>
+      <span className="min-w-0 flex-1 truncate">{props.workspaceRoot}</span>
     </span>
   );
 }

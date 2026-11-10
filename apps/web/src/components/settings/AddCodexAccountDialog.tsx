@@ -32,6 +32,7 @@ export function AddCodexAccountDialog({
 }: {
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
+  // Told when the account is created; the dialog then runs its own sign-in.
   readonly onAccountCreated?:
     | ((instanceId: ProviderInstanceId, displayName: string) => void)
     | undefined;
@@ -73,12 +74,8 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
