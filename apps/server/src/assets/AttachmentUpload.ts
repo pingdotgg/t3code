@@ -27,20 +27,14 @@ import {
   sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
+import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
-const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const PENDING_ATTACHMENT_SWEEP_INTERVAL_MS = 15 * 60_000;
 const lastPendingSweepByDirectory = new Map<string, number>();
 
@@ -70,17 +64,9 @@ function decodeClaims(encodedPayload: string): AttachmentUploadClaims | null {
   }
 }
 
-const loadSigningSecret = Effect.gen(function* () {
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  return yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
-});
-
 export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(function* (
   input: AttachmentCreateUploadUrlInput,
 ) {
-  const secret = yield* loadSigningSecret.pipe(
-    Effect.mapError((cause) => new AttachmentUploadSigningKeyError({ cause })),
-  );
   const config = yield* ServerConfig.ServerConfig;
   const nowMs = yield* Clock.currentTimeMillis;
   const previousSweep = lastPendingSweepByDirectory.get(config.attachmentsDir);
@@ -120,9 +106,13 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     }),
   );
 
+  const signer = yield* AssetSigner.AssetSigner;
+  const signature = yield* signer
+    .sign(encodedPayload)
+    .pipe(Effect.mapError((cause) => new AttachmentUploadSigningKeyError({ cause })));
   return {
     attachmentId,
-    relativeUrl: `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/${encodedPayload}.${signPayload(encodedPayload, secret)}`,
+    relativeUrl: `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/${encodedPayload}.${signature}`,
     expiresAt,
   };
 });
@@ -135,13 +125,14 @@ export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validat
     return null;
   }
 
-  const secret = yield* loadSigningSecret.pipe(
+  const signer = yield* AssetSigner.AssetSigner;
+  const verified = yield* signer.verify(encodedPayload, signature).pipe(
     Effect.tapError((cause) =>
       Effect.logError("Failed to load the attachment upload signing key.", { cause }),
     ),
-    Effect.orElseSucceed(() => null),
+    Effect.orElseSucceed(() => false),
   );
-  if (!secret || !timingSafeEqualBase64Url(signature, signPayload(encodedPayload, secret))) {
+  if (!verified) {
     return null;
   }
 
@@ -212,7 +203,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
     const published = yield* fileSystem.link(partPath, finalPath).pipe(
-      Effect.map(() => true),
+      Effect.as(true),
       Effect.catch((error) => {
         if (error.reason._tag === "AlreadyExists") return Effect.succeed(false);
         return Effect.tryPromise({
