@@ -226,7 +226,6 @@ interface ActiveTurn {
   flushScheduled: boolean;
   interruptRequested: boolean;
   compact: boolean;
-  /** Muse admits compaction only when idle; while waiting, its compaction items are not ours. */
   compactPhase: "sending" | "waiting" | "admitted";
 }
 
@@ -1036,7 +1035,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
       ) {
-        if (active !== turn || seenTerminals.has(turn.nativeId)) return false;
+        if (active !== turn || seenTerminals.has(turn.nativeId)) return;
         seenTerminals.add(turn.nativeId);
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
@@ -1133,7 +1132,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           });
         }
         yield* Deferred.succeed(turn.done, undefined);
-        return true;
       });
       const trackHostRun = Effect.fnUntraced(function* (method: string, params: unknown) {
         if (
@@ -1184,7 +1182,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
-      // A live run no turn owns, such as one started while compaction waited, still asks.
       const unownedRun = (turnId: unknown) =>
         typeof turnId === "string" &&
         hostRuns.has(turnId) &&
@@ -2143,26 +2140,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           selected,
         );
       });
-      // Once the turn's own terminal is emitted, return so its events persist exactly once.
-      const settleStartFailure =
-        (turn: ActiveTurn) =>
-        <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          effect.pipe(
-            Effect.catchCause((cause) =>
-              Effect.gen(function* () {
-                // Interrupted start settles its own turn; a closing session settles the rest.
-                if (Cause.hasInterrupts(cause)) return yield* Effect.failCause(cause);
-                const error = Cause.squash(cause);
-                const detail = isProtocolError(error)
-                  ? error.detail
-                  : error instanceof Error
-                    ? error.message
-                    : "Muse could not start the turn.";
-                const owned = yield* eventPermit.withPermits(1)(finish(turn, "failed", detail));
-                if (!owned) return yield* Effect.failCause(cause);
-              }),
-            ),
-          );
       const isRunActive = (error: unknown) =>
         isProtocolError(error) &&
         error.payload instanceof MspError &&
@@ -2237,7 +2214,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   : Effect.void,
               ).pipe(commands.withPermits(1)),
             ),
-            settleStartFailure(turn),
+            Effect.catch((error) =>
+              eventPermit.withPermits(1)(finish(turn, "failed", error.detail)),
+            ),
             Effect.ignore,
             Effect.forkIn(scope),
           );
@@ -2328,7 +2307,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           yield* updateSession("running");
           const held = compact ? undefined : wake;
           if (!compact) wake = undefined;
-          // Compaction waits for the held run, so requests it already raised are shown now.
           else if (wake) {
             // failHost clears `wake` mid-loop.
             const buffered = wake;
@@ -2344,7 +2322,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(eventPermit.withPermits(1));
         if (continuation) return;
         yield* Effect.gen(function* () {
-          if (compact) yield* compactWhenIdle(turn, nativeId);
+          if (compact)
+            yield* compactWhenIdle(turn, nativeId).pipe(
+              Effect.catch((error) =>
+                broken
+                  ? Effect.fail(error)
+                  : eventPermit.withPermits(1)(finish(turn, "failed", error.detail)),
+              ),
+            );
           else {
             const result = yield* request(
               "turn/start",
@@ -2377,10 +2362,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             }
           }
         }).pipe(
-          Effect.onInterrupt(() =>
-            eventPermit.withPermits(1)(finish(turn, "failed", "Muse could not start the turn.")),
-          ),
-          settleStartFailure(turn),
+          Effect.onError((cause) => {
+            const error = Cause.squash(cause);
+            const detail = isProtocolError(error)
+              ? error.detail
+              : error instanceof Error
+                ? error.message
+                : "Muse could not start the turn.";
+            return eventPermit.withPermits(1)(finish(turn, "failed", detail));
+          }),
         );
       });
       const snapshot = Effect.fnUntraced(function* (
