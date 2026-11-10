@@ -3178,7 +3178,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (mcpAvailable) state.mcp = { name, directory, credential };
-        else releaseSharedMcp(state, directory);
+        // A failed refresh keeps the cached registration, which still owns its name.
+        else if (state.mcp === undefined) releaseSharedMcp(state, directory);
         // Rules written before this turn assumed a name; a concurrent claim may have changed it.
         yield* writeRules(state, state.policy);
       }
