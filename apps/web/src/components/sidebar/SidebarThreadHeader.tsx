@@ -99,7 +99,7 @@ export function SidebarThreadHeader({
               !event.nativeEvent.isComposing &&
               event.keyCode !== 229 &&
               searchExpanded &&
-              searchQuery === ""
+              searchQuery.trim() === ""
             ) {
               event.currentTarget.blur();
             }
