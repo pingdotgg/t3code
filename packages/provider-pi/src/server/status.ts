@@ -83,6 +83,8 @@ interface PiDiscovery extends PiDiscoveredCommands {
   readonly authenticated: boolean;
   /** Pi's active model when Pi lists no model of its provider, so it cannot start a turn. */
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
+  /** Pi without extensions can load no model, so text generation fails for every entry. */
+  readonly textGenerationUnavailable: boolean;
 }
 
 function piModelsFromSettings(
@@ -205,6 +207,12 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     launchArgs,
     cwd,
   ).pipe(
+    // Pi exits before answering when launch args name a provider only an extension registers.
+    Effect.catchIf(
+      (error) =>
+        error._tag === "PiRpcError" && (error.operation === "read" || error.operation === "exit"),
+      () => Effect.succeed(new Set<string>()),
+    ),
     Effect.orElseSucceed(() => undefined),
     Effect.timeoutOrElse({
       duration: PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS,
@@ -244,6 +252,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
       !discoveredModels.some((model) => model.subProvider === activeProvider)
         ? { provider: activeProvider, id: activeModelId }
         : undefined,
+    textGenerationUnavailable: textGenerationModelSlugs?.size === 0,
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
@@ -564,22 +573,25 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
           resolvedLaunchArgs.args,
           discovery.unavailableActiveModel,
         );
-  return buildServerProvider({
-    presentation: PI_PRESENTATION,
-    enabled: piSettings.enabled,
-    checkedAt,
-    models,
-    slashCommands: discovery.slashCommands,
-    skills: discovery.skills,
-    probe: {
-      installed: true,
-      version,
-      // Other Pi models still work when only the default is unavailable, so keep the picker usable.
-      status: discovery.authenticated ? "ready" : "warning",
-      auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
-      ...(message === undefined ? {} : { message }),
-    },
-  });
+  return {
+    ...buildServerProvider({
+      presentation: PI_PRESENTATION,
+      enabled: piSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: discovery.slashCommands,
+      skills: discovery.skills,
+      probe: {
+        installed: true,
+        version,
+        // Other Pi models still work when only the default is unavailable, so keep the picker usable.
+        status: discovery.authenticated ? "ready" : "warning",
+        auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
+        ...(message === undefined ? {} : { message }),
+      },
+    }),
+    ...(discovery.textGenerationUnavailable ? { supportsTextGeneration: false } : {}),
+  };
 });
 
 export const enrichPiSnapshot = (input: {
