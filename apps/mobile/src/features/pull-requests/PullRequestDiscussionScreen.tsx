@@ -1,6 +1,7 @@
 import {
   parsePullRequestAnchor,
   pullRequestAnchorMatchesUrl,
+  resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
@@ -145,7 +146,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const scrollRef = useRef<ScrollViewInstance>(null);
   const pendingTop = useRef<number | null>(null);
   const positionedComment = useRef<string | null>(null);
-  const anchor = parsePullRequestAnchor(params.navigationUrl);
+  const location = parsePullRequestAnchor(params.navigationUrl);
+  const anchor =
+    location?.kind === "timeline"
+      ? resolvePullRequestReviewAnchor(location.anchor, [], [{ comments }])
+      : null;
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
@@ -218,8 +223,8 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 key={comment.id}
                 onLayout={(event) => {
                   if (
-                    anchor?.kind !== "timeline" ||
-                    !pullRequestAnchorMatchesUrl(anchor.anchor, comment.url) ||
+                    anchor === null ||
+                    !pullRequestAnchorMatchesUrl(anchor, comment.url) ||
                     positionedComment.current === comment.id
                   )
                     return;
@@ -227,7 +232,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   pendingTop.current = event.nativeEvent.layout.y;
                   scrollRef.current?.scrollTo({ y: pendingTop.current, animated: false });
                 }}
-                className="gap-3 border-b border-border-subtle py-4"
+                className={
+                  anchor !== null && pullRequestAnchorMatchesUrl(anchor, comment.url)
+                    ? "-mx-3 gap-3 rounded-2xl border border-primary bg-primary/10 px-3 py-4"
+                    : "gap-3 border-b border-border-subtle py-4"
+                }
               >
                 <View className="flex-row items-center gap-2">
                   <PullRequestAvatar actor={comment.author} size={28} />

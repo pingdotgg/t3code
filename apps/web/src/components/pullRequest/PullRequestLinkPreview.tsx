@@ -1,5 +1,6 @@
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import {
   cloneElement,
@@ -18,7 +19,12 @@ import { useEnvironmentQuery } from "~/state/query";
 
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPresentation";
+import { pullRequestLinkSubject, pullRequestReviewOutcome } from "./pullRequestDetail.logic";
+import {
+  PullRequestActorAvatar,
+  PullRequestReviewOutcomeBadge,
+  resolvePullRequestState,
+} from "./pullRequestPresentation";
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -57,6 +63,20 @@ export function PullRequestLinkPreview({
         })
       : null,
   );
+  // A link to a comment or commit shows that, read from the activity the panel shares.
+  const namesSubject =
+    parsePullRequestAnchor(originalUrl)?.kind === "timeline" ||
+    pullRequestLinkCommit(originalUrl) !== null;
+  const activityQuery = useEnvironmentQuery(
+    open && namesSubject
+      ? pullRequestEnvironment.activity({
+          environmentId: target.environmentId,
+          input: target.input,
+        })
+      : null,
+  );
+  const subject =
+    activityQuery.data === null ? null : pullRequestLinkSubject(originalUrl, activityQuery.data);
   const summary = useSharedPullRequestSummary(
     open ? target.environmentId : null,
     open ? target.input : null,
@@ -136,10 +156,16 @@ export function PullRequestLinkPreview({
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-                  {card.title}
-                </p>
-                {card.author === undefined ? null : (
+                {subject?.kind === "comment" ? (
+                  <LinkedComment subject={subject} />
+                ) : subject?.kind === "commit" ? (
+                  <LinkedCommit commit={subject.commit} />
+                ) : (
+                  <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                    {card.title}
+                  </p>
+                )}
+                {card.author === undefined || subject !== null ? null : (
                   <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
                     <span className="min-w-0 truncate">{authorLabel}</span>
@@ -159,5 +185,70 @@ export function PullRequestLinkPreview({
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
+  );
+}
+
+function actorLabel(actor: { readonly login: string } | null | undefined) {
+  return actor?.login ?? "ghost";
+}
+
+function LinkedComment({
+  subject,
+}: {
+  subject: Extract<ReturnType<typeof pullRequestLinkSubject>, { kind: "comment" }>;
+}) {
+  const outcome = pullRequestReviewOutcome(subject.reviewState);
+  return (
+    <div className="mt-2 min-w-0">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <PullRequestActorAvatar actor={subject.author} className="size-4" />
+        <span className="min-w-0 truncate font-medium text-foreground">
+          {actorLabel(subject.author)}
+        </span>
+        {outcome === null ? (
+          <span className="shrink-0">commented</span>
+        ) : (
+          <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
+        )}
+        <span aria-hidden>·</span>
+        <span className="shrink-0">
+          <RelativeTime timestamp={subject.createdAt} />
+        </span>
+      </div>
+      {subject.excerpt === null ? null : (
+        <p className="mt-1.5 line-clamp-4 text-xs leading-relaxed text-foreground text-pretty">
+          {subject.excerpt}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LinkedCommit({
+  commit,
+}: {
+  commit: Extract<ReturnType<typeof pullRequestLinkSubject>, { kind: "commit" }>["commit"];
+}) {
+  const author = commit.authors?.[0];
+  return (
+    <div className="mt-2 min-w-0">
+      <p className="text-sm font-medium leading-snug text-foreground text-pretty">
+        {commit.messageHeadline}
+      </p>
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <code className="shrink-0 font-mono">{commit.oid.slice(0, 7)}</code>
+        {author === undefined ? null : (
+          <>
+            <span aria-hidden>·</span>
+            <PullRequestActorAvatar actor={author} className="size-4" />
+            <span className="min-w-0 truncate">{actorLabel(author)}</span>
+          </>
+        )}
+        <span aria-hidden>·</span>
+        <span className="shrink-0">
+          <RelativeTime timestamp={commit.committedDate} />
+        </span>
+      </div>
+    </div>
   );
 }

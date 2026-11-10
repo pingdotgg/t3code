@@ -107,6 +107,33 @@ export function pullRequestAnchorMatchesUrl(
   return normalizePullRequestCommentAnchor(pullRequestUrlHash(url)) === anchor;
 }
 
+interface AnchoredComment {
+  readonly url: string | null;
+  readonly createdAt: string;
+  readonly reviewUrl?: string | null | undefined;
+}
+
+/**
+ * A review with no text of its own appears only through the line comments it posted, so its link
+ * resolves to the earliest of those. Any other anchor, or a review shown in its own right, is kept.
+ */
+export function resolvePullRequestReviewAnchor(
+  anchor: string,
+  comments: ReadonlyArray<Pick<AnchoredComment, "url">>,
+  reviewThreads: ReadonlyArray<{ readonly comments: ReadonlyArray<AnchoredComment> }>,
+): string {
+  if (!/^pullrequestreview-\d+$/i.test(anchor)) return anchor;
+  if (comments.some((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url))) return anchor;
+  // The earliest comment the review posted; `toSorted` is missing from Hermes.
+  let posted: AnchoredComment | undefined;
+  for (const comment of reviewThreads.flatMap((thread) => thread.comments)) {
+    if (comment.url === null || !pullRequestAnchorMatchesUrl(anchor, comment.reviewUrl)) continue;
+    if (posted === undefined || comment.createdAt < posted.createdAt) posted = comment;
+  }
+  const own = posted ? normalizePullRequestCommentAnchor(pullRequestUrlHash(posted.url)) : "";
+  return own || anchor;
+}
+
 export function pullRequestDiffPathMatches(digest: string, path: string): boolean {
   const bytes = utf8ToBytes(path);
   return digest === bytesToHex(digest.length === 32 ? md5(bytes) : sha256(bytes));

@@ -1,6 +1,7 @@
 import {
   parsePullRequestAnchor,
   pullRequestAnchorMatchesUrl,
+  resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
 import {
@@ -744,7 +745,9 @@ export function PullRequestTimelineTab({
     // Each click remounts the linked row, so it opens again even after the user closed it.
     if (revealAnchor !== null) setLinked({ anchor: revealAnchor, count: (linked?.count ?? 0) + 1 });
   }
-  const anchor = linked?.anchor ?? null;
+  const anchor = linked
+    ? resolvePullRequestReviewAnchor(linked.anchor, detail.comments, detail.reviewThreads)
+    : null;
   const listRef = useRef<LegendListRef | null>(null);
   const matches = (event: PullRequestTimelineEvent) =>
     anchor !== null && pullRequestTimelineEventMatches(event, anchor);

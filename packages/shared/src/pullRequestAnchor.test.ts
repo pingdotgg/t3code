@@ -4,6 +4,7 @@ import {
   pullRequestAnchorMatchesUrl,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestReviewAnchor,
 } from "./pullRequestAnchor.ts";
 
 const url = "https://github.com/owner/repo/pull/7";
@@ -109,4 +110,26 @@ it.each([
     kind: "timeline",
     anchor: "issuecomment-123",
   });
+});
+
+it("finds a review with no text of its own through the earliest comment it posted", () => {
+  const review = `${url}#pullrequestreview-9`;
+  const threads = [
+    {
+      comments: [
+        { url: `${url}#discussion_r3`, createdAt: "2026-07-01T00:02:00Z", reviewUrl: review },
+        { url: `${url}#discussion_r2`, createdAt: "2026-07-01T00:01:00Z", reviewUrl: review },
+        { url: `${url}#discussion_r1`, createdAt: "2026-07-01T00:00:00Z" },
+      ],
+    },
+  ];
+  expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [], threads)).toBe("discussion_r2");
+  // A review shown in its own right, an unknown review and other anchors are kept.
+  expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [{ url: review }], threads)).toBe(
+    "pullrequestreview-9",
+  );
+  expect(resolvePullRequestReviewAnchor("pullrequestreview-8", [], threads)).toBe(
+    "pullrequestreview-8",
+  );
+  expect(resolvePullRequestReviewAnchor("issuecomment-9", [], threads)).toBe("issuecomment-9");
 });

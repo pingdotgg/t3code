@@ -1,6 +1,7 @@
 import {
   parsePullRequestAnchor,
   pullRequestLinkCommit,
+  resolvePullRequestReviewAnchor,
   type PullRequestAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
@@ -673,7 +674,16 @@ export function PullRequestDetailPanel({
   const refreshFromHost = async () => {
     await refetchFromHost();
   };
-  const timelineAnchor = revealAnchor?.kind === "timeline" ? revealAnchor.anchor : null;
+  const timelineAnchor =
+    revealAnchor?.kind !== "timeline"
+      ? null
+      : detail === null
+        ? revealAnchor.anchor
+        : resolvePullRequestReviewAnchor(
+            revealAnchor.anchor,
+            detail.comments,
+            detail.reviewThreads,
+          );
   // Loaded activity without the linked item, keyed by load so a refetch is checked again.
   const revealMissedAt =
     timelineAnchor !== null &&

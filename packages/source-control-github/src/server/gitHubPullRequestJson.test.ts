@@ -110,6 +110,7 @@ const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   lastEditedAt: null,
   isMinimized: false,
   url: "https://github.com/acme/web/pull/1#discussion",
+  pullRequestReview: null,
   ...raw,
   author: actor(author),
   reactionGroups: reactionGroups(groups),
@@ -893,7 +894,14 @@ describe("review thread decoding", () => {
             comments: {
               nodes: [
                 { id: "t1", body: "fix this", createdAt: "2026-07-01T00:00:00Z" },
-                { id: "t2", body: "fixed", createdAt: "2026-07-01T01:00:00Z" },
+                {
+                  id: "t2",
+                  body: "fixed",
+                  createdAt: "2026-07-01T01:00:00Z",
+                  pullRequestReview: {
+                    url: "https://github.com/acme/web/pull/1#pullrequestreview-9",
+                  },
+                },
               ],
             },
           },
@@ -902,6 +910,11 @@ describe("review thread decoding", () => {
     );
     const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
     expect(comments.map((comment) => comment.id)).toEqual(["t1", "t2"]);
+    // A reply-only review has no text of its own; its link finds it through the reply it posted.
+    expect(result.threads[0]?.thread.comments.map((comment) => comment.reviewUrl)).toEqual([
+      undefined,
+      "https://github.com/acme/web/pull/1#pullrequestreview-9",
+    ]);
   });
 
   it("leaves out hidden thread comments, and a thread with none left", () => {

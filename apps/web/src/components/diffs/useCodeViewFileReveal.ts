@@ -14,6 +14,7 @@ interface FileRevealHandle {
           instance: {
             getDiffForSearch?(): FileDiffMetadata | undefined;
             revealLine?(line: number): boolean;
+            expandHunk?(hunkIndex: number, direction: "up" | "down", lineCount: number): void;
             getLinePosition(
               line: number,
               side?: SelectionSide,
@@ -26,18 +27,47 @@ interface FileRevealHandle {
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
+// Mirrors the viewer's `revealLine`, which reads distances from the edges of the collapsed gap.
+function expandPartialDiffToLine(
+  diff: FileDiffMetadata,
+  line: number,
+  expandHunk: (hunkIndex: number, direction: "up" | "down", lineCount: number) => void,
+): boolean {
+  const { hunks } = diff;
+  if (
+    hunks.some(
+      (hunk) => line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
+    )
+  ) {
+    return false;
+  }
+  const next = hunks.findIndex((hunk) => line < hunk.additionStart);
+  const previous = next === -1 ? hunks.at(-1) : hunks[next - 1];
+  const fromStart = line - (previous ? previous.additionStart + previous.additionCount : 1) + 1;
+  const after = next === -1 ? undefined : hunks[next];
+  if (after === undefined) expandHunk(hunks.length, "up", fromStart + REVEAL_CONTEXT_LINES);
+  else if (fromStart <= after.additionStart - line) {
+    expandHunk(next, "up", fromStart + REVEAL_CONTEXT_LINES);
+  } else expandHunk(next, "down", after.additionStart - line + REVEAL_CONTEXT_LINES);
+  return true;
+}
+
+const REVEAL_CONTEXT_LINES = 10;
+
 /**
  * Scrolls a code view to a file. `attach` is the viewer's ref and `flush` its post-render
  * handler, so a reveal asked before the viewer mounts, or for a file it does not hold yet, is
- * positioned once it does. A reveal belongs to the diff it was asked of, so detaching the viewer,
- * such as remounting it for another diff scope, drops it.
+ * positioned once it does. A reveal belongs to the diff it was asked of, so a viewer remounted for
+ * another diff scope, which no longer holds the file, drops it.
  */
 export function createCodeViewFileReveal() {
   let viewer: FileRevealHandle | null = null;
+  let detachedInstance: object | undefined;
   let pending: {
     id: string;
     range?: SelectedLineRange;
     positionedFile?: boolean;
+    loadingFile?: boolean;
     settling?: boolean;
   } | null = null;
   const flush = () => {
@@ -70,10 +100,24 @@ export function createCodeViewFileReveal() {
             : line;
       };
       const { range } = pending;
-      const startExpanded = rendered.instance.revealLine?.(additionLine(range.start, range.side));
-      const endExpanded = rendered.instance.revealLine?.(
-        additionLine(range.end, range.endSide ?? range.side),
-      );
+      const startLine = additionLine(range.start, range.side);
+      const endLine = additionLine(range.end, range.endSide ?? range.side);
+      // A patch-only diff holds no unchanged lines, and `revealLine` declines to expand it. The
+      // viewer's own expander loads the file first, so a line outside every hunk is opened with it.
+      if (diff?.isPartial && rendered.instance.expandHunk) {
+        // Wait for the file contents the expander asked for.
+        if (pending.loadingFile) return;
+        const { expandHunk } = rendered.instance;
+        const opened = [...new Set([startLine, endLine])].map((line) =>
+          expandPartialDiffToLine(diff, line, expandHunk),
+        );
+        if (opened.some(Boolean)) {
+          pending.loadingFile = true;
+          return;
+        }
+      }
+      const startExpanded = rendered.instance.revealLine?.(startLine);
+      const endExpanded = rendered.instance.revealLine?.(endLine);
       if (startExpanded || endExpanded) return;
       if (
         !rendered.instance.getLinePosition(range.start, range.side) ||
@@ -93,7 +137,19 @@ export function createCodeViewFileReveal() {
   };
   return {
     attach(next: FileRevealHandle | null) {
-      if (viewer !== null && next !== viewer && !pending?.settling) pending = null;
+      // The viewer rebuilds its handle on every render and can remount during the diff's first
+      // load. Item ids carry the diff's scope, so only a viewer without the item drops the reveal.
+      const previous = viewer?.getInstance() ?? detachedInstance;
+      if (next === null) detachedInstance = previous;
+      else {
+        const instance = next.getInstance();
+        if (pending !== null && previous !== undefined && instance !== previous) {
+          if (instance === undefined || next.getItem(pending.id) === undefined) pending = null;
+          // A new instance starts from the patch again, so it must expand the line itself.
+          else pending.loadingFile = false;
+        }
+        detachedInstance = undefined;
+      }
       viewer = next;
       flush();
     },

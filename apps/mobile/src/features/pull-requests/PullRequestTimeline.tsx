@@ -78,10 +78,10 @@ function TimelineComment({
   params: PullRequestParams;
   actions: CommentActions;
 }) {
-  const [expanded, setExpanded] = useState(() => {
-    const target = parsePullRequestAnchor(params.navigationUrl);
-    return target?.kind === "timeline" && pullRequestAnchorMatchesUrl(target.anchor, comment.url);
-  });
+  const target = parsePullRequestAnchor(params.navigationUrl);
+  const linked =
+    target?.kind === "timeline" && pullRequestAnchorMatchesUrl(target.anchor, comment.url);
+  const [expanded, setExpanded] = useState(linked);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
   const content = useMemo(
@@ -115,7 +115,13 @@ function TimelineComment({
         </Text>
       ) : null}
       {preview.trim() || content.attachments.length ? (
-        <View className="gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">
+        <View
+          className={
+            linked
+              ? "gap-2 overflow-hidden rounded-2xl border border-primary bg-primary/10 p-3"
+              : "gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3"
+          }
+        >
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
               markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}

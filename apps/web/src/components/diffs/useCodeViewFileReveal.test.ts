@@ -91,15 +91,47 @@ describe("createCodeViewFileReveal", () => {
     expect(view.scrolls.at(-1)).toEqual({ type: "range", id: "a", range, align: "center" });
   });
 
-  it("drops a pending reveal when its viewer detaches, but repositions a range a remount loses", () => {
+  it("expands a patch-only file to an unchanged line before positioning it", () => {
+    const reveal = createCodeViewFileReveal();
+    const view = viewer(["a"]);
+    let partial = true;
+    const expanded: unknown[] = [];
+    const instance = {
+      getDiffForSearch: () =>
+        ({
+          isPartial: partial,
+          hunks: [{ additionStart: 10, additionCount: 5, deletionStart: 10, deletionCount: 5 }],
+        }) as never,
+      expandHunk: (...args: unknown[]) => expanded.push(args),
+      revealLine: () => false,
+      getLinePosition: () => ({ top: 100, height: 20 }),
+    };
+    reveal.attach({
+      ...view,
+      getInstance: () => ({ getRenderedItems: () => [{ id: "a", instance }] }),
+    });
+    const range = { start: 30, end: 30, side: "additions" } as const;
+    reveal.request("a", range);
+    expect(expanded).toEqual([[1, "up", 26]]);
+    reveal.flush();
+    expect(view.scrolls).toEqual([]);
+    // The expander loads the file; the next render holds the line.
+    partial = false;
+    reveal.flush();
+    expect(view.scrolls).toEqual([{ type: "range", id: "a", range, align: "center" }]);
+  });
+
+  it("drops a pending reveal when another diff's viewer replaces it, but repositions a range a remount loses", () => {
     const reveal = createCodeViewFileReveal();
     const first = viewer([]);
-    const second = viewer(["a"]);
+    // Item ids carry the diff's scope, so another diff's viewer holds other ids.
+    const second = viewer(["b"]);
     reveal.attach(first);
 
     reveal.request("a");
     reveal.attach(null);
     reveal.attach(second);
+    second.items.add("a");
     reveal.flush();
     expect(second.scrolls).toEqual([]);
 

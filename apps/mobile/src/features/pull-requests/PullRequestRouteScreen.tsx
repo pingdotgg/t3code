@@ -3,6 +3,7 @@ import {
   pullRequestAnchorMatchesUrl,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
@@ -161,7 +162,16 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
     return rows;
   })();
   const location = parsePullRequestAnchor(params.navigationUrl);
-  const anchor = location?.kind === "timeline" ? location.anchor : null;
+  const anchor =
+    location?.kind !== "timeline"
+      ? null
+      : result.data
+        ? resolvePullRequestReviewAnchor(
+            location.anchor,
+            result.data.comments,
+            result.data.reviewThreads,
+          )
+        : location.anchor;
   const targetComment = anchor
     ? result.data?.comments.find((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url))
     : null;
@@ -454,6 +464,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   );
   const openedDiscussion = useRef<string | null>(null);
   const positionedActivity = useRef<string | null>(null);
+  // Rows above the target measure in after the first jump, so it is held until the user scrolls.
+  const heldActivityRow = useRef<number | null>(null);
+  const positionActivityRow = (index: number) =>
+    void scrollViews.current.activity?.scrollToIndex({
+      index,
+      viewPosition: 0,
+      viewOffset: contentTopInset + 12,
+      animated: false,
+    });
   const revealActivity = useEffectEvent(() => {
     const key = `${params.navigationUrl}:${params.navigationId ?? 0}`;
     if (activityContent.targetThread && openedDiscussion.current !== key) {
@@ -467,11 +486,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     // Later filter or refresh changes move the row; they must not pull the user back to it.
     if (activityTargetIndex >= 0 && positionedActivity.current !== key) {
       positionedActivity.current = key;
-      void scrollViews.current.activity?.scrollToIndex({
-        index: activityTargetIndex + 1,
-        viewPosition: 0.5,
-        animated: false,
-      });
+      // Its top sits under the app bar; centering a long comment pushed its start off screen.
+      heldActivityRow.current = activityTargetIndex + 1;
+      positionActivityRow(activityTargetIndex + 1);
     }
   });
   const targetThreadId = activityContent.targetThread?.id;
@@ -690,6 +707,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   // The scroll view owns its resting offset. LegendList keeps the first
                   // initialScrollOffset it gets, and the first render has the window's top
                   // inset (0 on the folded iPhone Duo), not the header's.
+                  onScrollBeginDrag={
+                    tab === "activity"
+                      ? () => {
+                          heldActivityRow.current = null;
+                        }
+                      : undefined
+                  }
                   onScroll={(event) => {
                     const offset = event.nativeEvent.contentOffset.y;
                     scrollOffsets.current[tab] = offset;
@@ -713,6 +737,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   alwaysBounceVertical
                   scrollsToTop={section === tab}
                   onItemSizeChanged={({ itemKey }) => {
+                    const held = heldActivityRow.current;
+                    if (tab === "activity" && held !== null) {
+                      // A filter or refresh that moved the row ends the hold.
+                      if (held !== activityTargetIndex + 1) heldActivityRow.current = null;
+                      else positionActivityRow(held);
+                      return;
+                    }
                     if (
                       tab !== "overview" ||
                       section !== "overview" ||
