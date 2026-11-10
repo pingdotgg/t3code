@@ -264,6 +264,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /** Final messages of launched threads by id, shown once a `t3_thread_wait` on one returns. */
+    threadResults: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     /** PRs already linked to the thread, with the state T3 last saw. */
     linkedPullRequests: Schema.optional(
       Schema.Array(
@@ -823,8 +825,11 @@ type Sample = {
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
-  /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
-  readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
+  /**
+   * Threads launched in prior turns or this sample, by id. Reading one shows its own brief, and it
+   * runs until a `t3_thread_wait` on it returns.
+   */
+  readonly threads: Map<string, LaunchedThread>;
   /** Files T3's request_secret saved in this sample, in call order. */
   readonly secretFiles: Array<string>;
   secretRequests: number;
@@ -833,6 +838,8 @@ type Sample = {
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
 };
+
+type LaunchedThread = { readonly title: string; readonly brief: string; completed: boolean };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
 
@@ -872,7 +879,22 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
-    threads: new Map(),
+    threads: new Map(
+      priorCalls.flatMap(({ tool, input, result }) =>
+        tool === "t3_thread_launch" && isRecord(result) && typeof result.threadId === "string"
+          ? [
+              [
+                result.threadId,
+                {
+                  title: valueText(result.title ?? (isRecord(input) ? input.title : "")),
+                  brief: isRecord(input) ? valueText(input.message).trim() : "",
+                  completed: false,
+                },
+              ] as const,
+            ]
+          : [],
+      ),
+    ),
     secretFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
@@ -1103,7 +1125,7 @@ export const t3Default = (
     const title =
       isRecord(request) && typeof request.title === "string" ? request.title : "New thread";
     const text = typeof brief === "string" ? brief.trim() : "";
-    sample.threads.set(uuid(n), { title, brief: text });
+    sample.threads.set(uuid(n), { title, brief: text, completed: false });
     return {
       threadId: uuid(n),
       title,
@@ -1237,20 +1259,33 @@ export const t3Default = (
       const threadId = valueText(input.threadId);
       const launched = sample.threads.get(threadId);
       if (launched !== undefined) {
-        const items = launched.brief
-          ? [{ position: 1, createdBy: "agent", creationSource: "mcp", text: launched.brief }]
-          : [];
+        const result = sample.testCase.setup.world?.threadResults?.[threadId];
+        const items = [
+          ...(launched.brief
+            ? [{ createdBy: "agent", creationSource: "mcp", text: launched.brief }]
+            : []),
+          ...(launched.completed && result !== undefined
+            ? [{ createdBy: "assistant", text: result }]
+            : []),
+        ].map((item, index) => ({ position: index + 1, ...item }));
         const thread = {
           threadId,
           title: launched.title,
           createdBy: "agent",
           creationSource: "mcp",
-          status: launched.brief ? "running" : "idle",
+          status: launched.completed ? "completed" : launched.brief ? "running" : "idle",
         };
         return { thread, items, nextPosition: items.length + 1, hasMore: false };
       }
       const { title, status, items } = DEFAULT_THREAD;
       return { thread: { threadId, title, status }, items, nextPosition: 3, hasMore: false };
+    }
+    case "t3_thread_wait": {
+      const threadId = valueText(input.threadId);
+      const launched = sample.threads.get(threadId);
+      if (launched === undefined) return { ok: true };
+      launched.completed = true;
+      return { threadId, status: "completed", timedOut: false };
     }
     case "html_preview":
       return { width: 728, contentHeight: 560, capturedHeight: 560, consoleMessages: [] };

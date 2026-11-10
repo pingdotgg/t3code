@@ -624,7 +624,7 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
-it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
+it("gives each launched thread its own id and brief, and it completes once waited on", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const sample = makeSample(childCase, base);
   const one = t3Default(sample, "t3_thread_launch", {
@@ -672,6 +672,49 @@ it("gives each launched thread its own id, and reading it back shows that thread
   assert.equal(
     read("11111111-1111-4111-8111-111111111111").thread.title,
     "Fix the flaky reconnect test",
+  );
+  assert.deepEqual(t3Default(sample, "t3_thread_wait", { threadId: "unknown" }), { ok: true });
+
+  const priorId = "55555555-5555-4555-8555-555555555555";
+  const prior = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        role: "top",
+        world: { threadResults: { [priorId]: "Committed on `rate-limits`." } },
+        priorTurns: [
+          {
+            role: "assistant",
+            toolCalls: [
+              {
+                tool: "t3_thread_launch",
+                input: { title: "Build", message: "Build it" },
+                result: { threadId: priorId, title: "Build", status: "running" },
+              },
+            ],
+          },
+        ],
+      },
+    },
+    base,
+  );
+  const readPrior = () =>
+    t3Default(prior, "t3_thread_read", { threadId: priorId }) as ReturnType<typeof read>;
+  assert.equal(readPrior().thread.status, "running");
+  assert.deepEqual(
+    readPrior().items.map((item) => item.text),
+    ["Build it"],
+  );
+  assert.deepEqual(t3Default(prior, "t3_thread_wait", { threadId: priorId }), {
+    threadId: priorId,
+    status: "completed",
+    timedOut: false,
+  });
+  assert.equal(readPrior().thread.status, "completed");
+  assert.deepEqual(
+    readPrior().items.map((item) => item.text),
+    ["Build it", "Committed on `rate-limits`."],
   );
 });
 
