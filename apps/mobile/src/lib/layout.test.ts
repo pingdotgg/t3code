@@ -138,8 +138,26 @@ describe("sidebar resizing", () => {
     { preferredWidth: 1000, availableWidth: 1200, expected: 880 },
     { preferredWidth: 420, availableWidth: 648, expected: 328 },
     { preferredWidth: 800, availableWidth: 1304, auxiliaryPaneWidth: 260, expected: 484 },
+    {
+      preferredWidth: 2000,
+      availableWidth: 1634.6666666666667,
+      auxiliaryPaneWidth: 260,
+      expected: 814,
+    },
   ])("keeps room for both panes: %j", ({ expected, ...input }) => {
-    expect(constrainPrimarySidebarWidth(input)).toBe(expected);
+    const listPaneWidth = constrainPrimarySidebarWidth(input);
+    expect(listPaneWidth).toBe(expected);
+    if (input.auxiliaryPaneWidth !== undefined) {
+      const panes = deriveWorkspacePaneLayout({
+        layout: { variant: "expanded", usesSplitView: true, listPaneWidth, shellPadding: 0 },
+        viewportWidth: input.availableWidth,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth: input.auxiliaryPaneWidth,
+      });
+      expect(panes.primarySidebarVisible).toBe(true);
+      expect(panes.auxiliaryPaneVisible).toBe(true);
+    }
   });
 });
 

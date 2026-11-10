@@ -286,6 +286,12 @@ function AdaptiveWorkspaceLayoutContent(
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
+  const [workspaceInspector, setWorkspaceInspector] = useState<{
+    readonly content: InspectorContent;
+    readonly active: boolean;
+    readonly routeKey: string | undefined;
+  } | null>(null);
+  const inspectorActive = workspaceInspector?.active ?? false;
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [railOverlay, setRailOverlay] = useState(false);
   // The compiler can't memoize these derivations: they stay live across later hook calls. Fresh
@@ -351,6 +357,15 @@ function AdaptiveWorkspaceLayoutContent(
             listPaneWidth: constrainPrimarySidebarWidth({
               preferredWidth: primarySidebarPreferredWidth,
               availableWidth: viewportWidth - navigationRailWidth,
+              auxiliaryPaneWidth:
+                !sidebarFloats && !workspacePage && inspectorActive && fileInspectorPreferredVisible
+                  ? (deriveFileInspectorPaneLayout({
+                      layout: baseLayout,
+                      viewportWidth: viewportWidth - navigationRailWidth,
+                      preferredWidth: fileInspectorPreferredWidth ?? undefined,
+                      reservedLeadingWidth: primarySidebarPreferredWidth,
+                    }).width ?? undefined)
+                  : undefined,
             }),
           }
         : baseLayout;
@@ -378,6 +393,11 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabs.row,
     floatingTabsEnabled,
     primarySidebarPreferredWidth,
+    sidebarFloats,
+    workspacePage,
+    inspectorActive,
+    fileInspectorPreferredVisible,
+    fileInspectorPreferredWidth,
   ]);
   // A floating sidebar brings the rail with it.
   const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
@@ -403,11 +423,6 @@ function AdaptiveWorkspaceLayoutContent(
       width,
     ],
   );
-  const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly content: InspectorContent;
-    readonly active: boolean;
-    readonly routeKey: string | undefined;
-  } | null>(null);
   // Without a column the inspector is a sheet, opened only on request for the route on top, and
   // shown again when that route returns to the top.
   const [inspectorSheetRoute, setInspectorSheetRoute] = useState<string | null>(null);
@@ -417,7 +432,6 @@ function AdaptiveWorkspaceLayoutContent(
     inspectorSheetRoute !== null &&
     workspaceInspector?.active === true &&
     workspaceInspector.routeKey === inspectorSheetRoute;
-  const inspectorActive = workspaceInspector?.active ?? false;
   const panes = useMemo(
     () =>
       deriveWorkspacePaneLayout({

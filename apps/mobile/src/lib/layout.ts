@@ -339,7 +339,7 @@ export function constrainPrimarySidebarWidth(input: {
   return clamp(
     Math.round(input.preferredWidth),
     SPLIT_SIDEBAR_MIN_WIDTH,
-    Math.max(SPLIT_SIDEBAR_MIN_WIDTH, input.availableWidth - minimumContentWidth),
+    Math.max(SPLIT_SIDEBAR_MIN_WIDTH, Math.floor(input.availableWidth - minimumContentWidth)),
   );
 }
 
