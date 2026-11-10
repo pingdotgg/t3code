@@ -72,7 +72,7 @@ export function drainBlockedPreparedRunQueuePosition(
   },
   queuedRuns: ReadonlyArray<{
     readonly ordinal: number;
-    readonly queuePosition: number | null | undefined;
+    readonly queuePosition?: number | null | undefined;
   }>,
 ): number {
   if (run.queuePosition != null) return run.queuePosition;
