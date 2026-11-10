@@ -18,7 +18,7 @@
     "agent-device": "0.21.32",
     "e2e": "0.23.0",
     "effect": "catalog:",
-    "playwright-core": "1.60.0",
+    "playwright-core": "1.64.1",
     "plist": "catalog:",
     "pngjs": "7.0.0",
     "sharp": "0.35.5"
