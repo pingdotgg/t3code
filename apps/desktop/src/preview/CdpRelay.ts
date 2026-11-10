@@ -215,7 +215,11 @@ export function createCdpRelayConnection(
         // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
         const [result] = await Promise.all(
           [...targets].map((relayed) =>
-            relayed.target.send("Page.setDownloadBehavior", { behavior }, undefined),
+            relayed.target
+              .send("Page.setDownloadBehavior", { behavior }, undefined)
+              .catch((cause: unknown) => {
+                if (relayed === page || !relayed.removed) throw cause;
+              }),
           ),
         );
         downloads = { behavior, directory: allowed ? directory : null };

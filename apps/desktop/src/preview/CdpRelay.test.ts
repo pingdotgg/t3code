@@ -644,23 +644,35 @@ describe("CDP relay downloads", () => {
     expect(written).toEqual([]);
   });
 
-  it.each([false, true])(
-    "keeps the previous download configuration (events enabled: %s) when configuration fails",
-    async (enabled) => {
-      const send = vi
-        .fn(async () => ({}))
-        .mockResolvedValueOnce({})
-        .mockRejectedValueOnce(new Error("Page command rejected"));
+  it.each(
+    [false, true].flatMap((enabled) =>
+      ["page", "popup", "removed popup"].map((failure) => ({ enabled, failure })),
+    ),
+  )(
+    "keeps download configuration consistent when $failure rejects (events enabled: $enabled)",
+    async ({ enabled, failure }) => {
+      const send = vi.fn(async () => ({}));
+      const popupSend = vi.fn(async () => ({}));
       const written: Array<Record<string, unknown>> = [];
       let directory: string | null = null;
+      let popupDirectory: string | null = null;
       const relay = makeRelay(
         makeTarget(send, (value) => {
           directory = value;
         }),
         (raw) => written.push(JSON.parse(raw)),
       );
+      const popup = relay.addPopup({
+        ...makeTarget(popupSend, (value) => {
+          popupDirectory = value;
+        }),
+        targetId: async () => "POPUP",
+      });
       relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
       for (const [id, eventsEnabled] of [enabled, !enabled].entries()) {
+        const pending = Promise.withResolvers<object>();
+        if (id === 1)
+          (failure === "page" ? send : popupSend).mockImplementationOnce(() => pending.promise);
         relay.receive(
           JSON.stringify({
             id: id + 2,
@@ -672,18 +684,42 @@ describe("CDP relay downloads", () => {
             },
           }),
         );
+        if (id === 1) {
+          if (failure === "removed popup") popup.remove();
+          pending.reject(new Error("Page command rejected"));
+        }
         await settle();
       }
-      expect(written).toContainEqual({
-        id: 3,
-        error: { code: -32000, message: "Page command rejected" },
-      });
-      expect(directory).toBe("/srv/artifacts");
+      const removed = failure === "removed popup";
+      expect(written).toContainEqual(
+        removed
+          ? { id: 3, result: {} }
+          : { id: 3, error: { code: -32000, message: "Page command rejected" } },
+      );
+      const expectedDirectory = removed
+        ? enabled
+          ? null
+          : "/srv/new-artifacts"
+        : "/srv/artifacts";
+      expect(directory).toBe(expectedDirectory);
+      expect(popupDirectory).toBe("/srv/artifacts");
+      if (removed) {
+        const lateSend = vi.fn(async () => ({}));
+        const lateDirectory = vi.fn();
+        relay.addPopup(makeTarget(lateSend, lateDirectory));
+        await settle();
+        expect(lateDirectory).toHaveBeenCalledExactlyOnceWith(expectedDirectory);
+        expect(lateSend).toHaveBeenCalledExactlyOnceWith(
+          "Page.setDownloadBehavior",
+          { behavior: enabled ? "deny" : "default" },
+          undefined,
+        );
+      }
       written.length = 0;
       relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
       relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
       expect(written).toEqual(
-        enabled
+        (removed ? !enabled : enabled)
           ? [
               { method: "Browser.downloadWillBegin", params: { guid: "g1" } },
               { method: "Browser.downloadProgress", params: { guid: "g1", state: "completed" } },
