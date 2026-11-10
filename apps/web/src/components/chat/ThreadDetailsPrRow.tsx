@@ -163,7 +163,6 @@ export function ThreadDetailsPrRow({
     reference,
     terminology,
     onSuccess: () => {
-      detailQuery.refresh();
       checksQuery.refresh();
       onActed?.();
     },
@@ -212,6 +211,8 @@ export function ThreadDetailsPrRow({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         reviewThreads: [],
         comments: [],
         checks: detail.checks,
@@ -408,7 +409,7 @@ export function ThreadDetailsPrRow({
             size="sm"
             part={part}
             multiline={wrap}
-            className={wrap ? "items-start [&>svg]:mt-0.5" : undefined}
+            className={wrap ? "items-start [&>svg]:mt-px" : undefined}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
