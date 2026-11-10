@@ -352,6 +352,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     viewportRef.current?.navigate({ releasesFollow: false });
     followStore.dispatch(visit, { type: "followEnd" });
     setReaderScrolledVisit(null);
+    refoldFromRef.current = null;
     visitScroll().showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     setTimelineAnchor(releaseChatTimelineAnchor);
@@ -536,6 +537,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     if (after.mode === "following") {
       // Back at the end, so a later jump away doesn't fold the composer without a new scroll.
       setReaderScrolledVisit(null);
+      refoldFromRef.current = null;
       setTimelineAnchor(releaseChatTimelineAnchor);
       scroll.showScrollDebouncer.cancel();
       setShowScrollToBottom(false);
