@@ -1527,7 +1527,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       isWokeStatus
                         ? "pointer-events-auto"
                         : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:opacity-0",
-                      "flex items-center self-center justify-self-end tabular-nums text-dim-foreground transition-opacity",
+                      "flex items-center self-center justify-self-end tabular-nums text-dim-foreground",
                       snoozeMenuOpen && "pointer-events-none opacity-0",
                     )}
                   >
