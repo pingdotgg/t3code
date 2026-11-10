@@ -371,7 +371,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "This is the built-in No project scratch project; it cannot be deleted through MCP. The user can remove it in Settings.",
+            '"No project" is the built-in scratch project and cannot be deleted through MCP. The user can remove it in Settings.',
         });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
