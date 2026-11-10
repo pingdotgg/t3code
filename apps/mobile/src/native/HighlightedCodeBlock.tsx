@@ -125,7 +125,7 @@ export function HighlightedCodeBlock(props: {
       ) : (
         <ScrollView
           horizontal
-          // As in the thread feed: a long-press opens the copy menu instead of closing the keyboard.
+          // As in the thread feed: with the keyboard open, the first long-press reaches the copy menu.
           keyboardShouldPersistTaps="always"
           contentContainerStyle={{ flexGrow: 1 }}
         >
