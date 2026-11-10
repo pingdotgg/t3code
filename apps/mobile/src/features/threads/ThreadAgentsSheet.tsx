@@ -141,9 +141,7 @@ function AgentRow(props: {
 }) {
   const { subagent } = props;
   const { presentationById } = useEnvironments();
-  const target = subagentThreadTarget(subagent, props.environmentId, (id) =>
-    presentationById.has(id),
-  );
+  const target = subagentThreadTarget(subagent, props.environmentId, presentationById);
 
   const row = (
     <View className="py-3.5">

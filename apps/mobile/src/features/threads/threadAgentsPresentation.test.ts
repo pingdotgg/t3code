@@ -4,6 +4,7 @@ import {
   projectedSubagentsToRuntime,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  EnvironmentId,
   NodeId,
   ProviderDriverKind,
   RunId,
@@ -16,6 +17,7 @@ import {
   nextWorkflowSelection,
   resolveSubagentRowPresentation,
   resolveSubagentStopTarget,
+  subagentThreadTarget,
   workflowMemberDetail,
   workflowMemberMetadata,
   workflowRail,
@@ -348,5 +350,28 @@ describe("resolveSubagentStopTarget", () => {
         nativeTaskRef: { ...native.nativeTaskRef, nativeId: "" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("subagentThreadTarget", () => {
+  const here = EnvironmentId.make("env-here");
+  const laptop = EnvironmentId.make("env-laptop");
+  const remote = {
+    childThreadId: null,
+    remoteChild: {
+      environmentId: laptop,
+      threadId: ThreadId.make("remote-thread"),
+      label: "Laptop",
+    },
+  };
+
+  it("opens a remote task only in an enabled saved environment", () => {
+    expect(
+      subagentThreadTarget(remote, here, new Map([[laptop, { entry: { enabled: true } }]])),
+    ).toEqual({ environmentId: laptop, threadId: "remote-thread" });
+    expect(
+      subagentThreadTarget(remote, here, new Map([[laptop, { entry: { enabled: false } }]])),
+    ).toBeNull();
+    expect(subagentThreadTarget(remote, here, new Map())).toBeNull();
   });
 });

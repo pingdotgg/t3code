@@ -189,10 +189,8 @@ export function ThreadSubagentGroup(props: {
       {!grouped || expanded ? (
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
-            // A task in a linked environment opens there, if this app is connected to it.
-            const target = subagentThreadTarget(agent, props.environmentId, (id) =>
-              presentationById.has(id),
-            );
+            // A task in a linked environment opens there, if it is enabled in this app.
+            const target = subagentThreadTarget(agent, props.environmentId, presentationById);
             return (
               <Pressable
                 key={agent.item.id}
