@@ -197,6 +197,7 @@ vi.mock("./browserVoiceInput", () => ({
       },
       cancelRecording() {},
       deleteRecording() {},
+      releaseRecording() {},
     };
   },
 }));

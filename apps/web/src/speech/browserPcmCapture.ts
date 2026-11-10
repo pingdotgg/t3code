@@ -167,6 +167,10 @@ export function createBrowserPcmCapture(
       URL.revokeObjectURL(uri);
       if (recordingUri === uri) recordingUri = null;
     },
+    // A recording handed to another owner, which deletes it; the next capture must not revoke it.
+    releaseRecording: (uri: string) => {
+      if (recordingUri === uri) recordingUri = null;
+    },
     transcriber: {
       prepare: async (options: VoiceTranscriptionOptions) => {
         const prepared = await prepare(options);

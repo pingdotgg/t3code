@@ -396,13 +396,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
     const parkFailedRecording = () => {
       const recording = controller.takeRetryRecording();
-      if (recording)
-        parkRetry({
-          prepared,
-          grantId,
-          recording,
-          discard: () => platform.deleteRecording(recording.uri),
-        });
+      if (!recording) return;
+      platform.releaseRecording(recording.uri);
+      parkRetry({
+        prepared,
+        grantId,
+        recording,
+        discard: () => platform.deleteRecording(recording.uri),
+      });
     };
     controller = new VoiceInputController({
       retryFailedRecording: true,
