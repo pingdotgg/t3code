@@ -49,6 +49,8 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const daemonHealthy = yield* Ref.make(true);
   const failedProbes = yield* Ref.make(0);
   const commands: Array<string> = [];
+  const stopResult = yield* Ref.make(processOutput(0));
+  const daemonFileAtStop: Array<boolean> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -97,6 +99,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
       run: (input) => {
         if (input.args.includes("devices") || input.args.includes("daemon"))
           commands.push(input.args.slice(1, 3).join(" "));
+        if (input.args.includes("daemon"))
+          return fs.exists(`${stateDir}/daemon.json`).pipe(
+            Effect.orDie,
+            Effect.tap((exists) => Effect.sync(() => daemonFileAtStop.push(exists))),
+            Effect.andThen(Ref.get(stopResult)),
+          );
         return input.args.includes("devices")
           ? startup(stateDir)
           : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
@@ -123,7 +131,17 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy, failedProbes, commands };
+  return {
+    host,
+    fs,
+    stateDir,
+    hub,
+    daemonHealthy,
+    failedProbes,
+    commands,
+    stopResult,
+    daemonFileAtStop,
+  };
 });
 
 describe("AgentDevice startup", () => {
@@ -131,7 +149,7 @@ describe("AgentDevice startup", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, daemonHealthy, commands } = yield* agentFixture((stateDir) =>
+      const { host, daemonHealthy, commands, daemonFileAtStop } = yield* agentFixture((stateDir) =>
         Effect.gen(function* () {
           attempts++;
           yield* fs
@@ -154,10 +172,45 @@ describe("AgentDevice startup", () => {
       expect(attempts).toBe(2);
       // The old daemon is stopped while daemon.json still identifies it.
       expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
+      expect(daemonFileAtStop).toEqual([true]);
       expect(restarted.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each([
+    ["fails", processOutput(1)],
+    ["times out", processOutput(0, "", "", true)],
+  ] as const)("keeps an unresponsive daemon's record when its stop %s", ([, result]) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host, stateDir, daemonHealthy, commands, stopResult } = yield* agentFixture(
+        (stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+              )
+              .pipe(Effect.orDie);
+            return processOutput(0);
+          }),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      yield* Ref.set(daemonHealthy, false);
+      yield* Ref.set(stopResult, result);
+
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostError",
+        step: "stopping unresponsive agent tools",
+      });
+      expect(commands).toEqual(["devices --json", "daemon stop"]);
+      expect(yield* fs.exists(`${stateDir}/daemon.json`)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

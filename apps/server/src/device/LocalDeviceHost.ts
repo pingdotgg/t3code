@@ -55,6 +55,9 @@ const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
 const DAEMON_HEALTH_TIMEOUT_MS = 3_000;
 const DAEMON_HEALTH_ATTEMPTS = 3;
+// agent-device waits up to 10 s after SIGTERM and 2 s after SIGKILL before it
+// reports whether the daemon exited.
+const DAEMON_RECOVERY_STOP_TIMEOUT = Duration.seconds(15);
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -571,7 +574,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       }
       // Stop through agent-device while daemon.json still names the process; once
       // the file is gone it reports "not-running" and the daemon keeps daemon.lock.
-      yield* stopAgentDeviceDaemon({ entryPath: agentTool.entryPath, nodePath });
+      // Keep the file unless the stop is confirmed, so a later attempt can retry it.
+      const stopped = yield* runAgentDeviceDaemonStop(
+        { entryPath: agentTool.entryPath, nodePath },
+        DAEMON_RECOVERY_STOP_TIMEOUT,
+      ).pipe(Effect.result);
+      if (stopped._tag === "Failure" || stopped.success.timedOut || stopped.success.code !== 0) {
+        return yield* new DeviceHost.DeviceHostError({
+          hostId,
+          step: "stopping unresponsive agent tools",
+          cause: stopped._tag === "Failure" ? stopped.failure : stopped.success,
+        });
+      }
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
@@ -634,25 +648,29 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }
   });
 
+  const runAgentDeviceDaemonStop = (
+    agentTool: { readonly entryPath: string; readonly nodePath: string },
+    timeout: Duration.Duration,
+  ) =>
+    runner.run({
+      command: agentTool.nodePath,
+      args: [
+        agentTool.entryPath,
+        "daemon",
+        "stop",
+        "--state-dir",
+        agentDeviceStateDir(path, config.stateDir),
+      ],
+      env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
+      timeout,
+      timeoutBehavior: "timedOutResult",
+    });
+
   const stopAgentDeviceDaemon = (
     agentTool: { readonly entryPath: string; readonly nodePath: string } | null,
   ) =>
     agentTool
-      ? runner
-          .run({
-            command: agentTool.nodePath,
-            args: [
-              agentTool.entryPath,
-              "daemon",
-              "stop",
-              "--state-dir",
-              agentDeviceStateDir(path, config.stateDir),
-            ],
-            env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-            timeout: Duration.seconds(10),
-            timeoutBehavior: "timedOutResult",
-          })
-          .pipe(Effect.ignore)
+      ? runAgentDeviceDaemonStop(agentTool, Duration.seconds(10)).pipe(Effect.ignore)
       : Effect.void;
 
   let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
