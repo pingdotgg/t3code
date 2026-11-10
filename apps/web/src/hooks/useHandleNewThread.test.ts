@@ -385,6 +385,7 @@ describe("default project selection", () => {
       title: project.environmentId,
       defaultModelSelection: null,
       scripts: [],
+      trackedFolders: [],
       createdAt: "2026-11-09T00:00:00.000Z",
       updatedAt: "2026-11-09T00:00:00.000Z",
     }));
