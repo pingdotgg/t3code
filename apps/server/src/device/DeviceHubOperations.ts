@@ -23,7 +23,6 @@ const SIMULATOR_LIST_FAILED =
 const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
 const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
 trap 'rm -f "$f"' 0
-trap 'exit 1' HUP INT TERM
 xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"`;
 
 const HubDevice = Schema.Struct({
@@ -271,7 +270,25 @@ export const makeDeviceHubOperations = (options: {
     },
   );
 
-  const hubScreenshot: DeviceOperations["screenshot"] = (device) =>
+  const defaultDisplayScreenshot = Effect.fn("DeviceHubOperations.defaultDisplayScreenshot")(
+    function* (udid: string) {
+      const capture = yield* run("sh", ["-c", DEFAULT_DISPLAY_SCREENSHOT, "sh", udid], {
+        timeoutMs: Duration.toMillis(SCREENSHOT_TIMEOUT),
+        maxOutputBytes: 64 * 1024 * 1024,
+      });
+      if (capture.code !== 0) {
+        return yield* new DeviceOperationError({
+          operation: "screenshot",
+          reason: "command_failed",
+          exitCode: capture.code,
+          cause: capture.stderr.trim(),
+        });
+      }
+      return new Uint8Array(Buffer.from(capture.stdout, "base64"));
+    },
+  );
+
+  const screenshot: DeviceOperations["screenshot"] = (device) =>
     httpClient
       .execute(
         HttpClientRequest.post(
@@ -295,37 +312,15 @@ export const makeDeviceHubOperations = (options: {
               cause,
             }),
         ),
+        Effect.catchIf(
+          (error) =>
+            device.platform === "ios" &&
+            runsOnXcode26Runtime(device.version) &&
+            error.reason === "hub_rejected",
+          () => defaultDisplayScreenshot(device.id),
+        ),
+        Effect.withSpan("DeviceHubOperations.screenshot"),
       );
-
-  const defaultDisplayScreenshot = Effect.fn("DeviceHubOperations.defaultDisplayScreenshot")(
-    function* (udid: string) {
-      const capture = yield* run("sh", ["-c", DEFAULT_DISPLAY_SCREENSHOT, "sh", udid], {
-        timeoutMs: Duration.toMillis(SCREENSHOT_TIMEOUT),
-        maxOutputBytes: 64 * 1024 * 1024,
-      });
-      if (capture.code !== 0) {
-        return yield* new DeviceOperationError({
-          operation: "screenshot",
-          reason: "command_failed",
-          exitCode: capture.code,
-          cause: capture.stderr.trim(),
-        });
-      }
-      return new Uint8Array(Buffer.from(capture.stdout, "base64"));
-    },
-  );
-
-  const screenshot: DeviceOperations["screenshot"] = (device) =>
-    hubScreenshot(device).pipe(
-      Effect.catchIf(
-        (error) =>
-          device.platform === "ios" &&
-          runsOnXcode26Runtime(device.version) &&
-          error.reason === "hub_rejected",
-        () => defaultDisplayScreenshot(device.id),
-      ),
-      Effect.withSpan("DeviceHubOperations.screenshot"),
-    );
 
   return { list, boot, attach, shutdown, screenshot };
 };

@@ -214,34 +214,9 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   const screenshotDevice = upstreamSearch.get("device");
-  if (
-    !ready.upstream &&
-    request.method === "POST" &&
-    hubPath === "/vendor/serve-sim/api/screenshot" &&
-    screenshotDevice &&
-    upstreamSearch.size === 1
-  ) {
-    return yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice }).pipe(
-      Effect.map(({ png }) =>
-        HttpServerResponse.uint8Array(png, {
-          contentType: "image/png",
-          headers: { "cache-control": "no-store" },
-        }),
-      ),
-      Effect.catch((error) =>
-        Effect.logWarning("Device screenshot failed", {
-          errorTag: error._tag,
-          ...(error._tag === "DeviceOperationError" ? { reason: error.reason } : {}),
-        }).pipe(
-          Effect.as(
-            HttpServerResponse.text(
-              error._tag === "DeviceNotFoundError" ? "Device not found" : "Screenshot failed",
-              { status: error._tag === "DeviceNotFoundError" ? 404 : 502 },
-            ),
-          ),
-        ),
-      ),
-    );
+  if (!ready.upstream && hubPath === "/vendor/serve-sim/api/screenshot" && screenshotDevice) {
+    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice });
+    return HttpServerResponse.uint8Array(png, { contentType: "image/png" });
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;
