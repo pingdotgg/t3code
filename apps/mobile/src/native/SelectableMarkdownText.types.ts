@@ -27,6 +27,14 @@ export interface SelectableMarkdownSkill {
   readonly path?: string;
 }
 
+export interface SelectableMarkdownModel {
+  readonly source: string;
+  readonly label: string;
+  readonly providerLabel: string;
+  readonly driver: string;
+  readonly iconUrl?: string | undefined;
+}
+
 export interface MarkdownImageRequest {
   readonly href: string;
   readonly alt: string | null;
@@ -66,6 +74,7 @@ export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
