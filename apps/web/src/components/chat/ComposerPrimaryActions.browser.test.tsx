@@ -20,8 +20,6 @@ it.each([
         canInterrupt
         stopShortcutLabel="Shift+Esc"
         isStopShortcutEvent={isStopShortcutEvent}
-        showPlanFollowUpPrompt={false}
-        promptHasText={false}
         isSendBusy={false}
         sendDisabledReason={null}
         isEnvironmentUnavailable={false}
