@@ -124,7 +124,7 @@ jobs:
       - id: version_app_token
         name: Mint release app token for version override
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != '' && inputs.profile != 'testflight'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -132,7 +132,7 @@ jobs:
 
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           token: ${{ steps.version_app_token.outputs.token || github.token }}
@@ -143,7 +143,7 @@ jobs:
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -161,7 +161,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
@@ -498,7 +498,7 @@ jobs:
       BUILD_TAG: mobile-android-build/${{ needs.production.outputs.android_version }}/${{ needs.production.outputs.android_fingerprint }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.production.outputs.android_sha }}
           fetch-depth: 0
@@ -551,7 +551,7 @@ jobs:
 
       - name: Mount build cache
         if: steps.record.outputs.built != 'true'
-        uses: useblacksmith/stickydisk@v1
+        uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
         with:
           key: ${{ github.repository }}-android-store-build
           path: ~/.cache/t3-android-store
@@ -569,7 +569,7 @@ jobs:
 
       - name: Setup Node
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: package.json
 
@@ -588,14 +588,14 @@ jobs:
 
       - name: Setup Java
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup EAS
         if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
@@ -642,7 +642,7 @@ jobs:
       # A --path submission doesn't keep its archive on EAS; this is the only downloadable copy.
       - name: Keep the AAB
         if: steps.record.outputs.built != 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-store-aab-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/t3code.aab
@@ -704,7 +704,7 @@ jobs:
       ALLOW_XCODE_RC: ${{ vars.MOBILE_IOS_ALLOW_XCODE_RC == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.production.outputs.ios_sha }}
           fetch-depth: 0
@@ -761,7 +761,7 @@ jobs:
 
       - name: Setup Node
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: package.json
 
@@ -780,7 +780,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
