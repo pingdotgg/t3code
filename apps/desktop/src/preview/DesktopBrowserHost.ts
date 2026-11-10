@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -26,6 +27,9 @@ const AGENT_INPUT_COMMAND =
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
+/** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
+const FIRST_PAGE_TIMEOUT = "5 seconds";
+const ERR_ABORTED = -3;
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -78,6 +82,8 @@ interface AttachedTab {
     sessionId: string,
   ) => void;
   readonly onNewDocument: () => void;
+  /** Stops waiting for the first page; set until the tab is announced. */
+  stopWaiting: (() => void) | null;
 }
 
 export class DesktopBrowserHost extends Context.Service<
@@ -415,11 +421,13 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    const announced = tab.stopWaiting === null;
+    tab.stopWaiting?.();
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
-    emit({ type: "detached", ...key });
+    if (announced) emit({ type: "detached", ...key });
   };
 
   const attach = (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => {
@@ -457,13 +465,53 @@ export const make = Effect.gen(function* () {
         dropFocusHolds(tab);
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
+      stopWaiting: null,
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
-    emit({ type: "attached", ...key });
-    const shown = shownTabs.get(id);
-    if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    const announce = () => {
+      emit({ type: "attached", ...key });
+      const shown = shownTabs.get(id);
+      if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    };
+    if (!debuggee.webContents.isLoadingMainFrame()) {
+      announce();
+      return;
+    }
+    // Electron does not pause a guest for the debugger, so Playwright connecting during its first
+    // commit builds its utility world in the discarded document and every wait on it hangs.
+    const { webContents } = debuggee;
+    // ERR_ABORTED is a newer navigation replacing this one, whose commit is still to come.
+    const onFailLoad = (
+      _event: Electron.Event,
+      code: number,
+      _description: string,
+      _url: string,
+      isMainFrame: boolean,
+    ) => {
+      if (isMainFrame && code !== ERR_ABORTED) ready();
+    };
+    const ready = () => {
+      if (tab.stopWaiting === null) return;
+      // The manager's cleanup for a destroyed guest can still be queued behind another tab's attach.
+      if (webContents.isDestroyed()) return detach(key);
+      tab.stopWaiting();
+      announce();
+    };
+    const timeout = runFork(
+      Effect.sleep(FIRST_PAGE_TIMEOUT).pipe(Effect.andThen(Effect.sync(ready))),
+    );
+    tab.stopWaiting = () => {
+      tab.stopWaiting = null;
+      webContents.off("dom-ready", ready);
+      webContents.off("did-stop-loading", ready);
+      webContents.off("did-fail-load", onFailLoad);
+      runFork(Fiber.interrupt(timeout));
+    };
+    webContents.on("dom-ready", ready);
+    webContents.on("did-stop-loading", ready);
+    webContents.on("did-fail-load", onFailLoad);
   };
 
   const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
@@ -474,7 +522,7 @@ export const make = Effect.gen(function* () {
     }
     if (shownTabs.get(id) === shown) return;
     shownTabs.set(id, shown);
-    if (tabs.has(id)) emit({ type: "shown", ...key, shown });
+    if (tabs.get(id)?.stopWaiting === null) emit({ type: "shown", ...key, shown });
   };
 
   const handleCommandLine = (line: string) =>
@@ -513,6 +561,8 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
+        // Announced once its first page is up.
+        if (tab.stopWaiting !== null) return Effect.void;
         const shown = shownTabs.get(keyOf(tab.key));
         return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
           Effect.andThen(
