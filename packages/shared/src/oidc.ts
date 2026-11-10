@@ -142,17 +142,32 @@ const base64UrlDecodeToString = (value: string): string => {
   return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
 };
 
-export const randomToken = (byteLength = 32): string =>
-  base64UrlEncode(crypto.getRandomValues(new Uint8Array(byteLength)));
+/** What sign-in needs from Web Crypto. React Native has no global `crypto` and passes its own. */
+export interface OidcCrypto {
+  readonly randomBytes: (byteLength: number) => Uint8Array;
+  readonly sha256: (data: Uint8Array<ArrayBuffer>) => Promise<ArrayBuffer>;
+}
+
+const webCrypto: OidcCrypto = {
+  randomBytes: (byteLength) => crypto.getRandomValues(new Uint8Array(byteLength)),
+  sha256: (data) => crypto.subtle.digest("SHA-256", data),
+};
+
+export const randomToken = (byteLength = 32, cryptoImpl: OidcCrypto = webCrypto): string =>
+  base64UrlEncode(cryptoImpl.randomBytes(byteLength));
 
 export interface PkcePair {
   readonly verifier: string;
   readonly challenge: string;
 }
 
-export async function createPkcePair(verifier: string = randomToken(32)): Promise<PkcePair> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  return { verifier, challenge: base64UrlEncode(new Uint8Array(digest)) };
+export async function createPkcePair(
+  verifier?: string,
+  cryptoImpl: OidcCrypto = webCrypto,
+): Promise<PkcePair> {
+  const value = verifier ?? randomToken(32, cryptoImpl);
+  const digest = await cryptoImpl.sha256(new TextEncoder().encode(value));
+  return { verifier: value, challenge: base64UrlEncode(new Uint8Array(digest)) };
 }
 
 export function buildAuthorizeUrl(input: {

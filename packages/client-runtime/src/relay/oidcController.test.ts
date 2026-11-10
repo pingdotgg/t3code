@@ -1,5 +1,5 @@
-import { base64UrlEncode } from "@t3tools/shared/oidc";
-import { describe, expect, it } from "vite-plus/test";
+import { base64UrlEncode, type OidcCrypto } from "@t3tools/shared/oidc";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createOidcController, type KeyValueStore } from "./oidcController.ts";
 
@@ -36,7 +36,7 @@ interface Harness {
   tokenReply: () => Response;
 }
 
-function makeHarness(): Harness {
+function makeHarness(options: { readonly crypto?: OidcCrypto } = {}): Harness {
   const sessions = memoryStore();
   const pending = memoryStore();
   const harness: Harness = {
@@ -69,6 +69,7 @@ function makeHarness(): Harness {
       navigate: (url) => harness.navigations.push(url),
       now: () => harness.clock,
       fetch: fetchImpl as typeof fetch,
+      ...options,
     }),
   });
 }
@@ -91,6 +92,8 @@ async function signInWith(harness: Harness, claims: Record<string, unknown> = {}
 }
 
 describe("sign-in redirect", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("sends the user to the provider with PKCE, state and a nonce", async () => {
     const harness = makeHarness();
     await harness.controller.signIn("/settings/connections");
@@ -126,7 +129,15 @@ describe("sign-in redirect", () => {
   });
 
   it("signs in through an in-app browser that hands back the redirect URL", async () => {
-    const harness = makeHarness();
+    // Like React Native: no global Web Crypto, so the app passes its own.
+    const webCrypto = globalThis.crypto;
+    const harness = makeHarness({
+      crypto: {
+        randomBytes: (length) => webCrypto.getRandomValues(new Uint8Array(length)),
+        sha256: (data) => webCrypto.subtle.digest("SHA-256", data),
+      },
+    });
+    vi.stubGlobal("crypto", undefined);
 
     await harness.controller.signInWithPrompt(async (authorizeUrl) => {
       const url = new URL(authorizeUrl);

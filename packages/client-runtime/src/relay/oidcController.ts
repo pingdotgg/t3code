@@ -10,6 +10,7 @@ import {
   oidcAccountLabel,
   randomToken,
   refreshOidcTokens,
+  type OidcCrypto,
   type OidcMetadata,
   type OidcTokens,
 } from "@t3tools/shared/oidc";
@@ -51,6 +52,7 @@ export interface OidcControllerDeps {
   readonly navigate: (url: string) => void;
   readonly now?: () => number;
   readonly fetch?: typeof fetch;
+  readonly crypto?: OidcCrypto;
   /** Serializes refreshes across tabs: providers that rotate refresh tokens reject a stale one. */
   readonly withRefreshLock?: <A>(run: () => Promise<A>) => Promise<A>;
 }
@@ -117,10 +119,10 @@ export function createOidcController(deps: OidcControllerDeps) {
   };
 
   const startAuthorization = async (returnTo: string): Promise<string> => {
-    const [oidc, pkce] = await Promise.all([metadata(), createPkcePair()]);
+    const [oidc, pkce] = await Promise.all([metadata(), createPkcePair(undefined, deps.crypto)]);
     const request: PendingAuthorization = {
-      state: randomToken(16),
-      nonce: randomToken(16),
+      state: randomToken(16, deps.crypto),
+      nonce: randomToken(16, deps.crypto),
       verifier: pkce.verifier,
       returnTo: safeReturnTo(returnTo),
     };

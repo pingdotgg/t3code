@@ -4,6 +4,7 @@ import {
   type OidcController,
 } from "@t3tools/client-runtime/relay";
 import * as AuthSession from "expo-auth-session";
+import * as ExpoCrypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 
@@ -52,6 +53,11 @@ export function getMobileOidcController(): OidcController | null {
           redirectUri,
           sessions: secureSessionStore(),
           pending: memoryStore(),
+          // Hermes has no Web Crypto.
+          crypto: {
+            randomBytes: ExpoCrypto.getRandomBytes,
+            sha256: (data) => ExpoCrypto.digest(ExpoCrypto.CryptoDigestAlgorithm.SHA256, data),
+          },
           navigate: () => {
             throw new Error("The mobile app signs in through an in-app browser.");
           },
