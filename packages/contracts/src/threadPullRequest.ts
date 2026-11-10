@@ -100,6 +100,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** Last substantive progress for this watched head; absent in older watches. */
+  lastProgressAt: Schema.optional(IsoDateTime),
+  /** Last one-shot stalled-release notification; resets on substantive progress. */
+  releaseStallNotifiedAt: Schema.optional(IsoDateTime),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

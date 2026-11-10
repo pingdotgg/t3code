@@ -389,6 +389,64 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("wakes only once when a green PR has no release progress for an hour", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const first = evaluate(watch(), green, noRemarks, Date.parse(STARTED));
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: false }]);
+    const before = evaluate(first.next, green, noRemarks, Date.parse(STARTED) + 59 * 60_000);
+    assert.deepEqual(before.changes, []);
+    const stalled = evaluate(before.next, green, noRemarks, Date.parse(STARTED) + 61 * 60_000);
+    assert.deepEqual(stalled.changes, [{ kind: "release-stalled", minutes: 61 }]);
+    const again = evaluate(stalled.next, green, noRemarks, Date.parse(STARTED) + 24 * 60 * 60_000);
+    assert.deepEqual(again.changes, []);
+    const { text } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: green.headSha ?? null,
+      report: stalled,
+    });
+    assert.include(text, "merge-group CI");
+    assert.include(text, "Do not just re-watch");
+  });
+
+  it("does not stall pending checks or immediately after new material progress", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const start = Date.parse(STARTED);
+    const initial = watch({
+      headSha: "aaaaaaaaaa",
+      passed: true,
+      passedChecks: ["test"],
+      lastProgressAt: STARTED,
+    });
+    const pending = evaluate(initial, detail(), noRemarks, start + 61 * 60_000);
+    assert.deepEqual(pending.changes, []);
+    const changed = evaluate(
+      initial,
+      detail({ ...green, headSha: "bbbbbbbbbb" }),
+      noRemarks,
+      start + 61 * 60_000,
+    );
+    assert.deepEqual(changed.changes, [{ kind: "checks-passed", count: 1, required: false }]);
+    assert.equal(changed.next.releaseStallNotifiedAt, undefined);
+    assert.deepEqual(
+      evaluate(
+        changed.next,
+        detail({ ...green, headSha: "bbbbbbbbbb" }),
+        noRemarks,
+        start + 62 * 60_000,
+      ).changes,
+      [],
+    );
+    const later = evaluate(
+      changed.next,
+      detail({ ...green, headSha: "bbbbbbbbbb" }),
+      noRemarks,
+      start + 122 * 60_000,
+    );
+    assert.deepEqual(later.changes, [{ kind: "release-stalled", minutes: 61 }]);
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(

@@ -11,6 +11,8 @@ import * as DateTime from "effect/DateTime";
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
+/** Give one actionable wake when a green head makes no release progress for an hour. */
+export const PULL_REQUEST_WATCH_RELEASE_STALL_MS = 60 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -19,7 +21,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "release-stalled"; readonly minutes: number };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -136,6 +139,26 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // The PR head can be green while a repository-specific merge controller refuses
+  // release. Don't turn a quiet watch into an indefinite no-action state.
+  const materialProgress = headMoved || changes.some((change) => change.kind !== "remarks");
+  const lastProgressAt = materialProgress
+    ? DateTime.formatIso(DateTime.makeUnsafe(now))
+    : (watch.lastProgressAt ?? watch.startedAt);
+  let releaseStallNotifiedAt = materialProgress ? undefined : watch.releaseStallNotifiedAt;
+  if (
+    !materialProgress &&
+    passed &&
+    detail.checks.length > 0 &&
+    releaseStallNotifiedAt === undefined &&
+    now - Date.parse(lastProgressAt) >= PULL_REQUEST_WATCH_RELEASE_STALL_MS
+  ) {
+    changes.push({
+      kind: "release-stalled",
+      minutes: Math.floor((now - Date.parse(lastProgressAt)) / 60_000),
+    });
+    releaseStallNotifiedAt = DateTime.formatIso(DateTime.makeUnsafe(now));
+  }
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -153,6 +176,8 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      lastProgressAt,
+      ...(releaseStallNotifiedAt === undefined ? {} : { releaseStallNotifiedAt }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -210,6 +235,10 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "release-stalled":
+      return [
+        `- This open PR has shown no material release progress for ${change.minutes} minutes despite passing head checks. Inspect the actual host merge queue, merge-group CI, or repository-specific merge controller, and repair its blocking verdict. Do not just re-watch or blindly requeue.`,
+      ];
   }
 }
 
@@ -219,6 +248,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "release-stalled": "release progress stalled",
 };
 
 export function pullRequestWatchMessage(input: {
