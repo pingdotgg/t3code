@@ -146,14 +146,18 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
 }
 
 /**
- * cmd+D for a thread: a diff tab hidden behind another tab comes forward;
- * otherwise `toggle` opens it where the side pane goes or hides it, as on main.
+ * cmd+D and cmd+L for a thread: the diff or linked pull requests tab hidden behind another
+ * tab comes forward; otherwise `toggle` opens it where the side pane goes or hides it.
  */
-export function toggleThreadDiff(threadRef: ScopedThreadRef, toggle: () => void): void {
+export function toggleThreadSurfaceTab(
+  threadRef: ScopedThreadRef,
+  surfaceId: "diff" | "pull-requests",
+  toggle: () => void,
+): void {
   const layout = useLayoutStore.getState().layout;
   const tab = findLayoutSurfaceTabs(layout, threadRef).find(
     (location) =>
-      location.tab.content.kind === "surface" && location.tab.content.surfaceId === "diff",
+      location.tab.content.kind === "surface" && location.tab.content.surfaceId === surfaceId,
   );
   if (tab && !onScreen(layout, tab)) {
     useLayoutStore.getState().focusTab(tab.tab.id);
