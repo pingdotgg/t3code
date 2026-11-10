@@ -3422,6 +3422,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND (status IN ('queued','preparing','starting','running','waiting')
                 OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
                 OR run_id = ${window.requiredRunId ?? null}
+                ${
+                  // The shell's latest run, even a steer-cancelled one outside the newest window.
+                  window.anchorItemId === undefined && window.requiredRunId === undefined
+                    ? sql`OR run_id = ${presentedShellRunId(sql`${threadId}`)}`
+                    : sql``
+                }
                 -- Queued or cancelled turns must not hide the latest actual session.
                 OR run_id = ${latestTodoList?.run_id ?? null}
                 OR run_id = (
@@ -6236,6 +6242,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
       )`;
     };
+    // The newest run not waiting in a held queue, matching latestUnheldRun.
+    const presentedShellRunId = (threadId: Statement.Fragment) => sql`(
+      SELECT candidate.run_id
+      FROM orchestration_v2_projection_runs candidate
+      WHERE candidate.thread_id = ${threadId}
+        AND NOT (
+          candidate.status = 'queued'
+          AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+        )
+        AND NOT ${isSilentShellRun("candidate")}
+      ORDER BY candidate.ordinal DESC, candidate.run_id DESC
+      LIMIT 1
+    )`;
 
     const selectShellThreadRows = (
       threadId?: ThreadId,
@@ -6403,19 +6422,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY r.ordinal DESC, r.run_id DESC
               LIMIT 1
             )
-            -- The newest run not waiting in a held queue, matching latestUnheldRun.
-            LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
-              SELECT candidate.run_id
-              FROM orchestration_v2_projection_runs candidate
-              WHERE candidate.thread_id = t.thread_id
-                AND NOT (
-                  candidate.status = 'queued'
-                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
-                )
-                AND NOT ${isSilentShellRun("candidate")}
-              ORDER BY candidate.ordinal DESC, candidate.run_id DESC
-              LIMIT 1
-            )
+            LEFT JOIN orchestration_v2_projection_runs presented
+              ON presented.run_id = ${presentedShellRunId(sql.literal("t.thread_id"))}
             LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
               SELECT candidate.run_id
               FROM orchestration_v2_projection_runs candidate
