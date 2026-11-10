@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -9,6 +10,10 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { fetch } from "expo/fetch";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -73,6 +78,27 @@ function readOverflowMessage(data: string): Overflow | null {
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
+class HtmlRenderLoadError extends Schema.TaggedError<HtmlRenderLoadError>()("HtmlRenderLoadError", {
+  cause: Schema.Defect(),
+}) {}
+
+// WebKit gives an about:blank iframe in a CSP-sandboxed document a null contentDocument,
+// so pages load from their text with an inert about:blank origin, not the server's sandbox.
+const DOCUMENT_BASE_URL = "about:blank";
+
+const htmlRenderDocumentAtom = Atom.family((uri: string) =>
+  Atom.make(
+    Effect.tryPromise({
+      try: async (signal) => {
+        const response = await fetch(uri, { signal });
+        if (!response.ok) throw new Error(`HTML request failed: ${response.status}`);
+        return response.text();
+      },
+      catch: (cause) => new HtmlRenderLoadError({ cause }),
+    }),
+  ).pipe(Atom.withLabel("mobile:html-render-document")),
+);
+
 export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
@@ -87,7 +113,13 @@ export function HtmlRenderWebView(props: {
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
-  const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
+  const page = useAtomValue(htmlRenderDocumentAtom(props.uri));
+  const pageFailed = AsyncResult.isFailure(page);
+  const { onLoadError } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a failed page fetch to the parent's retry
+  useEffect(() => {
+    if (pageFailed) onLoadError?.();
+  }, [pageFailed, onLoadError]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts theme changes into the already loaded WebView
   useEffect(() => {
     if (shownTheme.current === null || shownTheme.current === theme) return;
@@ -118,51 +150,54 @@ export function HtmlRenderWebView(props: {
             }
       }
     >
-      <WebView<object>
-        key={generation}
-        ref={webView}
-        source={source}
-        accessibilityLabel={props.title}
-        style={{ flex: 1, backgroundColor: "transparent" }}
-        allowsInlineMediaPlayback
-        contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
-        bounces={!props.nested}
-        showsVerticalScrollIndicator={!props.nested}
-        showsHorizontalScrollIndicator={!props.nested}
-        scrollEnabled={scrollable}
-        // Android's patched WebView always keeps horizontal drags. Only pages
-        // with vertical overflow hold vertical drags until they reach an edge.
-        nestedScrollEnabled={props.nested && overflow.y}
-        overScrollMode={props.nested ? "never" : "always"}
-        // The default whitelist cancels about:srcdoc iframes before the handler below.
-        originWhitelist={["http://*", "https://*", "about:srcdoc"]}
-        onShouldStartLoadWithRequest={(request) =>
-          request.isTopFrame === false ||
-          withoutFragment(request.url) === withoutFragment(props.uri)
-        }
-        onOpenWindow={(event) => {
-          const url = event.nativeEvent.targetUrl;
-          if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
-        }}
-        onLoadEnd={() => {
-          setLoaded(true);
-          shownTheme.current = theme;
-          if (theme !== initialTheme) postTheme(webView.current, theme);
-        }}
-        onError={props.onLoadError}
-        onHttpError={props.onLoadError}
-        onContentProcessDidTerminate={restart}
-        onRenderProcessGone={restart}
-        {...(props.nested
-          ? {
-              injectedJavaScript: OVERFLOW_SCRIPT,
-              onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
-              },
-            }
-          : {})}
-      />
+      {AsyncResult.isSuccess(page) ? (
+        <WebView<object>
+          key={generation}
+          ref={webView}
+          source={{
+            html: page.value,
+            baseUrl: DOCUMENT_BASE_URL + htmlRenderThemeFragment(initialTheme),
+          }}
+          accessibilityLabel={props.title}
+          style={{ flex: 1, backgroundColor: "transparent" }}
+          allowsInlineMediaPlayback
+          contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
+          bounces={!props.nested}
+          showsVerticalScrollIndicator={!props.nested}
+          showsHorizontalScrollIndicator={!props.nested}
+          scrollEnabled={scrollable}
+          // Android's patched WebView always keeps horizontal drags. Only pages
+          // with vertical overflow hold vertical drags until they reach an edge.
+          nestedScrollEnabled={props.nested && overflow.y}
+          overScrollMode={props.nested ? "never" : "always"}
+          // The default whitelist cancels about:srcdoc iframes before the handler below.
+          originWhitelist={["http://*", "https://*", "about:srcdoc"]}
+          onShouldStartLoadWithRequest={(request) =>
+            request.isTopFrame === false || withoutFragment(request.url) === DOCUMENT_BASE_URL
+          }
+          onOpenWindow={(event) => {
+            const url = event.nativeEvent.targetUrl;
+            if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
+          }}
+          onLoadEnd={() => {
+            setLoaded(true);
+            shownTheme.current = theme;
+            if (theme !== initialTheme) postTheme(webView.current, theme);
+          }}
+          onError={props.onLoadError}
+          onContentProcessDidTerminate={restart}
+          onRenderProcessGone={restart}
+          {...(props.nested
+            ? {
+                injectedJavaScript: OVERFLOW_SCRIPT,
+                onMessage: (event: WebViewMessageEvent) => {
+                  const next = readOverflowMessage(event.nativeEvent.data);
+                  if (next !== null) setOverflow(next);
+                },
+              }
+            : {})}
+        />
+      ) : null}
       {loaded ? null : (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <AppActivityIndicator />
