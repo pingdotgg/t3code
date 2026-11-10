@@ -235,6 +235,13 @@ it.effect(
       });
       expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
 
+      const idleTitled = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        generateTitle: true,
+      });
+      expect(idleTitled.result).toMatchObject({ code: "invalid_request" });
+      expect(idleTitled.launched).toHaveLength(0);
+
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",
         hostedAppUrl: "https://t3.example.com",
