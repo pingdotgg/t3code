@@ -21,7 +21,8 @@ const TooltipProvider = TooltipPrimitive.Provider;
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
 // The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
-function createTooltipHoverTracker() {
+function createTooltipHoverTracker(suppressHoverWhileScrolling: boolean) {
+  let lastScrollAt = Number.NEGATIVE_INFINITY;
   let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
   return {
     hover(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
@@ -30,7 +31,11 @@ function createTooltipHoverTracker() {
     release(actionsRef: TooltipActionsRef) {
       if (hovered?.actionsRef === actionsRef) hovered = null;
     },
+    suppressHover() {
+      return suppressHoverWhileScrolling && Date.now() - lastScrollAt < 150;
+    },
     dismissUnfocused() {
+      lastScrollAt = Date.now();
       const tooltip = hovered;
       if (!tooltip) return;
       const focused = tooltip.trigger.ownerDocument.activeElement;
@@ -48,8 +53,12 @@ type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
 const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
 
-function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
-  const [tracker] = useState(createTooltipHoverTracker);
+function TooltipScrollDismissArea({
+  onScrollCapture,
+  suppressHoverWhileScrolling = false,
+  ...props
+}: ComponentProps<"div"> & { suppressHoverWhileScrolling?: boolean }) {
+  const [tracker] = useState(() => createTooltipHoverTracker(suppressHoverWhileScrolling));
   return (
     <TooltipScrollContext value={tracker}>
       <div
@@ -77,6 +86,9 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
         {...props}
         actionsRef={actionsRef}
         onOpenChange={(open, details) => {
+          if (open && details.reason === "trigger-hover" && tracker.suppressHover()) {
+            details.cancel();
+          }
           props.onOpenChange?.(open, details);
           if (!open && !details.isCanceled) tracker.release(actionsRef);
         }}
