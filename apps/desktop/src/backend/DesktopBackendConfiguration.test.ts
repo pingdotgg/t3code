@@ -10,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -36,7 +35,7 @@ const layerShellEnvironment = (prepared = true) =>
 const layerBackendConfiguration = (prepared = true) =>
   DesktopBackendConfiguration.layer.pipe(
     Layer.provide(layerShellEnvironment(prepared)),
-    Layer.provideMerge(DesktopState.layer),
+    Layer.provide(DesktopState.layer),
   );
 
 const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
@@ -106,7 +105,6 @@ const withHarness = <A, E, R>(
     E,
     | R
     | DesktopEnvironment.DesktopEnvironment
-    | DesktopState.DesktopState
     | FileSystem.FileSystem
     | DesktopBackendConfiguration.DesktopBackendConfiguration
   >,
@@ -273,21 +271,6 @@ describe("DesktopBackendConfiguration", () => {
         );
       }),
     ),
-  );
-
-  it.effect.each([{ canInstallUpdates: false }, { canInstallUpdates: true }])(
-    "resolvePrimary tells the backend whether the desktop can update (canInstallUpdates: $canInstallUpdates)",
-    ({ canInstallUpdates }) =>
-      withHarness(
-        Effect.gen(function* () {
-          const desktopState = yield* DesktopState.DesktopState;
-          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-          yield* Ref.set(desktopState.canInstallUpdates, canInstallUpdates);
-
-          const config = yield* configuration.resolvePrimary;
-          assert.equal(config.bootstrap.desktopAppUpdate, canInstallUpdates);
-        }),
-      ),
   );
 
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>

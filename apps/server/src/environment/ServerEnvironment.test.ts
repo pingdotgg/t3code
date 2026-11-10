@@ -124,10 +124,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
     }),
   );
   it.effect.each([
-    { desktopAppUpdate: false, advertised: false },
+    { desktopAppUpdate: false, advertised: undefined },
     { desktopAppUpdate: true, advertised: true },
   ])(
-    "advertises desktop app updates only when the desktop can update (desktopAppUpdate: $desktopAppUpdate)",
+    "advertises desktop app updates only when the desktop can install them ($desktopAppUpdate)",
     ({ desktopAppUpdate, advertised }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -153,29 +153,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           ),
           Effect.provideService(HostProcess.Environment, {}),
         );
-        expect(descriptor.capabilities.serverSelfUpdate).toBe("desktop-managed");
-        expect(
-          {
-            desktopAppUpdate: descriptor.capabilities.desktopAppUpdate,
-            desktopAppChannelSwitch: descriptor.capabilities.desktopAppChannelSwitch,
-            serverSelfUpdateProgress: descriptor.capabilities.serverSelfUpdateProgress,
-          },
-          advertised
-            ? "desktop can update but desktopAppUpdate is not advertised"
-            : "advertises desktopAppUpdate although the desktop cannot update",
-        ).toEqual(
-          advertised
-            ? {
-                desktopAppUpdate: true,
-                desktopAppChannelSwitch: true,
-                serverSelfUpdateProgress: true,
-              }
-            : {
-                desktopAppUpdate: undefined,
-                desktopAppChannelSwitch: undefined,
-                serverSelfUpdateProgress: undefined,
-              },
-        );
+        const capabilities = descriptor.capabilities;
+        expect({
+          serverSelfUpdate: capabilities.serverSelfUpdate,
+          desktopAppUpdate: capabilities.desktopAppUpdate,
+          desktopAppChannelSwitch: capabilities.desktopAppChannelSwitch,
+          serverSelfUpdateProgress: capabilities.serverSelfUpdateProgress,
+        }).toEqual({
+          serverSelfUpdate: "desktop-managed",
+          desktopAppUpdate: advertised,
+          desktopAppChannelSwitch: advertised,
+          serverSelfUpdateProgress: advertised,
+        });
       }),
   );
   it.effect.each([
