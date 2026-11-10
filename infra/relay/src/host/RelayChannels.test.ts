@@ -62,6 +62,7 @@ const connectEnvironment = (port: number, token: string) =>
                 location: "/next",
                 "Set-Cookie": "s=1",
                 "Content-Security-Policy": "default-src *",
+                "Clear-Site-Data": '"*"',
               },
               body: Buffer.from(echo).toString("base64"),
             }),
@@ -82,6 +83,7 @@ const get = (port: number, path: string) =>
       location: response.headers.get("location"),
       cookie: response.headers.get("set-cookie"),
       csp: response.headers.get("content-security-policy"),
+      clearSiteData: response.headers.get("clear-site-data"),
     };
   });
 
@@ -98,6 +100,7 @@ describe("makeRelayChannels", () => {
         location: `${prefix}/next`,
         cookie: null,
         csp: "sandbox",
+        clearSiteData: null,
       });
       expect(yield* get(port, "/v1/metadata")).toEqual({
         status: 200,
@@ -105,6 +108,7 @@ describe("makeRelayChannels", () => {
         location: null,
         cookie: null,
         csp: null,
+        clearSiteData: null,
       });
     }).pipe(Effect.scoped, Effect.provide(makeLayer())),
   );

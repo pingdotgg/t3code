@@ -47,24 +47,45 @@ function parseFrame(chunk: string | Uint8Array): Option.Option<RelayChannelFrame
   }
 }
 
-// Headers the relay owns on a carried environment's responses; the environment's own are dropped.
-const RELAY_OWNED_RESPONSE_HEADERS = new Set([
-  "set-cookie",
-  "set-cookie2",
-  "content-security-policy",
-  "content-security-policy-report-only",
-  "x-content-type-options",
+// Response headers a carried environment may send through the relay's shared origin: content,
+// caching, redirects, auth challenges and CORS. Anything else, such as cookies or site policies,
+// would act on the relay origin itself.
+const ALLOWED_RESPONSE_HEADERS = new Set([
+  "content-type",
+  "content-range",
+  "content-disposition",
+  "content-encoding",
+  "content-language",
+  "accept-ranges",
+  "cache-control",
+  "etag",
+  "last-modified",
+  "expires",
+  "vary",
+  "location",
+  "www-authenticate",
+  "retry-after",
+  "dpop-nonce",
+  "access-control-allow-origin",
+  "access-control-allow-credentials",
+  "access-control-allow-methods",
+  "access-control-allow-headers",
+  "access-control-expose-headers",
+  "access-control-max-age",
 ]);
 
-/** Lowercases names, which frames from an environment need not do, then drops `excluded`. */
-function withoutHopByHop(
-  headers: Readonly<Record<string, string>>,
-  excluded: ReadonlySet<string> = HOP_BY_HOP_HEADERS,
-): Record<string, string> {
+function withoutHopByHop(headers: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) => !HOP_BY_HOP_HEADERS.has(name.toLowerCase())),
+  );
+}
+
+/** Lowercases names, which frames from an environment need not do, and keeps the allowlist. */
+function allowedResponseHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers)
       .map(([name, value]) => [name.toLowerCase(), value] as const)
-      .filter(([name]) => !HOP_BY_HOP_HEADERS.has(name) && !excluded.has(name)),
+      .filter(([name]) => ALLOWED_RESPONSE_HEADERS.has(name)),
   );
 }
 
@@ -193,9 +214,8 @@ export const makeRelayChannels = () => {
     if (Option.isNone(result)) {
       return HttpServerResponse.text("The environment did not answer in time.", { status: 504 });
     }
-    const { "content-type": contentType, ...forwarded } = withoutHopByHop(
+    const { "content-type": contentType, ...forwarded } = allowedResponseHeaders(
       result.value.headers,
-      RELAY_OWNED_RESPONSE_HEADERS,
     );
     // Every carried environment shares the relay's origin, and anyone can link one: its responses
     // may not run script there or set cookies the relay and other environments would see.
