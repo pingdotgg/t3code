@@ -987,6 +987,7 @@ describe("MuseAdapterV2", () => {
       sessionId: "unexpected-session",
       initialNativeThreadId: undefined,
       history: { items: [] },
+      activeTurnId: null,
     },
     {
       reason: "an unavailable projection",
@@ -994,20 +995,45 @@ describe("MuseAdapterV2", () => {
       sessionId: "saved-session",
       initialNativeThreadId: "saved-session",
       history: { items: null, mode: "none", noneReason: "projectionUnavailable" },
+      activeTurnId: null,
+    },
+    {
+      reason: "an unavailable projection while replaying queued work",
+      method: "session/resume",
+      sessionId: "saved-session",
+      initialNativeThreadId: "saved-session",
+      history: { items: null, mode: "none", noneReason: "projectionUnavailable" },
+      activeTurnId: "replayed-turn",
     },
   ])(
     "closes a newly opened host when native session registration returns $reason",
-    ({ method, sessionId, initialNativeThreadId, history }) =>
+    ({ method, sessionId, initialNativeThreadId, history, activeTurnId }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
+        const recovery = yield* makeFakeMuse("second");
+        if (activeTurnId) {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("test-environment"),
+            threadId: THREAD_ID,
+            providerSessionId: "test-session",
+            providerInstanceId: INSTANCE_ID,
+            endpoint: "http://127.0.0.1:43210/mcp",
+            authorizationHeader: "Bearer thread-scoped-test-token",
+            browserToolsAvailable: true,
+          });
+          for (const muse of [fake, recovery])
+            muse.host.initializeResult.grantedCapabilities.push("sessionMcp");
+        }
         fake.queueResponse(method, {
-          session: { sessionId, modelId: MODEL, activeTurnId: null },
+          session: { sessionId, modelId: MODEL, activeTurnId },
           history,
         });
-        const result = yield* makeHarness(fake, INSTANCE_ID, initialNativeThreadId).pipe(
+        const result = yield* makeHarness(fake, INSTANCE_ID, initialNativeThreadId, recovery).pipe(
           Effect.exit,
         );
         assert.strictEqual(result._tag, "Failure");
+        // A session Muse cannot stream fails before a relaunch cancels its replayed work.
+        assert.deepStrictEqual(recovery.calls, []);
         yield* Effect.promise(() => fake.host.exited);
         assert.strictEqual(fake.closeCount(), 1);
         assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 0);
