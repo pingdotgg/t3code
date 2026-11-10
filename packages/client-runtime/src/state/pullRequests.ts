@@ -1058,10 +1058,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           value === null || value.state === reply.state || isStalePullRequestReply(value, reply)
             ? value
             : { ...value, state: reply.state },
-        edit: (_input, value, edit) =>
-          value === null || edit.state === undefined || value.state === edit.state
+        edit: (_input, value, edits) => {
+          const state = edits.findLast((edit) => edit.state !== undefined)?.state;
+          return value === null || state === undefined || value.state === state
             ? value
-            : { ...value, state: edit.state },
+            : { ...value, state };
+        },
       },
     ),
   );
