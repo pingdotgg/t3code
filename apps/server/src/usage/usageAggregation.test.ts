@@ -197,6 +197,7 @@ describe("UsageAggregator", () => {
       untilDay: "2026-08-31",
       rates,
       modelAliases: resolveModelAliases({ "example-preview": "claude-fable-5" }),
+      rateModel: () => "claude-fable",
     });
     aggregator.add(record());
     aggregator.add(record({ model: "example-preview", rateModel: "example-preview-high" }));

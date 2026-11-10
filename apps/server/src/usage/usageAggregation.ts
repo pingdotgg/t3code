@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheSavingsUsd, lookupRate, priceUsage, type RateTable } from "./usagePricing.ts";
 
 // en-CA gives ISO-ordered parts in the requested zone; Date getters are host-local.
 function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
@@ -236,12 +236,15 @@ export class UsageAggregator {
     return true;
   }
 
-  // Aliases use the target's rate, which a provider may name apart from the target's ID.
+  // Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
   #mapModel(record: UsageRecord): UsageRecord {
     const model = this.#options.modelAliases?.get(record.model);
     if (model === undefined) return record;
     const { rateModel: _rateModel, ...rest } = record;
-    const rateModel = this.#options.rateModel?.(record.provider, model);
+    const rateModel =
+      lookupRate(this.#options.rates, model) === null
+        ? this.#options.rateModel?.(record.provider, model)
+        : undefined;
     return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
   }
 
