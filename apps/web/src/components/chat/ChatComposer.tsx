@@ -1680,8 +1680,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onPromptChangeStable = useStableCallback(onPromptChange);
   const isStopShortcutEventStable = useStableCallback(
     (event: KeyboardEvent) =>
-      resolveShortcutCommand(event, keybindings, { context: { composerFocus: true } }) ===
-      "thread.stop",
+      resolveShortcutCommand(event, keybindings, {
+        context: { composerFocus: true, turnRunning: true },
+      }) === "thread.stop",
   );
 
   const applyPromptReplacement = (
@@ -3598,7 +3599,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       },
                     )}
                     stopShortcutLabel={shortcutLabelForCommand(keybindings, "thread.stop", {
-                      context: { composerFocus: true },
+                      context: { composerFocus: true, turnRunning: true },
                     })}
                     isStopShortcutEvent={isStopShortcutEventStable}
                     voiceInputActive={voiceInputActive}
