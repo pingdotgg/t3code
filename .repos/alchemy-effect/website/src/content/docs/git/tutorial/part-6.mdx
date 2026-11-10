@@ -3,7 +3,7 @@ title: "Part 6: Protect a branch"
 description: Authorize parsed Git mutations in ordinary HTTP handlers, using the request's user before committing changes.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 The middleware decides who may push. Now add a rule about what an authorized
 push may do: it may update `main`, but it may not delete it.
@@ -19,7 +19,7 @@ Create `src/branch-policy.ts`:
 
 ```typescript
 // src/branch-policy.ts
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
 import { Session } from "./session.ts";
 
@@ -48,8 +48,8 @@ Create `src/protocol.ts`:
 
 ```typescript
 // src/protocol.ts
-import * as Git from "alchemy/Git";
-import * as GitHttp from "alchemy/Git/Http";
+import * as Git from "@alchemy.run/git";
+import * as GitHttp from "@alchemy.run/git/Http";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { checkRefChanges } from "./branch-policy.ts";
@@ -95,7 +95,7 @@ same function so it cannot bypass the push policy. Create `src/ref-writes.ts`:
 
 ```typescript
 // src/ref-writes.ts
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { checkRefChanges } from "./branch-policy.ts";
@@ -162,20 +162,7 @@ group against that actual API instead; see [HTTP routes](/git/blocks/server).
 
 ## Deploy the rule
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npx alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn alchemy deploy`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 Use Dana's `$KEY` when Git prompts during the checks below. Keep the remote
 pointed at `$HOST/$OWNER/web.git` from Part 4.
@@ -219,20 +206,7 @@ accepted the caller; the application handler rejected the proposed change.
 
 When you finish experimenting:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun alchemy destroy`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npx alchemy destroy`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm alchemy destroy`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn alchemy destroy`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy destroy" />
 
 This removes the Worker, repositories' storage, R2 bucket contents, and account
 database from this tutorial stack. Keep your local `work` checkout if you want
