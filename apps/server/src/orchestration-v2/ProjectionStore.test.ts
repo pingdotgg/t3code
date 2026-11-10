@@ -52,6 +52,7 @@ import {
   decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
+  THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
@@ -2579,6 +2580,112 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `,
         [{ updated_at: DateTime.formatIso(updatedAt) }],
       );
+    }),
+  );
+
+  it.effect("stores completed inline-output flags that page like the payload predicate", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("inline-output-flag");
+      const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      yield* store.apply({
+        id: EventId.make("event:inline-output-flag:run-completed"),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      const base = {
+        threadId,
+        runId: run.id,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const tool = (input: unknown, toolName = "lookup") => ({
+        ...base,
+        type: "dynamic_tool" as const,
+        toolName,
+        input,
+      });
+      const cases = [
+        ["plain", tool({ q: "x" }), 0],
+        ["html", tool({ htmlRender: true }), 1],
+        ["html-case", tool({ HTMLRENDER: true }), 1],
+        ["app", tool({ t3McpApp: {} }), 1],
+        ["image", { ...tool({}), viewedImagePath: "/tmp/a.png" }, 1],
+        ["delegate", tool({}, "mcp__t3_code__delegate_task"), 1],
+        ["delegate-like", tool({}, "t3-code.delegate-task"), 1],
+        ["running", { ...tool({ htmlRender: true }), status: "running" as const }, null],
+        ["command", { ...base, type: "command_execution" as const, input: "htmlRender" }, 0],
+      ] as const;
+      const write = (name: string, item: (typeof cases)[number][1], ordinal: number) =>
+        store.apply({
+          id: EventId.make(`event:inline-output-flag:${name}:${ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            status: "completed",
+            ...item,
+            id: TurnItemId.make(`item:inline-output-flag:${name}`),
+            ordinal,
+          },
+        });
+      for (const [index, [name, item]] of cases.entries()) yield* write(name, item, index + 2);
+      const flags = () =>
+        sql<{ readonly id: string; readonly flag: number | null }>`
+          SELECT turn_item_id AS id, persistent_output AS flag
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND ordinal > 1
+          ORDER BY ordinal`;
+      assert.deepEqual(
+        yield* flags(),
+        cases.map(([name, , flag]) => ({ id: `item:inline-output-flag:${name}`, flag })),
+      );
+
+      yield* write("html", tool({ q: "x" }), 3);
+      yield* write("plain", { ...tool({ htmlRender: true }), status: "running" }, 2);
+      yield* write("running", tool({ htmlRender: true }), 9);
+      const updated = new Map((yield* flags()).map((row) => [row.id, row.flag]));
+      assert.strictEqual(updated.get("item:inline-output-flag:html"), 0);
+      assert.isNull(updated.get("item:inline-output-flag:plain"));
+      assert.strictEqual(updated.get("item:inline-output-flag:running"), 1);
+      for (let index = 0; index < THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT; index += 1)
+        yield* write(`bulk-${index}`, tool({ index }), 20 + index);
+
+      const page = () =>
+        store.getThreadHistoryPage(
+          threadId,
+          encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: threadId,
+            sourceItemId: "item:inline-output-flag:end",
+            position: 1_000,
+          }),
+          undefined,
+          false,
+          "deferred",
+        );
+      const stored = yield* page();
+      assert.isTrue(stored.items.some((row) => row.item.deferredWork !== undefined));
+      assert.isTrue(
+        stored.items.some((row) => String(row.sourceItemId) === "item:inline-output-flag:app"),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET persistent_output = NULL
+        WHERE thread_id = ${threadId}`;
+      assert.deepEqual(yield* page(), stored);
     }),
   );
 

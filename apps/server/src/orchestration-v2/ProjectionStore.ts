@@ -2643,22 +2643,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type,
                 status,
                 updated_at,
-                payload_json
+                payload_json,
+                persistent_output
               )
-              VALUES (
-                ${event.payload.id},
-                ${event.payload.threadId},
-                ${event.payload.runId},
-                ${event.payload.nodeId},
-                ${event.payload.providerThreadId},
-                ${event.payload.providerTurnId},
-                ${event.payload.parentItemId},
-                ${event.payload.ordinal},
-                ${event.payload.type},
-                ${event.payload.status},
-                ${updatedAt},
-                ${payloadJson}
-              )
+              SELECT item.*, CASE WHEN item.status = 'completed'
+                THEN CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END END
+              FROM (SELECT
+                ${event.payload.id} AS turn_item_id,
+                ${event.payload.threadId} AS thread_id,
+                ${event.payload.runId} AS run_id,
+                ${event.payload.nodeId} AS node_id,
+                ${event.payload.providerThreadId} AS provider_thread_id,
+                ${event.payload.providerTurnId} AS provider_turn_id,
+                ${event.payload.parentItemId} AS parent_item_id,
+                ${event.payload.ordinal} AS ordinal,
+                ${event.payload.type} AS type,
+                ${event.payload.status} AS status,
+                ${updatedAt} AS updated_at,
+                ${payloadJson} AS payload_json
+              ) AS item
+              WHERE true
               ON CONFLICT(turn_item_id)
               DO UPDATE SET
                 thread_id = excluded.thread_id,
@@ -2671,7 +2675,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type = excluded.type,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                persistent_output = excluded.persistent_output
             `;
               break;
             }
@@ -5802,7 +5807,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
           ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
           ${
-            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
+            includePersistentOutput
+              ? sql`COALESCE(item.persistent_output, CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END)`
+              : sql`0`
           } AS persistent_output,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
