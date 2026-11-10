@@ -33,7 +33,9 @@ function linkedAtLabel(value: string): string {
 function endpointLabel(environment: RelayClientEnvironmentRecord): string {
   return environment.endpoint.providerKind === "cloudflare_tunnel"
     ? "Managed tunnel"
-    : "Activity publishing only";
+    : environment.endpoint.providerKind === "t3_relay"
+      ? "Carried by the relay"
+      : "Activity publishing only";
 }
 
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
