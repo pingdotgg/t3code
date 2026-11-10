@@ -152,7 +152,7 @@ process.stdout.write(args[0] === "__ssh-helper"
           { nodeScriptPath: cli },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localSsh));
         assert.strictEqual(pairedAgain.credential, launchedHome);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -270,7 +270,7 @@ switch (args[1]) {
           customHome,
         );
         assert.isTrue(yield* external.isRunning);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("rejects archive versions that are not a single exact version segment", () => {
