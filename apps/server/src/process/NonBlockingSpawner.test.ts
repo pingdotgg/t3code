@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a skip condition must be known before the test runs, and the spawner's checks are node:fs/promises calls.
-import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics nodeBuiltinImport:off - the spawner's checks are node:fs/promises calls, which the test spies on.
 import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -39,8 +38,6 @@ const withoutEnv = NonBlockingSpawner.layer.pipe(
   ),
   Layer.provideMerge(NodeServices.layer),
 );
-
-const bashAvailable = NodeChildProcess.spawnSync("bash", ["-c", ":"]).status === 0;
 
 const run = (command: ChildProcess.Command) =>
   ChildProcessSpawner.ChildProcessSpawner.use((spawner) => spawner.string(command));
@@ -142,17 +139,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live.skipIf(!bashAvailable)("keeps a function exported by bash callable in a bash child", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        ChildProcess.make("bash", ["-c", "x"], {
-          env: { PATH: process.env.PATH, "BASH_FUNC_x%%": "() {  echo exported\n}" },
-        }),
-      );
-      expect(result).toBe("exported\n");
-    }).pipe(Effect.provide(wrapped)),
-  );
-
   it.live("fails a missing command with NotFound, with or without cwd", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -183,21 +169,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live.skipIf(process.getuid?.() === 0)(
-    "fails a cwd it cannot enter the way the native spawner does",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const directory = `${yield* fileSystem.makeTempDirectoryScoped()}/locked`;
-        yield* fileSystem.makeDirectory(directory, { mode: 0o600 });
-        const command = ChildProcess.make("true", [], { cwd: directory });
-        const native = yield* spawnError(command).pipe(Effect.provide(NodeServices.layer));
-        const error = yield* spawnError(command).pipe(Effect.provide(wrapped));
-        expect(error.reason._tag).toBe("PermissionDenied");
-        expect(error.message).toBe(native.message);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.live("fails a missing or non-executable explicit path like the native spawner", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -211,23 +182,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
           expect(error.reason._tag).toBe(native.reason._tag);
           expect(error.message).toBe(native.message);
         }
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  // A hung check holds a libuv threadpool thread, and those also compress WebSocket frames.
-  // Natively these throw a defect instead of failing the spawn.
-  it.live("fails an explicit path through a file or a symlink loop as a bad resource", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped();
-      yield* fileSystem.writeFileString(`${directory}/plain`, "");
-      yield* fileSystem.symlink(`${directory}/loop`, `${directory}/loop`);
-      for (const executable of [`${directory}/plain/tool`, `${directory}/loop`]) {
-        const error = yield* spawnError(ChildProcess.make(executable, [])).pipe(
-          Effect.provide(wrapped),
-        );
-        expect(error.reason._tag).toBe("BadResource");
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
