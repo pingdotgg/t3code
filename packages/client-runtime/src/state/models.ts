@@ -158,6 +158,7 @@ export interface EnvironmentThreadShell {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
@@ -213,17 +214,6 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
     status === "failed" ||
     status === "cancelled" ||
     status === "rolled_back"
-  );
-}
-
-/** An async question waits for an answer only once its run stops working. */
-export function shellHasPendingUserInput(thread: OrchestrationV2ThreadShell): boolean {
-  const status = shellRuntime(thread)?.status;
-  // Waiting runs have ended their provider turn and are only draining effects.
-  const working = status === "preparing" || status === "starting" || status === "running";
-  return (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false || !working)
   );
 }
 
@@ -321,7 +311,12 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput: shellHasPendingUserInput(thread),
+    // Async questions count too, so a thread with any open question leaves Working.
+    hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
+    pendingUserInputAt:
+      thread.pendingRuntimeRequest?.kind === "user_input"
+        ? iso(thread.pendingRuntimeRequest.createdAt)
+        : null,
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
