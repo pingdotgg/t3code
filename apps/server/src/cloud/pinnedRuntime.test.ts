@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - node:path.win32 stands in for a Windows host in one test.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -6,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as NodePath from "node:path";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -15,7 +17,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  isVersionExecutable,
   ensurePinnedRuntimeInstalled,
+  isUnpublishedRelease,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -39,7 +43,7 @@ const validChecksums = archiveHex(archiveBytes).pipe(
 const releaseHttpClient = (checksums: string, requests: string[] = []) =>
   HttpClient.make((request) => {
     requests.push(request.url);
-    const body = request.url.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
+    const body = new URL(request.url).pathname.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body)));
   });
 const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: string[] = []) =>
@@ -155,6 +159,40 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("reports a release that lists an archive it does not serve as unpublished", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
+      const checksums = yield* validChecksums;
+      const failsWith = (status: number) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/SHA256SUMS")
+                  ? new Response(checksums)
+                  : new Response("", { status }),
+              ),
+            ),
+          ),
+          // "404" in the mirror's path must not read a server error as a missing release.
+          releaseBaseUrl: "https://updates.example.com/404/t3code",
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.die("must not validate a missing archive"),
+        }).pipe(Effect.flip);
+      assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
+      assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
+    }),
+  );
+
   it.effect("refuses an archive whose checksum does not match the release", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -267,6 +305,42 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("reuses a cached runtime under a mirror only while the mirror lists it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-mirror-" });
+      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(path.dirname(cached.entryPath), { recursive: true });
+      yield* fs.writeFileString(cached.entryPath, "#!/bin/sh\n");
+      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
+      const install = (checksums: string, requests: string[]) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(checksums, requests),
+          // A signed mirror URL keeps its query on every file it serves.
+          releaseBaseUrl: "https://updates.example.com/t3code/?token=abc",
+          requirePublishedRelease: true,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+        });
+
+      const withdrawn = yield* install("", []).pipe(Effect.flip);
+      assert.include(withdrawn.message, `finding ${archiveName} in the t3 release checksums`);
+      const requests: string[] = [];
+      assert.equal((yield* install(yield* validChecksums, requests)).entryPath, cached.entryPath);
+      // Listed, so the cached runtime is used without downloading it again.
+      assert.deepEqual(requests, [
+        `https://updates.example.com/t3code/v${version}/SHA256SUMS?token=abc`,
+      ]);
+    }),
+  );
+
   it.effect("preserves a completed runtime when validation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -302,6 +376,15 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(requests, []);
       assert.equal(yield* fs.readFileString(finalPaths.entryPath), "broken\n");
     }),
+  );
+});
+
+it("isVersionExecutable accepts only <version>/t3, never another drive or program", () => {
+  const win32 = NodePath.win32 as unknown as Path.Path;
+  assert.isTrue(isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\t3.exe"));
+  assert.isFalse(isVersionExecutable(win32, "C:\\t3\\versions", "D:\\t3.exe"));
+  assert.isFalse(
+    isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\node.exe"),
   );
 });
 
@@ -409,7 +492,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       // The launcher found on PATH is remembered for a service that cannot see it.
       assert.equal(
         yield* fs.readFileString(path.join(baseDir, "runtime", "launchers")),
-        `${path.join(customBinDir, "t3")}\n${path.join(binDir, "t3")}\n`,
+        `${path.join(customBinDir, "t3")}\n\n${path.join(binDir, "t3")}\n`,
       );
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-abc",
@@ -425,6 +508,52 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "2.0.0",
         "other",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    // An interrupted append cut this record short.
+    { name: "an unterminated launcher record", recorded: "/opt/t", cut: "" },
+    // Another process's append is cut short after prune reads the records.
+    { name: "a record cut short after the read", recorded: "/opt/t3\n", cut: "/opt/t" },
+  ])("remembers a launcher found on PATH after $name", ({ recorded, cut }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
+      const binDir = path.join(baseDir, "custom-bin");
+      yield* fs.makeDirectory(binDir);
+      yield* fs.symlink(path.join(versionsDir, "1.0.0", "t3"), path.join(binDir, "t3"));
+      const launchersFile = path.join(baseDir, "runtime", "launchers");
+      yield* fs.writeFileString(launchersFile, recorded);
+      const prune = (environment: Record<string, string>) =>
+        prunePinnedRuntimes({ baseDir, keep: [] }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner("p1\nftxt\nn/bin/sh\n")),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, environment),
+          Effect.provideService(HostProcess.HomeDirectory, baseDir),
+        );
+
+      yield* prune({ PATH: binDir }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file, encoding) =>
+            fs
+              .readFileString(file, encoding)
+              .pipe(
+                Effect.tap(() =>
+                  file === launchersFile
+                    ? fs.writeFileString(file, cut, { flag: "a" })
+                    : Effect.void,
+                ),
+              ),
+        }),
+      );
+      // A service that cannot see the interactive PATH.
+      const removed = yield* prune({});
+
+      assert.deepEqual(removed, []);
+      assert.isTrue(yield* fs.exists(path.join(versionsDir, "1.0.0", "t3")));
     }),
   );
 
@@ -487,14 +616,15 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         const path = yield* Path.Path;
         const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
         const entry = path.join(versionsDir, "1.0.0", "t3");
-        yield* fs.copyFile("/bin/sleep", entry);
+        // Multicall coreutils (Ubuntu's uutils) refuse to run renamed, so copy Node instead.
+        yield* fs.copyFile(process.execPath, entry);
         yield* fs.chmod(entry, 0o755);
         const link = path.join(baseDir, "t3");
         yield* fs.symlink(entry, link);
         // Its argv names only the link, as with `t3 serve` run from PATH. Removing the link after
         // spawning leaves the process's executable as the only reference.
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        yield* spawner.spawn(ChildProcess.make(link, ["30"]));
+        yield* spawner.spawn(ChildProcess.make(link, ["-e", "setTimeout(() => {}, 30_000)"]));
         yield* fs.remove(link);
 
         const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(

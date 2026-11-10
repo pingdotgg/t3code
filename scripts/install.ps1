@@ -20,6 +20,8 @@ $repo = "pingdotgg/t3code"
 $baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
 $t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".t3" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
+# Absolute, so PATH never gets a folder that changes with the working directory.
+$binDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($binDir)
 
 function Fail([string] $message) {
   Write-Error "t3 install: $message"
@@ -133,8 +135,19 @@ if (-not $version) {
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
     default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }
   }
-  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "t3-install" }
-  $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+  if ($channel -eq "stable") {
+    # release.yml marks only plain stable releases latest. This is a github.com
+    # page, so it is not cut off by a page of newer nightlies or the API quota.
+    $release = Invoke-RestMethod -Uri "https://github.com/$repo/releases/latest" -Headers @{ "User-Agent" = "t3-install"; "Accept" = "application/json" }
+    $tag = ($release | Where-Object { $_.tag_name -match $tagPattern }).tag_name
+  } else {
+    $tag = $null
+    for ($page = 1; -not $tag -and $page -le 10; $page++) {
+      $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -Headers @{ "User-Agent" = "t3-install" }
+      $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+      if (-not $releases) { break }
+    }
+  }
   if (-not $tag) { Fail "could not find a $channel release; set T3CODE_VERSION" }
   $version = $tag.Substring(1)
 }
@@ -205,19 +218,50 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
 Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
+# Replace only a shim that runs a version in this home; never the desktop app's or another t3.
+if (Test-Path -LiteralPath $shim) {
+  $existingTarget = ""
+  # The shim is UTF-8 without a BOM; Windows PowerShell 5.1 reads files as ANSI by default.
+  # Only a shim exactly as written here counts; a user's wrapper that also runs t3.exe does not.
+  $existing = [System.IO.File]::ReadAllText($shim, [System.Text.Encoding]::UTF8)
+  if ($existing -match '^@echo off\r?\n"([^"]+)" %\*\s*$') { $existingTarget = $Matches[1] }
+  # Full paths, so a target like versions\..\other cannot pass as ours.
+  $ownedPrefix = [System.IO.Path]::GetFullPath($versionsDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  if ($existingTarget) { $existingTarget = [System.IO.Path]::GetFullPath($existingTarget) }
+  # Exactly <version>\t3.exe, never another program inside a version.
+  $owned = $existingTarget.StartsWith($ownedPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+    ($existingTarget.Substring($ownedPrefix.Length) -match '^[^\\/]+\\t3\.exe$')
+  if (-not $owned) {
+    Fail "another t3 is already at $shim. Remove it and run this again, or run $(Join-Path $targetDir 't3.exe') directly."
+  }
+}
 # UTF-8 without a BOM: cmd.exe reads the shim as-is, and ASCII would corrupt
 # non-ASCII characters in the user's home path.
 [System.IO.File]::WriteAllText($shim, "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*", (New-Object System.Text.UTF8Encoding $false))
 # Pruning keeps what this shim points at; a background service cannot see $binDir otherwise.
 $launchers = Join-Path $t3Home "runtime\launchers"
-$shimPath = (Resolve-Path $shim).Path
+$shimPath = (Resolve-Path -LiteralPath $shim).Path
 if (-not ((Test-Path $launchers) -and ((Get-Content $launchers) -contains $shimPath))) {
   [System.IO.File]::AppendAllText($launchers, "$shimPath`r`n", (New-Object System.Text.UTF8Encoding $false))
 }
 if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 [Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
-if (($env:PATH -split ";") -notcontains $binDir) {
-  Write-Host "  Add $binDir to your PATH, then run ${bold}t3$reset.`n"
+if ($binDir.Contains(";")) {
+  # PATH would split the folder at the `;`, so name the command in full instead.
+  Write-Host "  Run ${bold}& '$($shim.Replace("'", "''"))'$reset to get started.`n"
 } else {
-  Write-Host "  Run ${bold}t3$reset to get started.`n"
+  # Either side may end in a separator. Trim only here: a drive root keeps its `\` for Join-Path.
+  $added = ($env:PATH -split ";" | ForEach-Object { $_.TrimEnd('\', '/') }) -notcontains $binDir.TrimEnd('\', '/')
+  # `irm | iex` runs in the user's own session, so t3 works in this window right away.
+  # Last, so it never shadows another t3.
+  if ($added) { $env:Path = "$env:Path;$binDir" }
+  # A t3 earlier on PATH runs instead, so name this one in full.
+  $first = Get-Command t3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($first -and [System.IO.Path]::GetFullPath($first.Source) -ne [System.IO.Path]::GetFullPath($shimPath)) {
+    Write-Host "  Another t3 at $($first.Source) runs first, so run ${bold}& '$($shim.Replace("'", "''"))'$reset to use this one.`n"
+  } elseif ($added) {
+    Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
+  } else {
+    Write-Host "  Run ${bold}t3$reset to use T3 Code here, or ${bold}t3 up$reset to use it from your other devices.`n"
+  }
 }

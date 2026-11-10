@@ -1,68 +1,29 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { clearReviewCommentTarget } from "./reviewCommentSelection";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
 
-const EMPTY_GIT_REVIEW_SECTIONS = Object.freeze<ReadonlyArray<ReviewDiffPreviewSource>>([]);
-const EMPTY_REVIEW_TURN_DIFFS = Object.freeze<Readonly<Record<string, string>>>({});
-const EMPTY_REVIEW_LOADING_TURN_IDS = Object.freeze<Readonly<Record<string, boolean>>>({});
-const EMPTY_REVIEW_ASYNC_STATE = Object.freeze<ReviewAsyncState>({
-  loadingTurnIds: EMPTY_REVIEW_LOADING_TURN_IDS,
-  error: null,
-});
 const EMPTY_REVIEW_SECTION_FILE_IDS = Object.freeze<
   Readonly<Record<string, ReadonlyArray<string> | undefined>>
 >({});
-const EMPTY_REVIEW_GIT_SECTIONS_ATOM = Atom.make(EMPTY_GIT_REVIEW_SECTIONS).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:review:git-sections:null"),
-);
-const EMPTY_REVIEW_TURN_DIFFS_ATOM = Atom.make(EMPTY_REVIEW_TURN_DIFFS).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:review:turn-diffs:null"),
-);
 const EMPTY_REVIEW_SELECTED_SECTION_ID_ATOM = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:review:selected-section-id:null"),
-);
-const EMPTY_REVIEW_ASYNC_STATE_ATOM = Atom.make(EMPTY_REVIEW_ASYNC_STATE).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:review:async-state:null"),
 );
 const EMPTY_REVIEW_SECTION_FILE_IDS_ATOM = Atom.make(EMPTY_REVIEW_SECTION_FILE_IDS).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:review:section-file-ids:null"),
 );
 
-const reviewGitSectionsByThreadKeyAtom = Atom.family((threadKey: string) =>
-  Atom.make(EMPTY_GIT_REVIEW_SECTIONS).pipe(
-    Atom.keepAlive,
-    Atom.withLabel(`mobile:review:git-sections:${threadKey}`),
-  ),
-);
-
-const reviewTurnDiffByThreadKeyAtom = Atom.family((threadKey: string) =>
-  Atom.make(EMPTY_REVIEW_TURN_DIFFS).pipe(
-    Atom.keepAlive,
-    Atom.withLabel(`mobile:review:turn-diffs:${threadKey}`),
-  ),
-);
-
 const reviewSelectedSectionIdByThreadKeyAtom = Atom.family((threadKey: string) =>
   Atom.make<string | null>(null).pipe(
     Atom.keepAlive,
     Atom.withLabel(`mobile:review:selected-section-id:${threadKey}`),
-  ),
-);
-
-const reviewAsyncStateByThreadKeyAtom = Atom.family((threadKey: string) =>
-  Atom.make(EMPTY_REVIEW_ASYNC_STATE).pipe(
-    Atom.keepAlive,
-    Atom.withLabel(`mobile:review:async-state:${threadKey}`),
   ),
 );
 
@@ -104,20 +65,12 @@ const reviewParsedDiffCacheAtom = Atom.make(() => ({
 
 export interface ReviewCacheForThread {
   readonly threadKey: string | null;
-  readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
-  readonly turnDiffById: Readonly<Record<string, string>>;
   readonly selectedSectionId: string | null;
-  readonly asyncState: ReviewAsyncState;
   readonly expandedFileIdsBySection: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
   readonly revealedLargeFileIdsBySection: Readonly<
     Record<string, ReadonlyArray<string> | undefined>
   >;
   readonly viewedFileIdsBySection: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-}
-
-export interface ReviewAsyncState {
-  readonly loadingTurnIds: Readonly<Record<string, boolean>>;
-  readonly error: string | null;
 }
 
 function buildThreadKey(input: {
@@ -138,19 +91,10 @@ export function useReviewCacheForThread(input: {
   readonly threadId?: ThreadId;
 }): ReviewCacheForThread {
   const threadKey = buildThreadKey(input);
-  const gitSections = useAtomValue(
-    threadKey ? reviewGitSectionsByThreadKeyAtom(threadKey) : EMPTY_REVIEW_GIT_SECTIONS_ATOM,
-  );
-  const turnDiffById = useAtomValue(
-    threadKey ? reviewTurnDiffByThreadKeyAtom(threadKey) : EMPTY_REVIEW_TURN_DIFFS_ATOM,
-  );
   const selectedSectionId = useAtomValue(
     threadKey
       ? reviewSelectedSectionIdByThreadKeyAtom(threadKey)
       : EMPTY_REVIEW_SELECTED_SECTION_ID_ATOM,
-  );
-  const asyncState = useAtomValue(
-    threadKey ? reviewAsyncStateByThreadKeyAtom(threadKey) : EMPTY_REVIEW_ASYNC_STATE_ATOM,
   );
   const expandedFileIdsBySection = useAtomValue(
     threadKey
@@ -168,72 +112,18 @@ export function useReviewCacheForThread(input: {
 
   return {
     threadKey,
-    gitSections,
-    turnDiffById,
     selectedSectionId,
-    asyncState,
     expandedFileIdsBySection,
     revealedLargeFileIdsBySection,
     viewedFileIdsBySection,
   };
 }
 
-export function setReviewGitSections(
-  threadKey: string,
-  sections: ReadonlyArray<ReviewDiffPreviewSource>,
-): void {
-  appAtomRegistry.set(reviewGitSectionsByThreadKeyAtom(threadKey), sections);
-}
-
-export function setReviewTurnDiff(threadKey: string, sectionId: string, diff: string): void {
-  const atom = reviewTurnDiffByThreadKeyAtom(threadKey);
-  const current = appAtomRegistry.get(atom);
-  appAtomRegistry.set(atom, {
-    ...current,
-    [sectionId]: diff,
-  });
-}
-
 export function setReviewSelectedSectionId(threadKey: string, sectionId: string | null): void {
+  // A line selection belongs to the section it was made in; switching away drops it, so
+  // switching back does not bring back a range over lines that may have changed.
+  clearReviewCommentTarget();
   appAtomRegistry.set(reviewSelectedSectionIdByThreadKeyAtom(threadKey), sectionId);
-}
-
-function updateReviewAsyncState(
-  threadKey: string,
-  update: (current: ReviewAsyncState) => ReviewAsyncState,
-): void {
-  const atom = reviewAsyncStateByThreadKeyAtom(threadKey);
-  appAtomRegistry.set(atom, update(appAtomRegistry.get(atom)));
-}
-
-export function setReviewTurnDiffLoading(
-  threadKey: string,
-  sectionId: string,
-  isLoading: boolean,
-): void {
-  updateReviewAsyncState(threadKey, (current) => {
-    const loadingTurnIds = { ...current.loadingTurnIds };
-    if (isLoading) {
-      loadingTurnIds[sectionId] = true;
-    } else {
-      delete loadingTurnIds[sectionId];
-    }
-    return {
-      ...current,
-      loadingTurnIds,
-    };
-  });
-}
-
-export function setReviewAsyncError(threadKey: string, error: string | null): void {
-  updateReviewAsyncState(threadKey, (current) => ({
-    ...current,
-    error,
-  }));
-}
-
-export function getReviewAsyncStateSnapshot(threadKey: string): ReviewAsyncState {
-  return appAtomRegistry.get(reviewAsyncStateByThreadKeyAtom(threadKey));
 }
 
 export function updateReviewExpandedFileIds(

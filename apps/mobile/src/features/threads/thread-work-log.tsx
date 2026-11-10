@@ -1,5 +1,4 @@
 import { Button } from "../../components/ui/Button";
-import { SubagentStatusDot } from "./SubagentStatusDot";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
@@ -21,10 +20,9 @@ import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { StackActions, useIsFocused, useNavigation } from "@react-navigation/native";
+import { useIsFocused } from "@react-navigation/native";
 import {
   useEffect,
-  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -33,11 +31,8 @@ import {
   type ReactNode,
 } from "react";
 import {
-  AccessibilityInfo,
   Animated as NativeAnimated,
-  AppState,
   type ColorValue,
-  Easing,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -63,15 +58,16 @@ import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { BrowserAppIcon } from "./BrowserAppIcon";
+import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
-  type AgentSpawnSummary,
   formatItemFullDetail,
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
 import {
+  isJsonToolText,
   toolCallLines,
   turnItemOutputImages,
   turnItemOutputText,
@@ -79,36 +75,35 @@ import {
 import { useTurnItemDetail } from "../../state/queries";
 import {
   resolveThreadWorkGroupInitialScroll,
-  shouldFollowThreadWorkGroupAppend,
   type ThreadWorkGroupScrollPosition,
-} from "./thread-feed-live-follow";
+} from "./thread-feed-scroll-position";
 import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
-import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
-import { FilePreviewGallery } from "../../components/FilePreviewGallery";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
   FadeIn,
   FadeOut,
   LinearTransition,
   ReduceMotion,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { startShimmerSteps } from "./work-shimmer-steps";
 
 const SHIMMER_WIDTH = 72;
-const SHIMMER_SWEEP_MS = 1_350;
-const SHIMMER_PAUSE_MS = 1_450;
 const SHIMMER_ICON_AND_GAP_WIDTH = 30;
 export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
@@ -170,11 +165,14 @@ export function ThreadDisclosureChevron(props: {
   const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
   const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the chevron's Reanimated rotation value when the expanded state changes
   useLayoutEffect(() => {
-    rotation.value = withTiming(props.expanded ? expandedAngle : 0, {
-      duration: THREAD_DISCLOSURE_TRANSITION_MS,
-      reduceMotion: ReduceMotion.System,
-    });
+    rotation.set(
+      withTiming(props.expanded ? expandedAngle : 0, {
+        duration: THREAD_DISCLOSURE_TRANSITION_MS,
+        reduceMotion: ReduceMotion.System,
+      }),
+    );
   }, [expandedAngle, props.expanded, rotation]);
 
   const rotationStyle = useAnimatedStyle(() => ({
@@ -263,62 +261,36 @@ export function ShimmeringWorkContent(props: {
 }) {
   const [availableWidth, setAvailableWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
-  const [appIsActive, setAppIsActive] = useState(AppState.currentState === "active");
-  const [reducedMotion, setReducedMotion] = useState(true);
+  const appIsActive = useAppActive();
+  const reducedMotion = useReduceMotionEnabled();
   const screenIsFocused = useIsFocused();
-  const progress = useAnimatedValue(0);
+  // Native from creation, so each setValue updates the view without a React render.
+  const progress = useAnimatedValue(0, { useNativeDriver: true });
   const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
   const contentWidth = Math.min(
     availableWidth,
     (props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0) + Math.ceil(textWidth),
   );
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      setAppIsActive(state === "active");
-    });
-    return () => subscription.remove();
-  }, []);
-
-  useEffect(() => {
-    void AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion);
-    const subscription = AccessibilityInfo.addEventListener(
-      "reduceMotionChanged",
-      setReducedMotion,
-    );
-    return () => subscription.remove();
-  }, []);
-
-  // Runs on React Native's native driver instead of Reanimated, whose
-  // per-frame commits starve React's while commit pausing is disabled
-  // (package.json). See docs/internals/performance-regressions.md.
+  // Uses a native Animated value instead of Reanimated, whose per-frame commits
+  // starve React's while commit pausing is disabled (package.json). See
+  // docs/internals/performance-regressions.md.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
   useEffect(() => {
     progress.setValue(0);
     if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
-
-    const loop = NativeAnimated.loop(
-      NativeAnimated.timing(progress, {
-        toValue: 1,
-        duration: SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
+    return startShimmerSteps(progress);
   }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
 
-  // One timing covers the sweep and the pause, so the native driver can loop it.
   // The React Compiler memoizes these, so re-renders don't rebuild the native
   // animation nodes.
-  const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
   const sweepTranslateX = progress.interpolate({
-    inputRange,
-    outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
+    inputRange: [0, 1],
+    outputRange: [-SHIMMER_WIDTH, contentWidth],
   });
   const counterSweepTranslateX = progress.interpolate({
-    inputRange,
-    outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
+    inputRange: [0, 1],
+    outputRange: [SHIMMER_WIDTH, -contentWidth],
   });
 
   return (
@@ -421,6 +393,8 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
       return { ios: "globe", android: "public" };
     case "search":
       return "magnifyingglass";
+    case "stop":
+      return "stop.fill";
     case "hammer":
       return { ios: "hammer", android: "construction" };
     case "lock":
@@ -542,11 +516,13 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     props.activities.every((row) => row.projectedItem.item.type === "reasoning")
   ) {
     return (
-      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
-        {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
-        ))}
-      </ScrollView>
+      <WorkLogBlock continues={props.continuesWorkLog}>
+        <ThreadReasoningGroup
+          activities={props.activities}
+          edgeFadeColor={props.edgeFadeColor}
+          renderReasoning={props.renderReasoning}
+        />
+      </WorkLogBlock>
     );
   }
 
@@ -569,6 +545,60 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
   );
 }
 
+function ThreadReasoningGroup(props: {
+  readonly activities: ReadonlyArray<ThreadFeedActivity>;
+  readonly edgeFadeColor: string;
+  readonly renderReasoning: (text: string) => ReactNode;
+}) {
+  const scrollOffset = useSharedValue(0);
+  const contentHeight = useSharedValue(0);
+  const viewportHeight = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((event) => {
+    scrollOffset.set(event.contentOffset.y);
+  });
+  const bottomFadeStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(
+      1,
+      Math.max(0, contentHeight.value - viewportHeight.value - scrollOffset.value) /
+        WORK_GROUP_EDGE_FADE_HEIGHT,
+    ),
+  }));
+
+  return (
+    <View className="ml-7">
+      <Animated.ScrollView
+        nestedScrollEnabled
+        className="max-h-96"
+        contentContainerClassName="py-1"
+        scrollEventThrottle={16}
+        onScroll={onScroll}
+        onLayout={(event) => {
+          viewportHeight.set(event.nativeEvent.layout.height);
+        }}
+        onContentSizeChange={(_width, height) => {
+          contentHeight.set(height);
+        }}
+      >
+        {props.activities.map((row) => (
+          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+        ))}
+      </Animated.ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        className="absolute inset-x-0 bottom-0"
+        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
+      >
+        <EdgeFade color={props.edgeFadeColor} direction="up" />
+      </Animated.View>
+    </View>
+  );
+}
+
+const WORK_GROUP_MAINTAIN_SCROLL_AT_END = {
+  animated: false,
+  on: { dataAppend: true },
+} as const;
+
 function ThreadWorkGroupList(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly edgeFadeColor: string;
@@ -582,37 +612,27 @@ function ThreadWorkGroupList(props: {
     props.activities,
     props.rowSizing.estimatedRowHeight,
   );
-  const [initialPosition] = useState(() => {
-    const position = props.scrollPositions.get(props.groupId);
-    return props.activities.some((row) => row.id === position?.rowId) ? position : undefined;
-  });
-  const [initialScrollIndex] = useState(() =>
-    resolveThreadWorkGroupInitialScroll(props.activities, initialPosition),
-  );
-  const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
+  const savedPosition = props.scrollPositions.get(props.groupId);
+  const initialPosition = props.activities.some((row) => row.id === savedPosition?.rowId)
+    ? savedPosition
+    : undefined;
+  const initialScrollIndex = resolveThreadWorkGroupInitialScroll(props.activities, initialPosition);
   const listRef = useRef<LegendListRef>(null);
+  const previousTextSize = useRef(props.rowSizing.textSizeKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the list's cached row sizes when the text size changes
+  useLayoutEffect(() => {
+    if (previousTextSize.current === props.rowSizing.textSizeKey) return;
+    previousTextSize.current = props.rowSizing.textSizeKey;
+    listRef.current?.clearCaches({ mode: "sizes" });
+  }, [props.rowSizing.textSizeKey]);
   const loadedRef = useRef(false);
-  const userScrollingRef = useRef(false);
-  const pendingAppendHeightRef = useRef<number | null>(null);
-  const previousContent = useRef({
-    rows: props.activities,
-    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
-    expandedRows: props.expandedRows,
-  });
-  const [measuredContent, setMeasuredContent] = useState(() => ({
-    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
-    rowCount: props.activities.length,
-  }));
-  const contentHeight = Math.max(
-    1,
-    measuredContent.height +
-      Math.max(0, props.activities.length - measuredContent.rowCount) *
-        (props.rowSizing.estimatedRowHeight + WORK_ROW_GAP),
-  );
+  const [contentHeight, setContentHeight] = useState(estimatedRowsHeight);
   const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
   const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
   const sharedValues = { scrollOffset };
 
+  // Each edge fades only while content continues past it. Scroll offset stays
+  // on the UI thread; only content-size changes update React state.
   const topFadeStyle = useAnimatedStyle(() => ({
     opacity: Math.min(1, Math.max(0, scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT),
   }));
@@ -622,77 +642,40 @@ function ThreadWorkGroupList(props: {
       Math.max(0, contentHeight - height - scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT,
     ),
   }));
-  const rememberPosition = () => {
+  const rememberPosition = (scroll: number) => {
     if (!loadedRef.current) return;
-    const state = listRef.current?.getState();
-    const position = state && resolveWorkGroupScrollAnchor(state);
-    if (!state || !position) return;
+    const position = listRef.current?.anchorVisibleContent({ hold: false });
+    if (!position) return;
     props.scrollPositions.set(props.groupId, {
-      ...position,
-      contentHeight: state.contentLength,
+      rowId: position.key,
+      offsetWithinRow: position.offset,
+      scrollOffset: scroll,
     });
   };
-  const finishPendingAppend = () => {
-    const targetHeight = pendingAppendHeightRef.current;
-    const state = listRef.current?.getState();
-    if (
-      targetHeight !== null &&
-      state &&
-      !userScrollingRef.current &&
-      Math.abs(state.scrollLength - targetHeight) <= 1
-    ) {
-      pendingAppendHeightRef.current = null;
-      void listRef.current?.scrollToEnd({ animated: false });
-    }
+  const handleMetricsChange = () => {
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    setContentHeight(Math.max(1, metrics.contentLength));
+    rememberPosition(metrics.scroll);
   };
-  // LegendList notifies from child layout effects. Effect Events see the
-  // committed rows before those effects run, unlike a parent layout-effect ref.
-  const onContentSizeChange = useEffectEvent((nextHeight: number) => {
-    const previous = previousContent.current;
-    const detailsChanged = previous.expandedRows !== props.expandedRows;
-    const followAppend =
-      loadedRef.current &&
-      shouldFollowThreadWorkGroupAppend({
-        previousRows: previous.rows,
-        rows: props.activities,
-        previousContentHeight: previous.height,
-        contentHeight: nextHeight,
-        viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
-        scrollOffset: scrollOffset.value,
-        detailsChanged,
-        userScrolling: userScrollingRef.current,
-      });
-    previousContent.current = {
-      rows: props.activities,
-      height: nextHeight,
-      expandedRows: props.expandedRows,
-    };
-    setMeasuredContent((current) =>
-      current.height === nextHeight && current.rowCount === props.activities.length
-        ? current
-        : { height: nextHeight, rowCount: props.activities.length },
-    );
-    if (followAppend) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-    } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
-      pendingAppendHeightRef.current = null;
-    } else if (pendingAppendHeightRef.current !== null) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-    }
-    finishPendingAppend();
-    rememberPosition();
-  });
-  // Native ScrollView reports size after LegendList lays out rows. Use LegendList's JS size
-  // so group height and row measurements settle in the same commit.
+  const handleReady = () => {
+    loadedRef.current = true;
+    handleMetricsChange();
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to LegendList's totalSize state to report content height in the same commit
   useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const unsubscribe = list.getState().listen("totalSize", () => {
-      onContentSizeChange(list.getState().contentLength);
-    });
-    onContentSizeChange(list.getState().contentLength);
-    return unsubscribe;
-  }, []);
+    const state = listRef.current?.getState();
+    if (!state) return;
+    handleMetricsChange();
+    const stops = [
+      state.listen("totalSize", handleMetricsChange),
+      state.listen("footerSize", handleMetricsChange),
+      state.listen("headerSize", handleMetricsChange),
+    ];
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, [handleMetricsChange]);
   const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
     props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
       ? undefined
@@ -709,40 +692,20 @@ function ThreadWorkGroupList(props: {
       <AnimatedLegendList
         ref={listRef}
         data={props.activities}
+        dataKey={props.groupId}
         keyExtractor={workLogRowKey}
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
         getFixedItemSize={getFixedItemSize}
         initialScrollIndex={initialScrollIndex}
-        // 50px bootstrap overscan may leave expanded details unmeasured until after scroll restoration.
-        alwaysRender={
-          restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
-        }
         recycleItems={false}
         extraData={props.renderRow}
         renderItem={renderItem}
         sharedValues={sharedValues}
-        onLayout={finishPendingAppend}
-        onLoad={() => {
-          loadedRef.current = true;
-          setRestoringPosition(false);
-          rememberPosition();
-        }}
-        onScroll={rememberPosition}
-        onScrollBeginDrag={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onScrollEndDrag={() => {
-          userScrollingRef.current = false;
-        }}
-        onMomentumScrollBegin={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onMomentumScrollEnd={() => {
-          userScrollingRef.current = false;
-          rememberPosition();
-        }}
+        onReady={handleReady}
+        onScroll={handleMetricsChange}
+        onLayout={handleMetricsChange}
+        maintainScrollAtEnd={WORK_GROUP_MAINTAIN_SCROLL_AT_END}
+        maintainScrollAtEndThreshold={1 / Math.max(1, height)}
         maintainVisibleContentPosition
         nestedScrollEnabled
         directionalLockEnabled
@@ -770,6 +733,7 @@ function ThreadWorkGroupList(props: {
   );
 }
 
+/** A screen-colored gradient painted over the list edge that still has content past it. */
 function EdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
   const gradientId = `work-group-fade-${useId().replaceAll(":", "")}`;
   return (
@@ -833,14 +797,16 @@ function WorkspacePreparationRetryButton(props: {
   );
 }
 
-function ReplCodeText({
+function ToolCodeText({
   code,
+  language,
   theme,
 }: {
   readonly code: string;
+  readonly language: "typescript" | "html" | "json";
   readonly theme: "light" | "dark";
 }) {
-  const lines = useMarkdownCodeHighlight({ code, language: "typescript", theme, enabled: true });
+  const lines = useMarkdownCodeHighlight({ code, language, theme, enabled: true });
   let offset = 0;
   const highlighted = lines?.flatMap((line, lineIndex) => {
     const separator = lineIndex > 0 ? "\n" : "";
@@ -882,7 +848,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
-  const navigation = useNavigation();
+  const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
     row.projectedItem.item.type === "command_execution";
@@ -896,13 +862,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     const warning = failureItem.failure.class === "usage_limit";
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
+    // The reset time is the viewer's local time; naming the zone keeps it unambiguous.
     const resetTime = resetAt
-      ? new Date(resetAt).toLocaleString(undefined, {
+      ? `${new Date(resetAt).toLocaleString(undefined, {
           month: "short",
           day: "numeric",
           hour: "numeric",
           minute: "2-digit",
-        })
+        })} (${new Intl.DateTimeFormat().resolvedOptions().timeZone})`
       : null;
     const label = warning
       ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
@@ -1056,13 +1023,10 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
           if (notifiedSubagentThreadId !== undefined) {
-            // Push rather than navigate so Back returns to the parent thread instead of Home.
-            navigation.dispatch(
-              StackActions.push("Thread", {
-                environmentId: String(props.environmentId),
-                threadId: String(notifiedSubagentThreadId),
-              }),
-            );
+            openLinkedThread({
+              environmentId: String(props.environmentId),
+              threadId: String(notifiedSubagentThreadId),
+            });
             return;
           }
           if (canExpand) {
@@ -1216,39 +1180,61 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             ) : call ? (
               [
                 call.command,
-                ...(call.args ?? []).map(([key, value]) =>
-                  key === "code" &&
-                  shownItem.type === "dynamic_tool" &&
-                  isJavaScriptReplTool(shownItem.toolName) ? (
+                ...(call.args ?? []).map(([key, value]) => {
+                  const language =
+                    key === "html"
+                      ? "html"
+                      : key === "code" &&
+                          shownItem.type === "dynamic_tool" &&
+                          isJavaScriptReplTool(shownItem.toolName)
+                        ? "typescript"
+                        : isJsonToolText(value)
+                          ? "json"
+                          : null;
+                  return language ? (
                     <View key={key}>
                       <Text className="font-mono text-2xs leading-normal text-foreground-muted">
                         {key}
                       </Text>
-                      <ReplCodeText code={value} theme={props.themeAppearance} />
+                      <ToolCodeText
+                        code={value}
+                        language={language}
+                        theme={props.themeAppearance}
+                      />
                     </View>
                   ) : (
                     `${key} ${value}`
-                  ),
-                ),
+                  );
+                }),
                 call.argsText,
               ]
                 .filter((line) => Boolean(line))
-                .map((line, index) =>
-                  typeof line === "string" ? (
-                    <Text
-                      key={`${index}:${line}`}
-                      selectable
-                      className="font-mono text-2xs leading-normal text-foreground"
-                    >
-                      {line}
-                    </Text>
-                  ) : (
-                    line
-                  ),
+                .map(
+                  (line, index) =>
+                    /* oxlint-disable react/no-array-index-key -- Log lines are stateless positions within this output. */ typeof line ===
+                    "string" ? (
+                      <Text
+                        key={`${index}:${line}`}
+                        selectable
+                        className="font-mono text-2xs leading-normal text-foreground"
+                      >
+                        {isJsonToolText(line) ? (
+                          <ToolCodeText code={line} language="json" theme={props.themeAppearance} />
+                        ) : (
+                          line
+                        )}
+                      </Text>
+                    ) : (
+                      line
+                    ) /* oxlint-enable react/no-array-index-key */,
                 )
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-                {fullDetail}
+                {isJsonToolText(fullDetail) ? (
+                  <ToolCodeText code={fullDetail} language="json" theme={props.themeAppearance} />
+                ) : (
+                  fullDetail
+                )}
               </Text>
             ) : null}
             {fetchedOutput ? (
@@ -1259,7 +1245,15 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                   (!call || call.command || call.args || call.argsText) && "mt-1.5",
                 )}
               >
-                {fetchedOutput}
+                {isJsonToolText(fetchedOutput) ? (
+                  <ToolCodeText
+                    code={fetchedOutput}
+                    language="json"
+                    theme={props.themeAppearance}
+                  />
+                ) : (
+                  fetchedOutput
+                )}
               </Text>
             ) : null}
             {streamsOutput ? null : exitLine}
@@ -1319,7 +1313,6 @@ export function ThreadWorkGroupToggle(props: {
             <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
           </WorkLogIconSlot>
           <Text
-            key={props.rowSizing.textSizeKey}
             selectable={false}
             numberOfLines={4}
             ellipsizeMode="tail"
@@ -1344,7 +1337,6 @@ export function ThreadWorkGroupToggle(props: {
           >
             {props.shimmer ? (
               <ShimmeringWorkContent
-                key={props.rowSizing.textSizeKey}
                 environmentId={props.environmentId}
                 icon={icon}
                 iconSubtleColor={props.iconSubtleColor}
@@ -1364,7 +1356,7 @@ export function ThreadWorkGroupToggle(props: {
                     themeAppearance={props.themeAppearance}
                   />
                 </WorkLogIconSlot>
-                <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
+                <WorkLogLabel>{props.summary}</WorkLogLabel>
               </>
             )}
             <ThreadDisclosureChevron
@@ -1381,133 +1373,23 @@ export function ThreadWorkGroupToggle(props: {
   );
 }
 
-export const ThreadAgentSpawnCard = function ThreadAgentSpawnCard(props: {
-  readonly summary: AgentSpawnSummary;
-  readonly expanded: boolean;
-  readonly iconSubtleColor: ColorValue;
-  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
-  readonly onToggle: () => void;
-  readonly onCopy: () => void;
-}) {
-  const { summary, expanded } = props;
-  const working = summary.tone === "working";
-  const memberCount = summary.members.length;
-  const canExpand = memberCount > 0;
-  return (
-    <Animated.View layout={WORK_LOG_LAYOUT_TRANSITION} className="-mx-1 mb-1 px-1">
-      <Pressable
-        accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityState={canExpand ? { expanded } : undefined}
-        accessibilityLabel={`${summary.title}, ${summary.status}`}
-        accessibilityHint={
-          canExpand
-            ? `Double tap to ${expanded ? "hide" : "show"} ${memberCount} ${memberCount === 1 ? "subagent" : "subagents"}. Long press to copy.`
-            : "Long press to copy."
-        }
-        hitSlop={4}
-        onPress={() => {
-          if (!canExpand) return;
-          void Haptics.selectionAsync();
-          props.onToggle();
-        }}
-        onLongPress={props.onCopy}
-        className="rounded-xl border border-border-subtle bg-card px-2.5 py-2 active:bg-subtle"
-      >
-        <View className="flex-row items-center gap-2">
-          <View className="h-6 w-6 shrink-0 items-center justify-center">
-            <SymbolView
-              name={{ ios: "sparkles", android: "auto_awesome" }}
-              size={14}
-              weight="medium"
-              tintColor={props.iconSubtleColor}
-              type="monochrome"
-            />
-          </View>
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text
-              key={props.rowSizing.textSizeKey}
-              className="font-t3-medium text-sm text-foreground"
-              numberOfLines={1}
-            >
-              {summary.title}
-            </Text>
-            <View className="flex-row items-center gap-1.5">
-              <SubagentStatusDot tone={summary.tone} />
-              {working ? (
-                <ShimmeringWorkContent
-                  key={props.rowSizing.textSizeKey}
-                  compact
-                  icon="brain"
-                  iconSubtleColor={props.iconSubtleColor}
-                  label={summary.status}
-                  showIcon={false}
-                />
-              ) : (
-                <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-                  {summary.status}
-                </Text>
-              )}
-            </View>
-          </View>
-          {canExpand ? (
-            <ThreadDisclosureChevron
-              expanded={expanded}
-              collapsedDirection="down"
-              size={11}
-              tintColor={props.iconSubtleColor}
-            />
-          ) : null}
-        </View>
-        {expanded && canExpand ? (
-          <Animated.View
-            entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-            exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-            layout={WORK_LOG_LAYOUT_TRANSITION}
-            className="ml-8 mt-1.5 gap-1.5 border-l border-border pl-3"
-          >
-            {summary.members.map((member) => (
-              <View key={member.title} className="gap-px">
-                <View className="flex-row items-center gap-1.5">
-                  <SubagentStatusDot tone={member.tone} />
-                  <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
-                    {member.title}
-                  </Text>
-                  <Text className="shrink-0 text-2xs text-foreground-muted">{member.status}</Text>
-                </View>
-                {member.detail ? (
-                  <Text
-                    selectable
-                    className="pl-3 font-mono text-2xs leading-normal text-foreground-muted"
-                    numberOfLines={expanded ? 6 : 1}
-                  >
-                    {member.detail}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
-          </Animated.View>
-        ) : null}
-      </Pressable>
-    </Animated.View>
-  );
-};
-
 export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
+  readonly label?: string;
 }) {
+  const label = props.label ?? "Thinking";
   return (
     <View
       accessible
-      accessibilityLabel="Thinking"
+      accessibilityLabel={label}
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
       <ShimmeringWorkContent
-        key={props.rowSizing.textSizeKey}
         icon="brain"
         iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
+        label={label}
         showIcon
       />
     </View>

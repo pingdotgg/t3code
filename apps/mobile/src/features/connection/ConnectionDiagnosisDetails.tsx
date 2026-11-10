@@ -10,7 +10,6 @@ import {
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { Linking, View } from "react-native";
 
@@ -28,8 +27,8 @@ export function useConnectionDiagnosis(
   environmentId: EnvironmentId,
   presentation: EnvironmentPresentation | null,
 ) {
-  const state = Option.getOrElse(
-    AsyncResult.value(useAtomValue(environmentCatalog.stateAtom(environmentId))),
+  const state = AsyncResult.getOrElse(
+    useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
   if (presentation === null || !presentation.entry.enabled) return { diagnosis: null, state };

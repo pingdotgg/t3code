@@ -1,5 +1,5 @@
+import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
-import * as Neon from "alchemy/Neon";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -14,9 +14,7 @@ export default Alchemy.Stack(
     const projectId = yield* Config.String("PARENT_PROJECT_ID");
     const parentBranchId = yield* Config.String("PARENT_BRANCH_ID");
     const bucketName = yield* Config.String("PARENT_BUCKET_NAME");
-    const appOrigin = yield* Effect.sync(
-      () => process.env.UPLOAD_APP_ORIGIN ?? "*",
-    );
+    const appOrigin = yield* Effect.sync(() => process.env.UPLOAD_APP_ORIGIN ?? "*");
     const branch = yield* Neon.Branch("Preview", {
       project: { projectId },
       parentBranch: { branchId: parentBranchId },
@@ -57,14 +55,9 @@ export default Alchemy.Stack(
       env: { VITE_API_URL: api.url, VITE_NEON_AUTH_URL: auth.baseUrl },
       assets: { notFoundHandling: "single-page-application" },
     });
-    if (!web.url)
-      return yield* Effect.die(new Error("Preview website URL is unavailable"));
-    const siteUrl =
-      typeof web.url === "string" ? Output.literal(web.url) : web.url;
-    const origin = Output.map(
-      siteUrl,
-      (url: string | undefined) => new URL(url ?? "").origin,
-    );
+    if (!web.url) return yield* Effect.die(new Error("Preview website URL is unavailable"));
+    const siteUrl = typeof web.url === "string" ? Output.literal(web.url) : web.url;
+    const origin = Output.map(siteUrl, (url: string | undefined) => new URL(url ?? "").origin);
     yield* Neon.AuthTrustedDomain("PreviewOrigin", { auth, domain: origin });
     // No CustomDomain is declared: parent hostnames must never route to this preview.
     return {

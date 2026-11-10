@@ -9,7 +9,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -26,11 +25,9 @@ it.effect.each(["expired", "resolved"] as const)(
       (_input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
     );
     const getSession = vi.fn(() =>
-      Effect.succeed(
-        Option.some({
-          respondToRuntimeRequest,
-        } as never),
-      ),
+      Effect.succeedSome({
+        respondToRuntimeRequest,
+      } as never),
     );
     const projection = {
       runtimeRequests: [

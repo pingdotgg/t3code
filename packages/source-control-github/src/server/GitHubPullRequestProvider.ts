@@ -24,6 +24,7 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import type {
   GitHubRepositoryAccess,
   GitHubViewerAccess,
@@ -40,6 +41,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -48,8 +51,8 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
-  edit: { changeRequest: true, comment: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
   labels: true,
@@ -110,6 +113,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":
@@ -119,12 +123,30 @@ function gitHubProviderFailure(
       };
     case "SourceControlRateLimitPausedError":
       return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiResponseError":
+      return {
+        reason:
+          error.status === 403 ||
+          (error.githubErrorTypes?.includes("FORBIDDEN") &&
+            error.githubErrorTypes.every((type) => type === "FORBIDDEN" || type === "NOT_FOUND"))
+            ? "forbidden"
+            : "failed",
+      };
     case "GitHubApiNotFoundError":
-      return { reason: "not-found" };
+      return error.credential === undefined || error.credential === "app"
+        ? { reason: "not-found" }
+        : { reason: "not-found", accessHint: REPOSITORY_ACCESS_HINTS[error.credential] };
     default:
       return { reason: "failed" };
   }
 }
+
+const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
+  settings:
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+  env: "The server's environment token can't see it. Give it access, or unset it.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+};
 
 function withAvatar(
   actor: PullRequestActor | null,
@@ -168,6 +190,7 @@ function withWorkflowApprovals(
             status: "action-required" as const,
             description: "GitHub could not determine whether workflows are awaiting approval.",
             url: null,
+            placeholder: true,
           },
         ]
       : []),
@@ -365,25 +388,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
+          Effect.map((page) => ({
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              author: withAvatar(item.author, new Map<string, string>(), input.host),
+            })),
+          })),
         ),
 
     listChangeRequestsAcross: (input) =>
@@ -465,10 +476,13 @@ export const make = Effect.gen(function* () {
             ...pullRequest.reviewRequestTeams,
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          viewerPermissions: {
+            ...gitHubViewerPermissions({
+              ...pullRequest.viewerAccess,
+              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+            }),
+            maintainerEdits: pullRequest.canEditMaintainerEdits,
+          },
           baseComparison:
             pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
@@ -500,10 +514,6 @@ export const make = Effect.gen(function* () {
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
             })),
@@ -512,67 +522,75 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-          author: withAvatar(
-            pullRequest.author,
-            reviewThreads.avatarsByLogin,
-            input.host,
-            reviewThreads.botLogins,
-          ),
-          reviewers: reviewThreads.reviewers,
-          reactions: reviewThreads.reactions,
-          commits: (reviewThreads.commits.length > 0
-            ? reviewThreads.commits
-            : pullRequest.commits
-          ).map((commit) => ({
-            ...commit,
-            ...reviewThreads.commitStats.get(commit.oid),
-            authors: commit.authors?.map(
-              (author) =>
-                withAvatar(
-                  author,
+        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
+          const commitStats = new Map(
+            pullRequest.commits.map(({ oid, additions, deletions }) => [
+              oid,
+              additions === undefined ? {} : { additions, deletions },
+            ]),
+          );
+          return {
+            author: withAvatar(
+              pullRequest.author,
+              reviewThreads.avatarsByLogin,
+              input.host,
+              reviewThreads.botLogins,
+            ),
+            reviewers: reviewThreads.reviewers,
+            reactions: reviewThreads.reactions,
+            commits: (reviewThreads.commits.length > 0
+              ? reviewThreads.commits
+              : pullRequest.commits
+            ).map((commit) => ({
+              ...commit,
+              ...commitStats.get(commit.oid),
+              authors: commit.authors?.map(
+                (author) =>
+                  withAvatar(
+                    author,
+                    reviewThreads.avatarsByLogin,
+                    input.host,
+                    reviewThreads.botLogins,
+                  ) ?? author,
+              ),
+            })),
+            comments: [...pullRequest.comments, ...reviewThreads.comments]
+              .map((comment) => ({
+                ...comment,
+                // Dismissal reasons live on timeline events; HTML-only bot reviews need that fallback too.
+                body:
+                  comment.kind === "review" &&
+                  comment.reviewState?.toUpperCase() === "DISMISSED" &&
+                  rendersEmpty(comment.body)
+                    ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
+                    : comment.body,
+                author: withAvatar(
+                  comment.author,
                   reviewThreads.avatarsByLogin,
                   input.host,
                   reviewThreads.botLogins,
-                ) ?? author,
-            ),
-          })),
-          comments: [...pullRequest.comments, ...reviewThreads.comments]
-            .map((comment) => ({
-              ...comment,
-              // Dismissal reasons live on timeline events; HTML-only bot reviews need that fallback too.
-              body:
-                comment.kind === "review" &&
-                comment.reviewState?.toUpperCase() === "DISMISSED" &&
-                rendersEmpty(comment.body)
-                  ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
-                  : comment.body,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
-              reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
-              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
-            }))
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-          commentsTruncated: reviewThreads.truncated,
-          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
-          reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              author: withAvatar(
-                comment.author,
-                reviewThreads.avatarsByLogin,
-                input.host,
-                reviewThreads.botLogins,
-              ),
+                ),
+                reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+                editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
+              }))
+              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentsTruncated: reviewThreads.truncated,
+            reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
+            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                author: withAvatar(
+                  comment.author,
+                  reviewThreads.avatarsByLogin,
+                  input.host,
+                  reviewThreads.botLogins,
+                ),
+              })),
             })),
-          })),
-        })),
+          };
+        }),
       ),
 
     getReviewThreadComments: (input) =>
@@ -641,6 +659,11 @@ export const make = Effect.gen(function* () {
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
+
     setLabels: (input) =>
       cli
         .setLabels({
@@ -674,6 +697,9 @@ export const make = Effect.gen(function* () {
     updateChangeRequest: (input) =>
       cli
         .updatePullRequest({
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { maintainerCanModify: input.maintainerCanModify }),
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
