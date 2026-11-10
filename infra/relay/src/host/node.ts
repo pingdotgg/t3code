@@ -2,6 +2,8 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Headers from "effect/http/Headers";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -15,6 +17,19 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as MobileTelemetry from "../mobileTelemetry/MobileTelemetry.ts";
 import * as Ports from "./ports.ts";
 import type { RelayHost } from "./RelayHost.ts";
+
+/**
+ * TLS ends at the proxy, so the Node request is plain HTTP. DPoP proofs sign the public URL,
+ * so every request is rewritten to the configured origin instead of trusting forwarded headers.
+ */
+export const withPublicOrigin = (relayPublicOrigin: string) => {
+  const origin = new URL(relayPublicOrigin);
+  const protocol = origin.protocol === "https:" ? "https" : "http";
+  return <A, E, R>(handler: Effect.Effect<A, E, R>) =>
+    Effect.updateService(handler, HttpServerRequest.HttpServerRequest, (request) =>
+      request.modify({ protocol, headers: Headers.set(request.headers, "host", origin.host) }),
+    );
+};
 
 export interface NodeHostOptions {
   readonly relayPublicOrigin: string;

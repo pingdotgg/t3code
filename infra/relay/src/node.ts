@@ -20,7 +20,7 @@ import * as Redacted from "effect/Redacted";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import { composeRelay } from "./composition.ts";
-import { makeNodeHost } from "./host/node.ts";
+import { makeNodeHost, withPublicOrigin } from "./host/node.ts";
 
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -74,7 +74,9 @@ const program = Effect.gen(function* () {
   // Built once: every request reuses the same services, as the Worker's per-isolate layers do.
   const context = yield* Layer.build(relay.runtime);
   const handler = yield* relay.fetch.pipe(Effect.provideContext(context));
-  yield* HttpServer.serveEffect(handler.pipe(Effect.provideContext(context)));
+  yield* HttpServer.serveEffect(
+    handler.pipe(withPublicOrigin(relayPublicOrigin), Effect.provideContext(context)),
+  );
   yield* Effect.logInfo("Self-hosted relay is serving", { relayPublicOrigin });
   // Serving is scoped to this program; keep it alive until the process is stopped.
   return yield* Effect.never;

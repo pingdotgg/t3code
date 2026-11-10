@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -9,7 +10,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as TestClock from "effect/testing/TestClock";
 
 import type * as RelayDb from "../db.ts";
-import { fixedWindowLimit, makeNodeHost } from "./node.ts";
+import { fixedWindowLimit, makeNodeHost, withPublicOrigin } from "./node.ts";
 import * as Ports from "./ports.ts";
 
 const layer = Layer.mergeAll(SecureRandom.layerWebCrypto, FetchHttpClient.layer);
@@ -21,6 +22,27 @@ const makeHost = makeNodeHost({
   // The queue and scheduler never touch the database.
   database: {} as RelayDb.RelayDb["Service"],
   mobileTelemetry: { token: undefined, traces: "", logs: "", metrics: "" },
+});
+
+describe("withPublicOrigin", () => {
+  it.effect("gives handlers the public URL a proxy terminated TLS for", () =>
+    Effect.gen(function* () {
+      const proxied = HttpServerRequest.fromWeb(
+        new Request("http://relay:8080/v1/client/dpop-token?x=1", { method: "POST" }),
+      );
+      const url = yield* Effect.map(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.toURL,
+      ).pipe(
+        withPublicOrigin("https://relay.example.com"),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, proxied),
+      );
+
+      expect(url._tag === "Some" && url.value.href).toBe(
+        "https://relay.example.com/v1/client/dpop-token?x=1",
+      );
+    }),
+  );
 });
 
 describe("fixedWindowLimit", () => {
