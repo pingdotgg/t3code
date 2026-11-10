@@ -231,7 +231,12 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        env: gitProcessEnv(hostPlatform, input.env),
+        env: gitProcessEnv(hostPlatform, {
+          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
+          ...input.env,
+        }),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",
