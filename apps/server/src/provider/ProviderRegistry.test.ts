@@ -3125,6 +3125,49 @@ it.layer(
       ),
     );
 
+    it.effect("does not let a lazy mise shim install Claude during a status check (#33415)", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fake-mise-claude-" });
+        const installMarker = path.join(directory, "installed");
+        const binaryPath = path.join(directory, "claude");
+        // A `lazy = true` mise shim downloads and installs the tool unless MISE_OFFLINE is set.
+        yield* fs.writeFileString(
+          binaryPath,
+          [
+            `#!/bin/sh`,
+            `case "$MISE_OFFLINE" in`,
+            `  1|true) cat >&2 <<'EOF'`,
+            `mise WARN  Failed to resolve tool version list for claude: [/home/u/.config/mise/config.toml] claude@latest: no versions found for claude`,
+            `mise ERROR Failed to install aqua:anthropics/claude-code@latest: no versions found for claude`,
+            `mise ERROR Version: 2026.11.5 linux-x64 (2026-11-09)`,
+            `mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information`,
+            `EOF`,
+            `  exit 1 ;;`,
+            `esac`,
+            `touch "${installMarker}"`,
+            `echo "2.1.0 (Claude Code)"`,
+          ].join("\n"),
+        );
+        yield* fs.chmod(binaryPath, 0o755);
+        const { MISE_OFFLINE: _, ...environment } = process.env;
+
+        const status = yield* checkClaudeProviderStatus(
+          { ...defaultClaudeSettings, binaryPath },
+          claudeCapabilities(),
+          environment,
+        );
+
+        assert.isFalse(
+          yield* fs.exists(installMarker),
+          "the Claude --version status probe let mise install Claude",
+        );
+        assert.isNull(status.version, "mise's own version is not Claude's");
+      }),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
