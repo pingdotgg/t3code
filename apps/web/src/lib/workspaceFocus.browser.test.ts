@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
+import { fakeTimers } from "../../test/render";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -287,6 +288,26 @@ describe("workspace area focus", () => {
     const list = fixture.area("pull-requests", 1);
     await vi.waitFor(() => expect(document.activeElement).toBe(list.button));
   });
+
+  it.each(["pointerdown", "keydown"])(
+    "cancels a delayed composer focus request after %s elsewhere",
+    async (eventType) => {
+      using fixture = setup();
+      using _timers = fakeTimers();
+      const main = fixture.area("composer", 2);
+      const panel = fixture.area("panel", 3);
+      main.button.focus();
+      fixture.controller.request({ area: "panel", selector: '[contenteditable="true"]' });
+      await Promise.resolve();
+      main.button.dispatchEvent(new Event(eventType, { bubbles: true }));
+      const editor = document.createElement("div");
+      editor.contentEditable = "true";
+      editor.textContent = "Side draft";
+      panel.element.append(editor);
+      await vi.runAllTimersAsync();
+      expect(document.activeElement).toBe(main.button);
+    },
+  );
 
   it("keeps focus on a control that React remounted elsewhere", async () => {
     using fixture = setup();
