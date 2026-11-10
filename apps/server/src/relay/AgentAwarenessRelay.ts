@@ -570,9 +570,9 @@ export const make = Effect.gen(function* () {
       !isListedThreadLineage(threadShell.lineage) &&
       !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
-      // Subagents and side chats have no relay rows; publish toward the listed parent instead.
+      // Side chats have no relay rows; publish toward the listed parent. Subagents reach it via trackSubagentRequest.
       const parentId = threadShell.lineage.parentThreadId;
-      if (parentId !== null && parentId !== threadId) {
+      if (threadShell.lineage.sideChat === true && parentId !== null && parentId !== threadId) {
         yield* Ref.update(childParentByThreadRef, (parents) =>
           new Map(parents).set(threadId, parentId),
         );
