@@ -1745,6 +1745,111 @@ describe("AcpRegistrySupport", () => {
       ),
     );
   });
+
+  it.effect("runs an installed dsh for the supplemental DeepSeek record", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-dsh-path-" });
+      const binDir = `${cacheDir}/bin`;
+      const dshPath = `${binDir}/dsh`;
+      yield* fileSystem.makeDirectory(binDir);
+      yield* fileSystem.writeFileString(dshPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(dshPath, 0o755);
+      const environment = { PATH: binDir };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+      const deepseekSettings = decodeAcpRegistrySettings({ agentId: "deepseek-harness" });
+
+      expect(yield* resolver.prepare({ agentId: "deepseek-harness" })).toMatchObject({
+        agentId: "deepseek-harness",
+        prepared: true,
+      });
+      expect(yield* resolver.inspect(deepseekSettings, environment)).toMatchObject({
+        status: "ready",
+        distribution: "local",
+      });
+      const resolved = yield* resolver.resolve(deepseekSettings, "/workspace", environment);
+      expect(resolved.distribution).toBe("local");
+      expect(resolved.spawn.command.replaceAll("\\", "/")).toMatch(/\/bin\/dsh$/);
+      expect(resolved.spawn.args).toEqual(["--profile", "acp"]);
+      expect(resolved.spawn.shell).toBe(false);
+      expect(yield* fileSystem.exists(`${cacheDir}/tools`)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version: "1.0.0", agents: [] })),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps an official DeepSeek entry on its own distribution when dsh is installed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-dsh-official-",
+      });
+      const binDir = `${cacheDir}/bin`;
+      yield* fileSystem.makeDirectory(binDir);
+      yield* fileSystem.writeFileString(`${binDir}/dsh`, "#!/bin/sh\n");
+      yield* fileSystem.chmod(`${binDir}/dsh`, 0o755);
+      const environment = { PATH: binDir };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+      const deepseekSettings = decodeAcpRegistrySettings({ agentId: "deepseek-harness" });
+
+      const prepared = yield* resolver.prepare({ agentId: "deepseek-harness" }).pipe(Effect.flip);
+      expect(prepared.reason).toBe("runner_unavailable");
+      expect(yield* resolver.inspect(deepseekSettings, environment)).toMatchObject({
+        status: "missing_runner",
+        distribution: "npx",
+        runner: "npm",
+      });
+      const resolved = yield* resolver
+        .resolve(deepseekSettings, "/workspace", environment)
+        .pipe(Effect.flip);
+      expect(resolved.reason).toBe("runner_unavailable");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                JSON.stringify({
+                  version: "1.0.0",
+                  agents: [
+                    {
+                      id: "deepseek-harness",
+                      name: "Official DeepSeek",
+                      version: "9.9.9",
+                      description: "Official registry entry",
+                      distribution: {
+                        npx: { package: "@official/deepseek-harness@9.9.9", args: ["acp"] },
+                      },
+                    },
+                  ],
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("acpRegistryManagedBinaryDirectories", () => {

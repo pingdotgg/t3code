@@ -23,7 +23,7 @@ export const SUPPLEMENTAL_ACP_AGENT_RECORDS = [
     name: "ZCode",
     version: "0.3.2",
     description:
-      "Unofficial ACP bridge for an installed ZCode desktop. T3 downloads zcode-acp and starts it.",
+      "Unofficial ACP bridge for ZCode desktop 3.11.2. Other desktop versions are rejected. T3 downloads zcode-acp and starts it.",
     authors: ["supermomonga"],
     website: "https://github.com/supermomonga/zcode-acp",
     repository: "https://github.com/supermomonga/zcode-acp",

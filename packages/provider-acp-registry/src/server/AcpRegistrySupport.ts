@@ -198,6 +198,11 @@ export const supplementalAcpAgents: ReadonlyArray<AcpRegistryAgent> =
     const decoded = decodeRegistryAgent(candidate);
     return Option.isSome(decoded) ? [decoded.value] : [];
   });
+const supplementalAgentSet = new Set<AcpRegistryAgent>(supplementalAcpAgents);
+
+function installedCommandForSupplementalAgent(agent: AcpRegistryAgent): string | undefined {
+  return supplementalAgentSet.has(agent) ? supplementalPathCommand(agent.id) : undefined;
+}
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeNpmPackageManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(NpmPackageManifest),
@@ -1697,7 +1702,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
-      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommandName = installedCommandForSupplementalAgent(agent);
       const localCommand =
         localCommandName === undefined
           ? undefined
@@ -1811,7 +1816,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             } as const);
       }
 
-      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommandName = installedCommandForSupplementalAgent(agent);
       const localCommand =
         localCommandName === undefined
           ? undefined
@@ -1937,7 +1942,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       let commandBinDirectory: string | undefined;
       const effectiveEnvironment = environment ?? hostEnvironment;
       const commandOverride = settings.commandPath.trim();
-      const localCommandName = supplementalPathCommand(agent.id);
+      const localCommandName = installedCommandForSupplementalAgent(agent);
       const localCommand =
         commandOverride.length === 0 && localCommandName !== undefined
           ? resolveExecutable(localCommandName, platform, effectiveEnvironment)
