@@ -1,12 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["alchemy.run.ts", "vite.config.ts", "src"],
+  "include": ["alchemy.run.ts", "vite.config.ts", "src", "test"],
   "compilerOptions": {
+    "types": ["bun", "vite/client"],
     "noEmit": true,
     "rootDir": ".",
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "target": "ESNext",
     "lib": ["ESNext", "DOM"]
-  }
+  },
+  "references": [
+    {
+      "path": "../../packages/alchemy/tsconfig.json"
+    }
+  ]
 }

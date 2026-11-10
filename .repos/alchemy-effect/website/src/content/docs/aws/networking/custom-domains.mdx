@@ -1,15 +1,17 @@
 ---
 title: Custom domains with Route53 + ACM
-description: Serve your site or API from your own domain — DNS-validated ACM certificates, Route 53 alias records, and the domain prop on Website resources.
+description: Serve your site or API from your own domain — DNS-validated ACM certificates, Route 53 or another DNS host through a DNS adapter, and the domain prop on Website resources and Lambda Functions.
 sidebar:
   order: 6
 ---
 
 A custom domain on AWS is three moving parts: a TLS certificate (ACM), DNS
-records (Route 53), and wiring both into whatever serves traffic (CloudFront
-or API Gateway). For websites, Alchemy collapses all three into a single
-`domain` prop; for APIs and anything bespoke, the same primitives —
-`AWS.ACM.Certificate` and `AWS.Route53.Record` — are available directly.
+records (Route 53, or another DNS host such as Cloudflare), and wiring both
+into whatever serves traffic (CloudFront, a load balancer, or API Gateway).
+For websites, load-balanced ECS services, and Lambda Functions, Alchemy
+collapses all three into a single `domain` prop; for APIs and anything
+bespoke, the same primitives — `AWS.ACM.Certificate` and
+`AWS.Route53.Record` — are available directly.
 
 ## The one-prop path: `domain` on Website resources
 
@@ -54,9 +56,43 @@ DNS records are still managed for you — only the certificate step is
 replaced. The certificate must cover the domain name and every alias you
 list.
 
+## Use a domain on another DNS host
+
+If the domain's DNS lives outside Route 53 — for example, a domain
+registered with Cloudflare Registrar — pass the DNS host's
+[adapter](/infrastructure-as-code/dns-adapters) as `dns`:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("Site", {
+  path: "./dist",
+  domain: {
+    name: "app.example.com",
+    aliases: ["www.app.example.com"],
+    dns: Cloudflare.DNS.Adapter(),
+  },
+});
+```
+
+The certificate is still issued by ACM, but its validation `CNAME`s are
+written to the Cloudflare zone (always DNS-only), and each hostname gets a
+`CNAME` to the CloudFront distribution — Cloudflare flattens it at the zone
+apex. The zone is inferred from each hostname; pin it with
+`Cloudflare.DNS.Adapter({ zone: "example.com" })`. The same `dns` option works
+on `AWS.Website.Router` (including hostnames bound by attached sites),
+`AWS.Website.SsrSite`, the `domain` of an `AWS.ECS.Service` load balancer, and
+a Lambda Function's `domain`. Include `Cloudflare.providers()` alongside
+`AWS.providers()` in the stack. `Hetzner.DNS.Adapter()` works the same way
+for a domain on Hetzner DNS.
+
+Records are DNS-only by default. `Cloudflare.DNS.Adapter({ proxied: true })`
+puts Cloudflare's CDN in front of CloudFront — set the zone's SSL/TLS mode to
+Full (strict) if you do. Validation records are left in the zone when a
+certificate is deleted: ACM reuses the same `CNAME` for every certificate on
+a name.
+
 ## Manage DNS elsewhere
 
-Set `dns: false` to skip Route 53 entirely:
+Set `dns: false` to skip DNS entirely:
 
 ```typescript
 domain: {
@@ -67,7 +103,7 @@ domain: {
 ```
 
 No records are created, so you point your DNS provider at the distribution's
-domain name yourself. `dns: false` requires `cert` — without Route 53 access
+domain name yourself. `dns: false` requires `cert` — without DNS access
 Alchemy can't complete DNS validation for a new certificate, so you must
 bring one.
 
@@ -105,7 +141,30 @@ const cert = yield* AWS.ACM.Certificate("WebsiteCertificate", {
 The provider upserts the DNS validation records ACM asks for into the zone,
 waits for Route 53 to propagate them, and blocks until the certificate
 reaches `ISSUED` — so `cert.certificateArn` is ready to attach the moment
-the effect resolves. Certificates are requested in `us-east-1`, the region
+the effect resolves.
+
+When the validation records live on another DNS host, request the
+certificate with `dnsValidation: "external"`, publish its records, and wait
+with `AWS.ACM.CertificateValidation`:
+
+```typescript
+const cert = yield* AWS.ACM.Certificate("WebsiteCertificate", {
+  domainName: "app.example.com",
+  dnsValidation: "external",
+});
+yield* Cloudflare.DNS.RecordList("WebsiteCertificateValidation", {
+  records: cert.domainValidationOptions.pipe(
+    Output.map(AWS.ACM.validationRecordsOf),
+  ),
+});
+const issued = yield* AWS.ACM.CertificateValidation("WebsiteCertificateIssued", {
+  certificateArn: cert.certificateArn,
+});
+```
+
+`issued.certificateArn` resolves once ACM issues the certificate, so
+resources that take it deploy after issuance. The `domain` props above do
+this for you when `dns` names another host. Certificates are requested in `us-east-1`, the region
 CloudFront requires for viewer certificates. ACM certificates are immutable:
 changing the domain name, SANs, or validation settings replaces the
 certificate with a new one.
@@ -132,6 +191,25 @@ Note that `aliasTarget.hostedZoneId` is the *distribution's* hosted zone ID
 with `UPSERT` — create and update are the same operation — and the provider
 waits for the Route 53 change to reach `INSYNC` before returning, so the
 record is live when the deploy finishes.
+
+## Custom domain for a Lambda Function
+
+Function URLs can't serve a custom hostname. Set `domain` on
+`AWS.Lambda.Function` and Alchemy puts an API Gateway v2 HTTP API in front
+of the Function, with a regional certificate, an API Gateway domain name per
+hostname, and the DNS records:
+
+```typescript
+const api = yield* AWS.Lambda.Function("Api", {
+  main: "./src/handler.ts",
+  domain: "api.example.com",
+});
+// api.domainUrl → "https://api.example.com"
+```
+
+The HTTP API uses payload format 2.0, the same event shape as a Function
+URL, so a `fetch` handler works unchanged. The object form takes `aliases`,
+`hostedZoneId`, and `dns` like the Website `domain` prop.
 
 ## Custom domain for API Gateway
 
@@ -191,4 +269,7 @@ for regional endpoint configurations.
 - Reference: [Certificate](/providers/aws/acm/certificate),
   [Record](/providers/aws/route53/record),
   [HostedZone](/providers/aws/route53/hostedzone),
-  [DomainName](/providers/aws/apigateway/domainname)
+  [DomainName](/providers/aws/apigateway/domainname),
+  [Cloudflare DNS Records](/providers/cloudflare/dns/records)
+- [DNS Adapters](/infrastructure-as-code/dns-adapters) — publish records on
+  another DNS host, or build an adapter for your own
