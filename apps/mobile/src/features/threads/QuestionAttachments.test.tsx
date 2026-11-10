@@ -50,8 +50,8 @@ vi.mock("./ComposerAttachmentButton", () => ({ ComposerAttachmentButton: () => n
 vi.mock("../../components/ComposerAttachmentStrip", () => ({
   ComposerAttachmentStrip: () => null,
 }));
-vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
-vi.mock("../../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: { environmentId: "env-1", id: "thread-1" } }),
 }));
