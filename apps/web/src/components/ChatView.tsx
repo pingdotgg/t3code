@@ -232,7 +232,7 @@ import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
-import { isPreviewFocused } from "../lib/previewFocus";
+import { isBrowserFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { draftModelSelectionApplies, threadHasStarted } from "../lib/chatThreadActions";
 import {
@@ -2827,7 +2827,9 @@ export default function ChatView(props: ChatViewProps) {
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
-    previewFocus: isPreviewFocused(),
+    // A thread's own toggles answer from its diff, files and pull request tabs; only a
+    // browser keeps the keys it shares with them (mod+l).
+    previewFocus: isBrowserFocused(),
     previewOpen: previewPanelOpen,
     rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
