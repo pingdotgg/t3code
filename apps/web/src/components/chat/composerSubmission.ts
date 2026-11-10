@@ -6,6 +6,7 @@ type ComposerSubmitEvent = { preventDefault: () => void };
 type ComposerSubmissionInput = {
   prompt: string;
   providerInput?: string;
+  isSendBusy?: boolean;
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
@@ -18,7 +19,7 @@ export function getComposerPromptInputLength(prompt: string): number {
   );
 }
 
-export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
+function getComposerPromptLengthValidationMessage(prompt: string): string | null {
   const inputLength = getComposerPromptInputLength(prompt);
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;
@@ -30,6 +31,9 @@ export function getComposerPromptLengthValidationMessage(prompt: string): string
 export function getComposerSubmissionValidationMessage(
   options: ComposerSubmissionInput,
 ): string | null {
+  if (options.isSendBusy) {
+    return "Your previous message is still saving. Wait for it to finish, then send again.";
+  }
   return options.submissionTarget === "provider-turn"
     ? getComposerPromptLengthValidationMessage(options.providerInput ?? options.prompt)
     : null;
