@@ -10,6 +10,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -119,7 +120,13 @@ const withService = <A, E>(
       const link = yield* CloudLink.CloudLink;
       return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
     }).pipe(
-      Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // These tests never sign proofs; the mocked secret store cannot create a key pair.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          Layer.provide(layerDependencies),
+        ),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
   });
@@ -301,6 +308,14 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
       const mintError = yield* link.mintCredential({} as never).pipe(Effect.flip);
       assert.equal(applyError.message, "Example Corp's policy does not allow T3 Connect.");
       assert.equal(mintError._tag, "ManagedPolicyRefusedError");
-    }).pipe(Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // These tests never sign proofs; the mocked secret store cannot create a key pair.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
   }),
 );
