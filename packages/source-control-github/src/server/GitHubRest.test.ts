@@ -510,6 +510,30 @@ describe("GitHubRest", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reads a proxy's 403 with Retry-After as a refusal and keeps the host open", () => {
+    const { layer, requests } = harness(
+      () =>
+        new Response("<html><head><title>403 Forbidden</title></head><body>nginx</body></html>", {
+          status: 403,
+          headers: { "content-type": "text/html", "retry-after": "5" },
+        }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubRest.GitHubRest;
+      const read = {
+        host: "ghes.example.internal",
+        operation: "checks",
+        path: "repos/acme/web/pulls/7",
+      };
+      const first = yield* Effect.flip(api.rest(read));
+      expect(first).toMatchObject({ _tag: "GitHubApiResponseError", status: 403 });
+      const second = yield* Effect.flip(api.rest(read));
+      expect(second).toMatchObject({ _tag: "GitHubApiResponseError", status: 403 });
+      expect(requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("drops a refused token so the next request asks the source again", () => {
     const { layer, requests, invalidations } = harness((request) =>
       request.headers.authorization === "Bearer first"
