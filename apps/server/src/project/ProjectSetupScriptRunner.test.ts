@@ -130,7 +130,6 @@ describe("ProjectSetupScriptRunner", () => {
       const command = 'node "${HOME:-.}/x.mjs" setup';
       const { writes } = yield* setup({ shell: "/usr/bin/fish", command });
       yield* TestClock.adjust("3 seconds");
-      // Interactive fish runs each submitted line alone and discards one that fails to parse.
       const submitted = (yield* Queue.take(writes)).split("\r");
       expect(submitted.find((line) => line.includes(command))).toMatch(/printf .*\$status/);
     }),
