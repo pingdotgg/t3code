@@ -213,8 +213,6 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
-  // iOS screenshots go through the service so the Device panel gets its Xcode 26 simctl fallback.
-  // Hosts with their own upstreams keep their routing; Simlock serves Android through serve-sim too.
   const screenshotDevice = upstreamSearch.get("device");
   if (
     !ready.upstream &&
