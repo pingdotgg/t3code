@@ -37,7 +37,6 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   confirmThreadUnpin: false,
-  contextWindowMeterEnabled: false,
   diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
@@ -55,7 +54,6 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
-  planModeEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   persistComposerContextStrip: true,
@@ -70,7 +68,6 @@ const clientSettings: ClientSettings = {
   boringSidebarMultilineRows: false,
   threadDetailsUsageEnabled: false,
   threadDetailsItems: {},
-  legacySidebarEnabled: false,
   sidebarWorkingShelfEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
@@ -142,6 +139,29 @@ describe("DesktopClientSettings", () => {
         assert.deepEqual(
           yield* decodeClientSettingsJson(yield* fileSystem.readFileString(linkedSettingsPath)),
           clientSettings,
+        );
+      }),
+    ),
+  );
+
+  it.effect("removes its temporary file when replacing the settings file fails", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(`${environment.clientSettingsPath}/occupied`, {
+          recursive: true,
+        });
+
+        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
+
+        assert.equal(error.operation, "replace-settings-file");
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+            name.endsWith(".tmp"),
+          ),
+          [],
         );
       }),
     ),
