@@ -29,7 +29,8 @@ class GrokQuotaConfigurationError extends Schema.TaggedError<
   GrokQuotaConfigurationError,
   { readonly brand: unique symbol }
 >()("GrokQuotaConfigurationError", { cause: Schema.Defect() }) {}
-const GrokUsageResponse = Schema.Struct({
+export const GROK_USAGE_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+export const GrokUsageResponse = Schema.Struct({
   config: Schema.optional(
     Schema.Struct({
       creditUsagePercent: Schema.optional(Schema.Number),
@@ -200,9 +201,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
-      HttpClientRequest.get("https://cli-chat-proxy.grok.com/v1/billing?format=credits").pipe(
-        HttpClientRequest.bearerToken(token),
-      ),
+      HttpClientRequest.get(GROK_USAGE_URL).pipe(HttpClientRequest.bearerToken(token)),
     );
     if (response.status === 403) {
       const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
