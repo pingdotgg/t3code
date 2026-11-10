@@ -309,6 +309,31 @@ it("keeps an image on its own line under a label but leaves inline images inline
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
 
+it("keeps the number written on each ordered list item", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: { value?: unknown }; children?: Node[] };
+  const values = (node: Node): unknown[] => [
+    ...(node.tagName === "li" ? [node.properties?.value] : []),
+    ...(node.children ?? []).flatMap(values),
+  ];
+  const render = (markdown: string) =>
+    values(processor.runSync(processor.parse(markdown), markdown) as Node);
+
+  expect(render("3. first\n5. second\n6. third")).toEqual([undefined, "5", undefined]);
+  expect(render("> 1. quoted\n> 4. skipped")).toEqual([undefined, "4"]);
+  expect(render("1. outer\n   1. nested\n   7. jump\n9. back")).toEqual([
+    undefined,
+    undefined,
+    "7",
+    "9",
+  ]);
+  expect(render("1. one\n2. two\n- bullet")).toEqual([undefined, undefined, undefined]);
+});
+
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
   const processor = unified()
     .use(remarkParse)
