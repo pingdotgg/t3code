@@ -34,7 +34,13 @@ describe("native PR entry points", () => {
         context,
         projects,
       ),
-    ).toEqual({ ...context, host: "github.com", repository: "org/repo", number: 12 });
+    ).toEqual({
+      ...context,
+      host: "github.com",
+      repository: "org/repo",
+      number: 12,
+      navigationUrl: "https://github.com/org/repo/pull/12/files#diff",
+    });
     expect(
       nativePullRequestDestination(
         "https://git.example/group/sub/repo/-/merge_requests/9",

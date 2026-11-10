@@ -6,11 +6,13 @@ import { createCodeViewFileReveal } from "./useCodeViewFileReveal";
 function viewer(initialItems: ReadonlyArray<string>) {
   const items = new Set(initialItems);
   const scrolls: CodeViewScrollTarget[] = [];
+  const collapsed = new Set<string>();
   return {
     items,
+    collapsed,
     scrolls,
     getInstance: () => ({}),
-    getItem: (id: string) => (items.has(id) ? {} : undefined),
+    getItem: (id: string) => (items.has(id) ? { collapsed: collapsed.has(id) } : undefined),
     scrollTo: (target: CodeViewScrollTarget) => scrolls.push(target),
   };
 }
@@ -24,6 +26,13 @@ describe("createCodeViewFileReveal", () => {
     reveal.request("a");
 
     expect(view.scrolls).toEqual([{ type: "item", id: "a", align: "start" }]);
+    const range = { start: 12, side: "deletions", end: 15, endSide: "additions" } as const;
+    view.collapsed.add("a");
+    reveal.request("a", range);
+    expect(view.scrolls).toHaveLength(1);
+    view.collapsed.delete("a");
+    reveal.flush();
+    expect(view.scrolls.at(-1)).toEqual({ type: "range", id: "a", range, align: "center" });
   });
 
   it("keeps a missing file pending until a flush finds it, then drops it", () => {
@@ -52,6 +61,34 @@ describe("createCodeViewFileReveal", () => {
     view.items.add("a");
     reveal.flush();
     expect(view.scrolls).toEqual([{ type: "item", id: "a", align: "start" }]);
+  });
+
+  it("renders the destination file and expands context before positioning its range", () => {
+    const reveal = createCodeViewFileReveal();
+    const view = viewer(["a"]);
+    let rendered = false;
+    let expanded = false;
+    const instance = {
+      revealLine: () => {
+        if (expanded) return false;
+        expanded = true;
+        return true;
+      },
+      getLinePosition: () => (expanded ? { top: 100, height: 20 } : undefined),
+    };
+    reveal.attach({
+      ...view,
+      getInstance: () => ({ getRenderedItems: () => (rendered ? [{ id: "a", instance }] : []) }),
+    });
+    const range = { start: 12, end: 15, side: "additions" } as const;
+    reveal.request("a", range);
+    expect(view.scrolls).toEqual([{ type: "item", id: "a", align: "start" }]);
+    rendered = true;
+    reveal.flush();
+    expect(expanded).toBe(true);
+    expect(view.scrolls).toHaveLength(1);
+    reveal.flush();
+    expect(view.scrolls.at(-1)).toEqual({ type: "range", id: "a", range, align: "center" });
   });
 
   it("drops a pending reveal when its viewer detaches, and positions the next viewer on request", () => {

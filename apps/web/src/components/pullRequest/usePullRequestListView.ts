@@ -40,6 +40,7 @@ import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly selectedUrl?: string;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -146,6 +147,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
           repository: search.repository,
           number: search.number,
           projectId: selectedProject.id,
+          ...(search.selectedUrl ? { url: search.selectedUrl, revealUrl: search.selectedUrl } : {}),
           ...(selectedHost ? { host: selectedHost } : {}),
         }
       : null;

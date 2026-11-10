@@ -1,3 +1,9 @@
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+  pullRequestDiffPathMatches,
+  pullRequestLinkCommit,
+} from "@t3tools/shared/pullRequestAnchor";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
@@ -154,8 +160,25 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
       });
     return rows;
   })();
+  const location = parsePullRequestAnchor(params.navigationUrl);
+  const anchor = location?.kind === "timeline" ? location.anchor : null;
+  const targetComment = anchor
+    ? result.data?.comments.find((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url))
+    : null;
+  const targetThread = anchor
+    ? result.data?.reviewThreads.find((thread) =>
+        thread.comments.some((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url)),
+      )
+    : null;
+  const targetKey = targetThread
+    ? `discussion:${targetThread.id}`
+    : targetComment
+      ? `comment:${targetComment.id}`
+      : null;
   return {
     rows,
+    targetKey,
+    targetThread,
     hiddenCount: filtered?.hiddenCount ?? 0,
     pending: result.isPending && !result.data,
     error: result.error,
@@ -334,7 +357,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const params = route.params;
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
-  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">("overview");
+  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">(() => {
+    const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
+    return kind === "timeline" || kind === "commits" ? "activity" : "overview";
+  });
   const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -345,7 +371,14 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const shown = (tab: typeof chosenSection) =>
     !guidesEnabled && tab === "guide" ? "overview" : tab;
   const section = shown(chosenSection);
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(DEFAULT_ACTIVITY_FILTER);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(() => {
+    const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
+    return kind === "timeline"
+      ? { ...DEFAULT_ACTIVITY_FILTER, bots: true, resolved: true }
+      : kind === "commits"
+        ? { ...DEFAULT_ACTIVITY_FILTER, kind: "commits" }
+        : DEFAULT_ACTIVITY_FILTER;
+  });
   const activityContent = usePullRequestActivityRows(params, activityFilter);
   const scrollOffsets = useRef<Record<string, number>>({});
   // The offset of the tab last shown, and which tab that was: a tab standing in for a hidden guide
@@ -386,6 +419,58 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
     setSection(next);
   };
+  const followLink = useEffectEvent(() => {
+    const target = parsePullRequestAnchor(params.navigationUrl);
+    if (target?.kind === "diff" || target?.kind === "code") {
+      const commit = pullRequestLinkCommit(params.navigationUrl);
+      navigation.navigate("PullRequestFile", {
+        ...params,
+        path: "",
+        ...(commit ? { commit } : {}),
+      });
+    } else if (target?.kind === "timeline") {
+      selectSection("activity");
+      setActivityFilter((filter) => ({ ...filter, kind: "all", bots: true, resolved: true }));
+    } else if (target?.kind === "commits") {
+      selectSection("activity");
+      setActivityFilter((filter) => ({ ...filter, kind: "commits" }));
+    } else if (target?.kind === "checks" || target?.kind === "summary") {
+      selectSection("overview");
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link selects its native PR section or diff even when the route is reused
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- URL navigation selects the PR section and makes its target visible
+    followLink();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each clicked URL is a fresh navigation request
+  }, [params.navigationUrl, params.navigationId]);
+
+  const activityTargetIndex = activityContent.rows.findIndex(
+    (row) => row.key === activityContent.targetKey,
+  );
+  const openedDiscussion = useRef<string | null>(null);
+  const revealActivity = useEffectEvent(() => {
+    const key = `${params.navigationUrl}:${params.navigationId ?? 0}`;
+    if (activityContent.targetThread && openedDiscussion.current !== key) {
+      openedDiscussion.current = key;
+      navigation.navigate("PullRequestDiscussion", {
+        ...params,
+        discussionId: activityContent.targetThread.id,
+      });
+      return;
+    }
+    if (activityTargetIndex >= 0)
+      void scrollViews.current.activity?.scrollToIndex({
+        index: activityTargetIndex + 1,
+        viewPosition: 0.5,
+        animated: false,
+      });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the requested activity once its asynchronous rows arrive
+  useEffect(() => {
+    revealActivity();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- repositions when asynchronous activity resolves the URL target
+  }, [params.navigationUrl, params.navigationId, activityTargetIndex]);
   const tabContent = activityContent;
   const filesY = useRef(0);
   const descriptionY = useRef(0);
@@ -848,9 +933,15 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
   const result = usePullRequestDiff(route.params, terminology);
+  const linkAnchor = parsePullRequestAnchor(route.params.navigationUrl);
+  const linkPath =
+    linkAnchor?.kind === "diff" && result.parsed.kind === "files"
+      ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
+          ?.path
+      : undefined;
   const filter = usePullRequestFileFilter(
     result.parsed,
-    route.params.focus ? route.params.path : undefined,
+    linkPath ?? (route.params.focus ? route.params.path : undefined),
   );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
@@ -922,15 +1013,30 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
-  const [jumpPath, setJumpPath] = useState(route.params.path);
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
+  const jumpPath = pickedPath ?? linkPath ?? route.params.path;
   const requestedFile =
     result.parsed.kind === "files"
       ? result.parsed.files.find((file) => file.path === jumpPath)
       : undefined;
   const targetFile =
     data.files.find((file) => file.path === jumpPath) ??
-    (!jumpPath || requestedFile ? data.files[0] : undefined);
-  const focus = route.params.focus;
+    (linkAnchor?.kind === "diff" && !linkPath
+      ? undefined
+      : !jumpPath || requestedFile
+        ? data.files[0]
+        : undefined);
+  const range = pickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const focus =
+    route.params.focus ??
+    (range
+      ? {
+          side: range.side === "left" ? ("old" as const) : ("new" as const),
+          start: range.start,
+          end: range.end,
+          endSide: range.endSide === "left" ? ("old" as const) : ("new" as const),
+        }
+      : undefined);
   const focusedRows = guideFocusedRows(data.rows, targetFile?.id, focus);
   const focusIndex = focusedRows.length
     ? data.rows.findIndex((row) => row.id === focusedRows[0]?.id)
@@ -941,7 +1047,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   // The filter the current jump was made under. Hiding or showing test files replaces the rows,
   // so a jump made under the other filter has to run again. Native applies the entry
   // destination before its first viewport, so the first one counts as made.
-  const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
+  const jumpedUnder = useRef<boolean | null>(targetFile ? filter.hideTestFiles : null);
   const hasTestFiles =
     result.parsed.kind === "files" &&
     result.parsed.files.some((file) => isTestChangedFile(file.path));

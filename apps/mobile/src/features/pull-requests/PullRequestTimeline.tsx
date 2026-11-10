@@ -1,3 +1,7 @@
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+} from "@t3tools/shared/pullRequestAnchor";
 import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -74,7 +78,10 @@ function TimelineComment({
   params: PullRequestParams;
   actions: CommentActions;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => {
+    const target = parsePullRequestAnchor(params.navigationUrl);
+    return target?.kind === "timeline" && pullRequestAnchorMatchesUrl(target.anchor, comment.url);
+  });
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
   const content = useMemo(
@@ -202,6 +209,7 @@ export function pullRequestTimelineRows(
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
   actions: CommentActions,
 ) {
+  const linkTarget = parsePullRequestAnchor(params.navigationUrl);
   const discussionIds = new Set(
     activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
@@ -211,7 +219,19 @@ export function pullRequestTimelineRows(
       .map((comment) => ({
         key: `comment:${comment.id}`,
         date: comment.createdAt,
-        content: <TimelineComment comment={comment} params={params} actions={actions} />,
+        content: (
+          <TimelineComment
+            key={
+              linkTarget?.kind === "timeline" &&
+              pullRequestAnchorMatchesUrl(linkTarget.anchor, comment.url)
+                ? `${comment.id}:${params.navigationId ?? params.navigationUrl}`
+                : comment.id
+            }
+            comment={comment}
+            params={params}
+            actions={actions}
+          />
+        ),
       })),
     ...activity.reviewThreads.map((thread) => ({
       key: `discussion:${thread.id}`,

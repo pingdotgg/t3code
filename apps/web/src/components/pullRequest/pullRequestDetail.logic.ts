@@ -1,3 +1,4 @@
+import { pullRequestAnchorMatchesUrl } from "@t3tools/shared/pullRequestAnchor";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -694,6 +695,16 @@ function readableBody(raw: string): string | null {
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
  */
+/** Whether a link anchor names this event or a reply in its review thread. */
+export function pullRequestTimelineEventMatches(
+  event: PullRequestTimelineEvent,
+  anchor: string,
+): boolean {
+  return [event, ...(event.thread?.replies ?? [])].some((item) =>
+    pullRequestAnchorMatchesUrl(anchor, item.url),
+  );
+}
+
 export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,

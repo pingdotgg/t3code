@@ -1,4 +1,8 @@
 import {
+  parsePullRequestAnchor,
+  pullRequestDiffPathMatches,
+} from "@t3tools/shared/pullRequestAnchor";
+import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -348,6 +352,8 @@ function PullRequestCodeTab({
   refreshToken = 0,
   backgroundRefreshToken = 0,
   revealRequest = null,
+  revealUrl,
+  onRevealSettled,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -364,6 +370,9 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   refreshToken?: number;
   backgroundRefreshToken?: number;
+  /** A clicked link to a file or line range, until onRevealSettled reports it shown. */
+  revealUrl?: string | undefined;
+  onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
   const resolvedTheme = useRenderedAppearance();
@@ -575,6 +584,20 @@ function PullRequestCodeTab({
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
   );
+  const linkAnchor = parsePullRequestAnchor(revealUrl);
+  const linkFile =
+    linkAnchor?.kind === "diff"
+      ? loadedFiles.find((file) =>
+          pullRequestDiffPathMatches(linkAnchor.digest, resolveFileDiffPath(file)),
+        )
+      : undefined;
+  const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
+  // The linked file stays shown past the test-file filter after the link settles.
+  const [revealedLink, setRevealedLink] = useState<{
+    readonly scope: string;
+    readonly path: string;
+  } | null>(null);
+  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
@@ -582,7 +605,7 @@ function PullRequestCodeTab({
   const files = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
+        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
       })
     : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - files.length;
@@ -790,7 +813,7 @@ function PullRequestCodeTab({
     setFileViewed,
   };
 
-  const revealFile = (path: string) => {
+  const revealFile = (path: string, range?: SelectedLineRange) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
@@ -799,7 +822,8 @@ function PullRequestCodeTab({
         toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
       );
     }
-    codeViewReveal.request(item.id);
+    if (range) setSelectedLines({ id: item.id, range });
+    codeViewReveal.request(item.id, range);
   };
 
   const toggleAllFiles = () => {
@@ -1430,6 +1454,47 @@ function PullRequestCodeTab({
     answerReveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
   }, [canLoadNextSlice, items, revealRequest]);
+  // The store clears a settled link after this render, so one link must not reveal twice.
+  const answeredLink = useRef<string | null>(null);
+  const revealLink = useEffectEvent(() => {
+    if (revealUrl === undefined) answeredLink.current = null;
+    if (revealUrl === undefined || linkAnchor?.kind !== "diff") return;
+    const key = `${scopeKey}:${revealUrl}`;
+    if (answeredLink.current === key) return;
+    if (
+      !pendingLinkPath ||
+      !items.some((item) => resolveFileDiffPath(item.fileDiff) === pendingLinkPath)
+    ) {
+      if (canLoadNextSlice) loadNextSlice();
+      // Every page is loaded and none has the file.
+      else if (!pendingLinkPath && loadedSlices.length > 0 && nextCursor === null) {
+        answeredLink.current = key;
+        onRevealSettled?.(revealUrl);
+      }
+      return;
+    }
+    answeredLink.current = key;
+    setRevealedLink({ scope: scopeKey, path: pendingLinkPath });
+    onRevealSettled?.(revealUrl);
+    const range = linkAnchor.range;
+    revealFile(
+      pendingLinkPath,
+      range
+        ? {
+            start: range.start,
+            end: range.end,
+            side: toViewerSide(range.side),
+            endSide: toViewerSide(range.endSide),
+          }
+        : undefined,
+    );
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pages and scrolls the virtual diff to a clicked file or line range
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- revealing unfolds the target and may request the next diff page
+    revealLink();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries the reveal as diff pages and viewer items arrive
+  }, [revealUrl, pendingLinkPath, canLoadNextSlice, items]);
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}

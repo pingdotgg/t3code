@@ -1,3 +1,7 @@
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+} from "@t3tools/shared/pullRequestAnchor";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -8,7 +12,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, View, type ScrollViewInstance } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -138,6 +142,10 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
       [...extra, ...(thread?.comments ?? [])].map((comment) => [comment.id, comment]),
     ).values(),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const pendingTop = useRef<number | null>(null);
+  const positionedComment = useRef<string | null>(null);
+  const anchor = parsePullRequestAnchor(params.navigationUrl);
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
@@ -162,6 +170,12 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         />
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
+            ref={scrollRef}
+            onContentSizeChange={() => {
+              if (pendingTop.current === null) return;
+              scrollRef.current?.scrollTo({ y: pendingTop.current, animated: false });
+              pendingTop.current = null;
+            }}
             className="flex-1"
             contentInsetAdjustmentBehavior="automatic"
             keyboardShouldPersistTaps="handled"
@@ -192,7 +206,21 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               <Text>This discussion is no longer available.</Text>
             ) : null}
             {comments.map((comment) => (
-              <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
+              <View
+                key={comment.id}
+                onLayout={(event) => {
+                  if (
+                    anchor?.kind !== "timeline" ||
+                    !pullRequestAnchorMatchesUrl(anchor.anchor, comment.url) ||
+                    positionedComment.current === comment.id
+                  )
+                    return;
+                  positionedComment.current = comment.id;
+                  pendingTop.current = event.nativeEvent.layout.y;
+                  scrollRef.current?.scrollTo({ y: pendingTop.current, animated: false });
+                }}
+                className="gap-3 border-b border-border-subtle py-4"
+              >
                 <View className="flex-row items-center gap-2">
                   <PullRequestAvatar actor={comment.author} size={28} />
                   <Text className="min-w-0 flex-1 text-sm font-t3-medium">
