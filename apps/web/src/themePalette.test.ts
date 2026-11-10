@@ -19,6 +19,9 @@ import {
   replaceCustomThemeCollection,
   resolveDesktopTheme,
   resolveThemeAppearance,
+  resolveThemeHalf,
+  themeVariantHalves,
+  T3_CODE_CLASSIC_THEME,
   serializeThemeFile,
   T3_CHAT_THEME,
   GROVE_THEME,
@@ -702,6 +705,76 @@ describe("context chip colors", () => {
 });
 
 describe("stored theme preferences", () => {
+  it.each([
+    {
+      theme: "system",
+      halves: null,
+      classic: true,
+      expected: { light: "t3-code-classic", dark: "t3-code-classic" },
+    },
+    { theme: "t3-code-classic", halves: null, classic: false, expected: {} },
+    {
+      theme: "system",
+      halves: { dark: "grove" },
+      classic: true,
+      expected: { light: "t3-code-classic", dark: "grove" },
+    },
+    {
+      theme: "t3-code-classic",
+      halves: { dark: "grove" },
+      classic: false,
+      expected: { dark: "grove" },
+    },
+    {
+      theme: "grove",
+      halves: { light: "t3-code-classic" },
+      classic: false,
+      expected: { dark: "grove" },
+    },
+    {
+      theme: "grove",
+      halves: { dark: "t3-code-classic" },
+      classic: false,
+      expected: { light: "grove" },
+    },
+    { theme: "grove", halves: null, classic: true, expected: null },
+    { theme: "grove", halves: null, classic: false, expected: null },
+    { theme: "system", halves: { light: "t3-code-classic" }, classic: false, expected: {} },
+    {
+      theme: "t3-code-classic",
+      halves: { dark: "not-yet-streamed" },
+      classic: false,
+      expected: { dark: "not-yet-streamed" },
+    },
+  ])(
+    "switches only the card's halves: $theme, $halves, classic=$classic",
+    ({ theme, halves, classic, expected }) => {
+      expect(
+        themeVariantHalves(
+          theme,
+          halves,
+          [null, T3_CODE_CLASSIC_THEME.id],
+          classic ? T3_CODE_CLASSIC_THEME.id : null,
+        ),
+      ).toEqual(expected);
+    },
+  );
+
+  it("follows system light and dark after switching the house colors", () => {
+    const halves = themeVariantHalves(
+      "system",
+      null,
+      [null, T3_CODE_CLASSIC_THEME.id],
+      T3_CODE_CLASSIC_THEME.id,
+    );
+    for (const systemDark of [false, true]) {
+      const appearance = resolveThemeAppearance("system", systemDark, true, "system", halves);
+      expect(appearance).toBe(systemDark ? "dark" : "light");
+      expect(resolveThemeHalf("system", halves, appearance)).toBe(T3_CODE_CLASSIC_THEME.id);
+    }
+    expect(resolveDesktopTheme("system", true, "system", halves)).toBe("system");
+  });
+
   it("lets a configured half unlock an appearance the base theme lacks", () => {
     const lightOnly = parseThemeFile({
       version: THEME_FILE_VERSION,
