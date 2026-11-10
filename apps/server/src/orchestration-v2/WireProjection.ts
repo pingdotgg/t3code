@@ -246,9 +246,13 @@ function boundToolOutput(output: unknown): unknown {
   }
   const app =
     MCP_APP_OUTPUT_KEY in output ? readMcpAppReference(output[MCP_APP_OUTPUT_KEY]) : undefined;
-  return app === undefined
-    ? boundToolResult(output)
-    : { [MCP_APP_OUTPUT_KEY]: app, result: boundToolResult(output.result) };
+  if (app === undefined) return boundToolResult(output);
+  // The app receives this result, so its image data stays unless it is too large to send.
+  const fits = boundDynamicValue(output.result) === output.result;
+  return {
+    [MCP_APP_OUTPUT_KEY]: app,
+    result: fits ? output.result : boundToolResult(output.result),
+  };
 }
 
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
