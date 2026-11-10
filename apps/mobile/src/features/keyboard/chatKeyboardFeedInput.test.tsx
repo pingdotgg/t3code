@@ -70,11 +70,12 @@ function renderFeed(
   native.scroll.value = restOffset;
   let focused = INPUT_TAG;
   let contentOffsetY: Shared<number> | undefined;
+  const freeze: Shared<boolean> = { value: false };
   function Feed() {
     const chat = useChatKeyboard({ current: null } as never, {
       inverted: false,
       keyboardLiftBehavior,
-      freeze: { value: false } as never,
+      freeze: freeze as never,
       offset: 0,
       initialContentOffsetY: restOffset,
       blankSpace: { value: 0 } as never,
@@ -116,6 +117,9 @@ function renderFeed(
       return transition(300);
     },
     hide: () => transition(0),
+    setFrozen: (frozen: boolean) => {
+      freeze.value = frozen;
+    },
     [Symbol.dispose]: () => act(() => root.unmount()),
   };
 }
@@ -156,4 +160,15 @@ it("lifts for the composer and returns to the end after a feed input moved the f
   using feed = renderFeed(1322, 40);
 
   expect([feed.open(), feed.open(COMPOSER_TAG), feed.hide()]).toEqual([1282, 1622, 1322]);
+});
+
+it("keeps the feed where it rests after the keyboard closed while frozen", () => {
+  using feed = renderFeed(500, 500);
+
+  feed.open();
+  feed.setFrozen(true);
+  feed.hide();
+  feed.setFrozen(false);
+
+  expect(feed.open(COMPOSER_TAG)).toBe(742);
 });
