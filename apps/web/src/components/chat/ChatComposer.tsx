@@ -3445,6 +3445,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerApprovalPanel
         key={activePendingApproval.requestId}
         approval={activePendingApproval}
+        workspaceRoot={gitCwd ?? undefined}
         count={pendingApprovals.length}
         disabled={!canOperateThread}
         isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
