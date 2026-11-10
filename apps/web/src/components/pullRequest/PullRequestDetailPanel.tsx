@@ -682,8 +682,9 @@ export function PullRequestDetailPanel({
         });
         return;
       }
-      // A read that finished before the invalidation cannot show the comment is missing.
-      if (read.after !== null && (revealReadFailed || (revealMissedAt ?? 0) > read.after)) {
+      // A read that finished before the invalidation cannot show the comment is missing. `after` is
+      // stamped once the refetch was requested, so a read in that same millisecond is the new one.
+      if (read.after !== null && (revealReadFailed || (revealMissedAt ?? 0) >= read.after)) {
         settleReveal(revealUrl);
       }
       return;
