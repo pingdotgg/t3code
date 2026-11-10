@@ -6485,7 +6485,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(originRemote, ["init", "--bare"]);
           yield* git(upstreamRemote, ["init", "--bare"]);
           yield* git(cwd, ["remote", "add", "origin", originRemote]);
-          yield* git(cwd, ["remote", "add", "origin/team", originRemote]);
+          // Git 2.55 rejects adding overlapping remote names; model an existing configuration.
+          yield* git(cwd, ["config", "remote.origin/team.url", originRemote]);
+          yield* git(cwd, [
+            "config",
+            "remote.origin/team.fetch",
+            "+refs/heads/*:refs/remotes/origin/team/*",
+          ]);
           yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
           yield* git(cwd, ["push", "origin", "main", "main:refs/heads/feature/push"]);
           yield* git(cwd, ["checkout", "--no-track", "-b", branch]);
@@ -6540,9 +6546,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect(
-      "pushes upstream branches to the remote branch name, not the upstream shorthand",
-      () =>
+    it.effect.each(["main", "origin/team/main"])(
+      "pushes upstream branches to the remote branch name, not the upstream shorthand (%s)",
+      (branch) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const remote = yield* makeTmpDir("git-remote-");
@@ -6551,7 +6557,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["branch", "-M", "main"]);
           yield* git(remote, ["init", "--bare"]);
           yield* git(cwd, ["remote", "add", "origin", remote]);
-          yield* git(cwd, ["push", "-u", "origin", "main"]);
+          yield* git(cwd, ["config", "remote.origin/team.url", remote]);
+          yield* git(cwd, [
+            "config",
+            "remote.origin/team.fetch",
+            "+refs/heads/*:refs/remotes/origin/team/*",
+          ]);
+          const remoteBranch = branch === "main" ? "main" : "team/main";
+          const initialHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["push", "origin", "main"]);
+          yield* git(cwd, ["push", "-u", "origin", `main:${remoteBranch}`]);
+          yield* git(cwd, ["branch", "-M", branch]);
           yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
           yield* git(cwd, ["add", "-A"]);
           yield* driver.commit(cwd, "Add upstream update", "");
@@ -6560,18 +6576,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
           assert.deepInclude(pushed, {
             status: "pushed",
-            branch: "main",
-            upstreamBranch: "origin/main",
+            branch,
+            upstreamBranch: `origin/${remoteBranch}`,
             setUpstream: false,
           });
           assert.equal(
-            yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", "main"]),
+            yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", remoteBranch]),
             "Add upstream update",
+          );
+          assert.equal(yield* driver.readConfigValue(cwd, `branch.${branch}.remote`), "origin");
+          assert.equal(
+            yield* driver.readConfigValue(cwd, `branch.${branch}.merge`),
+            `refs/heads/${remoteBranch}`,
+          );
+          assert.equal(
+            yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/main"]),
+            remoteBranch === "main" ? yield* git(cwd, ["rev-parse", "HEAD"]) : initialHead,
           );
           const badBranch = yield* driver.execute({
             operation: "GitVcsDriver.test.showBadRemoteBranch",
             cwd: remote,
-            args: ["--git-dir=.", "show-ref", "--verify", "--quiet", "refs/heads/origin/main"],
+            args: [
+              "--git-dir=.",
+              "show-ref",
+              "--verify",
+              "--quiet",
+              `refs/heads/origin/${remoteBranch}`,
+            ],
             allowNonZeroExit: true,
             timeoutMs: 10_000,
           });

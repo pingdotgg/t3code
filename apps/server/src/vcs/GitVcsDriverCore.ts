@@ -1327,13 +1327,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return upstreamRef;
   });
 
-  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (
-    cwd: string,
-    knownUpstreamRef?: string,
-  ) {
-    const upstreamRef = knownUpstreamRef ?? (yield* readCurrentUpstreamRef(cwd));
+  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (input: {
+    readonly cwd: string;
+    readonly branch?: string;
+    readonly knownUpstreamRef?: string;
+  }) {
+    const { cwd } = input;
+    const upstreamRef = input.knownUpstreamRef ?? (yield* readCurrentUpstreamRef(cwd));
     if (upstreamRef === null) {
       return null;
+    }
+
+    if (input.branch !== undefined) {
+      const localRef = `refs/heads/${input.branch}`;
+      const configured = yield* runGitStdout("GitVcsDriver.resolveCurrentUpstream", cwd, [
+        "for-each-ref",
+        "--format=%(refname)\t%(upstream:remotename)\t%(upstream:remoteref)",
+        localRef,
+      ]).pipe(
+        Effect.map((stdout) =>
+          stdout
+            .split("\n")
+            .map((line) => line.split("\t"))
+            .find(([refName]) => refName === localRef),
+        ),
+      );
+      const [, remoteName = "", merge = ""] = configured ?? [];
+      if (!remoteName || remoteName === "." || !merge.startsWith("refs/heads/")) return null;
+      return { upstreamRef, remoteName, branchName: merge.slice("refs/heads/".length) };
     }
 
     const remoteNames = yield* runGitStdout("GitVcsDriver.listRemoteNames", cwd, ["remote"]).pipe(
@@ -2067,7 +2088,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : (parseUpstreamRefByFirstSeparator(currentUpstreamRef)?.upstreamRef ?? null);
     // Trimming a remote that starts with Unicode whitespace can leave a leading slash.
     if (currentUpstreamRef?.startsWith("/")) {
-      upstreamRef = (yield* resolveCurrentUpstream(cwd, currentUpstreamRef))?.upstreamRef ?? null;
+      upstreamRef =
+        (yield* resolveCurrentUpstream({ cwd, knownUpstreamRef: currentUpstreamRef }))
+          ?.upstreamRef ?? null;
     }
     let aheadCount = 0;
     let behindCount = 0;
@@ -2686,11 +2709,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { remoteName, branchName, publishes: true, upstream: null };
     }
 
-    const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
+    const upstream = yield* resolveCurrentUpstream({ cwd, branch }).pipe(
+      Effect.orElseSucceed(() => null),
+    );
     if (!upstream) return null;
     // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
     const isAliasOfUpstreamHead =
       branch === upstream.branchName ||
+      branch === upstream.upstreamRef ||
       (branch.endsWith(`/${upstream.branchName}`) && upstream.upstreamRef.endsWith(`/${branch}`));
     if (isAliasOfUpstreamHead) {
       return {
