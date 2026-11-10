@@ -1,0 +1,33 @@
+import type * as opensearch from "@distilled.cloud/aws/opensearch";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `GetUpgradeStatus` operation (IAM action
+ * `es:GetUpgradeStatus`).
+ *
+ * Reads the status of a domain's most recent engine-version upgrade or upgrade-eligibility check. Provide the implementation with
+ * `Effect.provide(AWS.OpenSearch.GetUpgradeStatusHttp)`.
+ * ### Engine Upgrades
+ * **Example:** Check an In-Progress Upgrade
+ * ```typescript
+ * const getUpgradeStatus = yield* OpenSearch.GetUpgradeStatus();
+ *
+ * const result = yield* getUpgradeStatus({ DomainName: name });
+ * // result.StepStatus → "SUCCEEDED"
+ * ```
+ *
+ * @binding
+ */
+export interface GetUpgradeStatus extends Binding.Service<
+  GetUpgradeStatus,
+  "AWS.OpenSearch.GetUpgradeStatus",
+  () => Effect.Effect<
+    (
+      request: opensearch.GetUpgradeStatusRequest,
+    ) => Effect.Effect<opensearch.GetUpgradeStatusResponse, opensearch.GetUpgradeStatusError>
+  >
+> {}
+export const GetUpgradeStatus = Binding.Service<GetUpgradeStatus>(
+  "AWS.OpenSearch.GetUpgradeStatus",
+);
