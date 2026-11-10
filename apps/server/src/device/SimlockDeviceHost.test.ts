@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { SimlockDeviceHostConfig } from "@t3tools/contracts";
+import { SecretProviderId, type SimlockDeviceHostConfig } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
@@ -62,14 +64,16 @@ const fakePool = (
     const commands: Array<{ readonly args: ReadonlyArray<string>; readonly cwd?: string }> = [];
     let leases = 0;
     let renewStatus = 200;
+    let catalog: unknown = CATALOG;
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const url = new URL(request.url);
         requests.push(`${request.method} ${url.pathname}`);
-        expect(request.headers.authorization).toBe("Bearer agent-token");
         const json = (body: unknown, status = 200) =>
           HttpClientResponse.fromWeb(request, Response.json(body, { status }));
-        if (url.pathname === "/v1/catalog") return json(CATALOG);
+        if (request.headers.authorization !== "Bearer agent-token")
+          return json({ error: { code: "UNAUTHENTICATED", message: "Unknown bearer token" } }, 401);
+        if (url.pathname === "/v1/catalog") return json(catalog);
         if (url.pathname.endsWith("/renew")) return json({}, renewStatus);
         if (request.method === "DELETE") return json({}, 202);
         return json({}, 404);
@@ -134,12 +138,29 @@ const fakePool = (
       endLeases: () => {
         renewStatus = 404;
       },
+      setCatalog: (next: unknown) => {
+        catalog = next;
+      },
     };
   });
 
-const layer = Layer.mergeAll(
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-simlock-host-" }),
-).pipe(Layer.provideMerge(NodeServices.layer));
+const makeSecretResolver = (values: Record<string, string> = {}) =>
+  Layer.succeed(SecretResolver.SecretResolver, {
+    read: (references) =>
+      Effect.succeed(references.map((reference) => values[reference.reference])),
+    invalidate: () => Effect.void,
+    label: (provider) => Effect.succeed(provider),
+  });
+
+const layerWith = (secrets: Layer.Layer<SecretResolver.SecretResolver>) =>
+  Layer.mergeAll(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-simlock-host-" }),
+    secrets,
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
+const layer = layerWith(makeSecretResolver());
+
+const tokenSource = { provider: SecretProviderId.make("homelab"), reference: "simlock#token" };
 
 const makeHost = (
   pool: Effect.Success<ReturnType<typeof fakePool>>,
@@ -254,6 +275,120 @@ describe("Simlock device host", () => {
       expect(pool.ran("open")).toHaveLength(1);
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("reports its platforms unavailable when the gateway refuses the agent token", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config({ agentToken: "revoked" }), scope);
+      expect(yield* host.platformAvailability("ios")).toEqual({
+        platform: "ios",
+        available: false,
+        reason: "The Simlock gateway refused the agent token for Device pool.",
+      });
+      expect((yield* host.summary).platforms.every((platform) => !platform.available)).toBe(true);
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("sends saved and machine tokens only to the gateway each belongs to", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const availability = (baseUrl: string) =>
+        Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          const host = yield* makeHost(pool, config({ agentToken: "" }), scope).pipe(
+            Effect.provideService(HostProcess.Environment, {
+              AGENT_DEVICE_DAEMON_BASE_URL: baseUrl,
+              AGENT_DEVICE_DAEMON_AUTH_TOKEN: "agent-token",
+            }),
+          );
+          const result = yield* host.platformAvailability("ios");
+          yield* Scope.close(scope, Exit.void);
+          return result;
+        });
+
+      expect(
+        yield* SimlockDeviceHost.resolveSimlockToken(
+          yield* SecretResolver.SecretResolver,
+          "https://elsewhere.example:4700",
+          config({ agentToken: "saved-token" }),
+          {},
+        ),
+      ).toBeNull();
+
+      expect(yield* availability(`${GATEWAY}/v1/agent-device`)).toEqual({
+        platform: "ios",
+        available: true,
+      });
+      const requests = pool.requests.length;
+      expect(yield* availability("https://elsewhere.example:4700/v1/agent-device")).toEqual({
+        platform: "ios",
+        available: false,
+        reason: "Add an agent token for Device pool in Settings.",
+      });
+      expect(pool.requests).toHaveLength(requests);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("reads its agent token from the secret provider the setting names", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config({ agentToken: tokenSource }), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      const leaseId = yield* ready.devices.boot(iphone!);
+      expect(yield* ready.devices.agentEndpoint!(leaseId)).toMatchObject({ token: "agent-token" });
+      yield* Scope.close(scope, Exit.void);
+      expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerWith(makeSecretResolver({ "simlock#token": "agent-token" }))),
+    ),
+  );
+
+  it.effect("fails instead of using this machine's token when its secret cannot be read", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config({ agentToken: tokenSource }), scope).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          AGENT_DEVICE_DAEMON_BASE_URL: `${GATEWAY}/v1/agent-device`,
+          AGENT_DEVICE_DAEMON_AUTH_TOKEN: "agent-token",
+        }),
+      );
+      const availability = yield* host.platformAvailability("ios");
+      expect(availability.available).toBe(false);
+      expect(availability.reason).toContain('secret provider "homelab"');
+      expect(pool.requests).toEqual([]);
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("lists a platform again as soon as its workers return", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      pool.setCatalog({ platforms: [] });
+      expect((yield* ready.devices.list).devices).toEqual([]);
+      // Mid-reconnect, the gateway knows the Android models but no worker that makes them.
+      pool.setCatalog({
+        platforms: [
+          CATALOG.platforms[0]!,
+          { ...CATALOG.platforms[1]!, modelWorkers: { "Pixel 9": [], "Pixel 8": [] } },
+        ],
+      });
+      const during = (yield* ready.devices.list).devices;
+      expect(during.some((device) => device.platform === "android")).toBe(false);
+      pool.setCatalog(CATALOG);
+      const after = (yield* ready.devices.list).devices;
+      expect(after.some((device) => device.platform === "android")).toBe(true);
+      yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

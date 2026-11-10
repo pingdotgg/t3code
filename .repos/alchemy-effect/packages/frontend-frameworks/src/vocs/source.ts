@@ -1,6 +1,5 @@
-import * as FrameworkCore from "../core/index.ts";
 import * as Effect from "effect/Effect";
-import vocsCloudflareTarget from "./cloudflare.ts";
+import * as FrameworkCore from "../core/index.ts";
 import {
   makeWakuSourceProvider,
   SourceProviderError,
@@ -8,6 +7,7 @@ import {
   type WakuBuildChildConfig,
   type WakuSourceOptions,
 } from "../waku/source.ts";
+import vocsCloudflareTarget from "./cloudflare.ts";
 import { make as vocsFrameworkLayer } from "./Vocs.ts";
 
 const PROVIDER = "@alchemy.run/frontend-frameworks/vocs/source";
@@ -37,9 +37,7 @@ export const buildInChild = (config: WakuBuildChildConfig) =>
     ),
   );
 
-export const makeVocsSourceProvider = (
-  options: VocsSourceOptions,
-): SourceProvider =>
+export const makeVocsSourceProvider = (options: VocsSourceOptions): SourceProvider =>
   makeWakuSourceProvider(
     { ...options, distDir: options.outDir },
     {
@@ -56,13 +54,8 @@ export const makeVocsSourceProvider = (
   );
 
 const sourceModule = {
-  make: (
-    options: unknown,
-  ): Effect.Effect<SourceProvider, SourceProviderError> => {
-    if (
-      options !== undefined &&
-      (typeof options !== "object" || options === null)
-    ) {
+  make: (options: unknown): Effect.Effect<SourceProvider, SourceProviderError> => {
+    if (options !== undefined && (typeof options !== "object" || options === null)) {
       return Effect.fail(
         new SourceProviderError({
           provider: PROVIDER,
@@ -70,9 +63,7 @@ const sourceModule = {
         }),
       );
     }
-    return Effect.succeed(
-      makeVocsSourceProvider((options ?? {}) as VocsSourceOptions),
-    );
+    return Effect.succeed(makeVocsSourceProvider((options ?? {}) as VocsSourceOptions));
   },
 };
 

@@ -31,6 +31,12 @@ export declare namespace Subscriber {
 export interface RegistryEntry {
   readonly scriptName: string;
   readonly debugPortAddress: string;
+  /**
+   * Identifies the workerd process behind `debugPortAddress`. A process restarted
+   * after a crash reuses the address, so only this tells subscribers to reconnect.
+   * Absent in entries written by older runtimes.
+   */
+  readonly instanceId?: string;
   readonly services: [RegistryEntry.Worker, ...Array<RegistryEntry.Service>];
 }
 
@@ -69,6 +75,7 @@ export type ResolvedTarget<T extends Subscriber = Subscriber> = Extract<
 > & {
   readonly scriptName: string;
   readonly debugPortAddress: string;
+  readonly instanceId?: string;
 };
 
 export const resolvedTargetKey = (entry: ResolvedTarget | Subscriber) => {
@@ -83,3 +90,11 @@ export const resolvedTargetKey = (entry: ResolvedTarget | Subscriber) => {
       return `workflow:${entry.scriptName}:${entry.workflowName}` as const;
   }
 };
+
+/**
+ * Header carrying the per-instance credential for registry pushes to the
+ * registry proxy (Miniflare's `MF-Dev-Registry-Secret`). The credential lives
+ * only in the owning process and the proxy's private binding; it is never
+ * written to registry files.
+ */
+export const HEADER_REGISTRY_UPDATE_SECRET = "Alchemy-Runtime-Registry-Update-Secret";

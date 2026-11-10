@@ -1,3 +1,6 @@
+import type * as FileSystem from "effect/FileSystem";
+import type * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 /**
  * `@alchemy.run/frontend-frameworks/nuxt` — Nuxt integration implementing framework-core's
  * `Framework` service, with the deploy target passed as a value (Cloudflare
@@ -16,9 +19,6 @@
  * behind `@alchemy.run/frontend-frameworks/nuxt/cloudflare`.
  */
 import type { Framework } from "../core/index.ts";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Layer from "effect/Layer";
-import type * as Path from "effect/Path";
 import { layer, type NuxtOptions } from "./Nuxt.ts";
 
 export {

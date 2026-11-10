@@ -24,9 +24,20 @@ const deviceHubDescription =
 const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+/** Platforms whose latest listing on a ready host may be missing devices. */
+export const incompleteListings = (
+  status: DeviceServiceState["hostStatuses"][string] | undefined,
+) =>
+  (["ios", "android"] as const).filter(
+    (platform) =>
+      status?.status === "ready" &&
+      (status.incompletePlatforms?.includes(platform) ||
+        (platform === "android" && status.androidDiscoveryIncomplete === true)),
+  );
+
 export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
-  Object.values(state.hostStatuses).some(
-    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  Object.values(state.hostStatuses).some((status) =>
+    incompleteListings(status).includes("android"),
   );
 
 /**
@@ -103,6 +114,16 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       (host.kind === "local" && state.hostStatus === "ready"),
   );
   if (readyHosts.length > 0 && !hasDevices) {
+    if (
+      readyHosts.some((host) =>
+        state.hostStatuses[host.id]?.incompletePlatforms?.includes(platform),
+      )
+    ) {
+      return {
+        ready: false,
+        message: `No ${platformName(platform)} devices were listed because device discovery reported a problem.`,
+      };
+    }
     return {
       ready: false,
       message:
@@ -119,7 +140,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
     ready: true,
     message:
       remoteHost?.kind === "eas"
-        ? `${remoteHost.label} starts iOS Simulators in the cloud with EAS Simulator.`
+        ? `${remoteHost.label} starts ${platform === "ios" ? "iOS Simulators" : "Android emulators"} in the cloud with EAS Simulator.`
         : platform === "ios"
           ? `Xcode and iOS Simulator are available${location}.`
           : `The Android SDK and Emulator are available${location}.`,
