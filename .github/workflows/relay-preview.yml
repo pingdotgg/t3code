@@ -62,7 +62,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
