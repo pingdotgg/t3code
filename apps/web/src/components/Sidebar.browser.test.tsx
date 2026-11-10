@@ -13,7 +13,17 @@ import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
-vi.mock("../localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }));
+vi.mock(import("../connection/catalog"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentCatalog: {
+      ...actual.environmentCatalog,
+      catalogValueAtom: Atom.make({ isReady: true, entries: new Map() }) as never,
+    },
+  };
+});
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
