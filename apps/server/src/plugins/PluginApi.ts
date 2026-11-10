@@ -12,6 +12,7 @@ import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
+import type * as PluginThreadStatuses from "./PluginThreadStatuses.ts";
 
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
@@ -60,6 +61,7 @@ export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly threadStatuses: PluginThreadStatuses.PluginThreadStatuses["Service"];
 }
 
 /**
@@ -68,6 +70,7 @@ export interface PluginApiServices {
  */
 export const makePluginApi = (input: {
   readonly id: PluginId;
+  readonly name: string;
   readonly rootDir: string;
   readonly settingsSchema: Schema.JsonObject | undefined;
   readonly activation: PluginActivation;
@@ -96,10 +99,26 @@ export const makePluginApi = (input: {
   };
 
   return {
-    version: 1,
+    version: 2,
     id,
     rootDir: input.rootDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
+    threads: {
+      setStatus: (value) =>
+        call(
+          services.threadStatuses.set(
+            { pluginId: id, pluginName: input.name, deactivated: activation.controller.signal },
+            value,
+          ),
+        ),
+      clearStatus: (value) =>
+        call(
+          services.threadStatuses.clear(
+            { pluginId: id, pluginName: input.name, deactivated: activation.controller.signal },
+            value,
+          ),
+        ),
+    },
     settings: {
       get: () => call(services.settings.get(id, input.settingsSchema)),
       changes: () => facade.iterate(services.settings.changes(id)),

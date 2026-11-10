@@ -80,6 +80,19 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly id: string;
   readonly rootDir: string;
   readonly log: PluginLogger;
+  readonly threads: {
+    /** Shows attributed text until cleared or deactivated. Up to 8 keys per thread, 64 threads per plugin. Added in version 2. */
+    readonly setStatus: (input: {
+      readonly threadId: string;
+      readonly key: string;
+      readonly text: string;
+    }) => Promise<void>;
+    /** Removes this plugin's status with this key. Added in version 2. */
+    readonly clearStatus: (input: {
+      readonly threadId: string;
+      readonly key: string;
+    }) => Promise<void>;
+  };
   readonly settings: {
     /**
      * The saved settings, secret values included. Fields nobody saved read as the `default` in

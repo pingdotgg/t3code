@@ -404,6 +404,8 @@ import {
   PluginSettingsUpdateInput,
   PluginSubscribeInput,
   PluginSubscriptionEvent,
+  PluginThreadStatusesEvent,
+  PluginThreadStatusesInput,
 } from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
@@ -592,6 +594,7 @@ export const WS_METHODS = {
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
   pluginsSubscribe: "plugins.subscribe",
+  pluginsSubscribeThreadStatuses: "plugins.subscribeThreadStatuses",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2152,6 +2155,14 @@ const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
   stream: true,
 });
 
+/** The thread's plugin statuses now, then all of them again after each change. */
+const WsPluginsSubscribeThreadStatusesRpc = Rpc.make(WS_METHODS.pluginsSubscribeThreadStatuses, {
+  payload: PluginThreadStatusesInput,
+  success: PluginThreadStatusesEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2251,6 +2262,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,
   WsPluginsSubscribeRpc,
+  WsPluginsSubscribeThreadStatusesRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

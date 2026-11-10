@@ -105,6 +105,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pluginsSettingsUpdate]: "plugins",
   [WS_METHODS.pluginsInvoke]: "plugins",
   [WS_METHODS.pluginsSubscribe]: "plugins",
+  [WS_METHODS.pluginsSubscribeThreadStatuses]: "plugins",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",

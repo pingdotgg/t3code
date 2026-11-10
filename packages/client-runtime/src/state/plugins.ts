@@ -18,6 +18,11 @@ export function createPluginEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    threadStatuses: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:plugins:thread-statuses",
+      tag: WS_METHODS.pluginsSubscribeThreadStatuses,
+      idleTtlMs: 0,
+    }),
     pluginsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugins:live",
       tag: WS_METHODS.pluginsSubscribeStates,

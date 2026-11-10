@@ -10,6 +10,8 @@ import {
   type PluginListResult,
   type PluginSettingsGetResult,
   type PluginState,
+  type PluginThreadStatusesEvent,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -57,6 +59,7 @@ import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginThreadStatuses from "./PluginThreadStatuses.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 
@@ -144,6 +147,9 @@ export class PluginHost extends Context.Service<
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Stream.Stream<PluginListResult>;
+    readonly subscribeThreadStatuses: (
+      threadId: ThreadId,
+    ) => Stream.Stream<PluginThreadStatusesEvent>;
     /** Waits until the plugin has started or stopped. */
     readonly setEnabled: (
       pluginId: PluginId,
@@ -245,6 +251,7 @@ const make = Effect.gen(function* () {
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
+    threadStatuses: yield* PluginThreadStatuses.PluginThreadStatuses,
   };
   const settingsStore = services.settings;
 
@@ -340,6 +347,7 @@ const make = Effect.gen(function* () {
     activation: PluginActivation,
   ) {
     activation.controller.abort();
+    yield* services.threadStatuses.clearPlugin(pluginId);
     const timedOut = yield* Effect.forEach(
       activation.cleanups.toReversed(),
       (cleanup) => runCleanup(pluginId, cleanup),
@@ -431,6 +439,7 @@ const make = Effect.gen(function* () {
           const activation = makePluginActivation();
           const api = makePluginApi({
             id: plugin.id,
+            name: manifest.name,
             rootDir: plugin.rootDir,
             settingsSchema: manifest.settingsSchema,
             activation,
@@ -735,6 +744,7 @@ const make = Effect.gen(function* () {
 
   const service = PluginHost.of({
     streamForClient: pluginStates.streamForClient,
+    subscribeThreadStatuses: services.threadStatuses.subscribe,
     setEnabled,
     reload,
     rescan: rescan(),

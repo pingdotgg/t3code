@@ -146,6 +146,21 @@ socket and stream you create an `'error'` listener.
 The server API can't read T3's threads, projects or providers. A tool can keep its own data per
 thread in `storage` under the `threadId`, but it can't look that thread up.
 
+## Thread statuses
+
+Server API version 2 adds `api.threads.setStatus({ threadId, key, text })` and
+`api.threads.clearStatus({ threadId, key })`. A status shows with the plugin's name on the thread
+in web, desktop and native mobile clients, including read-only clients. It belongs to the plugin's
+environment, so use a thread ID from that environment, such as an MCP handler's `context.threadId`.
+Unknown or deleted threads are refused. This does not read the thread or change its run state.
+
+Setting the same key replaces the text. Keys use 1–64 letters, digits, dots, underscores or hyphens;
+text is up to 200 characters and must be nonempty, single-line text without control characters.
+A plugin can retain up to eight keys per thread on up to 64 threads. Clear keys you no longer need.
+All its statuses disappear when it deactivates, reloads or uninstalls, and after a server restart.
+Updates from a stopped activation are refused. These statuses are independent of Pi's own native
+extension statuses; a plugin should not copy them.
+
 ## Web half
 
 ```tsx

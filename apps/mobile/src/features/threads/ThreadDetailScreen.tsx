@@ -139,6 +139,7 @@ import {
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
+import { pluginEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
@@ -427,6 +428,14 @@ function ThreadDetailBody(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
+  const pluginStatuses = useEnvironmentQuery(
+    props.draftMode
+      ? null
+      : pluginEnvironment.threadStatuses({
+          environmentId: props.environmentId,
+          input: { threadId: props.selectedThread.id },
+        }),
+  );
   const openDevicePreview = () => {
     Keyboard.dismiss();
     if (
@@ -754,11 +763,29 @@ function ThreadDetailBody(
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
-  const extensionStatus = props.extensionStatuses?.length
+  const extensionLabels = [
+    ...(props.extensionStatuses?.length
+      ? [`Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`]
+      : []),
+    ...(props.connectionStateLabel === "connected"
+      ? (pluginStatuses.data?.plugins.map(
+          (plugin) =>
+            `${plugin.pluginName} · ${plugin.statuses.map((status) => status.text).join(" · ")}`,
+        ) ?? [])
+      : []),
+  ];
+  const extensionStatus = extensionLabels.length
     ? {
-        label: `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`,
+        label: extensionLabels.join(" | "),
         onPress: () =>
-          Dialog.alert("Pi", props.extensionStatuses?.map((status) => status.text).join("\n\n")),
+          Dialog.alert(
+            extensionLabels.length === 1 && props.extensionStatuses?.length
+              ? "Pi"
+              : "Extension statuses",
+            extensionLabels.length === 1 && props.extensionStatuses?.length
+              ? props.extensionStatuses.map((status) => status.text).join("\n\n")
+              : extensionLabels.join("\n\n"),
+          ),
       }
     : null;
   const floatingStatus = ((): FloatingWorkingStatus | null => {

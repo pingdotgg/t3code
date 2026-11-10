@@ -98,6 +98,7 @@ import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
+import * as PluginThreadStatuses from "./plugins/PluginThreadStatuses.ts";
 import * as PluginUploads from "./plugins/PluginUploads.ts";
 import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
@@ -786,6 +787,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
 const layerRuntimeDependenciesWithPlugins = PluginUploads.layer.pipe(
   Layer.provideMerge(
     PluginHost.layer.pipe(
+      Layer.provide(PluginThreadStatuses.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
       Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provideMerge(layerRuntimeDependencies),
     ),
