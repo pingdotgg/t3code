@@ -18,6 +18,23 @@ function stripRelativePrefixes(path: string): string {
   return path.replace(/^\.\/+/, "").replace(/^\/+/, "");
 }
 
+export function formatWorkspaceRelativeDetail(
+  detail: string | undefined,
+  workspaceRoot: string | undefined,
+): string | undefined {
+  if (!detail || !workspaceRoot) return detail;
+  const root = trimTrailingPathSeparators(workspaceRoot);
+  const label = fileBasename(normalizePathSeparators(root));
+  for (const prefix of new Set([root, normalizePathSeparators(root)])) {
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    detail = detail.replace(
+      new RegExp(`(^|[\\s"'\\x60(])${escaped}([/\\\\])`, "g"),
+      (_match, boundary: string, separator: string) => `${boundary}${label}${separator}`,
+    );
+  }
+  return detail;
+}
+
 export function formatWorkspaceRelativePath(
   pathWithPosition: string,
   workspaceRoot: string | undefined,
