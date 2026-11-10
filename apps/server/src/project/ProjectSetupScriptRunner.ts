@@ -181,8 +181,8 @@ function quoteFish(value: string): string {
 }
 
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-// Interactive fish keeps a line that fails to parse in its editor, running nothing, so the body is first parsed as a
-// quoted string. It stays typed rather than sourced because only the line editor expands abbreviations.
+// Interactive fish leaves a body that fails to parse in its editor, so it is parse-checked first, except on fish
+// before 3.3 (no --no-config) or when it uses an abbreviation, which only the editor expands.
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -194,7 +194,14 @@ function wrapCommandForCompletion(
     case "powershell":
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-config --no-execute; or printf '\\n${sentinel}%s\\n' $status\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+      return [
+        "begin; if string match -qr '^(3\\.([3-9]|[1-9][0-9])|[4-9]|[1-9][0-9])\\.' -- $version",
+        "and not abbr --show | string match -q -- '* --regex *'",
+        "set -l a (abbr --list | string escape --style=regex)",
+        `if test (count $a) -eq 0; or not string match -qr -- '(^|[\\s;|&(])('(string join '|' -- $a)')($|[\\s;|&)])' ${quoteFish(body)}`,
+        `printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-config --no-execute; or printf '\\n${sentinel}%s\\n' $status`,
+        `end; end; end\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`,
+      ].join("; ");
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
