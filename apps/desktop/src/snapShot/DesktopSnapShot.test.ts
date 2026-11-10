@@ -1004,7 +1004,7 @@ it.effect.each(["succeeds", "fails"] as const)(
   },
 );
 
-it.effect("matches Windows accessibility windows on a scaled display", () => {
+it.effect("captures and reads Windows windows in physical pixels on a scaled display", () => {
   const png = Buffer.from([1, 2, 3]);
   const active = {
     platform: "windows",
@@ -1013,27 +1013,27 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
     owner: { name: "Editor", processId: 123 },
     bounds: { x: 10, y: 20, width: 800, height: 600 },
   } as const;
-  const dipBounds = { x: 5, y: 10, width: 400, height: 300 };
+  const window = (name: string, value: string) => ({
+    role: "window",
+    name,
+    bounds: active.bounds,
+    value,
+    children: async () => [
+      {
+        role: "button",
+        name: "Save",
+        bounds: { x: 210, y: 220, width: 200, height: 100 },
+        children: async () => [],
+      },
+    ],
+    tree: async () => ({ name, value, children: [] }),
+  });
   activeWindowMock.mockReset().mockResolvedValue(active);
-  screenToDipRectMock.mockImplementation(() => dipBounds);
+  screenToDipRectMock.mockImplementation(() => ({ x: 5, y: 10, width: 400, height: 300 }));
   regionCaptureMock.mockReset().mockResolvedValue({ width: 800, height: 600, png });
   accessibilityForegroundMock.mockReset().mockResolvedValue({
     pid: 123,
-    asElement: () => ({
-      role: "window",
-      name: "Editor",
-      bounds: dipBounds,
-      value: "Scaled text",
-      children: async () => [
-        {
-          role: "button",
-          name: "Save",
-          bounds: { x: 105, y: 110, width: 100, height: 50 },
-          children: async () => [],
-        },
-      ],
-      tree: async () => ({ name: "Editor", value: "Scaled text", children: [] }),
-    }),
+    children: async () => [window("Settings", "Wrong window"), window("Editor", "Scaled text")],
   });
   let metadata = "";
   return Effect.scoped(
@@ -1043,6 +1043,7 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
       yield* service.capture;
       const saved = yield* decodePendingMetadata(metadata);
       const source = { ...saved.source, ...(yield* service.readContext(saved.id)) };
+      assert.deepEqual(regionCaptureMock.mock.calls[0]?.[0], active.bounds);
       assert.include(source.accessibleText, "Scaled text");
       assert.deepEqual(
         source.accessibility?.format === "element-tree"
@@ -1429,7 +1430,7 @@ it.each(["darwin", "win32", "linux"] as const)(
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
 
     const result = await readAccessibleWindowContext(
       { title: "Editor", bounds, owner: { processId: 123 } },
@@ -1469,7 +1470,7 @@ it.each(["darwin", "win32"] as const)(
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
     try {
       assert.isUndefined(
         await readAccessibleWindowText(
@@ -1517,7 +1518,7 @@ it.each([
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
     try {
       const result = await readAccessibleWindowContext(
         { title: "Editor", bounds, owner: { processId: 123 } },
@@ -1563,7 +1564,9 @@ it("keeps Windows text outside the rich serialization budget without a second tr
     tree,
     children: async () => [...children, unreadable],
   };
-  accessibilityForegroundMock.mockReset().mockResolvedValue({ pid: 123, asElement: () => window });
+  accessibilityForegroundMock
+    .mockReset()
+    .mockResolvedValue({ pid: 123, children: async () => [window] });
   const result = await readAccessibleWindowContext(
     { title: "Editor", bounds, owner: { processId: 123 } },
     "win32",
@@ -1598,7 +1601,7 @@ it.each(["missing", "failed"] as const)(
     };
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
     const result = await readAccessibleWindowContext(
       { title: "Editor", bounds, owner: { processId: 123 } },
       "win32",
@@ -1633,7 +1636,9 @@ it("returns Windows text collected before a stalled child without starting anoth
       },
     ],
   };
-  accessibilityForegroundMock.mockReset().mockResolvedValue({ pid: 123, asElement: () => window });
+  accessibilityForegroundMock
+    .mockReset()
+    .mockResolvedValue({ pid: 123, children: async () => [window] });
   try {
     const pending = readAccessibleWindowContext(
       { title: "Editor", bounds, owner: { processId: 123 } },
