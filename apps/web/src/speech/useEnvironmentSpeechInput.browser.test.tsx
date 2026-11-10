@@ -376,31 +376,82 @@ it("retries a failed transcription on the same chosen environment", async () => 
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
-it.each([false, true])(
-  "still sends a confirmed dictation after leaving its thread and coming back (transcript lands while away: %s)",
-  async (landsWhileAway) => {
-    setup({ destination: "env-a" });
-    let resolveTranscript!: (text: string) => void;
-    mocks.transcripts = [new Promise<string>((resolve) => (resolveTranscript = resolve))];
-    const submit = vi.fn();
-    await using screen = await render(<Probe ownerKey="thread-a" />);
-    await act(() => mocks.voice.start());
-    await act(() => mocks.voice.submitAfterDictation(submit));
-    expect(mocks.voice.state.phase).toBe("transcribing");
-    await screen.rerender(<Probe ownerKey="thread-b" />);
-    expect(mocks.voice.state.phase).toBe("idle");
-    if (landsWhileAway) {
-      await act(async () => resolveTranscript("dictated"));
-      await vi.waitFor(() => expect(mocks.transcribeCalls).toHaveLength(1));
-      expect(mocks.committed).not.toHaveBeenCalled();
-      expect(submit).not.toHaveBeenCalled();
-    }
-    await screen.rerender(<Probe ownerKey="thread-a" />);
-    if (!landsWhileAway) await act(async () => resolveTranscript("dictated"));
-    await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
-  },
-);
+function confirmedSend(text: string) {
+  const draft = { text, submit: vi.fn(), cancel: vi.fn() };
+  let resolveTranscript!: (value: string) => void;
+  mocks.transcripts.push(new Promise<string>((resolve) => (resolveTranscript = resolve)));
+  const confirm = () =>
+    mocks.voice.submitAfterDictation(draft.submit, {
+      draft: {
+        unchanged: () => draft.text === text,
+        commit: (next) => {
+          draft.text = next;
+        },
+      },
+      cancel: draft.cancel,
+    });
+  return { draft, confirm, land: (value: string) => resolveTranscript(value) };
+}
+
+it.each([
+  ["another thread is shown", () => <Probe ownerKey="thread-b" />],
+  ["its editor unmounts", () => <span />],
+])("finishes a confirmed send on its own draft after %s", async (_, away) => {
+  setup({ destination: "env-a" });
+  mocks.draft = "a-draft";
+  const a = confirmedSend("a-draft");
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => a.confirm());
+  expect(mocks.voice.state.phase).toBe("transcribing");
+  mocks.draft = "b-draft";
+  await screen.rerender(away());
+  await act(async () => a.land("from A"));
+  await vi.waitFor(() => expect(a.draft.submit).toHaveBeenCalledExactlyOnceWith("a-draft from A"));
+  expect(a.draft.text).toBe("a-draft from A");
+  expect(a.draft.cancel).not.toHaveBeenCalled();
+  expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("keeps another thread's dictation out of a pending confirmed send", async () => {
+  setup({ destination: "env-a" });
+  mocks.draft = "a-draft";
+  const a = confirmedSend("a-draft");
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => a.confirm());
+  mocks.draft = "b-draft";
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  expect(mocks.voice.state.phase).toBe("idle");
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("idle");
+  const submitB = vi.fn();
+  await act(() => mocks.voice.submitAfterDictation(submitB));
+  expect(submitB).toHaveBeenCalledExactlyOnceWith("b-draft");
+  await act(async () => a.land("from A"));
+  await vi.waitFor(() => expect(a.draft.submit).toHaveBeenCalledExactlyOnceWith("a-draft from A"));
+  expect(mocks.committed).not.toHaveBeenCalled();
+  mocks.transcripts = ["from B"];
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("b-draft from B", expect.anything());
+  expect(a.draft.submit).toHaveBeenCalledOnce();
+});
+
+it("drops a confirmed send whose draft changed before its transcript landed", async () => {
+  setup({ destination: "env-a" });
+  mocks.draft = "a-draft";
+  const a = confirmedSend("a-draft");
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => a.confirm());
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  a.draft.text = "edited elsewhere";
+  await act(async () => a.land("from A"));
+  await vi.waitFor(() => expect(a.draft.cancel).toHaveBeenCalledOnce());
+  expect(a.draft.submit).not.toHaveBeenCalled();
+  expect(a.draft.text).toBe("edited elsewhere");
+});
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });

@@ -2949,7 +2949,14 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onComposerSendStable = useStableCallback(onSend);
+  const onComposerSendStable = useStableCallback(
+    (
+      event?: { preventDefault: () => void },
+      dispatchMode?: Parameters<typeof onSend>[1],
+      submissionIntent?: Parameters<typeof onSend>[2],
+      dictation?: Promise<string | null>,
+    ) => onSend(event, dispatchMode, submissionIntent, undefined, dictation),
+  );
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,

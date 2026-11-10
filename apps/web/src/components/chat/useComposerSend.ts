@@ -1,4 +1,5 @@
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { getComposerSubmissionValidationMessage } from "./composerSubmission";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -247,6 +248,59 @@ interface ComposerSendInput {
   }) => Promise<AtomCommandResult<void, unknown>>;
 }
 
+/** Refs for a dictated send that may resume while another thread is shown. */
+async function bindDictatedSend(
+  dictation: Promise<string | null>,
+  live: {
+    readonly composerRef: ComposerHandleRef;
+    readonly promptRef: { current: string };
+    readonly stillHere: () => boolean;
+    readonly readPrompt: () => string;
+  },
+) {
+  const handle = live.composerRef.current;
+  const context = handle?.getSendContext();
+  const pendingAttachments = handle?.hasPendingAttachments() ?? false;
+  const text = await dictation;
+  if (text === null || !handle || !context) return { promptRef: null, composerRef: null };
+  const { stillHere } = live;
+  const promptRef = {
+    get current() {
+      return live.readPrompt();
+    },
+    set current(value: string) {
+      if (stillHere()) live.promptRef.current = value;
+    },
+  };
+  const composerRef: ComposerHandleRef = {
+    current: {
+      ...handle,
+      getSendContext: () => ({ ...context, prompt: text }),
+      hasPendingAttachments: () => pendingAttachments,
+      resetCursorState: (...args) => {
+        if (stillHere()) live.composerRef.current?.resetCursorState(...args);
+      },
+      validateProviderInput: (providerInput) => {
+        if (stillHere())
+          return live.composerRef.current?.validateProviderInput(providerInput) ?? false;
+        const message = getComposerSubmissionValidationMessage({
+          prompt: text,
+          providerInput,
+          submissionTarget: "provider-turn",
+        });
+        if (message)
+          toastManager.add({
+            type: "error",
+            title: "Voice message was not sent",
+            description: message,
+          });
+        return message === null;
+      },
+    },
+  };
+  return { promptRef, composerRef };
+}
+
 /**
  * Everything the composer's send button can start: a turn on this thread or a new one,
  * a multiple-model start, a queued or steering message, a plan follow-up or implementation
@@ -370,8 +424,22 @@ export function useComposerSend(input: ComposerSendInput) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    dictation?: Promise<string | null>,
   ) => {
     e?.preventDefault();
+    const stillHere = () => currentRouteThreadKeyRef.current === routeThreadKey;
+    // A dictated send resumes once its transcript lands, possibly while another thread is shown:
+    // it reads its own draft and leaves the shared editor refs alone unless it is still shown.
+    const { promptRef, composerRef } = dictation
+      ? await bindDictatedSend(dictation, {
+          composerRef: input.composerRef,
+          promptRef: input.promptRef,
+          stillHere,
+          readPrompt: () =>
+            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "",
+        })
+      : { promptRef: input.promptRef, composerRef: input.composerRef };
+    if (!promptRef) return;
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
@@ -407,7 +475,7 @@ export function useComposerSend(input: ComposerSendInput) {
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
-      readPendingEnvironmentChange() !== null ||
+      (stillHere() && readPendingEnvironmentChange() !== null) ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
@@ -852,6 +920,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
     if (
       multipleModelSelections === null &&
+      stillHere() &&
       shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
       activeThreadKey
     ) {
@@ -1039,7 +1108,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
-    } else {
+    } else if (stillHere()) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
@@ -1106,7 +1175,7 @@ export function useComposerSend(input: ComposerSendInput) {
     } else {
       optimisticBlobPreviews.release(optimisticMessage);
     }
-    setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
+    if (stillHere()) setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -1225,7 +1294,7 @@ export function useComposerSend(input: ComposerSendInput) {
             }
           : undefined;
       const backgroundThreadRef =
-        submissionIntent === "background" && isLocalDraftThread
+        submissionIntent === "background" && isLocalDraftThread && stillHere()
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
@@ -1396,7 +1465,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      if (!sendQueuesBehindSetup) resetLocalDispatch();
+      if (!sendQueuesBehindSetup && stillHere()) resetLocalDispatch();
     }
   };
 

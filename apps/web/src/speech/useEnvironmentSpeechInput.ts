@@ -26,7 +26,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel, resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
@@ -107,6 +107,35 @@ type HookInput = {
   ) => void;
 };
 
+/** A draft a confirmed send still reaches after its editor shows another draft or unmounts. */
+export type DictationSendDraft = {
+  /** False once the draft changed since Send, which makes the transcript stale. */
+  readonly unchanged: () => boolean;
+  readonly commit: (text: string) => void;
+};
+
+type ConfirmedSend = {
+  readonly controller: VoiceInputController;
+  readonly prepared: PreparedConnection;
+  readonly grantId: string;
+  readonly state: VoiceInputState;
+};
+
+// Confirmed sends finish on their own controller, so they survive navigation and remounts.
+const confirmedSends = new Map<string, ConfirmedSend>();
+const confirmedSendListeners = new Set<() => void>();
+function subscribeConfirmedSends(notify: () => void) {
+  confirmedSendListeners.add(notify);
+  return () => {
+    confirmedSendListeners.delete(notify);
+  };
+}
+function updateConfirmedSend(ownerKey: string, entry: ConfirmedSend | null) {
+  if (entry) confirmedSends.set(ownerKey, entry);
+  else confirmedSends.delete(ownerKey);
+  for (const notify of confirmedSendListeners) notify();
+}
+
 /**
  * Microphone audio leaves this device only for the environment the person chose in
  * Voice settings. Nothing is inferred from the primary or the draft's environment, and
@@ -167,6 +196,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly prepared: PreparedConnection;
     readonly value: EnvironmentSpeechStatus | null;
   } | null>(null);
+  const confirmedSend = useSyncExternalStore(
+    subscribeConfirmedSends,
+    () => confirmedSends.get(input.ownerKey),
+    () => undefined,
+  );
+  const [controllerGeneration, setControllerGeneration] = useState(0);
   const [controllerState, setControllerState] = useState({
     prepared,
     grantId,
@@ -192,27 +227,30 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setQueuedStart(null);
     setSetup(INITIAL_SETUP);
   }
-  // A confirmed send keeps running for its own draft; another draft shown meanwhile sees it idle.
-  const [sendingOwner, setSendingOwner] = useState<string | null>(null);
-  const controllerPhaseState: VoiceInputState =
-    controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
   const state: VoiceInputState =
-    queuedStart === prepared && prepared
+    confirmedSend?.state ??
+    (queuedStart === prepared && prepared
       ? WAITING_STATE
-      : sendingOwner !== null && sendingOwner !== input.ownerKey
-        ? INITIAL_STATE
-        : controllerPhaseState;
+      : controllerState.prepared === prepared
+        ? controllerState.value
+        : INITIAL_STATE);
 
   const controllerRef = useRef<VoiceInputController | null>(null);
+  const detachRef = useRef<
+    | ((send: {
+        ownerKey: string;
+        draft: DictationSendDraft;
+        submit: (text: string) => void;
+        cancel: () => void;
+      }) => boolean)
+    | null
+  >(null);
   const startRequestRef = useRef(0);
   const pendingSubmissionRef = useRef<{
     ownerKey: string;
     submit: (text: string) => void;
-    draft: VoiceDraftSnapshot | null;
     text?: string;
-    heldCommit?: { text: string; selection: { start: number; end: number } };
   } | null>(null);
-  const lastDraftSnapshotRef = useRef<VoiceDraftSnapshot | null>(null);
   const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
@@ -234,6 +272,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
     if (!prepared || !grantId || typeof navigator === "undefined") return;
+    // A changed destination or consent abandons confirmed sends recorded under the old one.
+    for (const [ownerKey, entry] of confirmedSends) {
+      if (entry.prepared !== prepared || entry.grantId !== grantId) {
+        entry.controller.cancel();
+        updateConfirmedSend(ownerKey, null);
+      }
+    }
     const hasAudioConsent = bindAudioGrant(grantId);
     let disposed = false;
     let controller: VoiceInputController;
@@ -242,10 +287,21 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           readonly cleanup: SpeechPostProcessingOptions | null;
           readonly cleanupGrant: string | null;
           readonly environmentId: EnvironmentId;
+          readonly target: PreparedConnection | null;
         }
       | undefined;
+    let lastSnapshot: VoiceDraftSnapshot | null = null;
+    let detached: {
+      readonly ownerKey: string;
+      readonly snapshot: VoiceDraftSnapshot;
+      readonly draft: DictationSendDraft;
+      readonly submit: (text: string) => void;
+      readonly cancel: () => void;
+      text?: string;
+    } | null = null;
 
-    const readDraft = (): VoiceDraftSnapshot => {
+    const readDraft = (): VoiceDraftSnapshot | null => {
+      if (detached) return detached.draft.unchanged() ? detached.snapshot : null;
       const current = latestRef.current.input;
       const draft = current.readDraft();
       const revision = draftRevisionRef.current;
@@ -256,19 +312,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           revision: revision.revision + 1,
         };
       }
-      const snapshot = {
+      lastSnapshot = {
         ownerKey: current.ownerKey,
         text: draft.text,
         selection: draft.selection,
         revision: draftRevisionRef.current.revision,
       };
-      // After Send, the transcript still belongs to the draft it was recorded for: while another
-      // draft is shown, or once its own frozen draft is back unchanged despite the owner switch.
-      const pinned = pendingSubmissionRef.current?.draft;
-      if (pinned && (snapshot.ownerKey !== pinned.ownerKey || snapshot.text === pinned.text))
-        return pinned;
-      lastDraftSnapshotRef.current = snapshot;
-      return snapshot;
+      return lastSnapshot;
     };
     const platform = createBrowserVoiceInputPlatform({
       prepared,
@@ -293,6 +343,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         recordingPreferences = {
           cleanupGrant,
           environmentId: current.environmentId,
+          target: latestRef.current.cleanupPrepared,
           cleanup: cleanupEnabled
             ? {
                 speechCustomWords,
@@ -325,14 +376,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       options,
     ) => {
       const preferences = recordingPreferences;
-      const { input: current, cleanupPrepared: target } = latestRef.current;
+      const { input: current, cleanupPrepared } = latestRef.current;
+      const target = detached ? (preferences?.target ?? null) : cleanupPrepared;
       if (
         !preferences?.cleanup ||
         !hasAudioConsent() ||
         preferences.cleanupGrant !== readCleanupGrant() ||
-        current.cleanup === false ||
-        current.environmentId !== preferences.environmentId ||
-        current.ownerKey !== options.draft.ownerKey
+        (!detached &&
+          (current.cleanup === false ||
+            current.environmentId !== preferences.environmentId ||
+            current.ownerKey !== options.draft.ownerKey))
       )
         return null;
       if (!target)
@@ -367,36 +420,69 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }),
       readDraft,
       commitDraft: (text, selection) => {
-        const pending = pendingSubmissionRef.current;
-        if (pending && pending.ownerKey !== latestRef.current.input.ownerKey) {
-          pending.heldCommit = { text, selection };
+        if (detached) {
+          detached.draft.commit(text);
+          detached.text = text;
           return;
         }
         if (latestRef.current.input.disabled) return;
         latestRef.current.input.commitDraft(text, selection);
-        if (pending) pending.text = text;
+        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
       },
       onStateChange: (value) => {
-        if (disposed) return;
-        if (value.phase === "error") {
-          pendingSubmissionRef.current = null;
-          setSendingOwner(null);
+        const send = detached;
+        if (send) {
+          if (value.phase === "idle" || value.phase === "error") {
+            detached = null;
+            updateConfirmedSend(send.ownerKey, null);
+            if (value.phase === "idle" && send.text !== undefined) send.submit(send.text);
+            else send.cancel();
+            if (value.phase === "error") {
+              toastManager.add({
+                type: "error",
+                title: "Voice message was not sent",
+                description: value.error,
+              });
+              controller.dispose();
+            }
+          } else {
+            const entry = confirmedSends.get(send.ownerKey);
+            if (entry?.controller === controller)
+              updateConfirmedSend(send.ownerKey, { ...entry, state: value });
+          }
+          return;
         }
+        if (disposed) return;
+        if (value.phase === "error") pendingSubmissionRef.current = null;
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
     });
     controllerRef.current = controller;
+    // Hands an in-flight transcript to the send that confirmed it; the editor gets a new controller.
+    const detach: NonNullable<typeof detachRef.current> = (send) => {
+      if (detached || !lastSnapshot || lastSnapshot.ownerKey !== send.ownerKey) return false;
+      detached = { ...send, snapshot: lastSnapshot };
+      updateConfirmedSend(send.ownerKey, {
+        controller,
+        prepared,
+        grantId,
+        state: controller.currentState,
+      });
+      return true;
+    };
+    detachRef.current = detach;
     return () => {
       disposed = true;
       pendingSubmissionRef.current = null;
-      setSendingOwner(null);
       startRequestRef.current += 1;
       setQueuedStart(null);
-      controller.dispose();
+      if (!detached) controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
+      if (detachRef.current === detach) detachRef.current = null;
     };
-  }, [prepared, grantId, cloudProvider, cloudModel]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a detached send keeps its controller; the generation gives this editor a fresh one
+  }, [prepared, grantId, cloudProvider, cloudModel, controllerGeneration]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
@@ -442,48 +528,58 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an unconfirmed recording when the draft's owner changes; a confirmed send waits for its own draft
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording and any queued submission when the draft's owner changes
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
-    startRequestRef.current += 1;
-    const pending = pendingSubmissionRef.current;
-    if (pending && (pending.ownerKey !== input.ownerKey || !input.disabled)) return;
     pendingSubmissionRef.current = null;
-    setSendingOwner(null);
+    startRequestRef.current += 1;
     controllerRef.current?.ownerChanged();
   }, [input.ownerKey, input.disabled]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to its own draft
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
   useEffect(() => {
     const pending = pendingSubmissionRef.current;
-    if (controllerPhaseState.phase !== "idle" || !pending) return;
-    if (pending.ownerKey !== input.ownerKey) return;
+    if (state.phase !== "idle" || !pending) return;
     pendingSubmissionRef.current = null;
-    setSendingOwner(null);
-    if (input.disabled) return;
-    let text = pending.text;
-    const current = latestRef.current.input;
-    if (pending.heldCommit && current.readDraft().text === pending.draft?.text) {
-      current.commitDraft(pending.heldCommit.text, pending.heldCommit.selection);
-      text = pending.heldCommit.text;
-    }
-    if (text !== undefined) pending.submit(text);
-  }, [controllerPhaseState, input.ownerKey, input.disabled]);
+    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
+      pending.submit(pending.text);
+  }, [state, input.ownerKey, input.disabled]);
 
-  const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
-    if (latestRef.current.input.disabled || state.phase === "preparing") return;
-    const controller = controllerRef.current;
-    if (!controller || !voiceInputBlocksSubmission(state)) {
-      submit(latestRef.current.input.readDraft().text);
-      return;
-    }
-    if (pendingSubmissionRef.current) return;
-    const ownerKey = latestRef.current.input.ownerKey;
-    pendingSubmissionRef.current = { ownerKey, submit, draft: lastDraftSnapshotRef.current };
-    setSendingOwner(ownerKey);
-    if (controller.currentState.phase === "recording") void controller.stop();
-  });
+  /**
+   * With `send.draft`, the transcript commits to that draft and `submit` runs even after the editor
+   * shows another draft or unmounts; `send.cancel` runs when nothing will be submitted.
+   */
+  const submitAfterDictation = useStableCallback(
+    (
+      submit: (text: string) => void,
+      send?: { readonly draft: DictationSendDraft; readonly cancel: () => void },
+    ) => {
+      const current = latestRef.current.input;
+      const controller = controllerRef.current;
+      if (current.disabled || state.phase === "preparing" || confirmedSend) {
+        send?.cancel();
+        return;
+      }
+      if (!controller || !voiceInputBlocksSubmission(state)) {
+        submit(current.readDraft().text);
+        return;
+      }
+      if (pendingSubmissionRef.current) {
+        send?.cancel();
+        return;
+      }
+      if (send && detachRef.current?.({ ownerKey: current.ownerKey, submit, ...send })) {
+        if (controller.currentState.phase === "recording") void controller.stop();
+        setControllerState({ prepared, grantId, value: INITIAL_STATE });
+        setPreview(null);
+        setControllerGeneration((generation) => generation + 1);
+        return;
+      }
+      pendingSubmissionRef.current = { ownerKey: current.ownerKey, submit };
+      if (controller.currentState.phase === "recording") void controller.stop();
+    },
+  );
 
   const loadSetupCatalog = useStableCallback(
     async (connection: PreparedConnection, selectedModelId: string, request: number) => {
@@ -513,6 +609,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const start = useStableCallback(async () => {
     if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
+    if (confirmedSends.size > 0) {
+      toastManager.add({ type: "info", title: "Finishing the previous voice message" });
+      return;
+    }
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
@@ -663,15 +763,22 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputBlocksSubmission(state),
     start,
     submitAfterDictation,
-    stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
+    stop: useStableCallback(
+      () => (confirmedSend?.controller ?? controllerRef.current)?.stop() ?? Promise.resolve(),
+    ),
     cancel: useStableCallback(() => {
+      if (confirmedSend) {
+        confirmedSend.controller.cancel();
+        return;
+      }
       pendingSubmissionRef.current = null;
-      setSendingOwner(null);
       startRequestRef.current += 1;
       setQueuedStart(null);
       setSetup(INITIAL_SETUP);
       controllerRef.current?.cancel();
     }),
-    skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
+    skipPostProcessing: useStableCallback(() =>
+      (confirmedSend?.controller ?? controllerRef.current)?.skipPostProcessing(),
+    ),
   };
 }

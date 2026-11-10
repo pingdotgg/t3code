@@ -453,6 +453,7 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    dictation?: Promise<string | null>,
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -2093,7 +2094,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
-    if (voiceInputActive) {
+    if (voiceInputActive && (activePendingProgress || isEditingQueuedMessage)) {
       event?.preventDefault();
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return;
@@ -2127,23 +2128,48 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
+    const resolvedDispatchMode =
+      dispatchMode ??
+      resolveComposerDispatchMode({
+        running: phase === "running",
+        alternateModifier: false,
+        activeTurnDefault: followUpBehavior,
+        canSteer: !isCompacting,
+      });
+    if (voiceInputActive) {
+      // The send binds to this draft now and finishes there once the transcript lands, wherever
+      // the composer is by then.
+      event?.preventDefault();
+      const target = composerDraftTarget;
+      const targetKey = composerDraftTargetKey;
+      const promptAtSend = getComposerDraft(target)?.prompt ?? "";
+      const transcript = new Promise<string | null>((resolve) =>
+        submitAfterDictation(
+          (text) => {
+            resolve(text);
+            if (composerDraftTargetKeyRef.current !== targetKey) return;
+            onTypingGuardSend();
+            if (shouldBlurMobileComposerOnSubmit()) blurMobileComposerAfterSend();
+          },
+          {
+            draft: {
+              unchanged: () => (getComposerDraft(target)?.prompt ?? "") === promptAtSend,
+              commit: (text) => setComposerDraftPrompt(target, text),
+            },
+            cancel: () => resolve(null),
+          },
+        ),
+      );
+      onSend(undefined, resolvedDispatchMode, submissionIntent, transcript);
+      return;
+    }
     const submission = submitComposerDraft({
       prompt: promptRef.current,
       submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
       event,
       onSend: (sendEvent) => {
         providerInputRejectedRef.current = false;
-        onSend(
-          sendEvent,
-          dispatchMode ??
-            resolveComposerDispatchMode({
-              running: phase === "running",
-              alternateModifier: false,
-              activeTurnDefault: followUpBehavior,
-              canSteer: !isCompacting,
-            }),
-          submissionIntent,
-        );
+        onSend(sendEvent, resolvedDispatchMode, submissionIntent);
         return !providerInputRejectedRef.current;
       },
     });
