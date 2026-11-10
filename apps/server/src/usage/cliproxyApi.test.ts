@@ -509,6 +509,56 @@ describe("CLIProxyAPI built-in management API", () => {
         "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
       );
       expect(summary?.data).toBe(encodeJson({ project: "project-7" }));
+      const identityCalls = test.requests.filter((request) =>
+        request.body?.url?.endsWith("/userinfo"),
+      );
+      expect(identityCalls).toHaveLength(1);
+      expect(identityCalls[0]?.body).toMatchObject({
+        method: "GET",
+        url: "https://www.googleapis.com/oauth2/v2/userinfo",
+        header: { Authorization: "Bearer $TOKEN$" },
+      });
+    }),
+  );
+
+  it.effect("keeps Antigravity limits and listing email when its identity read fails", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "antigravity.json",
+            auth_index: "g",
+            provider: "antigravity",
+            email: "g@example.com",
+            project_id: "project-7",
+          },
+        ],
+        upstream: (request) =>
+          request.url?.endsWith("/userinfo")
+            ? { status: 403, body: { error: "denied" } }
+            : {
+                status: 200,
+                body: {
+                  buckets: [
+                    {
+                      bucketId: "gemini-weekly",
+                      window: "weekly",
+                      remainingFraction: 0.75,
+                      resetTime: "2099-01-01T00:00:00Z",
+                    },
+                  ],
+                },
+              },
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result).toHaveLength(1);
+      const [account] = result;
+      expect(account).toMatchObject({ driver: "antigravity", email: "g@example.com" });
+      expect(account?.usageLimits.credentialFingerprint).toBeUndefined();
+      expect(account?.usageLimits.unavailable).toBeUndefined();
+      expect(account?.usageLimits.windows).toMatchObject([
+        { id: "gemini-weekly", kind: "weekly", usedPercent: 25 },
+      ]);
     }),
   );
 
