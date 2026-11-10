@@ -322,6 +322,17 @@ describe("resolveTranscriptCommit", () => {
     expect(result).toMatchObject({ kind: "commit", text: expected });
   });
 
+  it("keeps surrogate pairs whole when an emoji changed while recording", () => {
+    const captured = draft({ text: "🔔", selection: { start: 0, end: 0 } });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: "🤔", selection: { start: 0, end: 0 } }),
+      "hello",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: "🤔hello" });
+  });
+
   it("does not insert into a missing draft or another owner's draft", () => {
     const captured = draft();
     expect(resolveTranscriptCommit(captured, null, "text", "en-US")).toEqual({ kind: "stale" });

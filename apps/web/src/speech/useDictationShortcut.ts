@@ -64,13 +64,19 @@ const targetScope = (field: HTMLElement | null | undefined) =>
   field?.closest('[role="dialog"]') ?? field;
 
 // Escape inside another shown dictation editor, or the dialog hosting it, belongs to that editor.
+// The editor itself is checked before dialogs, since one dialog can host several editors.
 function inOtherShortcutTarget(id: symbol, target: EventTarget | null) {
   if (!(target instanceof Node)) return false;
-  if (targetScope(shortcutTargets.get(id)?.().targetRef?.current)?.contains(target)) return false;
-  return [...shortcutTargets].some(([other, read]) => {
-    const field = read().targetRef?.current;
-    return other !== id && !!field?.getClientRects().length && targetScope(field)?.contains(target);
-  });
+  const own = shortcutTargets.get(id)?.().targetRef?.current;
+  const others = [...shortcutTargets]
+    .filter(([other]) => other !== id)
+    .map(([, read]) => read().targetRef?.current)
+    .filter((field): field is HTMLElement => !!field?.getClientRects().length);
+  for (const scope of [(field?: HTMLElement | null) => field, targetScope]) {
+    if (scope(own)?.contains(target)) return false;
+    if (others.some((field) => scope(field)?.contains(target))) return true;
+  }
+  return false;
 }
 
 export function useDictationShortcut(input: ShortcutInput) {

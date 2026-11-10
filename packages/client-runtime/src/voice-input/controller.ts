@@ -108,6 +108,9 @@ type TranscriptCommitResult =
 
 const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
 
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
 function mapSelection(
   before: string,
   text: string,
@@ -119,9 +122,15 @@ function mapSelection(
     before[before.length - 1 - offset] === text[text.length - 1 - offset];
   let prefix = 0;
   let suffix = 0;
-  if (suffixFirst) while (suffix < shared && matchesFromEnd(suffix)) suffix += 1;
+  // Matching is per UTF-16 unit; never let a boundary split a surrogate pair.
+  const scanSuffix = (limit: number) => {
+    while (suffix < limit && matchesFromEnd(suffix)) suffix += 1;
+    if (suffix > 0 && isLowSurrogate(before.charCodeAt(before.length - suffix))) suffix -= 1;
+  };
+  if (suffixFirst) scanSuffix(shared);
   while (prefix < shared - suffix && before[prefix] === text[prefix]) prefix += 1;
-  if (!suffixFirst) while (suffix < shared - prefix && matchesFromEnd(suffix)) suffix += 1;
+  if (prefix > 0 && isHighSurrogate(before.charCodeAt(prefix - 1))) prefix -= 1;
+  if (!suffixFirst) scanSuffix(shared - prefix);
   const editEnd = before.length - suffix;
   const map = (position: number, afterInsertion: boolean) =>
     position < prefix || (position === prefix && !afterInsertion)

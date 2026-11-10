@@ -129,6 +129,27 @@ it("lets Escape in another dictation editor reach that editor instead of canceli
   expect(editorEscape).toHaveBeenCalledTimes(2);
 });
 
+it("lets Escape in another editor of the recording editor's dialog reach that editor", async () => {
+  const speech = recording();
+  const replyRef = createRef<HTMLTextAreaElement>();
+  const otherReplyRef = createRef<HTMLTextAreaElement>();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} targetRef={replyRef} />
+      <Probe speech={actions(true)} targetRef={otherReplyRef} />
+      <div role="dialog" aria-label="Pull request">
+        <textarea aria-label="Reply A" ref={replyRef} />
+        <textarea aria-label="Reply B" ref={otherReplyRef} />
+      </div>
+    </>,
+  );
+  const other = screen.getByRole("textbox", { name: "Reply B" }).element();
+  if (!(other instanceof HTMLElement)) throw new Error("expected a reply editor");
+  other.focus();
+  other.dispatchEvent(escape());
+  expect(speech.cancel).not.toHaveBeenCalled();
+});
+
 it("cancels the recording on Escape outside other shown dictation editors", async () => {
   const speech = recording();
   const reviewRef = createRef<HTMLTextAreaElement>();
