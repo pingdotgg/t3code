@@ -127,7 +127,7 @@ describe("Antigravity process environment", () => {
           ANTIGRAVITY_HARNESS_PATH: "/stale/harness",
           AGY_CLI_AUTO_COMPACT_OVERRIDE: "70%",
         },
-        autoCompactWindow,
+        ...(autoCompactWindow === undefined ? {} : { autoCompactWindow }),
       });
 
       expect(spawn.command).toBe("/usr/bin/agy");

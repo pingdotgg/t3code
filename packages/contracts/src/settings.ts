@@ -902,7 +902,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Auto-compact after",
-        description: "Token count, 1–100%, or off. Leave empty to use Antigravity's default.",
+        description:
+          "Token count, 1–100%, or off. Leave empty to preserve existing CLI behavior, including any inherited override.",
         providerSettingsForm: { placeholder: "e.g. 840000 or 85%", clearWhenEmpty: "omit" },
       }),
     ),
