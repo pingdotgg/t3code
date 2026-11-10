@@ -168,6 +168,10 @@ if (import.meta.main) {
     process.exit(2);
   }
   const scenarioPath = NodePath.resolve(scenario);
+  // A proof left by an earlier run must not be read as this one's.
+  for (const stale of ["proof.md", "proof.json"]) {
+    NodeFS.rmSync(NodePath.join(SCRIPTS, ".e2e/prove", stale), { force: true });
+  }
   const sides = (["base", "head"] as const).map((side) => {
     const sha = git([
       "rev-parse",
@@ -198,11 +202,20 @@ if (import.meta.main) {
   const captures = [...base.captures, ...head.captures];
   const links = new Map<string, string>();
   if (values["upload-command"] !== undefined && captures.length > 0) {
-    const [command, ...args] = values["upload-command"].split(/\s+/).filter(Boolean);
-    const urls = NodeChildProcess.execFileSync(command!, [...args, ...captures], {
-      encoding: "utf8",
-    });
-    for (const [index, url] of urls.trim().split("\n").entries()) links.set(captures[index]!, url);
+    const [command = "", ...args] = values["upload-command"].split(/\s+/).filter(Boolean);
+    // A failed upload must not lose two finished runs: the proof then points at local files.
+    try {
+      const urls = NodeChildProcess.execFileSync(command, [...args, ...captures], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      for (const [index, url] of urls.trim().split("\n").entries()) {
+        const capture = captures[index];
+        if (capture !== undefined) links.set(capture, url);
+      }
+    } catch {
+      console.error("The upload command failed; the proof links local capture files.");
+    }
   }
   const proveDir = NodePath.join(SCRIPTS, ".e2e/prove");
   const proof = buildProof(

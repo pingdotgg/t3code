@@ -2455,6 +2455,9 @@ importers:
 
   scripts:
     dependencies:
+      '@e2e-dev/mobile':
+        specifier: 0.12.6
+        version: 0.12.6(e2e@0.23.0)
       '@e2e-dev/web':
         specifier: 0.15.5
         version: 0.15.5(e2e@0.23.0)
@@ -2477,8 +2480,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/tailscale
       agent-device:
-        specifier: 0.21.32
-        version: 0.21.32
+        specifier: 0.21.36
+        version: 0.21.36
       e2e:
         specifier: 0.23.0
         version: 0.23.0
@@ -3721,6 +3724,16 @@ packages:
     resolution: {integrity: sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg==}
     peerDependencies:
       react: '>=16.8.0'
+
+  '@e2e-dev/mobile@0.12.6':
+    resolution: {integrity: sha512-V56hOt5cJsoC9M8kMIjsCKOY2pEPHb4awYMLP699yMO4aNUUnpALYK/R2ik6C64CLEq4N1aibLmD7ErPZVc97w==}
+    engines: {node: ^22.22.3 || >=24.8.0}
+    peerDependencies:
+      ai: ^7.0.0
+      e2e: '>=0.22.1 <1'
+    peerDependenciesMeta:
+      ai:
+        optional: true
 
   '@e2e-dev/web@0.15.5':
     resolution: {integrity: sha512-fUXrSgfii6w/q7OyX9/kEIDLpIMHpEkTH81hrR8WLnqk8li3bRyXJQBGWqtq9NoWpS2UANnhMI45n6Fv1ErCnw==}
@@ -7678,8 +7691,8 @@ packages:
     engines: {node: '>=18.18'}
     hasBin: true
 
-  agent-device@0.21.32:
-    resolution: {integrity: sha512-gfpNs+qeCHKKLY3mqD/NpC7Et7wh5qxNvM9A2cPOhOpzX21e9UHSkO7zOMBpUK7NGtOOkbtz67jco5SVmZOPog==}
+  agent-device@0.21.36:
+    resolution: {integrity: sha512-aG88WlEHjFc/OEBQC7AJg+2LfNoVT/ogxnnzIUYUEgafdiTvBaA+X6uQ2wNmpp2ZrHLy8QIXoEOyc3NEZgJCpQ==}
     engines: {node: '>=22.12'}
     hasBin: true
     peerDependencies:
@@ -13844,6 +13857,13 @@ snapshots:
       react: 19.3.0
       tslib: 2.8.1
 
+  '@e2e-dev/mobile@0.12.6(e2e@0.23.0)':
+    dependencies:
+      agent-device: 0.21.36
+      e2e: 0.23.0
+      pngjs: 7.0.0
+      zod: 4.6.7
+
   '@e2e-dev/web@0.15.5(e2e@0.23.0)':
     dependencies:
       e2e: 0.23.0
@@ -17334,7 +17354,7 @@ snapshots:
 
   agent-cli-detector@0.1.7: {}
 
-  agent-device@0.21.32: {}
+  agent-device@0.21.36: {}
 
   agent-install@0.0.5:
     dependencies:

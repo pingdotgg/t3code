@@ -1,7 +1,8 @@
 # Scenarios
 
 A scenario is an [e2e](https://e2e.com/docs) test that shows one behavior in the real app: a real
-server on its own T3 home, real HTTP and WebSocket, and a real browser on the real web client. The
+server on its own T3 home, real HTTP and WebSocket, and a real browser on the web client or a
+pooled iPhone simulator running the mobile app. The
 dev replay agent stands in for the model, so a run is free and repeatable. Use one as the proof
 for a bug fix: it fails on the base commit and passes on the fix.
 
@@ -13,27 +14,26 @@ runner; its docs ship in `scripts/node_modules/e2e/docs` and `e2e guide` prints 
 ```ts
 import { expect } from "e2e";
 
-import { test } from "./t3.ts";
+import { test, WEB } from "./t3.ts";
 
-test("Tab moves from the add-project Git URL field to its submit button", async ({
-  t3,
-  app,
-  screen,
-  browser,
-}) => {
-  await t3.project("demo");
-  await t3.open();
+test(
+  "Tab moves from the add-project Git URL field to its submit button",
+  WEB,
+  async ({ t3, app, screen, browser }) => {
+    await t3.project("demo");
+    await t3.open();
 
-  await screen.getByRole("button", "Add project").tap();
-  await screen.getByText("Git URL").tap();
-  await screen.getByRole("combobox").fill("https://github.com/pingdotgg/t3code.git");
-  const submit = screen.getByRole("button", "Continue (Enter)");
-  await expect(submit).toBeEnabled();
+    await screen.getByRole("button", "Add project").tap();
+    await screen.getByText("Git URL").tap();
+    await screen.getByRole("combobox").fill("https://github.com/pingdotgg/t3code.git");
+    const submit = screen.getByRole("button", "Continue (Enter)");
+    await expect(submit).toBeEnabled();
 
-  await browser.keyboard.press("Tab");
-  await app.screenshot("after-tab");
-  await expect(submit).toBeFocused();
-});
+    await browser.keyboard.press("Tab");
+    await app.screenshot("after-tab");
+    await expect(submit).toBeFocused();
+  },
+);
 ```
 
 `screen`, `browser`, `app`, and `expect` are e2e's own. [`t3.ts`](../../scripts/scenarios/t3.ts)
@@ -94,14 +94,50 @@ test: a temporary worktree beside your checkout, installed with `vp i` and remov
 commit that is your clean `HEAD` runs in place. So a new scenario can prove a fix against a base
 that predates it.
 
+## iOS
+
+An iOS scenario imports from [`t3-mobile.ts`](../../scripts/scenarios/t3-mobile.ts) and passes
+`IOS` where a web one passes `WEB`:
+
+```ts
+import { expect } from "e2e";
+
+import { IOS, test } from "./t3-mobile.ts";
+
+test(
+  "The iOS app lists a seeded thread and opens its history",
+  IOS,
+  async ({ t3, app, screen }) => {
+    const project = await t3.project("demo");
+    await t3.thread({ project, title: "Earlier work", messages: ["first", "second"] });
+    await t3.open();
+
+    const thread = screen.getByText("Earlier work", { exact: false }).first();
+    await expect(thread).toBeVisible({ timeout: 120_000 });
+    await thread.tap();
+    await expect(screen.getByText("second fixture turn complete", { exact: false })).toBeVisible();
+  },
+);
+```
+
+`t3.project` and `t3.thread` are the same. `t3.open()` installs the dev client for the checkout's
+native fingerprint, loads it from Metro, and pairs it with the scenario's server. `device` is
+e2e's [device fixture](https://e2e.com/docs/mobile#the-device-fixture) for system actions.
+
+The run leases an iPhone 18 Pro from the Simlock pool, so it needs `SIMLOCK_AGENT_DEVICE_URL`
+and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, as `mobile:e2e` does, and a gateway on Simlock 0.7.0 or
+later. A web-only run leases nothing. The device reaches this machine over the tailnet on ports
+13990 (server) and 8190 (Metro); set `T3_SCENARIO_SERVER_PORT` and `T3_SCENARIO_METRO_PORT` when
+another run on the machine holds them. An iOS run takes two to three minutes, most of it the
+device and the first bundle. `e2e run --target web` or `--target ios` runs one side.
+
+`scenarios:prove` works the same for an iOS scenario. Each commit gets the dev client built for
+its own native code.
+
 ## Other tiers
 
-Only the web client with the replay agent runs today.
-
-- **Mobile.** e2e's `@e2e-dev/mobile` engine drives iOS and Android through agent-device, which
-  this repository already uses. A mobile target in
-  [`e2e.config.ts`](../../scripts/e2e.config.ts) and a `t3` fixture that pairs the device would
-  run scenarios written with `screen` locators unchanged. Tests that use `browser` are web-only.
+- **Android.** Add a target with `mobile({ platform: "android", device: simlock("Pixel 9") })`
+  and open the dev client with the Android form of the Expo link. Not built.
 - **Live provider.** Point the default model in `start-app.ts` at a real provider's cheapest
   model. Assertions on exact reply text would not hold.
 
@@ -114,7 +150,7 @@ result as a pull request comment.
 
 ## What a scenario cannot cover
 
-- Desktop shell behavior (menus, windows, IPC), and the mobile app until it has a target.
+- Desktop shell behavior (menus, windows, IPC), and Android.
 - Provider-specific behavior. The replay agent speaks generic ACP.
 - State no command can create, such as a run stopped by a usage limit.
 - Timing. Replay streaming is simulated, so a scenario cannot show a performance regression.

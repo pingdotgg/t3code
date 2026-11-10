@@ -8,6 +8,7 @@
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@e2e-dev/mobile": "0.12.6",
     "@e2e-dev/web": "0.15.5",
     "@effect/platform-node": "catalog:",
     "@electron/asar": "^4.3.0",
@@ -15,7 +16,7 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
-    "agent-device": "0.21.32",
+    "agent-device": "0.21.36",
     "e2e": "0.23.0",
     "effect": "catalog:",
     "playwright-core": "1.64.1",
