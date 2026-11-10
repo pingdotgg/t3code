@@ -346,9 +346,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const layout = useMemo(() => {
     const preferredLayout =
-      Platform.OS === "android" &&
-      baseLayout.listPaneWidth !== null &&
-      primarySidebarPreferredWidth !== null
+      baseLayout.listPaneWidth !== null && primarySidebarPreferredWidth !== null
         ? {
             ...baseLayout,
             listPaneWidth: constrainPrimarySidebarWidth({
