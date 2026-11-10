@@ -68,7 +68,6 @@ describe("HookInboxStore", () => {
           yield* Deferred.succeed(released, undefined);
           const nextAt = yield* Fiber.join(run);
           expect(sent).toEqual(["first"]);
-          // The alarm must not be rescheduled, even if the in-flight send failed.
           expect(nextAt).toBeNull();
           const sql = yield* SqlClient.SqlClient;
           expect(yield* sql`SELECT id FROM held_hooks`).toEqual([]);

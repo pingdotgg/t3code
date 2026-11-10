@@ -14,6 +14,7 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         icon={item.icon}
         subtitle={item.subtitle}
         disabled={item.disabled}
+        destructive={item.destructive}
         isOn={item.selected}
         onPress={item.onPress}
       >
@@ -23,7 +24,6 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
   );
 }
 
-/** Returns direct native items for toolbar serialization, including nested menu data. */
 export function createNativeHeaderMenu(menu: AppBarMenu) {
   return (
     <Toolbar.Menu
