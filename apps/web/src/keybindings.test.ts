@@ -644,6 +644,20 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("maximizes the right panel with mod+alt+e by default", () => {
+    // macOS reports Option+E as the dead key "´", so the physical key decides.
+    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true });
+    const linux = event({ key: "e", code: "KeyE", ctrlKey: true, altKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(mac, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "rightPanel.toggleMaximized",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(linux, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "rightPanel.toggleMaximized",
+    );
+  });
+
   it("navigates history with mod+[ and mod+] outside the terminal", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
