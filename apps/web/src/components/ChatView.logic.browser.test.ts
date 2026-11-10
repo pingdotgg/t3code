@@ -70,7 +70,7 @@ it("refocuses the composer on window return from a clicked area after a bare key
   // A window switch can deliver a lone modifier key without moving focus.
   await userEvent.keyboard("{Shift}");
   expect(
-    shouldRefocusComposerOnWindowFocus(document.activeElement),
+    shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection()),
     "a clicked area counts as reached from the keyboard after a bare key press",
   ).toBe(true);
 
@@ -79,5 +79,7 @@ it("refocuses the composer on window return from a clicked area after a bare key
   await userEvent.keyboard("{F6}");
   controller.move(1);
   expect(document.activeElement).toBe(conversation);
-  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    false,
+  );
 });
