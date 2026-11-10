@@ -2894,7 +2894,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.workspaceRoot &&
         relativePath &&
         !/[\\/]$/.test(presentation.path) &&
-        workspaceLinkLookupQuery(relativePath, props.workspaceRoot) !== null &&
+        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
         const workspaceRoot = props.workspaceRoot;

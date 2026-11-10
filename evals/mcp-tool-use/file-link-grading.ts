@@ -4,6 +4,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  parseMarkdownFileLink,
   resolveMarkdownFileLinkTarget,
 } from "@t3tools/shared/markdownLinks";
 import {
@@ -37,7 +38,7 @@ export const fileLinkPills = (
     const path = splitFilePathPosition(target).path.replace(/\/+$/, "");
     // System paths such as /usr/bin/node are not what these cases test.
     if (!/^\/(?:home|Users)\//.test(path)) return [];
-    const relative = splitFilePathPosition(source).path;
+    const relative = parseMarkdownFileLink(source)?.path ?? path;
     const entries = files.flatMap((file) =>
       file.startsWith(`${cwd}/`)
         ? [{ path: file.slice(cwd.length + 1), kind: "file" as const }]
