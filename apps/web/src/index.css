@@ -3403,6 +3403,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --checked-indicator-border: initial;
   --kbd-destructive-fill: initial;
   --kbd-destructive-shadow: initial;
   --warning-foreground: var(--ss-default-warning-foreground);
@@ -4209,6 +4210,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --dismiss-shadow: var(--floating-shadow);
   --kbd-destructive-fill: linear-gradient(#00000026, #00000026);
   --kbd-destructive-shadow: none;
+  --checked-indicator-border: 1px;
   --gloss-on-background:
     var(--lit-fill) padding-box, var(--lit-rim) border-box, var(--lit-fill) border-box;
   --slider-bar-fill: var(--lit-fill);
@@ -4257,6 +4259,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tree-row-hover-fill: var(--ghost-hover-fill) !important;
   --tree-row-selected-fill: var(--selected-fill) !important;
   --tree-row-selected-rim: var(--sidebar-row-selected-rim) !important;
+}
+
+:is([data-slot="checkbox-indicator"], [data-slot="radio-indicator"]) {
+  border: var(--checked-indicator-border, 0px) solid transparent;
 }
 
 /* Flat groups and floating surfaces use the same fill ladder as controls.
