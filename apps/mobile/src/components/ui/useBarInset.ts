@@ -38,14 +38,21 @@ export function useBarOverlap(): number {
 }
 
 /**
- * The content's top safe area under the AppBar: a translucent bar's height, zero under a solid
- * one or on Android, where the bar sits in flow. For scroll content insets, which must not
- * double-count a solid bar.
+ * The content's top safe area under the AppBar: the height of the iOS bar its column lays content
+ * under, glass or solid, and zero on Android, where the bar sits in flow. For manual scroll
+ * content insets.
  */
 export function useContentTopInset(): number {
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
   return Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
+}
+
+/** The content's bottom safe area on iOS, which a list with manual insets must add itself. */
+export function useContentBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  return Platform.OS === "ios" ? (columnMetrics?.safeArea.bottom ?? insets.bottom) : 0;
 }
 
 /** How much of the screen's bottom edge an AppBar `search` covers: iOS's bottom search toolbar. */
