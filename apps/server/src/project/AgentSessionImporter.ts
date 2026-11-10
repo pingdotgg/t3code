@@ -107,10 +107,14 @@ function dateTime(value: string): DateTime.Utc {
   return DateTime.makeUnsafe(value);
 }
 
+type HistoryMessage = Omit<AgentSessionScanner.AgentSessionThreadMessage, "role"> & {
+  readonly role: AgentSessionScanner.AgentSessionThreadMessage["role"] | "reasoning";
+};
+
 function messageEvents(input: {
   readonly threadId: ThreadId;
   readonly index: number;
-  readonly message: AgentSessionScanner.AgentSessionThreadMessage;
+  readonly message: HistoryMessage;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
   const ordinal = input.index + 1;
   const suffix = String(input.index).padStart(6, "0");
@@ -119,20 +123,6 @@ function messageEvents(input: {
     `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
   );
   const at = dateTime(input.message.createdAt);
-  const message: OrchestrationV2ConversationMessage = {
-    createdBy: input.message.role === "user" ? "user" : "agent",
-    creationSource: "server",
-    id: messageId,
-    threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    role: input.message.role,
-    text: input.message.text,
-    attachments: [],
-    streaming: false,
-    createdAt: at,
-    updatedAt: at,
-  };
   const common = {
     id: turnItemId,
     threadId: input.threadId,
@@ -147,6 +137,32 @@ function messageEvents(input: {
     title: null,
     startedAt: at,
     completedAt: at,
+    updatedAt: at,
+  };
+  const turnItemEvent = (payload: OrchestrationV2TurnItem): OrchestrationV2DomainEvent => ({
+    id: EventId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`),
+    type: "turn-item.updated",
+    threadId: input.threadId,
+    occurredAt: at,
+    payload,
+  });
+  if (input.message.role === "reasoning") {
+    return [
+      turnItemEvent({ ...common, type: "reasoning", text: input.message.text, streaming: false }),
+    ];
+  }
+  const message: OrchestrationV2ConversationMessage = {
+    createdBy: input.message.role === "user" ? "user" : "agent",
+    creationSource: "server",
+    id: messageId,
+    threadId: input.threadId,
+    runId: null,
+    nodeId: null,
+    role: input.message.role,
+    text: input.message.text,
+    attachments: [],
+    streaming: false,
+    createdAt: at,
     updatedAt: at,
   };
   const turnItem: OrchestrationV2TurnItem =
@@ -176,13 +192,7 @@ function messageEvents(input: {
       occurredAt: at,
       payload: message,
     },
-    {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`),
-      type: "turn-item.updated",
-      threadId: input.threadId,
-      occurredAt: at,
-      payload: turnItem,
-    },
+    turnItemEvent(turnItem),
   ];
 }
 
@@ -494,7 +504,7 @@ const make = Effect.gen(function* () {
     );
     // Thread commands write whole thread rows, so hold their lock from the
     // re-read through the write to keep both this marker and their changes.
-    const commit = (messages: ReadonlyArray<AgentSessionScanner.AgentSessionThreadMessage>) =>
+    const commit = (messages: ReadonlyArray<HistoryMessage>) =>
       threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {
@@ -554,11 +564,12 @@ const make = Effect.gen(function* () {
         Effect.timeout(NATIVE_HISTORY_READ_TIMEOUT),
         Effect.scoped,
       );
+    const reasoningIds = new Set(snapshot.reasoningMessageIds);
     const messages = snapshot.messages.flatMap((message) =>
       (message.role === "user" || message.role === "assistant") && message.text.trim() !== ""
         ? [
             {
-              role: message.role,
+              role: reasoningIds.has(message.id) ? ("reasoning" as const) : message.role,
               text: message.text,
               createdAt: DateTime.formatIso(message.createdAt),
             },

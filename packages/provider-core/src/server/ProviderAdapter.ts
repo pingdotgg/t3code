@@ -517,6 +517,8 @@ export interface ProviderAdapterV2ThreadSnapshot {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
+  /** Ids in `messages` that hold the agent's reasoning, not its reply. */
+  readonly reasoningMessageIds?: ReadonlyArray<OrchestrationV2ConversationMessage["id"]>;
   readonly runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>;
   readonly providerPayload?: unknown;
 }

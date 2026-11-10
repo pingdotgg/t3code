@@ -2620,12 +2620,20 @@ describe("AcpAdapterV2", () => {
           content: { type: "text", text: "after plan" },
         },
       });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "weighing it" },
+        },
+      });
 
       const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
       assert.deepEqual(
         snapshot.messages.map((message) => message.text),
-        ["before plan", "after plan"],
+        ["before plan", "after plan", "weighing it"],
       );
+      assert.deepEqual(snapshot.reasoningMessageIds, [snapshot.messages[2]!.id]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
