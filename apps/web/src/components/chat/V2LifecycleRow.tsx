@@ -260,7 +260,7 @@ function SubagentAvatar({
             iconClassName="size-4"
           />
         ) : (
-          <BotIcon className="size-4 text-muted-foreground" />
+          <BotIcon className="size-4 text-dim-foreground" />
         )}
       </span>
     );
