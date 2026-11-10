@@ -236,8 +236,9 @@ import { readEnvironmentScope, usePreparedConnection } from "../../state/session
 import { projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
-  pickWorkspaceBasenameMatch,
+  pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
+  workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
@@ -2893,17 +2894,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.workspaceRoot &&
         relativePath &&
         !/[\\/]$/.test(presentation.path) &&
-        needsWorkspaceBasenameLookup(relativePath) &&
+        workspaceLinkLookupQuery(relativePath, props.workspaceRoot) !== null &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
+        const workspaceRoot = props.workspaceRoot;
         const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
         void executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
             environmentId: props.environmentId,
             input: {
-              cwd: props.workspaceRoot,
-              query: relativePath,
+              cwd: workspaceRoot,
+              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
               kind: "file",
               limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
             },
@@ -2913,7 +2915,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           (result) => {
             const match =
               result._tag === "Success"
-                ? pickWorkspaceBasenameMatch(relativePath, result.value.entries)
+                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
                 : null;
             if (!match || match === relativePath) {
               openAt(relativePath);
@@ -2930,7 +2932,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ).then(
               (metadata) =>
                 openAt(
-                  metadata._tag === "Success" && metadata.value?.kind !== "directory"
+                  metadata._tag === "Success" &&
+                    (needsWorkspaceBasenameLookup(relativePath)
+                      ? metadata.value?.kind !== "directory"
+                      : metadata.value === null)
                     ? match
                     : relativePath,
                 ),
