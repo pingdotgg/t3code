@@ -206,16 +206,15 @@ export const layer = Layer.effectDiscard(
                           ids.allocate
                             .command({
                               fixtureName: "delegated-completion",
-                              commandName: "acknowledge-disabled",
+                              commandName: "dispose-disabled",
                             })
                             .pipe(
-                              Effect.flatMap((ackCommandId) =>
+                              Effect.flatMap((disposeCommandId) =>
                                 threads.dispatch({
-                                  type: "delegated_task.completion-delivery.acknowledge",
-                                  commandId: ackCommandId,
+                                  type: "delegated_task.completion-delivery.dispose",
+                                  commandId: disposeCommandId,
                                   parentThreadId: request.threadId,
                                   taskId,
-                                  observedByRunId: null,
                                 }),
                               ),
                             ),
