@@ -182,7 +182,8 @@ process.on("message", async (message) => {
       error: error instanceof Error ? error.stack ?? error.message : String(error) });
   }
 });
-process.on("disconnect", () => process.exit(0));
+// Exit teardown under in-flight native inference segfaults, so terminate without it.
+process.on("disconnect", () => process.kill(process.pid, "SIGKILL"));
 `;
 
 type Reply = {
