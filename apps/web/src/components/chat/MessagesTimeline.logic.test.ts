@@ -2320,6 +2320,41 @@ describe("deriveMessagesTimelineRows", () => {
         },
       );
 
+      it("keeps the answered wait out of a wake run's timer that continues from the run", () => {
+        // A notification wake keeps its predecessor's start, so its timer spans the earlier wait.
+        const wakeRunId = RunId.make("waiting-request-wake-run");
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([
+            prompt,
+            command("before", 1, 1),
+            request(62),
+            {
+              ...base("answer", 3, 70),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Blue it is",
+              streaming: false,
+            },
+            { ...command("wake", 4, 80), runId: wakeRunId },
+          ]),
+          latestRun: {
+            runId: wakeRunId,
+            status: "running",
+            startedAt: DateTime.formatIso(at(80)),
+            completedAt: null,
+          },
+          runningRunId: wakeRunId,
+          isWorking: true,
+          activeTurnStartedAt: DateTime.formatIso(at(0)),
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+
+        expect(rows.find((row) => row.kind === "working")).toMatchObject({
+          createdAt: DateTime.formatIso(at(60)),
+        });
+      });
+
       it.runIf(kind === "question")("counts work past a question answered by message", () => {
         const asyncQuestion = { ...request(null), responseMode: "message" as const };
         const live = deriveMessagesTimelineRows({

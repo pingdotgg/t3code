@@ -66,7 +66,6 @@ describe("activeWorkTimerStartedAt", () => {
     expect(
       activeWorkTimerStartedAt({
         runStartedAt: null,
-        runId: undefined,
         runlessStartedAt: DateTime.formatIso(at(100)),
         items: [
           approval("earlier-turn", null, 10, 20),
@@ -75,5 +74,18 @@ describe("activeWorkTimerStartedAt", () => {
         ],
       }),
     ).toBe(DateTime.formatIso(at(160)));
+  });
+
+  it("moves a wake run's timer past the answered requests of the run it continues", () => {
+    expect(
+      activeWorkTimerStartedAt({
+        runStartedAt: DateTime.formatIso(at(0)),
+        runlessStartedAt: null,
+        items: [
+          approval("before-work", RunId.make("run-0"), -30, 10),
+          approval("woken-run", RunId.make("run-a"), 2, 62),
+        ],
+      }),
+    ).toBe(DateTime.formatIso(at(60)));
   });
 });

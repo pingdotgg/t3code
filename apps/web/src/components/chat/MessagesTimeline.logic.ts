@@ -1788,23 +1788,24 @@ export function deriveMessagesTimelineRows(input: {
   const activeCompactionRunId = compactsOnReturn
     ? runningCompactionRunId
     : (resumeCompactionEntry?.entry.runId ?? null);
-  // Zen hides open requests from the rows, so read them from every entry. Runless work owns only
-  // the requests since its prompt.
-  const activeRunUserWaits: UserWaitItem[] = [];
+  // Zen hides open requests from the rows, so read them from every entry. A run's timer skips the
+  // waits of any run since its start, while runless work owns only the requests since its prompt.
+  // Only the active work's own open request means it waits on the user.
+  const activeWorkUserWaits: UserWaitItem[] = [];
+  let activeWorkRequestOpen = false;
   if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     const fromIndex =
       unsettledRunId === null ? lastResponseBoundaryIndex(input.timelineEntries) + 1 : 0;
     for (let index = fromIndex; index < input.timelineEntries.length; index += 1) {
       const entry = input.timelineEntries[index]!;
       const userWait = timelineEntryUserWait(entry);
-      if (userWait !== null && timelineEntryRunId(entry) === unsettledRunId) {
-        activeRunUserWaits.push(userWait);
-      }
+      if (userWait === null) continue;
+      const ownRequest = timelineEntryRunId(entry) === unsettledRunId;
+      if (ownRequest || unsettledRunId !== null) activeWorkUserWaits.push(userWait);
+      if (ownRequest && userWait.completedAt === null) activeWorkRequestOpen = true;
     }
   }
-  const waitingOnUser =
-    activeCompactionRunId === null &&
-    activeRunUserWaits.some((request) => request.completedAt === null);
+  const waitingOnUser = activeCompactionRunId === null && activeWorkRequestOpen;
   const endedRunId = input.latestRun?.turnEnded === true ? input.latestRun.runId : null;
   const zenAnswerLanded =
     input.toolCallVisibility === "zen" &&
@@ -1822,7 +1823,7 @@ export function deriveMessagesTimelineRows(input: {
         : ((compactsOnReturn ? undefined : resumeCompactionEntry?.entry.createdAt) ??
           (input.activeTurnStartedAt == null
             ? null
-            : workingTimerStartedAt(input.activeTurnStartedAt, activeRunUserWaits))),
+            : workingTimerStartedAt(input.activeTurnStartedAt, activeWorkUserWaits))),
       ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
       ...(waitingOnUser ? { waitingOnUser: true as const } : {}),
     });

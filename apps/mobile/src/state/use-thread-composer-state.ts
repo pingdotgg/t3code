@@ -380,7 +380,6 @@ export function useThreadComposerState(input: {
         latestRun: selectedThreadActivityRun,
         runtime: selectedThreadRuntime,
       }),
-      runId: selectedThreadActivityRun?.runId,
       runlessStartedAt: runlessWorkStartedAt,
       items: selectedThreadVisibleTurnItems.map(({ item }) => item),
     });

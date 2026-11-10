@@ -1,4 +1,4 @@
-import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { DateTime } from "effect";
 
 export type UserWaitItem = Pick<OrchestrationV2TurnItem, "startedAt" | "completedAt">;
@@ -45,31 +45,42 @@ export function userWaitMs(
   return total;
 }
 
-/** A live working timer's start, moved past answered requests so it counts only working time. */
+/**
+ * A live working timer's start, moved past the requests answered since it started so it counts
+ * only working time. A wake run keeps its predecessor's start, so its waits are taken from every
+ * run; a request made before the timer started belongs to earlier work.
+ */
 export function workingTimerStartedAt(
   startedAt: string,
   requests: ReadonlyArray<UserWaitItem>,
 ): string {
   const startMs = Date.parse(startedAt);
-  const waitedMs = userWaitMs(requests, startMs, Number.POSITIVE_INFINITY);
+  const waitedMs = userWaitMs(
+    requests.filter(
+      (request) =>
+        request.startedAt !== null && DateTime.toEpochMillis(request.startedAt) >= startMs,
+    ),
+    startMs,
+    Number.POSITIVE_INFINITY,
+  );
   return waitedMs === 0 ? startedAt : DateTime.formatIso(DateTime.makeUnsafe(startMs + waitedMs));
 }
 
 /**
  * The live working timer's start: the active run's, else provider-native runless work's, moved
- * past the answered requests of that work.
+ * past the answered requests of that work. Runless work owns only runless requests.
  */
 export function activeWorkTimerStartedAt(input: {
   readonly runStartedAt: string | null;
-  readonly runId: RunId | null | undefined;
   readonly runlessStartedAt: string | null;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
 }): string | null {
   const startedAt = input.runStartedAt ?? input.runlessStartedAt;
   if (startedAt === null) return null;
-  const runId = input.runStartedAt === null ? null : input.runId;
   return workingTimerStartedAt(
     startedAt,
-    input.items.filter((item) => item.runId === runId && isUserWaitItem(item)),
+    input.items.filter(
+      (item) => isUserWaitItem(item) && (input.runStartedAt !== null || item.runId === null),
+    ),
   );
 }
