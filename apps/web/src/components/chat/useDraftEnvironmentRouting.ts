@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { toastManager } from "../ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -20,6 +21,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import type { DraftSessionState } from "../../composerDraftStore";
+import { loadBalancingSendWarning } from "./composerSend.logic";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -74,7 +76,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const allProjects = useProjects();
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = needsLoadBalancing
+  const loadBalancingCandidates = automaticEnvironment
     ? logicalProjectEnvironments
         .filter((candidate) => {
           const environment = environmentById.get(candidate.environmentId);
@@ -108,9 +110,64 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         .map((candidate) => candidate.environmentId)
     : [];
   const loadBalancing = useLoadBalancedEnvironment(
-    loadBalancingCandidates,
+    needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
+  const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  const refreshBeforeSend = () => {
+    if (
+      !automaticEnvironment ||
+      !draftId ||
+      !draftThread?.loadBalancedEnvironmentId ||
+      draftThread.promotedTo ||
+      composerHasAttachments
+    )
+      return null;
+    const originalDraft = getDraftSession(draftId);
+    const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
+    return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
+      const current = readRouting();
+      if (
+        current.input.draftId !== draftId ||
+        !current.input.automaticEnvironment ||
+        current.input.composerHasAttachments ||
+        current.input.activeProjectKey !== activeProjectKey ||
+        current.input.selectedProvider !== selectedProvider ||
+        current.input.activeProviderInstanceId !== activeProviderInstanceId ||
+        current.input.loadBalancingSettings.loadBalancingWeights !==
+          loadBalancingSettings.loadBalancingWeights ||
+        current.loadBalancingCandidates.join("\n") !== loadBalancingCandidates.join("\n") ||
+        getDraftSession(draftId) !== originalDraft ||
+        useComposerDraftStore.getState().getComposerDraft(draftId) !== composerDraft
+      )
+        return false;
+      const target = current.input.logicalProjectEnvironments.find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      if (!target?.projectId) {
+        toastManager.add({
+          type: "warning",
+          ...loadBalancingSendWarning({
+            pending: false,
+            threadContexts: referencedThreadContexts,
+            candidateEnvironmentIds: loadBalancingCandidates,
+          }),
+        });
+        return false;
+      }
+      const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+      // The send must read the target project's composer and provider context after retargeting.
+      flushSync(() =>
+        setDraftThreadContext(draftId, {
+          projectRef,
+          environmentSelection: "auto",
+          loadBalancedEnvironmentId: target.environmentId,
+          branch: originalDraft?.branch ?? null,
+        }),
+      );
+      return true;
+    });
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
@@ -133,7 +190,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
-    if (envLocked || !draftId) return;
+    if (envLocked || !draftId || sendInFlightRef.current) return;
     if (composerHasAttachments) {
       toastManager.add({
         type: "warning",
@@ -262,6 +319,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   return {
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
     isEnvironmentChanging,
