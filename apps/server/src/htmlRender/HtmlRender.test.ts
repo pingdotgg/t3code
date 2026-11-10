@@ -555,7 +555,7 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
         for (const html of [
           '<div style="aspect-ratio:2/1"></div>',
           '<div id="box"></div><script>box.style.height = innerWidth / 2 + "px";</script>',
-        ]) {
+        ].map((page) => `<style>html{padding:0}</style>${page}`)) {
           const reference = yield* htmlRender.publish({
             threadId: ThreadId.make("thread-html-measure"),
             html,
