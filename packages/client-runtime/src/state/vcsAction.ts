@@ -6,6 +6,7 @@ import {
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
+  type ModelSelection,
   type ThreadId,
   type ProjectId,
   WS_METHODS,
@@ -79,6 +80,7 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
+  readonly modelSelection?: ModelSelection;
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
@@ -474,6 +476,7 @@ export function createVcsActionManager<R, E>(
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+          ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
         };
         const clearOwnedState = Effect.sync(() => {
           const current = registry.get(stateAtom);

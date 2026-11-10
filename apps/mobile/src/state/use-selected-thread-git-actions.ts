@@ -371,6 +371,11 @@ export function useSelectedThreadGitActions() {
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           threadId: thread.id,
+          ...(input.modelSelection
+            ? { modelSelection: input.modelSelection }
+            : thread.modelSelection
+              ? { modelSelection: thread.modelSelection }
+              : {}),
         });
         if (AsyncResult.isFailure(result)) {
           return result;

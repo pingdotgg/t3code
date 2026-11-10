@@ -966,6 +966,19 @@ export default function GitActionsControl({
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
+  const composerDraft = useComposerDraftStore((store) => {
+    if (draftId) {
+      return store.getComposerDraft(draftId);
+    }
+    if (activeThreadRef) {
+      return store.getComposerDraft(activeThreadRef);
+    }
+    return null;
+  });
+  const threadModelSelection =
+    (composerDraft?.activeProvider
+      ? composerDraft.modelSelectionByProvider[composerDraft.activeProvider]
+      : undefined) ?? activeServerThread?.modelSelection;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1213,6 +1226,7 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
+      ...(threadModelSelection ? { modelSelection: threadModelSelection } : {}),
     });
 
     if (result._tag === "Failure") {

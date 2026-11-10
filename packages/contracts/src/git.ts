@@ -8,6 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -135,6 +136,9 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
+  // Thread's current model. Used to write commit/PR text when no dedicated
+  // source-control writer is configured.
+  modelSelection: Schema.optional(ModelSelection),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

@@ -130,17 +130,65 @@ function isTextGenerationTargetUsable(
   );
 }
 
+function isWriterSelectionUsable(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
+  selection: ModelSelection,
+): boolean {
+  if (
+    !resolveTextGenerationSelectionEnabled(settings, projectId, selection.instanceId) ||
+    !isTextGenerationTargetUsable(settings, providers, selection.instanceId)
+  ) {
+    return false;
+  }
+  const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider === undefined || isWriterProviderSignedIn(provider);
+}
+
+function isWriterProviderSignedIn(provider: ServerProvider): boolean {
+  return provider.installed !== false && provider.auth.status !== "unauthenticated";
+}
+
+function firstAvailableWriterModelSelection(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
+): ModelSelection | undefined {
+  for (const provider of providers ?? []) {
+    const model =
+      provider.models.find((candidate) => candidate.isDefault === true)?.slug ??
+      provider.models[0]?.slug;
+    if (!model) {
+      continue;
+    }
+    const selection = createModelSelection(provider.instanceId, model);
+    if (isWriterSelectionUsable(settings, providers, projectId, selection)) {
+      return selection;
+    }
+  }
+  return undefined;
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,
   projectId: ProjectId | null,
+  preferredFallback?: ModelSelection | null,
 ): ModelSelection {
-  const selection = settings.sourceControlWriterModelSelection;
-  return selection &&
-    resolveTextGenerationSelectionEnabled(settings, projectId, selection.instanceId) &&
-    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
-    ? selection
-    : settings.textGenerationModelSelection;
+  const candidates = [
+    settings.sourceControlWriterModelSelection,
+    preferredFallback,
+    settings.textGenerationModelSelection,
+  ];
+  return (
+    candidates.find(
+      (selection): selection is ModelSelection =>
+        selection != null && isWriterSelectionUsable(settings, providers, projectId, selection),
+    ) ??
+    firstAvailableWriterModelSelection(settings, providers, projectId) ??
+    settings.textGenerationModelSelection
+  );
 }
 
 export function resolveReviewGuideModelSelection(
