@@ -1,3 +1,4 @@
+import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it } from "vite-plus/test";
 import {
   dismissContextMenu,
@@ -77,13 +78,19 @@ it("opens and cancels one submenu level at a time, then returns to the thread", 
 });
 
 it("activates the focused action with Space or Enter", async () => {
-  using _fixture = setup();
+  using fixture = setup();
   const first = showContextMenuFallback(items);
   press(" ");
   await expect(first).resolves.toBe("rename");
   const second = showContextMenuFallback(items);
   press("Enter");
   await expect(second).resolves.toBe("rename");
+  expect(fixture.origin.matches(":focus-visible")).toBe(true);
+  const pointer = showContextMenuFallback(items, { x: 100, y: 100 });
+  await userEvent.click(page.getByRole("menuitem", { name: "Rename", exact: true }));
+  await expect(pointer).resolves.toBe("rename");
+  expect(document.activeElement).toBe(fixture.origin);
+  expect(fixture.origin.matches(":focus-visible")).toBe(false);
 });
 
 it("closes on Tab and returns focus to the opener so Tab continues from there", async () => {
