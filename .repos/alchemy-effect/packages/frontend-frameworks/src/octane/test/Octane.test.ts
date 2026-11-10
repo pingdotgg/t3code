@@ -4,11 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import { describe, expect, it } from "vitest";
-import {
-  ADAPTER_NAME,
-  ADAPTER_PACKAGE,
-  makeCloudflareTarget,
-} from "../cloudflare.ts";
+import { ADAPTER_NAME, ADAPTER_PACKAGE, makeCloudflareTarget } from "../cloudflare.ts";
 import { fromHarnessOptions } from "../index.ts";
 import { readOctaneOutput } from "../Octane.ts";
 
@@ -16,9 +12,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("readOctaneOutput", () => {
@@ -37,31 +31,13 @@ describe("readOctaneOutput", () => {
         });
         yield* fs.makeDirectory(clientDir, { recursive: true });
         // alphabetically before worker.js, to prove entry-first sorting
-        yield* fs.writeFileString(
-          path.join(serverDir, "chunks", "a.js"),
-          "export const a = 1;",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "entry.js"),
-          "export const e = 1;",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "worker.js"),
-          "export default {};",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "chunks", "a.js"), "export const a = 1;");
+        yield* fs.writeFileString(path.join(serverDir, "entry.js"), "export const e = 1;");
+        yield* fs.writeFileString(path.join(serverDir, "worker.js"), "export default {};");
         // adapt() inputs embedded into worker.js — must NOT surface as modules
-        yield* fs.writeFileString(
-          path.join(serverDir, "index.html"),
-          "<!doctype html>",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "octane-client-assets.json"),
-          "{}",
-        );
-        yield* fs.writeFileString(
-          path.join(clientDir, "robots.txt"),
-          "User-agent: *\n",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "index.html"), "<!doctype html>");
+        yield* fs.writeFileString(path.join(serverDir, "octane-client-assets.json"), "{}");
+        yield* fs.writeFileString(path.join(clientDir, "robots.txt"), "User-agent: *\n");
         return yield* readOctaneOutput({ dir, serverDir, clientDir });
       }),
     );
@@ -86,13 +62,8 @@ describe("readOctaneOutput", () => {
         const clientDir = path.join(dir, "client");
         yield* fs.makeDirectory(serverDir, { recursive: true });
         yield* fs.makeDirectory(clientDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "entry.js"),
-          "export const e = 1;",
-        );
-        return yield* readOctaneOutput({ dir, serverDir, clientDir }).pipe(
-          Effect.flip,
-        );
+        yield* fs.writeFileString(path.join(serverDir, "entry.js"), "export const e = 1;");
+        return yield* readOctaneOutput({ dir, serverDir, clientDir }).pipe(Effect.flip);
       }),
     );
     expect(error.message).toContain('no "server/worker.js" entry');

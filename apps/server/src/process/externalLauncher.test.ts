@@ -95,6 +95,39 @@ const layerTest = (input: {
   );
 };
 
+// macOS command lookup cannot search a Windows drive-letter PATH.
+it.effect.skipIf(windowsHost)(
+  "opens home-relative app bundles using the server home directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, "open"), 0o755);
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+          yield* launcher.launchEditor({ editor: "file-manager", cwd });
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: bin },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.args),
+        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)(
   "launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE",
   () =>
@@ -302,7 +335,7 @@ it.effect.skipIf(windowsHost)(
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
       assert.equal(spawned.options.detached, true);
-      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
+      const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
