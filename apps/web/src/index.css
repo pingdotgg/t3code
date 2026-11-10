@@ -939,14 +939,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     padding-inline: 0;
   }
 
-  .messages-timeline-scroll {
-    contain: strict;
-  }
-
-  .messages-timeline-scroll [data-timeline-root] {
-    contain: layout style;
-  }
-
   .settings-slider {
     --settings-slider-progress: 0%;
     --settings-slider-fill-offset: 0.5rem;

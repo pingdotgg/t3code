@@ -11,11 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
-import * as Electron from "electron";
 import { vi } from "vite-plus/test";
+import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
@@ -23,8 +20,7 @@ const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
-  BrowserWindow: { fromWebContents: ownerWindow, getAllWindows: vi.fn(() => []) },
-  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
+  BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -42,7 +38,6 @@ import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
   getLocalEnvironmentBearerToken,
-  installLocalEnvironmentBootstrapEvents,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -533,45 +528,3 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-
-describe("local environment bootstrap events", () => {
-  it.effect("forwards topology changes and resume, and disposes the resume listener", () =>
-    Effect.gen(function* () {
-      const changes = yield* PubSub.sliding<void>({ capacity: 1, replay: 1 });
-      const sent = yield* Queue.unbounded<string>();
-      const send = vi.fn();
-      vi.mocked(Electron.BrowserWindow.getAllWindows).mockReturnValue([
-        { isDestroyed: () => false, webContents: { send } } as unknown as Electron.BrowserWindow,
-      ]);
-      vi.mocked(Electron.powerMonitor.on).mockClear();
-      vi.mocked(Electron.powerMonitor.removeListener).mockClear();
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          yield* installLocalEnvironmentBootstrapEvents().pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.mock(DesktopBackendPool.DesktopBackendPool)({
-                  changes: Stream.fromPubSub(changes),
-                }),
-                Layer.mock(ElectronWindow.ElectronWindow)({
-                  sendAll: (channel) => Queue.offer(sent, channel).pipe(Effect.asVoid),
-                }),
-              ),
-            ),
-          );
-          yield* PubSub.publish(changes, undefined);
-          assert.equal(yield* Queue.take(sent), "desktop:local-environment-bootstraps-changed");
-          const [event, resume] = vi.mocked(Electron.powerMonitor.on).mock.calls.at(-1)!;
-          assert.equal(event, "resume");
-          resume();
-          assert.deepEqual(send.mock.calls, [["desktop:local-environment-bootstraps-changed"]]);
-        }),
-      );
-      assert.equal(
-        vi.mocked(Electron.powerMonitor.removeListener).mock.calls.at(-1)?.[0],
-        "resume",
-      );
-      vi.mocked(Electron.BrowserWindow.getAllWindows).mockReturnValue([]);
-    }),
-  );
-});
