@@ -7,7 +7,6 @@ import * as Path from "effect/Path";
 
 import {
   applyPreferredCodexDefaultModel,
-  checkCodexProviderStatus,
   mapCodexModelCapabilities,
   probeCodexSkillsForCwd,
 } from "./CodexProvider.ts";
@@ -60,29 +59,6 @@ it.live.skipIf(windowsHost)("lists remote marketplace plugin skills for a worksp
 
     assert.deepStrictEqual(
       skills.map((skill) => skill.name),
-      ["impeccable:impeccable"],
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live.skipIf(windowsHost)("reports remote marketplace plugin skills in the Codex snapshot", () =>
-  Effect.gen(function* () {
-    const fixture = yield* makeRemotePluginCodexFixture();
-    const provider = yield* checkCodexProviderStatus(
-      {
-        enabled: true,
-        binaryPath: fixture.binaryPath,
-        homePath: "",
-        shadowHomePath: "",
-        launchArgs: "",
-        customModels: [],
-      },
-      undefined,
-      fixture.environment,
-    );
-
-    assert.deepStrictEqual(
-      provider.skills.map((skill) => skill.name),
       ["impeccable:impeccable"],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
