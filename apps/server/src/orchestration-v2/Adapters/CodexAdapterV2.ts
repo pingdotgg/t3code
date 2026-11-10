@@ -1581,6 +1581,8 @@ export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
@@ -1590,13 +1592,23 @@ export const layerAppServerClientFactory: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const portDiscovery = yield* PortScanner.PortDiscovery;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const homeDirectory = yield* HostProcess.HomeDirectory;
+        const codexHome = input.settings.homePath
+          ? expandHomePath(input.settings.homePath, homeDirectory)
+          : input.environment.CODEX_HOME || path.join(homeDirectory, ".codex");
+        const codexConfig = yield* fileSystem
+          .readFileString(path.join(codexHome, "config.toml"))
+          .pipe(Effect.orElseSucceed(() => ""));
         const { env, configArgs } = codexAppServerEnvironment(
           input.environment,
           yield* HostProcess.Platform,
+          codexConfig,
         );
         const environment = {
           ...env,

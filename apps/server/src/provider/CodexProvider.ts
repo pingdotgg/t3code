@@ -468,6 +468,7 @@ const withLoopback = (value: string) => {
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
+  codexConfig = "",
 ): { readonly env: NodeJS.ProcessEnv; readonly configArgs: ReadonlyArray<string> } => {
   const base = { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME, ...environment };
   const proxyNames = Object.keys(environment).filter((name) =>
@@ -489,9 +490,11 @@ export const codexAppServerEnvironment = (
       ...Object.fromEntries(names.map((name) => [name, withLoopback(environment[name] ?? "")])),
     },
     // Any non-empty *_proxy turns off Python's macOS system proxy, so agent shells get them blank.
-    configArgs: usesEnvProxy
-      ? []
-      : names.flatMap((name) => ["-c", `shell_environment_policy.set.${name}=""`]),
+    // `-c` outranks config.toml, so a config that names either spelling keeps its own values.
+    configArgs:
+      usesEnvProxy || /no_proxy/i.test(codexConfig)
+        ? []
+        : names.flatMap((name) => ["-c", `shell_environment_policy.set.${name}=""`]),
   };
 };
 

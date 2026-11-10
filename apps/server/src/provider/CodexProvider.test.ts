@@ -225,6 +225,14 @@ it.each([
     configArgs: BLANK_SHELL_NO_PROXY,
   },
   {
+    name: "keeps shell bypasses the user's Codex config sets",
+    platform: "darwin",
+    environment: {},
+    codexConfig: '[shell_environment_policy.set]\nNO_PROXY = "127.0.0.1"\n',
+    expected: { NO_PROXY: LOOPBACK, no_proxy: LOOPBACK },
+    configArgs: [],
+  },
+  {
     name: "leaves Linux without env proxies unchanged",
     platform: "linux",
     environment: { NO_PROXY: "" },
@@ -235,10 +243,11 @@ it.each([
   name: string;
   platform: NodeJS.Platform;
   environment: NodeJS.ProcessEnv;
+  codexConfig?: string;
   expected: { NO_PROXY: string | undefined; no_proxy: string | undefined };
   configArgs: ReadonlyArray<string>;
-}>)("$name", ({ platform, environment, expected, configArgs }) => {
-  const launch = codexAppServerEnvironment(environment, platform);
+}>)("$name", ({ platform, environment, codexConfig, expected, configArgs }) => {
+  const launch = codexAppServerEnvironment(environment, platform, codexConfig);
 
   assert.deepStrictEqual(
     { NO_PROXY: launch.env.NO_PROXY, no_proxy: launch.env.no_proxy },
