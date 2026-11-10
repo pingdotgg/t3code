@@ -1015,8 +1015,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         : TIMELINE_MAINTAIN_SCROLL_AT_END;
   // The smooth config leaves layout to this pin, which runs before paint with the
   // current viewport height.
-  const pinEndOnViewportResize = useStableCallback((node: HTMLElement, wasAtEnd: boolean) => {
-    if (wasAtEnd && maintainScrollAtEnd === TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) {
+  const pinEndOnViewportResize = useStableCallback((node: HTMLElement) => {
+    if (maintainScrollAtEnd === TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) {
       node.scrollTop = node.scrollHeight - node.clientHeight;
     }
   });
@@ -1029,9 +1029,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       measureTimelineGutter(viewportElement);
       const node = scrollNode();
       if (!node) return;
-      const wasAtEnd = node.scrollHeight - height - node.scrollTop <= 1;
-      height = node.clientHeight;
-      pinEndOnViewportResize(node, wasAtEnd);
+      const nextHeight = node.clientHeight;
+      if (nextHeight !== height) pinEndOnViewportResize(node);
+      height = nextHeight;
     });
     return () => {
       stopObserving();
