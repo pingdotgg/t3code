@@ -50,7 +50,12 @@ import * as Stream from "effect/Stream";
 import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import * as AssetSigner from "./AssetSigner.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
-import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import {
+  parseAttachmentFileExtension,
+  parseThreadSegmentFromAttachmentId,
+  PENDING_ATTACHMENT_THREAD_SEGMENT,
+  resolveAttachmentPathById,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -68,6 +73,7 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
+const COMMITTED_ATTACHMENT_TOKEN_BUCKET_MS = 5 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
@@ -188,6 +194,7 @@ export type ResolvedAsset =
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
       readonly renderIntent?: "mcp-app";
+      readonly maxAgeSeconds?: number;
     }
   | {
       readonly kind: "bytes";
@@ -659,6 +666,14 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         input.resource.disposition === "inline" && extension !== null
           ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
+      // Committed ids never change bytes, so mints in one window share a browser-cached URL.
+      // Pending ids can be re-uploaded with different bytes and keep a URL per mint.
+      if (
+        parseThreadSegmentFromAttachmentId(input.resource.attachmentId) !==
+        PENDING_ATTACHMENT_THREAD_SEGMENT
+      ) {
+        expiresAt -= expiresAt % COMMITTED_ATTACHMENT_TOKEN_BUCKET_MS;
+      }
       if (!isGenericFile) {
         imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
           Effect.flatMap(readImageDimensionsFromHeader),
@@ -853,7 +868,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     claims = { ...claims, expiresAt };
   }
   if (claims.kind === "attachment" && claims.mimeType === "text/html") {
-    // Stable URLs let immutable HTML reloads hit the cache; image retries need fresh URLs.
+    // HTML pages share a longer window so reloads keep hitting the cache. Retries that need the
+    // bytes again remount or bypass the cache instead of relying on a new URL per mint.
     expiresAt =
       Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
@@ -890,7 +906,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!verified) return null;
 
   const claims = decodeClaims(encodedPayload);
-  if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  const now = yield* Clock.currentTimeMillis;
+  if (!claims || claims.expiresAt <= now) return null;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
@@ -920,6 +937,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
           ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
+          // Shared bucketed URLs must not stay fresh in the browser after the token expires.
+          maxAgeSeconds: Math.min(3600, Math.floor((claims.expiresAt - now) / 1000)),
         } satisfies ResolvedAsset)
       : null;
   }

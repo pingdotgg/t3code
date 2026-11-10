@@ -96,12 +96,13 @@ export function assetResponseHeaders(
     readonly download?: boolean;
     readonly fileName?: string;
     readonly mimeType?: string;
+    readonly maxAgeSeconds?: number;
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
   const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": `private, max-age=${options?.maxAgeSeconds ?? 3600}`,
     "X-Content-Type-Options": "nosniff",
     ...(options?.download
       ? {
@@ -166,6 +167,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app";
+    readonly maxAgeSeconds?: number;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,

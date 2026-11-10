@@ -526,6 +526,8 @@ function MessageAttachmentImage(props: {
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  // A re-mint inside the server's expiry window returns the same URL, so remount to reload.
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   if (uri === null) {
     return (
@@ -568,6 +570,7 @@ function MessageAttachmentImage(props: {
         }
       >
         <MessageImage
+          key={loadAttempt}
           source={assetImageSource(props.environmentId, resource, uri)}
           className={props.className}
           maxWidth={props.maxWidth}
@@ -578,7 +581,7 @@ function MessageAttachmentImage(props: {
           onError={() => {
             if (retriedImage.current) return;
             retriedImage.current = true;
-            void refreshAssetUrl();
+            void refreshAssetUrl().then(() => setLoadAttempt((value) => value + 1));
           }}
         />
       </Pressable>
