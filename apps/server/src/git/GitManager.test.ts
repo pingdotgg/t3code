@@ -3537,6 +3537,58 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect(
+    "commit_push_pr publishes a branch that tracks the default branch under its own name",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "main", "develop"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/feature", "--track", "origin/develop"]);
+        const readRemoteDevelop = runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/develop",
+        ]).pipe(Effect.map((output) => output.stdout));
+        const remoteBefore = yield* readRemoteDevelop;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            defaultBranch: "develop",
+            prListSequence: [
+              [],
+              [
+                {
+                  number: 506,
+                  title: "Feature",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/506",
+                  baseRefName: "develop",
+                  headRefName: "t3code/feature",
+                },
+              ],
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(yield* readRemoteDevelop).toBe(remoteBefore);
+        expect(
+          created(providerCalls).some(
+            (call) => call.baseRefName === "develop" && call.headSelector === "t3code/feature",
+          ),
+        ).toBe(true);
+      }),
+  );
+
   it.effect("create_pr reports a created PR when the lookup after creation fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

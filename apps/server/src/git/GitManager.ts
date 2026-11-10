@@ -2291,7 +2291,8 @@ export const make = Effect.gen(function* () {
     const headContext = yield* resolveBranchHeadContext(cwd, { branch, upstreamRef });
     if (headContext.isCrossRepository) return;
     const { baseBranch } = yield* resolvePrBase(cwd, branch, upstreamRef, headContext);
-    if (baseBranch !== headContext.headBranch) return;
+    // A differently named upstream is a base: the push publishes the branch under its own name.
+    if (baseBranch !== branch) return;
     if (yield* findOpenPr(cwd, headContext)) return;
     return yield* new GitManagerError({
       operation: "runStackedAction",
