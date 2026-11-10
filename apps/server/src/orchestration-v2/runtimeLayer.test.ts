@@ -3632,6 +3632,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
         [],
       );
+      // An already-delivered release-stall alert survives an explicit stop/re-watch.
+      yield* TestClock.adjust("61 minutes");
+      yield* restarted.sweep;
+      yield* worker.drain();
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed",
+        "#12: checks passed",
+        "#12: release progress stalled",
+      ]);
+      const beforeRewatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]
+        ?.watch;
+      assert.isDefined(beforeRewatch?.releaseStallNotifiedAt);
+      assert.isDefined(beforeRewatch?.lastProgressAt);
+      yield* watch(false, "end-first");
+      yield* watch(true, "end-rewatch");
+      const afterRewatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.equal(afterRewatch?.releaseStallNotifiedAt, beforeRewatch?.releaseStallNotifiedAt);
+      assert.equal(afterRewatch?.lastProgressAt, beforeRewatch?.lastProgressAt);
+      yield* restarted.sweep;
+      yield* worker.drain();
+      assert.equal((yield* summaries).length, 3);
       yield* watch(false, "end");
     }),
   );
@@ -3963,7 +3984,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("1 hour");
       yield* sweep;
       const settled = yield* wakes;
-      assert.lengthOf(settled, 2);
+      assert.lengthOf(settled, 3);
+      assert.equal(settled[2]!.notification?.summary, "#14: release progress stalled");
       assert.lengthOf(
         settled.filter((message) => message.text.includes("No checks have reported")),
         1,

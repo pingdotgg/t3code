@@ -141,7 +141,10 @@ export function evaluatePullRequestWatch(
 
   // The PR head can be green while a repository-specific merge controller refuses
   // release. Don't turn a quiet watch into an indefinite no-action state.
-  const materialProgress = headMoved || changes.some((change) => change.kind !== "remarks");
+  const materialProgress =
+    headMoved ||
+    conflicting !== watch.conflicting ||
+    changes.some((change) => change.kind !== "remarks");
   const lastProgressAt = materialProgress
     ? DateTime.formatIso(DateTime.makeUnsafe(now))
     : (watch.lastProgressAt ?? watch.startedAt);

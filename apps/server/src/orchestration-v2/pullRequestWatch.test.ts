@@ -447,6 +447,35 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(later.changes, [{ kind: "release-stalled", minutes: 61 }]);
   });
 
+  it("clears the stalled-release clock when a same-head conflict is resolved", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const t0 = Date.parse(STARTED);
+    const before = evaluate(
+      watch({
+        headSha: "aaaaaaaaaa",
+        passed: true,
+        passedChecks: ["test"],
+        conflicting: true,
+        lastProgressAt: STARTED,
+        releaseStallNotifiedAt: STARTED,
+      }),
+      green,
+      noRemarks,
+      t0 + 3 * 60 * 60_000,
+    );
+    assert.deepEqual(before.changes, []);
+    assert.equal(before.next.conflicting, false);
+    assert.equal(before.next.releaseStallNotifiedAt, undefined);
+    assert.deepEqual(
+      evaluate(before.next, green, noRemarks, t0 + 3 * 60 * 60_000 + 60_000).changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluate(before.next, green, noRemarks, t0 + 4 * 60 * 60_000 + 60_000).changes,
+      [{ kind: "release-stalled", minutes: 61 }],
+    );
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(

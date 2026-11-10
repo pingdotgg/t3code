@@ -4161,6 +4161,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
+                    // A user re-watch is not new PR progress. Restore the one-shot
+                    // stall watermark so re-watching cannot manufacture a retry wake.
+                    ...(existing.endedWatch?.lastProgressAt !== undefined && {
+                      lastProgressAt: existing.endedWatch.lastProgressAt,
+                    }),
+                    ...(existing.endedWatch?.releaseStallNotifiedAt !== undefined && {
+                      releaseStallNotifiedAt: existing.endedWatch.releaseStallNotifiedAt,
+                    }),
                     remarksThrough: startedAt,
                     remarkIds: [],
                     wakes: 0,
