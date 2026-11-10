@@ -1757,8 +1757,11 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
 
       yield* click(140, 35);
       expect(yield* output("selectMenu"), "a plain select is offered").toHaveLength(1);
-      expect(yield* events("relayed"), "the page sees the press, never the native popup").toEqual({
-        events: "pointerdown mousedown pointerup mouseup click ",
+      expect(
+        yield* events("relayed"),
+        "the page sees the trusted press, never the native popup",
+      ).toEqual({
+        events: "pointerdown! mousedown! pointerup! mouseup! click! ",
         value: "One",
         open: false,
       });
@@ -1766,7 +1769,7 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
       yield* click(140, 95);
       expect(yield* output("selectMenu"), "a cancelled press offers nothing").toEqual([]);
       expect(yield* events("readonly")).toEqual({
-        events: "pointerdown mousedown pointerup mouseup click ",
+        events: "pointerdown! mousedown! pointerup! mouseup! click! ",
         value: "One",
         open: false,
       });
@@ -1810,7 +1813,7 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         cdp.send("Runtime.evaluate", {
           expression: `document.body.innerHTML = \`
             <select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px"
-              onmousedown="event.preventDefault(); document.querySelector('input').showPicker()">
+              onmousedown="if (!event.isTrusted) return; event.preventDefault(); document.querySelector('input').showPicker()">
               <option>Upload</option>
             </select><input type="file">\``,
         }),
@@ -1819,7 +1822,7 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
       yield* click(140, 35);
       let chooser = yield* Queue.take(viewer.output);
       while (chooser._tag !== "fileChooser") chooser = yield* Queue.take(viewer.output);
-      expect(chooser._tag, "the relayed press carries the viewer's user activation").toBe(
+      expect(chooser._tag, "the press stays trusted and carries the viewer's user activation").toBe(
         "fileChooser",
       );
     }),

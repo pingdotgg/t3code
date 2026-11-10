@@ -129,12 +129,11 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 const SELECT_MENU_OPTION_LIMIT = 10_000;
 const SELECT_MENU_LABEL_LIMIT = 150;
 /**
- * Presses the dropdown select at a viewport point, through shadow roots, and returns
- * `{ select, x, y, pressed }`, or null where the real press should land instead.
- * The events are synthetic: they run page handlers but can never open the native popup.
- * A select in a frame keeps the real press: a CDP user gesture only activates the main frame.
+ * Guards the dropdown select at a viewport point so the trusted press that follows runs page
+ * handlers, then is cancelled after them; `pressed` records whether the page cancelled it first.
+ * Returns null where the native popup should open, including selects in frames.
  */
-const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
+const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
   let element = document.elementFromPoint(x, y);
   while (element && element.shadowRoot) {
     const inner = element.shadowRoot.elementFromPoint(x, y);
@@ -151,13 +150,16 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
   )
     return null;
   if (element.options.length > optionLimit) return null;
-  const keys = { altKey: (modifiers & 1) !== 0, ctrlKey: (modifiers & 2) !== 0, metaKey: (modifiers & 4) !== 0, shiftKey: (modifiers & 8) !== 0 };
-  const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1, ...keys };
-  const pressed =
-    element.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })) &&
-    element.dispatchEvent(new MouseEvent("mousedown", { ...init, detail: 1 }));
-  if (pressed) element.focus({ preventScroll: true });
-  return { select: element, x, y, keys, pressed };
+  const state = { select: element, pressed: false };
+  const guard = (event) => {
+    if (!event.composedPath().includes(element)) return;
+    state.pressed = !event.defaultPrevented;
+    event.preventDefault();
+    if (state.pressed) element.focus({ preventScroll: true });
+  };
+  addEventListener("mousedown", guard);
+  state.stop = () => removeEventListener("mousedown", guard);
+  return state;
 }`;
 /** Describes a pressed select in viewport CSS px and keeps the offered options. */
 const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
@@ -182,15 +184,6 @@ const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
     width,
     height,
   };
-}`;
-const RELEASE_SELECT_PRESS_SCRIPT = `function () {
-  const { select, x, y, keys } = this;
-  const view = select.ownerDocument.defaultView;
-  if (!view) return;
-  const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 0, ...keys };
-  select.dispatchEvent(new view.PointerEvent("pointerup", { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true }));
-  select.dispatchEvent(new view.MouseEvent("mouseup", { ...init, detail: 1 }));
-  select.dispatchEvent(new view.MouseEvent("click", { ...init, detail: 1 }));
 }`;
 const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
   const { select, offered } = this;
@@ -352,7 +345,7 @@ interface ViewerState {
   readonly canOperate: boolean;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
-  /** Handle for a select press the page saw synthetically; its release follows it there. */
+  /** Handle for the guarded select under a held left press; its release offers the menu. */
   selectPress: string | null;
   /** Handle for the select and options this viewer was last offered; only that offer answers. */
   selectMenu: {
@@ -2488,15 +2481,7 @@ const make = Effect.gen(function* () {
     viewer.pressedButtons.clear();
     const press = viewer.selectPress;
     viewer.selectPress = null;
-    if (press) {
-      await session
-        .send("Runtime.callFunctionOn", {
-          objectId: press,
-          functionDeclaration: RELEASE_SELECT_PRESS_SCRIPT,
-        })
-        .catch(constVoid);
-      releaseSelectHandle(viewer, session, press);
-    }
+    if (press) releaseSelectHandle(viewer, session, press);
     withdrawSelectMenu(viewer);
     viewer.requestedSize = null;
   };
@@ -2515,23 +2500,12 @@ const make = Effect.gen(function* () {
   };
 
   // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
-  // a desktop host it is a native menu CDP cannot dismiss, so the real press must not reach it.
-  const pressSelect = async (
-    session: CDPSession,
-    viewer: ViewerState,
-    x: number,
-    y: number,
-    modifiers: number,
-  ) => {
+  // a desktop host it is a native menu CDP cannot dismiss, so the press must not open it.
+  const guardSelectPress = async (session: CDPSession, x: number, y: number) => {
     const { result } = await session.send("Runtime.evaluate", {
-      // The viewer's press stands in for a trusted one, so it grants the page user activation.
-      userGesture: true,
-      expression: `(${PRESS_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${modifiers}, ${SELECT_MENU_OPTION_LIMIT})`,
+      expression: `(${GUARD_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${SELECT_MENU_OPTION_LIMIT})`,
     });
-    const objectId = result.objectId;
-    if (!objectId) return false;
-    viewer.selectPress = objectId;
-    return true;
+    return result.objectId ?? null;
   };
 
   // Offered after the release, so options a page adds or replaces on mousedown or click count.
@@ -2567,50 +2541,55 @@ const make = Effect.gen(function* () {
     switch (message.type) {
       case "mouse": {
         const action = message.action;
-        const press = message.button === "left" ? viewer.selectPress : null;
-        if (press && (action === "down" || action === "up")) {
+        const left = message.button === "left";
+        if (left && action === "down") {
+          const stale = viewer.selectPress;
           viewer.selectPress = null;
-          if (action === "up") {
-            await session
-              .send("Runtime.callFunctionOn", {
-                objectId: press,
-                functionDeclaration: RELEASE_SELECT_PRESS_SCRIPT,
-                userGesture: true,
-              })
-              .catch(constVoid);
-            await offerSelectMenu(session, viewer, press);
+          if (stale) releaseSelectHandle(viewer, session, stale);
+          if (!tab.dialog) {
+            viewer.selectPress = await guardSelectPress(
+              session,
+              num(message.x),
+              num(message.y),
+            ).catch(() => null);
           }
-          releaseSelectHandle(viewer, session, press);
-          if (action === "up") return;
         }
-        if (message.button === "left" && action === "down" && !tab.dialog) {
-          const pressed = await pressSelect(
-            session,
-            viewer,
-            num(message.x),
-            num(message.y),
-            modifiers,
-          ).catch(() => false);
-          if (pressed) return;
-        }
+        const guarded = left && action === "down" ? viewer.selectPress : null;
         const type =
           action === "down" ? "mousePressed" : action === "up" ? "mouseReleased" : "mouseMoved";
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
-        await session.send("Input.dispatchMouseEvent", {
-          type,
-          x: num(message.x),
-          y: num(message.y),
-          button,
-          buttons: num(message.buttons),
-          clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
-          modifiers,
-        });
+        try {
+          await session.send("Input.dispatchMouseEvent", {
+            type,
+            x: num(message.x),
+            y: num(message.y),
+            button,
+            buttons: num(message.buttons),
+            clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
+            modifiers,
+          });
+        } finally {
+          if (guarded) {
+            await session
+              .send("Runtime.callFunctionOn", {
+                objectId: guarded,
+                functionDeclaration: "function () { this.stop(); }",
+              })
+              .catch(constVoid);
+          }
+        }
         if (button !== "none") {
           if (action === "down")
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
+        }
+        const press = left && action === "up" ? viewer.selectPress : null;
+        if (press) {
+          viewer.selectPress = null;
+          await offerSelectMenu(session, viewer, press);
+          releaseSelectHandle(viewer, session, press);
         }
         return;
       }
