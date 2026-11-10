@@ -363,6 +363,10 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
+// Code Mode search matches a namespace only as a whole path segment and returns nothing otherwise.
+const mcpServerInstructions = (name: string) =>
+  `T3 Code's MCP server in this thread is \`${name}\`. Use that full name, not \`t3-code\`, wherever a server or tool namespace is asked for.`;
+
 // Last match wins: deny all threads' T3 servers, then allow only this thread's.
 const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
   mcpServerName === null
@@ -3135,6 +3139,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
+        mcpAvailable ? mcpServerInstructions(name) : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");

@@ -41,6 +41,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -2900,7 +2901,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         browserToolsAvailable: false,
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(child));
-      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+      const runtime = yield* openCode2ReplayRuntime([
         ...opening,
         out("session.get", { sessionID: SESSION }),
         replyData(
@@ -2925,6 +2926,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
         }),
         reply("mcp.add", null),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: [
+            buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+            t3OrchestrationSystemPrompt(true, false),
+            `T3 Code's MCP server in this thread is \`${server}\`. Use that full name, not \`t3-code\`, wherever a server or tool namespace is asked for.`,
+          ].join("\n\n"),
+        }),
+        reply("session.instructions.entry.put", null),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
