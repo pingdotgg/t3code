@@ -191,13 +191,6 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const usageBytes = bytesAt(data, step ? 9 : 4);
   // Copy the usage bytes: a subarray would hold the row's whole blob alive.
   const usage = usageBytes === undefined ? undefined : fields(usageBytes.slice());
-  // A generation's usage is repeated on the step after its last_step_index.
-  const lastStep = step
-    ? undefined
-    : (data.get(20) ?? [])
-        .map((entry) => fields(blob(entry)))
-        .find((pair) => textAt(pair, 1) === "last_step_index");
-  const lastStepIndex = lastStep === undefined ? "" : textAt(lastStep, 2);
   const names = [textAt(model, step ? 12 : 19), textAt(model, step ? 8 : 21)].map(modelName);
   return {
     model:
@@ -207,8 +200,24 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
       ? (timestamp(nested(data, 8)) ?? timestamp(nested(data, 1)))
       : timestamp(nested(nested(data, 9), 4)),
     usage,
-    stepIndex: /^\d+$/.test(lastStepIndex) ? Number(lastStepIndex) + 1 : undefined,
+    stepIndex: step ? undefined : linkedStepIndex(data),
   };
+}
+
+// A generation's usage is repeated on the step after its last_step_index. The link only merges that
+// copy, so a malformed entry leaves the generation unlinked instead of failing the whole database.
+function linkedStepIndex(data: Fields): number | undefined {
+  for (const entry of data.get(20) ?? []) {
+    try {
+      const pair = fields(blob(entry));
+      if (textAt(pair, 1) !== "last_step_index") continue;
+      const index = textAt(pair, 2);
+      return /^\d+$/.test(index) ? Number(index) + 1 : undefined;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 function blob(value: unknown): Uint8Array {

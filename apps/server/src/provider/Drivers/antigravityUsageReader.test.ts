@@ -222,6 +222,9 @@ describe("readAntigravityUsage", () => {
                 ...protoText(19, "Gemini 3 Pro"),
                 ...protoBytes(9, protoBytes(4, stamp)),
                 ...protoBytes(17, protoBytes(2, usage)),
+                // Malformed key/value entries before the link must not hide it or fail the database.
+                ...protoBytes(20, [0x0a, 0x05]),
+                ...protoBytes(20, protoBytes(1, [0xff, 0xfe])),
                 ...lastStepIndex(0),
               ]),
             ),
