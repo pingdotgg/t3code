@@ -343,13 +343,13 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
+            const normalized = toForgejoChangeRequest(item);
             if (
-              item.head.ref !== branch ||
+              normalized.headRefName !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )
               continue;
-            const normalized = toForgejoChangeRequest(item);
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
           if (items.length === 0) break;
