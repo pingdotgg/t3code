@@ -327,6 +327,11 @@ export const make = Effect.gen(function* () {
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
     resolveRemoteWebHost,
+    // Forgejo's `head` filter matches the branch name in every fork, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
     listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);

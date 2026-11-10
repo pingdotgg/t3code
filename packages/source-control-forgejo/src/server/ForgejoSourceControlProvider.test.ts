@@ -1913,3 +1913,60 @@ it.effect(
       }
     }),
 );
+
+it.effect("looks up a branch's pull requests past a fork's newer same-named branch", () => {
+  const pull = (number: number, owner: string) => ({
+    number,
+    title: `PR ${number}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+    state: "open",
+    merged: false,
+    head: {
+      ref: "feature",
+      sha: `head-${number}`,
+      repo: { full_name: `${owner}/project`, owner: { login: owner } },
+    },
+    base: {
+      ref: "main",
+      sha: "base",
+      repo: { full_name: "maria/project", owner: { login: "maria" } },
+    },
+  });
+  // Forgejo's `head` filter matches the branch name in every fork, newest first.
+  const page = [pull(9, "octocat"), pull(4, "maria")];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    // GitManager reads one open result when a host gives no probe.
+    const limit =
+      provider.headBranchProbe?.({ headSelectors: ["feature"], state: "open" }).limit ?? 1;
+    const listed = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "open",
+      limit,
+    });
+    assert.deepStrictEqual(
+      listed.map((pullRequest) => pullRequest.number),
+      [9, 4],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer(),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "forgejo.test",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) =>
+            encodeJsonEffect(
+              new URLSearchParams(input.path.split("?")[1]).get("page") === "1" ? page : [],
+            ).pipe(Effect.orDie, Effect.map(processOutput)),
+        }),
+      ),
+    ),
+  );
+});
