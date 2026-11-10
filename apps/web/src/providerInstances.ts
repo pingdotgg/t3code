@@ -15,10 +15,10 @@ import {
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
-  shouldShowInstanceBadge,
+  shouldShowInstanceBadge as resolveInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
-export { normalizeProviderAccentColor, shouldShowInstanceBadge };
+export { normalizeProviderAccentColor };
 
 /** Placeholder for untargetable drafts. Never persist or dispatch it; disable send until replaced. */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
@@ -31,6 +31,7 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  readonly instanceBadge?: boolean | undefined;
   readonly acpRegistryAgentId?: string | undefined;
   readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
@@ -41,6 +42,16 @@ export interface ProviderInstanceEntry {
   readonly isAvailable: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+export function shouldShowInstanceBadge(
+  entry: Pick<
+    ProviderInstanceEntry,
+    "driverKind" | "accentColor" | "acpRegistryAgentId" | "enabled" | "instanceBadge"
+  >,
+  entries: Iterable<Pick<ProviderInstanceEntry, "driverKind" | "acpRegistryAgentId" | "enabled">>,
+): boolean {
+  return entry.instanceBadge ?? resolveInstanceBadge(entry, entries);
 }
 
 /** Disabled instances may retain ready status until reconciliation. */

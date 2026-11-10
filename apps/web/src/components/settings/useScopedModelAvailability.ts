@@ -19,6 +19,7 @@ export function useScopedModelDisabledReason(
   entries: readonly ProviderInstanceEntry[],
 ) {
   const { targets } = useSettingsScope();
+  const multipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -35,7 +36,11 @@ export function useScopedModelDisabledReason(
         if (
           !generator?.enabled ||
           generator.kind !== shownGenerator?.kind ||
-          generator.baseUrl !== shownGenerator.baseUrl
+          (generator.kind === "opencode"
+            ? shownGenerator.kind !== "opencode" ||
+              generator.providerInstanceId !== shownGenerator.providerInstanceId ||
+              multipleEnvironments
+            : shownGenerator.kind === "opencode" || generator.baseUrl !== shownGenerator.baseUrl)
         ) {
           return unavailable;
         }

@@ -1,4 +1,4 @@
-import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
+import { ProviderDriverKind, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -13,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
+import * as OpenCodeTextGenerator from "./v2/textGenerator.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -352,6 +353,9 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     );
+    const rawGenerate = yield* OpenCodeTextGenerator.make().pipe(
+      Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+    );
 
     const checkUsageLimits = readOpenCodeGoUsageLimits({
       enabled: effectiveConfig.enabled,
@@ -548,6 +552,16 @@ export const OpenCodeDriver: ProviderDriver<
             }),
       orchestrationAdapter,
       textGeneration,
+      generateText: (input) =>
+        byOpenCodeRuntime(runtimeProbe.get, {
+          v2: rawGenerate(input),
+          v1: Effect.fail(
+            new TextGenerationError({
+              operation: "generateText",
+              detail: "OpenCode text generators require OpenCode 2. Update the selected provider.",
+            }),
+          ),
+        }),
     } satisfies ProviderInstance;
   }),
 };

@@ -915,7 +915,7 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
-export const TextGeneratorKind = Schema.Literals(["openaiCompatible", "anthropic"]);
+export const TextGeneratorKind = Schema.Literals(["openaiCompatible", "anthropic", "opencode"]);
 export type TextGeneratorKind = typeof TextGeneratorKind.Type;
 
 const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
@@ -937,18 +937,28 @@ const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
 );
 
 /** A model API that only generates text. Its key shares the id namespace with provider instances. */
-export const TextGeneratorConfig = Schema.Struct({
-  kind: TextGeneratorKind,
+export const TextGeneratorApiConfig = Schema.Struct({
+  kind: Schema.Literals(["openaiCompatible", "anthropic"]),
   label: Schema.optional(TrimmedNonEmptyString),
   baseUrl: TextGeneratorBaseUrl,
   apiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
+export const TextGeneratorConfig = Schema.Union([
+  TextGeneratorApiConfig,
+  Schema.Struct({
+    kind: Schema.Literal("opencode"),
+    providerInstanceId: ProviderInstanceId,
+    label: Schema.optional(TrimmedNonEmptyString),
+    enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  }),
+]);
 export type TextGeneratorConfig = typeof TextGeneratorConfig.Type;
 
 export const TextGeneratorModel = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  subProvider: Schema.optional(TrimmedNonEmptyString),
 });
 export type TextGeneratorModel = typeof TextGeneratorModel.Type;
 

@@ -10,6 +10,8 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
+  ModelSelection,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -51,6 +53,11 @@ export interface ProviderInstance {
   >;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
+  /** Stateless text generation, without a provider session. */
+  readonly generateText?: (input: {
+    readonly prompt: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<string, TextGenerationError>;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {
