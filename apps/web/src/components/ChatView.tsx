@@ -1,3 +1,4 @@
+import { usePullRequestCheckoutState } from "./pullRequest/pullRequestCheckoutState";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -478,6 +479,9 @@ export default function ChatView(props: ChatViewProps) {
       : draftId
         ? store.getDraftSession(draftId)
         : null,
+  );
+  const isPreparingPullRequestCheckout = usePullRequestCheckoutState(
+    (state) => draftId !== null && state.draftIds.has(draftId),
   );
   const serverThreadShell = useQuietThreadShell(routeThreadRef);
   const routeThreadDetailRef = resolveThreadDetailRef(routeThreadRef, {
@@ -3646,6 +3650,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isCompacting={isCompacting}
                                 canInterrupt={canInterruptRunningThread}
                                 isSendBusy={
+                                  isPreparingPullRequestCheckout ||
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&
                                     setupQueueSendThreadKey === activeThreadKey) ||
@@ -3655,19 +3660,21 @@ export default function ChatView(props: ChatViewProps) {
                                 canResume={resumableRunId !== null || hasHeldQueuedRuns}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
-                                  !canOperateThread
-                                    ? "This connection cannot change threads."
-                                    : isEnvironmentChanging
-                                      ? "Preparing machine"
-                                      : isRevertingCheckpoint
-                                        ? "Rewinding conversation"
-                                        : feedbackUploading
-                                          ? "Sending feedback"
-                                          : threadDetailLoading
-                                            ? "Messages loading"
-                                            : worktreeSetupBlocksSend
-                                              ? "Preparing worktree"
-                                              : projectCloneSendBlockReason
+                                  isPreparingPullRequestCheckout
+                                    ? "Preparing pull request checkout"
+                                    : !canOperateThread
+                                      ? "This connection cannot change threads."
+                                      : isEnvironmentChanging
+                                        ? "Preparing machine"
+                                        : isRevertingCheckpoint
+                                          ? "Rewinding conversation"
+                                          : feedbackUploading
+                                            ? "Sending feedback"
+                                            : threadDetailLoading
+                                              ? "Messages loading"
+                                              : worktreeSetupBlocksSend
+                                                ? "Preparing worktree"
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={

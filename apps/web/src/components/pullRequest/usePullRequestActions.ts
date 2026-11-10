@@ -1,3 +1,4 @@
+import { setPullRequestCheckoutPending } from "./pullRequestCheckoutState";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -347,61 +348,66 @@ export async function runPullRequestCheckoutHandoff(input: {
     return;
   }
 
-  const prepared = await input.prepare(opened.threadId);
-  if (cancelled) return;
-  if (prepared._tag === "Failure") {
+  setPullRequestCheckoutPending(opened.draftId, true);
+  try {
+    const prepared = await input.prepare(opened.threadId);
+    if (cancelled) return;
+    if (prepared._tag === "Failure") {
+      settled = true;
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "error",
+        title: `Could not prepare the ${input.terminology.singular} checkout`,
+        description: checkoutFailureDescription(
+          isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
+        ),
+      });
+      return;
+    }
+
+    const pointed = await input.pointThread(prepared.value, opened);
+    if (cancelled) return;
     settled = true;
-    input.clearHandoff();
-    finishCheckoutHandoffToast(toastId, {
-      type: "error",
-      title: `Could not prepare the ${input.terminology.singular} checkout`,
-      description: checkoutFailureDescription(
-        isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
-      ),
-    });
-    return;
-  }
+    if (!pointed) {
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "error",
+        title: "Checked out, but the thread stayed where it was",
+        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+      });
+      return;
+    }
 
-  const pointed = await input.pointThread(prepared.value, opened);
-  if (cancelled) return;
-  settled = true;
-  if (!pointed) {
     input.clearHandoff();
-    finishCheckoutHandoffToast(toastId, {
-      type: "error",
-      title: "Checked out, but the thread stayed where it was",
-      description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-    });
-    return;
-  }
-
-  input.clearHandoff();
-  if (input.task === null) {
+    if (input.task === null) {
+      finishCheckoutHandoffToast(
+        toastId,
+        prepared.value.isOnPullRequestHead
+          ? {
+              type: "success",
+              title: input.mode === "local" ? "Checked out here" : "Checked out",
+              description:
+                input.mode === "local"
+                  ? `This repository is on the ${input.terminology.singular}'s branch, with a thread open on it.`
+                  : `The ${input.terminology.singular} is in its own worktree, with a thread open on it.`,
+            }
+          : offHeadPullRequestCheckoutToast(input.terminology),
+      );
+      return;
+    }
     finishCheckoutHandoffToast(
       toastId,
       prepared.value.isOnPullRequestHead
         ? {
             type: "success",
-            title: input.mode === "local" ? "Checked out here" : "Checked out",
-            description:
-              input.mode === "local"
-                ? `This repository is on the ${input.terminology.singular}'s branch, with a thread open on it.`
-                : `The ${input.terminology.singular} is in its own worktree, with a thread open on it.`,
+            title: "Checkout ready",
+            description: "The task is in the composer. Read it over, then send.",
           }
         : offHeadPullRequestCheckoutToast(input.terminology),
     );
-    return;
+  } finally {
+    setPullRequestCheckoutPending(opened.draftId, false);
   }
-  finishCheckoutHandoffToast(
-    toastId,
-    prepared.value.isOnPullRequestHead
-      ? {
-          type: "success",
-          title: "Checkout ready",
-          description: "The task is in the composer. Read it over, then send.",
-        }
-      : offHeadPullRequestCheckoutToast(input.terminology),
-  );
 }
 
 export type PullRequestHandoffDetail = Pick<
