@@ -117,6 +117,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
+  readonly session?: Option.Option<ClientCapabilities.CloudSessionIdentity>;
   /** False builds a direct-only client that provides no relay services. */
   readonly relay?: boolean;
 }) {
@@ -132,7 +133,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     ReadonlyArray<Parameters<ManagedRelay.ManagedRelayClient["Service"]["connectEnvironment"]>[0]>
   >([]);
   const session = yield* Ref.make<Option.Option<ClientCapabilities.CloudSessionIdentity>>(
-    Option.some({ accountId: "account-1" }),
+    input.session ?? Option.some({ accountId: "account-1" }),
   );
   const thumbprint = yield* Ref.make("thumbprint-1");
   const tokenReads = yield* Queue.unbounded<EnvironmentId>();
@@ -328,6 +329,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         relay: false,
+        session: Option.none(),
         responses: [
           Response.json({
             ...DESCRIPTOR,
