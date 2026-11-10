@@ -97,11 +97,8 @@ export function HistorySwipeNavigation() {
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
-    // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
+    // The swipe ended or was decided: ignore the rest of it, momentum included.
     const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
-        navigateHistory(gesture.direction);
-      }
       gesture = { kind: "ignored" };
       hideIndicator();
     };
@@ -133,6 +130,12 @@ export function HistorySwipeNavigation() {
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
+      }
+      // Chromium only ends a trackpad scroll after its momentum stops, so waiting for the
+      // fingers to lift would delay navigation by the whole momentum tail.
+      if (gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
+        navigateHistory(gesture.direction);
+        return release();
       }
       setSwipe({
         direction: gesture.direction,
