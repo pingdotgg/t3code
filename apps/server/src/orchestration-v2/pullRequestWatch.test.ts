@@ -266,6 +266,29 @@ describe("evaluatePullRequestWatch", () => {
     }
   });
 
+  it("reports a retry that fails again where the run keeps its URL", () => {
+    // GitLab retries failed jobs inside the same pipeline, so only the run ID moves.
+    const pipeline = (finishedAt: string): PullRequestCheck => ({
+      ...check("Pipeline", "failure"),
+      url: "https://gitlab.example/o/r/-/pipelines/7",
+      runId: `7@${finishedAt}`,
+    });
+    const first = pipeline("2026-11-10T00:28:57.000Z");
+    const again = pipeline("2026-11-10T00:39:53.000Z");
+    const told = evaluatePullRequestWatch(watch(), detail({ checks: [first] }), noRemarks);
+    assert.deepEqual(told.changes, [{ kind: "checks-failed", failed: [first] }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(told.next, detail({ checks: [first] }), noRemarks).changes,
+      [],
+    );
+    const retried = evaluatePullRequestWatch(told.next, detail({ checks: [again] }), noRemarks);
+    assert.deepEqual(retried.changes, [{ kind: "checks-failed", failed: [again] }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(retried.next, detail({ checks: [again] }), noRemarks).changes,
+      [],
+    );
+  });
+
   it("does not repeat a failure an older watch told by name", () => {
     const older = watch({ headSha: "aaaaaaaaaa", failedChecks: ["lint"] });
     const failed = detail({ checks: [check("lint", "failure")] });
