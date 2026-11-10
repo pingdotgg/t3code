@@ -13,6 +13,7 @@ export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3to
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
   readonly hasConnections: boolean;
+  readonly hasEnabledEnvironment: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
@@ -71,18 +72,29 @@ export function projectWorkspaceConnectionState(input: {
       environment.connectionState === "reconnecting",
   );
 
+  const connectionState = overallConnectionState(activeEnvironments, input.networkStatus);
+  const withError = activeEnvironments.filter(
+    (environment) => environment.connectionError !== null,
+  );
+  // The detail must explain the state the title names, so prefer an environment
+  // in that state. The status banner still surfaces any other failure.
+  const connectionError =
+    (
+      withError.find((environment) => environment.connectionState === connectionState) ??
+      withError[0]
+    )?.connectionError ?? null;
+
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
+    hasEnabledEnvironment: activeEnvironments.length > 0,
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
       activeEnvironments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
-    connectionState: overallConnectionState(activeEnvironments, input.networkStatus),
-    connectionError:
-      activeEnvironments.find((environment) => environment.connectionError !== null)
-        ?.connectionError ?? null,
+    connectionState,
+    connectionError,
     networkStatus: input.networkStatus,
   };
 }
