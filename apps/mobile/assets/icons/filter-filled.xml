@@ -1,0 +1,7 @@
+<!-- Tabler Icons filter, filled (MIT), matching AppSymbol's line.3.horizontal.decrease.circle.fill. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#000000"
+        android:pathData="M20,3 h-16 a1,1 0 0,0 -1,1 v2.227 l0.008,0.223 a3,3 0 0,0 0.772,1.795 l4.22,4.641 v8.114 a1,1 0 0,0 1.316,0.949 l6,-2 l0.108,-0.043 a1,1 0 0,0 0.576,-0.906 v-6.586 l4.121,-4.12 a3,3 0 0,0 0.879,-2.123 v-2.171 a1,1 0 0,0 -1,-1 z" />
+</vector>

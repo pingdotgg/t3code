@@ -1,7 +1,7 @@
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,8 +14,6 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-
-import { ANTIGRAVITY_RELEASE_VERSION } from "./antigravityRelease.ts";
 
 const ENDPOINTS = [
   "https://daily-cloudcode-pa.googleapis.com",
@@ -191,7 +189,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
@@ -202,7 +200,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 
   const sha256 = (text: string) =>
     crypto
-      .digest("SHA-256", new TextEncoder().encode(text))
+      .digest(Digest.sha256, new TextEncoder().encode(text))
       .pipe(
         Effect.map((digest) =>
           Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
@@ -290,8 +288,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
                   Authorization: `Bearer ${accessToken}`,
-                  // The legacy hub identity omits Gemini and Argon quota groups for some accounts.
-                  "User-Agent": `antigravity/acp/${ANTIGRAVITY_RELEASE_VERSION} (aidev_client; os_type=${platform}; arch=${architecture === "x64" ? "amd64" : architecture}; host_path=t3-code/0.1.0; proxy_client=antigravity/sdk)`,
+                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
                 }),
                 HttpClientRequest.bodyJsonUnsafe(
                   token.project_id ? { project: token.project_id } : {},
