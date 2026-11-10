@@ -228,6 +228,7 @@ it.each(["", "Design system"])(
 it.each([
   { name: "", expected: "second" },
   { name: "My project", expected: "My project" },
+  { name: "first", expected: "first" },
 ])("updates inferred names when changing folders: $name", async ({ name, expected }) => {
   setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);

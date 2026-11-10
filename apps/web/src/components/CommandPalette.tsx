@@ -1973,8 +1973,9 @@ function OpenCommandPaletteDialog(props: {
     const inferred = inferProjectTitleFromPath(folder);
     setAddProjectEnvironmentId(environmentId);
     setSelectedProjectFolder(folder);
-    setProjectName((name) => (!name.trim() || name === autoFilledProjectName ? inferred : name));
-    setAutoFilledProjectName(inferred);
+    const shouldInferName = !projectName.trim() || projectName === autoFilledProjectName;
+    if (shouldInferName) setProjectName(inferred);
+    setAutoFilledProjectName(shouldInferName ? inferred : null);
     setIsChoosingProjectSource(false);
     popView();
   };
