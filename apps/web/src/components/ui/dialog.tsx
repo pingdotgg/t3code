@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
@@ -7,6 +8,7 @@ import {
   createContext,
   type ReactNode,
   use,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -144,6 +146,8 @@ function DialogPopup({
   contentInset?: number;
 }) {
   const [parts, registerPart] = useParts();
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -172,6 +176,8 @@ function DialogPopup({
         initialFocus={initialFocus}
         render={renderRetainedPopup}
         {...props}
+        id={popupId}
+        finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
       >
         <PartPresenceContext value={registerPart}>{children}</PartPresenceContext>
         {showCloseButton && (
