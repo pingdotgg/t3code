@@ -4658,7 +4658,7 @@ describe("PiAdapterV2", () => {
       resetsInMinutes: 137,
     },
     {
-      name: "a ChatGPT plan limit whose reset already passed",
+      name: "a ChatGPT plan limit whose reset rounds to ~0 min",
       errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~0 min.",
       resetsInMinutes: null,
     },
