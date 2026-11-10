@@ -207,6 +207,8 @@ const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
+  /** Transcripts whose native session a T3 thread owns, so later attempts skip them for free. */
+  const ownedTranscripts = new Map<string, AgentSessionImportSource>();
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -261,15 +263,23 @@ const make = Effect.gen(function* () {
       }
       return payload.value.importedTranscripts ?? [];
     });
-    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
+    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources, [
+      ...ownedTranscripts.values(),
+    ]);
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
+    let deferredCount = 0;
 
     yield* Stream.runForEach(outcomes, (outcome) =>
       Effect.gen(function* () {
         if (outcome._tag === "Skipped") {
           skippedCount += 1;
+          return;
+        }
+        if (outcome._tag === "Deferred") {
+          skippedCount += 1;
+          deferredCount += 1;
           return;
         }
         const source = outcome.source;
@@ -457,7 +467,10 @@ const make = Effect.gen(function* () {
               },
             ],
           });
-          if (committed.length === 0) return null;
+          if (committed.length === 0) {
+            ownedTranscripts.set(`${source.providerInstanceId}\0${source.filePath}`, source);
+            return null;
+          }
           yield* persistRuntime;
           yield* runtimes.recordImportedTranscript({ threadId, source });
           return true;
@@ -479,7 +492,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+    return { importedCount, skippedCount, deferredCount } satisfies AgentSessionImportResult;
   });
 
   /**
