@@ -1,19 +1,18 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import { createHash } from "node:crypto";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as firestore from "@distilled.cloud/gcp/firestore_v1";
 import * as pubsub from "@distilled.cloud/gcp/pubsub_v1";
 import * as run from "@distilled.cloud/gcp/run_v2";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -25,19 +24,10 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// Both hosts are built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
+describe("gcp-pubsub-worker", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   /** Pull subscriptions the worker's event source created on the topic. */
@@ -50,10 +40,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
   let subscriptions: string[] = [];
 
   /** Poll until a deleted resource reads as `NotFound`. */
-  const expectGone = <E, R>(
-    what: string,
-    status: Effect.Effect<"found" | "gone", E, R>,
-  ) =>
+  const expectGone = <E, R>(what: string, status: Effect.Effect<"found" | "gone", E, R>) =>
     status.pipe(
       // Deletes can take a few seconds to become visible.
       Effect.repeat({
@@ -61,9 +48,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
         until: (status) => status === "gone",
         times: 12,
       }),
-      Effect.tap((status) =>
-        Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`)),
-      ),
+      Effect.tap((status) => Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`))),
     );
 
   const found = Effect.as("found" as const);
@@ -79,43 +64,27 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
         "worker pool",
         run
           .getProjectsLocationsWorkerPools({ name: outputs.workerPoolName })
-          .pipe(
-            found,
-            Effect.catchTag("NotFound", gone),
-            Effect.provide(GcpHttp),
-          ),
+          .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
       );
       yield* expectGone(
         "topic",
         pubsub
           .getProjectsTopics({ topic: outputs.topicName })
-          .pipe(
-            found,
-            Effect.catchTag("NotFound", gone),
-            Effect.provide(GcpHttp),
-          ),
+          .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
       );
       for (const subscription of subscriptions) {
         yield* expectGone(
           subscription,
           pubsub
             .getProjectsSubscriptions({ subscription })
-            .pipe(
-              found,
-              Effect.catchTag("NotFound", gone),
-              Effect.provide(GcpHttp),
-            ),
+            .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
         );
       }
       yield* expectGone(
         "database",
         firestore
           .getProjectsDatabases({ name: outputs.databaseName })
-          .pipe(
-            found,
-            Effect.catchTag("NotFound", gone),
-            Effect.provide(GcpHttp),
-          ),
+          .pipe(found, Effect.catchTag("NotFound", gone), Effect.provide(GcpHttp)),
       );
     }),
     { timeout: 600_000 },
@@ -141,9 +110,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
 
   const statusOf = (baseUrl: string, id: string) =>
     Effect.gen(function* () {
-      const res = yield* HttpClient.execute(
-        HttpClientRequest.get(`${baseUrl}/jobs/${id}`),
-      );
+      const res = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/jobs/${id}`));
       if (res.status !== 200 && res.status !== 202) {
         return yield* new UnexpectedStatus({
           status: res.status,
@@ -234,9 +201,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-worker", () => {
           .pipe(Effect.provide(GcpHttp));
         expect(document.fields?.status?.stringValue).toBe("done");
         expect(document.fields?.sha256?.stringValue).toBe(expected.sha256);
-        expect(Number(document.fields?.words?.integerValue)).toBe(
-          expected.words,
-        );
+        expect(Number(document.fields?.words?.integerValue)).toBe(expected.words);
       }
     }),
     { timeout: 900_000 },
