@@ -28,11 +28,7 @@ export class Vite extends Context.Service<
     readonly dev: (
       pluginOptions?: CloudflareVitePluginOptions,
       config?: ViteModule.InlineConfig,
-    ) => Effect.Effect<
-      { url: string; server: ViteModule.ViteDevServer },
-      ViteError,
-      Scope.Scope
-    >;
+    ) => Effect.Effect<{ url: string; server: ViteModule.ViteDevServer }, ViteError, Scope.Scope>;
   }
 >()("@alchemy/Vite") {}
 
@@ -42,9 +38,7 @@ export const ViteLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const cwd = yield* Cwd;
 
-    const load = (
-      root: string = cwd,
-    ): Effect.Effect<typeof ViteModule, ViteError> =>
+    const load = (root: string = cwd): Effect.Effect<typeof ViteModule, ViteError> =>
       FrameworkCore.loadProjectModule<typeof ViteModule>(root, "vite").pipe(
         Effect.mapError(
           (error) =>
@@ -76,15 +70,13 @@ export const ViteLive = Layer.effect(
             );
             await builder.buildApp();
           },
-          catch: (error) =>
-            new ViteError({ message: "Failed to build", cause: error }),
+          catch: (error) => new ViteError({ message: "Failed to build", cause: error }),
         });
         return yield* collector
           .collect()
           .pipe(
             Effect.mapError(
-              (error) =>
-                new ViteError({ message: error.message, cause: error.cause }),
+              (error) => new ViteError({ message: error.message, cause: error.cause }),
             ),
           );
       }),
@@ -95,10 +87,7 @@ export const ViteLive = Layer.effect(
             try: async () => {
               const server = await vite.createServer({
                 ...config,
-                plugins: [
-                  ...(config?.plugins ?? []),
-                  cloudflareVitePlugin(pluginOptions),
-                ],
+                plugins: [...(config?.plugins ?? []), cloudflareVitePlugin(pluginOptions)],
               });
               return await server.listen();
             },

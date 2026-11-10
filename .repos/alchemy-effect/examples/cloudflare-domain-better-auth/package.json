@@ -1,0 +1,38 @@
+{
+  "name": "cloudflare-domain-better-auth",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-domain-better-auth"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@alchemy.run/better-auth": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/domain": "workspace:*",
+    "@effect/platform-browser": "catalog:",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@foldkit/vite-plugin": "catalog:",
+    "@types/bun": "catalog:",
+    "oauth2-mock-server": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}
