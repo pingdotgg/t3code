@@ -845,7 +845,8 @@ export const layer: Layer.Layer<
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
-        session.driver === "opencode";
+        (session.driver === "opencode" &&
+          session.providerSession.capabilities.turns.supportsNativeGoals === true);
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(

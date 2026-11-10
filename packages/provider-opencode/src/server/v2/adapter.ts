@@ -732,7 +732,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: "ready",
       cwd: input.runtimePolicy.cwd ?? host.paths.cwd,
       model: input.modelSelection.model,
-      capabilities: OpenCode2ProviderCapabilities,
+      capabilities: {
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          supportsNativeGoals: supportsNativeGoals(),
+        },
+      },
       createdAt: now,
       updatedAt: now,
       lastError: null,
@@ -2751,6 +2757,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      session = {
+        ...session,
+        capabilities: {
+          ...session.capabilities,
+          turns: { ...session.capabilities.turns, supportsNativeGoals: supportsNativeGoals() },
+        },
+      };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.

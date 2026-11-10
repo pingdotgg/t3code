@@ -5165,6 +5165,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           { goal: { objective: "Saved before downgrade", status: "active" } },
         );
+        assert.isFalse(runtime.providerSession.capabilities.turns.supportsNativeGoals);
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((e) => e.type === "turn.terminal"),
           Stream.runCollect,
@@ -5206,6 +5207,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
         { version: "2.2.5" },
       );
+      assert.isTrue(runtime.providerSession.capabilities.turns.supportsNativeGoals);
       const thread = yield* runtime.resumeThread({
         providerThread: providerThread(yield* DateTime.now),
         threadId,

@@ -1168,12 +1168,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
     providerInstanceId: ProviderInstanceId,
   ) {
-    const { driver } = yield* providerAdapters
-      .get(providerInstanceId)
-      .pipe(mapDispatchError(command));
-    return driver === "codex" || driver === "claudeAgent" || driver === "opencode"
-      ? driver
-      : undefined;
+    const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
+    const { driver } = adapter;
+    if (driver === "opencode") {
+      const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+      return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
+    }
+    return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
   });
 
   /** Claude Code reads `/goal pause` and `/goal resume` as new goals named "pause" and "resume". */
