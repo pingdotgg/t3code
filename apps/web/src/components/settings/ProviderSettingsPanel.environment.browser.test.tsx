@@ -36,6 +36,7 @@ const state = vi.hoisted(() => ({
   updateModelPreferences: vi.fn(),
   toggleFavorite: vi.fn(),
   mutateProviderInstance: vi.fn(),
+  confirm: vi.fn<() => Promise<boolean>>(),
 }));
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -80,6 +81,14 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       "accept-url-auth": state.acceptUrlAuth,
     })[command.label ?? ""] ?? vi.fn()) as never,
 }));
+vi.mock(import("~/localApi"), async (original) => {
+  const api = { dialogs: { confirm: state.confirm } };
+  return {
+    ...(await original()),
+    readLocalApi: (() => api) as never,
+    ensureLocalApi: (() => api) as never,
+  };
+});
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
@@ -231,6 +240,7 @@ async function setup() {
   state.updateModelPreferences.mockReset();
   state.toggleFavorite.mockReset();
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success({}));
+  state.confirm.mockReset().mockResolvedValue(false);
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateProvider.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
@@ -355,6 +365,90 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       },
       {},
+    );
+  });
+});
+
+describe("EnvironmentProviderSettings instance removal", () => {
+  it("resets a configured default instance only once the user confirms", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { binaryPath: "/opt/codex/bin/codex" },
+        },
+      },
+    };
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    const reset = page.getByRole("button", { name: "Reset Codex provider settings to default" });
+    await userEvent.click(reset);
+
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(reset);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: codexId,
+      }),
+    );
+  });
+
+  it("warns that resetting an enabled default-off provider turns it off", async () => {
+    await setup();
+    const antigravityId = ProviderInstanceId.make("antigravity");
+    const antigravity = ProviderDriverKind.make("antigravity");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [antigravityId]: {
+          driver: antigravity,
+          enabled: true,
+          config: { binaryPath: "/opt/antigravity/bin/agy" },
+        },
+      },
+    };
+    await setProviders([{ ...provider(), instanceId: antigravityId, driver: antigravity }]);
+    await using _screen = await render(panel({ targetInstanceId: antigravityId }));
+    await userEvent.click(page.getByRole("button", { name: /^Reset .* provider settings/ }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("It will also be turned off."),
+      {
+        variant: "destructive",
+      },
+    );
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+  });
+
+  it("deletes a custom instance only once the user confirms", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    await using _screen = await render(panel({ targetInstanceId: customId }));
+    const remove = page.getByRole("button", { name: `Delete instance ${customId}` });
+    await userEvent.click(remove);
+
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(remove);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: customId,
+      }),
     );
   });
 });
