@@ -15,7 +15,7 @@ import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import type { MenuPopupProps } from "./MenuPopup";
-import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
+import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol.android";
 
 // The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
 function MenuIcon(props: {
@@ -55,7 +55,9 @@ function MenuIcon(props: {
   );
 }
 
-export function MenuPopup(props: MenuPopupProps) {
+export function MenuPopupItems(
+  props: Pick<MenuPopupProps, "menuWidth" | "actions" | "title" | "parent" | "onPress" | "onBack">,
+) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();
   const body = resolveScaledTextRole("body", appearance.baseFontSize);
@@ -64,7 +66,7 @@ export function MenuPopup(props: MenuPopupProps) {
   const muted = colors["--color-foreground-muted"];
   // A fixed native item height clips wrapped labels; a minimum lets each row grow.
   const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
-  const items = (
+  return (
     <>
       {props.parent ? (
         <DropdownMenuItem onClick={props.onBack} modifiers={itemModifiers}>
@@ -146,6 +148,11 @@ export function MenuPopup(props: MenuPopupProps) {
       ))}
     </>
   );
+}
+
+export function MenuPopup(props: MenuPopupProps) {
+  const { themeVariables: colors } = useAppearancePreferences();
+  const items = <MenuPopupItems {...props} />;
   if (props.inline) {
     return (
       <NativeThemeHost

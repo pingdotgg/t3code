@@ -1,11 +1,9 @@
+import * as NodePath from "node:path";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type * as Esbuild from "esbuild";
-import * as NodePath from "node:path";
 
-export class BundleError extends Data.TaggedError<"BundleError">(
-  "BundleError",
-)<{
+export class BundleError extends Data.TaggedError<"BundleError">("BundleError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
@@ -42,9 +40,7 @@ export const makeWranglerExternalsPlugin = (): Esbuild.Plugin => ({
     build.onResolve({ filter: /\.(wasm|bin)(\?module)?$/ }, (args) => {
       const clean = args.path.replace(/\?module$/, "");
       return {
-        path: NodePath.isAbsolute(clean)
-          ? clean
-          : NodePath.resolve(args.resolveDir, clean),
+        path: NodePath.isAbsolute(clean) ? clean : NodePath.resolve(args.resolveDir, clean),
       };
     });
   },
@@ -88,8 +84,7 @@ export const bundleWorker = (
   Effect.gen(function* () {
     const esbuild = yield* Effect.tryPromise({
       try: async () => await import("esbuild"),
-      catch: (cause) =>
-        new BundleError({ message: "Failed to load esbuild", cause }),
+      catch: (cause) => new BundleError({ message: "Failed to load esbuild", cause }),
     });
     const result = yield* Effect.tryPromise({
       try: () =>
@@ -102,9 +97,7 @@ export const bundleWorker = (
           // entry paths.
           absWorkingDir: options.openNextDirectory,
           plugins: [makeWranglerExternalsPlugin()],
-          entryPoints: [
-            NodePath.join(options.openNextDirectory, WORKER_ENTRY_NAME),
-          ],
+          entryPoints: [NodePath.join(options.openNextDirectory, WORKER_ENTRY_NAME)],
           outdir: options.outDirectory,
           bundle: true,
           format: "esm",
