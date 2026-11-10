@@ -1,4 +1,5 @@
 import type {
+  ModelSelection,
   OrchestrationV2TurnItemStatus,
   OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
@@ -50,6 +51,7 @@ export function formatSubagentDisplayTitle(title: string): string {
 
 export function resolveSubagentMetadata(input: {
   readonly model: string | null;
+  readonly modelSelection?: Pick<ModelSelection, "model"> | undefined;
   readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
   readonly parentThread?:
     | Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">
@@ -65,7 +67,7 @@ export function resolveSubagentMetadata(input: {
     | null
     | undefined;
 }) {
-  const model = input.model?.trim();
+  const model = input.model?.trim() || input.modelSelection?.model.trim();
   const slug = input.provider
     ? resolveSelectableModel(input.provider.driver, model, input.provider.models)
     : model;
@@ -108,7 +110,7 @@ export function resolveSubagentMetadata(input: {
         ]
       : []),
   ];
-  return { modelLabel, workspace };
+  return { modelLabel, modelSlug: slug ?? model ?? null, workspace };
 }
 
 export function subagentDetailPreview(input: {
@@ -132,7 +134,15 @@ export function subagentDetailPreview(input: {
       if (compact.length > 0) compact += " ";
     }
     compact += detail[index];
-    if (compact.length > 280) return `${compact.slice(0, 280).trimEnd()}…`;
+    if (compact.length > 280) {
+      let end = 280;
+      const previous = compact.charCodeAt(end - 1);
+      const next = compact.charCodeAt(end);
+      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        end -= 1;
+      }
+      return `${compact.slice(0, end).trimEnd()}…`;
+    }
   }
   return compact || null;
 }
