@@ -297,7 +297,10 @@ describe("DesktopUpdates", () => {
           ? Effect.void
           : Effect.die(new Error("download setup failed"));
       }),
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
     });
+    harness.pendingRemoval.fails = true;
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -314,6 +317,7 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.status, "available");
         assert.equal(failedState.errorContext, "download");
         assert.equal(failedState.message, "Desktop update download action failed unexpectedly.");
+        assert.isDefined(harness.previousInstallRecord());
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
@@ -336,7 +340,10 @@ describe("DesktopUpdates", () => {
           }
           return Effect.void;
         }),
+        installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+        appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
       });
+      harness.pendingRemoval.fails = true;
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -352,10 +359,12 @@ describe("DesktopUpdates", () => {
           const interruptedState = yield* updates.getState;
           assert.equal(interruptedState.status, "available");
           assert.isNull(interruptedState.message);
+          assert.isDefined(harness.previousInstallRecord());
 
           const retry = yield* updates.download;
           assert.isTrue(retry.accepted);
           assert.isTrue(retry.completed);
+          assert.isUndefined(harness.previousInstallRecord());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
