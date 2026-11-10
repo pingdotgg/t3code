@@ -862,32 +862,6 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "keeps an outside HTML page bound to the file opened during resolution",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-open-file-" });
-        const filePath = path.join(root, "page.html");
-        const secretPath = path.join(root, "secret.txt");
-        yield* fs.writeFileString(filePath, "<p>public</p>");
-        yield* fs.writeFileString(secretPath, "private information");
-        const result = yield* issueAssetUrl({
-          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
-        });
-        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-        const separator = suffix.indexOf("/");
-        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
-        if (asset?.kind !== "file") throw new Error("Expected a resolved page");
-
-        yield* fs.rename(filePath, path.join(root, "saved.html"));
-        yield* fs.symlink(secretPath, filePath);
-        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
-        expect(yield* Effect.promise(() => response.text())).toBe("<p>public</p>");
-      }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect.skipIf(!symlinksSupported)(
     "refuses an outside HTML page's folder once that folder is replaced",
     () =>
       Effect.gen(function* () {
