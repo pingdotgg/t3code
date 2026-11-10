@@ -42,7 +42,6 @@ import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 
@@ -209,7 +208,7 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests" | "onUsageLimits"
+    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
   > = {},
 ) {
   let hostCount = 0;
@@ -608,16 +607,7 @@ describe("MuseAdapterV2", () => {
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const reports: Array<ProviderUsageLimitsReport> = [];
-      const harness = yield* makeHarness(
-        fake,
-        INSTANCE_ID,
-        undefined,
-        undefined,
-        undefined,
-        runtimePolicy,
-        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
-      );
+      const harness = yield* makeHarness(fake);
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -634,10 +624,6 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
-      assert.deepStrictEqual(
-        reports.map((report) => [report.authLabel, report.windows[0]?.usedPercent]),
-        [["tier-1", 100]],
-      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -699,16 +685,7 @@ describe("MuseAdapterV2", () => {
   it.effect("skips an unreadable usage report without ending the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const reports: Array<ProviderUsageLimitsReport> = [];
-      const harness = yield* makeHarness(
-        fake,
-        INSTANCE_ID,
-        undefined,
-        undefined,
-        undefined,
-        runtimePolicy,
-        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
-      );
+      const harness = yield* makeHarness(fake);
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
@@ -723,7 +700,6 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.isUndefined(terminal.failure?.resetAt);
-      assert.deepStrictEqual(reports, []);
       assert.strictEqual(fake.closeCount(), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
