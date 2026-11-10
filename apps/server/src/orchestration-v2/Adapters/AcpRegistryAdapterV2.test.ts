@@ -2731,24 +2731,37 @@ describe("AcpRegistryAdapterV2", () => {
       const draining = yield* minimax.runtime
         .startTurn(minimax.turnInput(2, { continuation: true }))
         .pipe(Effect.forkScoped);
-      yield* minimax.until(
+      const started = yield* minimax.until(
         (event) => event.type === "provider_turn.updated" && event.providerTurn.ordinal === 2,
       );
       yield* minimax.terminate();
       yield* Fiber.join(draining);
       yield* TestClock.adjust("10 seconds");
       gate.release("after-exit");
-      const seen = yield* minimax.until(
-        (event) =>
-          event.type === "turn.terminal" ||
-          (event.type === "provider_thread.updated" &&
-            event.providerThread.nativeMetadata?.title === "after exit"),
-      );
+      const seen = [
+        ...started,
+        ...(yield* minimax.until(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.title === "after exit"),
+        )),
+      ];
       const terminal = seen.at(-1)!;
       if (terminal.type !== "turn.terminal")
         throw new Error("Exit during the drain left the run open");
       assert.equal(terminal.status, "failed");
       assert.equal(terminal.runOrdinal, 2);
+      const drainedTools = new Set(
+        seen.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.startsWith("tool-") === true
+            ? [event.turnItem.nativeItemRef.nativeId]
+            : [],
+        ),
+      );
+      // Without this the test passes silently if the exit lands after the drain instead of during it.
+      assert.isBelow(drainedTools.size, burst.length, "the exit must land before the drain ends");
       assert.lengthOf(minimax.offers, 1, "a dead process must not offer another continuation");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
