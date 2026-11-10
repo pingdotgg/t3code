@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -35,8 +35,7 @@ export default class Monitor extends GCP.Function<Monitor>()(
     // The table id is bound at deploy time and read inside handlers.
     const tableId = yield* table.tableId;
 
-    const record = (row: HeartbeatRow) =>
-      writer.insert([row]).pipe(Effect.orDie);
+    const record = (row: HeartbeatRow) => writer.insert([row]).pipe(Effect.orDie);
 
     yield* GCP.CloudScheduler.consumeSchedule(
       "Heartbeat",
@@ -44,9 +43,7 @@ export default class Monitor extends GCP.Function<Monitor>()(
       (event) =>
         Effect.gen(function* () {
           const receivedAt = new Date();
-          const scheduleTime = event.scheduleTime
-            ? new Date(event.scheduleTime)
-            : receivedAt;
+          const scheduleTime = event.scheduleTime ? new Date(event.scheduleTime) : receivedAt;
           yield* record({
             kind: "heartbeat",
             jobName: event.jobName,
@@ -74,9 +71,7 @@ export default class Monitor extends GCP.Function<Monitor>()(
           yield* record({
             kind: "daily",
             jobName: event.jobName,
-            scheduleTime: event.scheduleTime
-              ? new Date(event.scheduleTime)
-              : receivedAt,
+            scheduleTime: event.scheduleTime ? new Date(event.scheduleTime) : receivedAt,
             receivedAt,
             value: Number(counted?.n ?? 0),
           });
@@ -112,10 +107,7 @@ export default class Monitor extends GCP.Function<Monitor>()(
           return yield* HttpServerResponse.json({ heartbeats: rows });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
   }).pipe(
