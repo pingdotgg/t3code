@@ -87,7 +87,7 @@ describe("thread undo notice", () => {
     );
     await notice().undo();
     expect(cancelAnnouncement).toHaveBeenCalledWith("thread-undo-notice");
-    expect(announce).toHaveBeenLastCalledWith("Pinned 2 threads", "thread-undo-result");
+    expect(announce).toHaveBeenLastCalledWith("Pinned 2 threads");
   });
 
   it("announces only the undos that succeeded", async () => {
@@ -104,6 +104,6 @@ describe("thread undo notice", () => {
     });
     await notice().undo();
     expect(add).toHaveBeenCalledOnce();
-    expect(announce).toHaveBeenLastCalledWith("Unsettled 1 thread", "thread-undo-result");
+    expect(announce).toHaveBeenLastCalledWith("Unsettled 1 thread");
   });
 });

@@ -120,11 +120,10 @@ function refreshNotice() {
         }),
       );
       const count = restored.filter(Boolean).length;
-      // A separate source, so a new notice shown while the undo ran isn't replaced.
+      // No source: each result is its own fact, so a later undo or notice must not replace it.
       if (count > 0) {
         announce(
           threadUndoNoticeSummary({ action: latest.action, count }, UNDONE_ACTION[latest.action]),
-          "thread-undo-result",
         );
       }
     },
