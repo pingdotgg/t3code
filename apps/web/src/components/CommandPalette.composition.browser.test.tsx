@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -12,13 +13,15 @@ const pickerMocks = vi.hoisted(() => ({
   target: "primary",
   pickFolder: vi.fn<() => Promise<string | null>>(),
   command: vi.fn(),
+  deniedScope: undefined as string | undefined,
 }));
 
-function setupPicker(enabled = false) {
+function setup({ enabled = false, deniedScope }: { enabled?: boolean; deniedScope?: string } = {}) {
   if (!Object.getOwnPropertyDescriptor(window, "desktopBridge")) {
     Object.defineProperty(window, "desktopBridge", { configurable: true, get: () => undefined });
   }
   pickerMocks.target = "primary";
+  pickerMocks.deniedScope = deniedScope;
   pickerMocks.settings.preferNativeProjectFolderPicker = enabled;
   pickerMocks.pickFolder.mockReset().mockResolvedValue(null);
   pickerMocks.command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
@@ -84,6 +87,7 @@ vi.mock("../state/environments", async (original) => ({
         serverConfig: {
           environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
           settings: { addProjectBaseDirectory: "/workspace/" },
+          newProjectsRoot: "/workspace/",
         },
       },
     ],
@@ -112,7 +116,8 @@ vi.mock("../state/queries", async (original) => ({
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  useEnvironmentScope: () => true,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) =>
+    scope !== pickerMocks.deniedScope,
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/filesystem", async (original) => ({
@@ -133,7 +138,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     { isComposing: true, keyCode: 13 },
     { isComposing: false, keyCode: 229 },
   ])("keeps Enter in the input during composition: %j", async (composition) => {
-    setupPicker();
+    setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
@@ -167,7 +172,7 @@ describe("add-project native folder preference", () => {
   it.each([false, true])(
     "uses the built-in browser without a desktop bridge: %s",
     async (enabled) => {
-      setupPicker(enabled);
+      setup({ enabled });
       using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue(undefined);
       await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
       await act(() => openCommandPalette({ open: "add-project" }));
@@ -178,7 +183,7 @@ describe("add-project native folder preference", () => {
   );
 
   it("adds the native selection to the selected environment", async () => {
-    setupPicker(true);
+    setup({ enabled: true });
     pickerMocks.pickFolder.mockResolvedValue("/workspace/native-project");
     using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
       pickFolder: pickerMocks.pickFolder,
@@ -199,7 +204,7 @@ describe("add-project native folder preference", () => {
     await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
   });
   it.each(["cancel", "error"] as const)("allows another attempt after %s", async (result) => {
-    setupPicker(true);
+    setup({ enabled: true });
     if (result === "error")
       pickerMocks.pickFolder.mockRejectedValueOnce(new Error("Picker unavailable"));
     using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
@@ -217,7 +222,7 @@ describe("add-project native folder preference", () => {
   });
 
   it("keeps one picker in flight and restores the built-in browser when disabled", async () => {
-    setupPicker(true);
+    setup({ enabled: true });
     let finishPicker!: (path: string | null) => void;
     pickerMocks.pickFolder.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -245,7 +250,7 @@ describe("add-project native folder preference", () => {
   });
 
   it.each(["remote", "desktop-local"])("uses the correct picker for %s", async (target) => {
-    setupPicker(true);
+    setup({ enabled: true });
     pickerMocks.target = target;
     using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
       pickFolder: pickerMocks.pickFolder,
@@ -268,8 +273,44 @@ describe("add-project native folder preference", () => {
   });
 });
 
+it.each([
+  { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
+  {
+    step: "highlighted folder",
+    source: "Local folder",
+    keys: "{ArrowDown}",
+    description: /Add.*(Ctrl|⌘) Enter/,
+  },
+  { step: "repository", source: "Git URL", keys: "", description: /Continue.*Enter/ },
+  { step: "new project", source: "New project", keys: "", description: /Create.*Enter/ },
+  {
+    step: "permission-blocked folder",
+    source: "Local folder",
+    keys: "",
+    deniedScope: AuthOrchestrationOperateScope,
+    description: "This connection cannot add projects.",
+  },
+  {
+    step: "permission-blocked destination",
+    source: "Git URL",
+    keys: "https://example.com/team/project.git{Enter}",
+    deniedScope: AuthSourceControlWriteScope,
+    description: "This connection needs permission to write source control and add projects.",
+  },
+])(
+  "tells screen readers how to submit the $step step",
+  async ({ source, keys, deniedScope, description }) => {
+    setup({ deniedScope });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText(source, { exact: true }).click();
+    if (keys) await userEvent.keyboard(keys);
+    await expect.element(page.getByRole("combobox")).toHaveAccessibleDescription(description);
+  },
+);
+
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
-  setupPicker();
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Local folder", { exact: true }).click();
@@ -281,4 +322,19 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
   await expect.element(input()).toHaveValue("/workspace/project");
   await userEvent.keyboard("w");
   await expect.element(input()).toHaveValue("/wworkspace/project");
+});
+
+it.each([
+  { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
+  { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
+])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText(step.flow, { exact: true }).click();
+  const input = page.getByRole("combobox");
+  await input.fill(step.value);
+  const submit = page.getByRole("button", { name: step.submit });
+  await expect.element(submit).toBeEnabled();
+  await userEvent.keyboard("{Tab}");
+  await expect.element(submit).toHaveFocus();
 });
