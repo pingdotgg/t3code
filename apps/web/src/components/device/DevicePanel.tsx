@@ -2,6 +2,7 @@ import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { otherThreadDeviceSessions } from "@t3tools/client-runtime/state/device";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type {
   DevicePlatform,
   DeviceServiceState,
@@ -418,7 +419,9 @@ function DeviceHolderNotice(props: {
   readonly onTakeOver: () => Promise<unknown>;
 }) {
   const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
-  const running = threadRuntimeIsActive(shell?.runtime);
+  const running =
+    threadRuntimeIsActive(shell?.runtime) ||
+    backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []);
   const [takingOver, setTakingOver] = useState(false);
   return (
     <div

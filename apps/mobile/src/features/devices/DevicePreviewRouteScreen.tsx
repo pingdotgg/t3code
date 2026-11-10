@@ -9,6 +9,7 @@ import {
   otherThreadDeviceSessions,
 } from "@t3tools/client-runtime/state/device";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   StackActions,
   useIsFocused,
@@ -420,7 +421,9 @@ function DeviceHolderBanner(props: {
   readonly onTakeOver: () => Promise<void>;
 }) {
   const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
-  const running = threadRuntimeIsActive(shell?.runtime);
+  const running =
+    threadRuntimeIsActive(shell?.runtime) ||
+    backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []);
   const [takingOver, setTakingOver] = useState(false);
   const title = shell?.title.trim() || "another thread";
   return (
