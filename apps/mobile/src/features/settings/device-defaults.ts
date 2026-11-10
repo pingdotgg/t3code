@@ -1,7 +1,4 @@
-import {
-  DEFAULT_BASE_FONT_SIZE,
-  normalizeBaseFontSize,
-} from "../../lib/appearancePreferences";
+import { DEFAULT_BASE_FONT_SIZE, normalizeBaseFontSize } from "../../lib/appearancePreferences";
 import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../../lib/composerEnterBehavior";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../../lib/followUpBehavior";
 import { microphoneEntryKey, microphoneOrder } from "../../lib/microphonePriority";
@@ -19,7 +16,7 @@ import {
   NAVIGATION_TAB_ORDER,
   resolveHiddenNavigationTabs,
   resolveNavigationTabOrder,
-} from "../workspace/navigation-tab-order";
+} from "../layout/workspace/navigation-tab-order";
 
 interface DeviceDefaultEntry {
   readonly id: string;
@@ -53,16 +50,15 @@ const DEVICE_DEFAULT_ENTRIES: readonly DeviceDefaultEntry[] = [
   {
     id: "navigation-style",
     label: "Navigation style",
-    isDefault: (preferences) => preferences.androidNavigationStyle === undefined,
-    // Cleared by deleting the key in restoreDevicePreferencesTransform; there is
-    // no explicit value that means "follow the device default".
-    patch: () => ({}),
+    isDefault: (preferences) => preferences.androidNavigationStyle == null,
+    patch: () => ({ androidNavigationStyle: null }),
   },
   {
     id: "text-size",
     label: "Text size",
     isDefault: (preferences) =>
-      normalizeBaseFontSize(preferences.baseFontSize) === DEFAULT_BASE_FONT_SIZE,
+      normalizeBaseFontSize(preferences.baseFontSize ?? preferences.markdownFontSize) ===
+      DEFAULT_BASE_FONT_SIZE,
     patch: () => ({ baseFontSize: DEFAULT_BASE_FONT_SIZE }),
   },
   {
@@ -95,8 +91,7 @@ const DEVICE_DEFAULT_ENTRIES: readonly DeviceDefaultEntry[] = [
     id: "project-grouping",
     label: "Project grouping",
     isDefault: (preferences) =>
-      resolveMobileProjectGroupingSettings(preferences).sidebarProjectGroupingMode ===
-      "repository",
+      resolveMobileProjectGroupingSettings(preferences).sidebarProjectGroupingMode === "repository",
     patch: () => mobileProjectGroupingModePatch("repository"),
   },
   {
@@ -128,8 +123,7 @@ const DEVICE_DEFAULT_ENTRIES: readonly DeviceDefaultEntry[] = [
     id: "follow-ups",
     label: "Follow-ups",
     isDefault: (preferences) =>
-      (preferences.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR) ===
-      DEFAULT_FOLLOW_UP_BEHAVIOR,
+      (preferences.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR) === DEFAULT_FOLLOW_UP_BEHAVIOR,
     patch: () => ({ followUpBehavior: DEFAULT_FOLLOW_UP_BEHAVIOR }),
   },
   {
@@ -147,23 +141,10 @@ const DEVICE_DEFAULT_ENTRIES: readonly DeviceDefaultEntry[] = [
       const current = microphoneOrder(preferences.microphones).map(microphoneEntryKey);
       const defaults = microphoneOrder([]).map(microphoneEntryKey);
       return (
-        current.length === defaults.length &&
-        current.every((key, index) => key === defaults[index])
+        current.length === defaults.length && current.every((key, index) => key === defaults[index])
       );
     },
     patch: () => ({ microphones: [] }),
-  },
-  {
-    id: "plan-mode",
-    label: "Plan mode",
-    isDefault: (preferences) => preferences.planModeEnabled !== true,
-    patch: () => ({ planModeEnabled: false }),
-  },
-  {
-    id: "crash-reports",
-    label: "Crash reports",
-    isDefault: (preferences) => preferences.crashReportsEnabled !== false,
-    patch: () => ({ crashReportsEnabled: true }),
   },
 ];
 
@@ -179,16 +160,4 @@ export function isDevicePreferencesDefault(preferences: Preferences): boolean {
 
 export function buildRestoreDeviceDefaultsPatch(): Partial<Preferences> {
   return Object.assign({}, ...DEVICE_DEFAULT_ENTRIES.map((entry) => entry.patch()));
-}
-
-/**
- * Restore transform for updatePreferences: clears keys whose default is "absent"
- * (navigation style) instead of writing an explicit value for them.
- */
-export function restoreDevicePreferencesTransform(
-  current: Preferences,
-): Partial<Preferences> {
-  const next = { ...current, ...buildRestoreDeviceDefaultsPatch() };
-  delete next.androidNavigationStyle;
-  return next;
 }

@@ -8,12 +8,28 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { setCrashReportsEnabled } from "../observability/observe";
 import { SettingsSection } from "./components/SettingsSection";
 import {
+  buildRestoreDeviceDefaultsPatch,
   getChangedDevicePreferenceLabels,
-  restoreDevicePreferencesTransform,
 } from "./device-defaults";
+
+function confirmRestoreDeviceDefaults(
+  changedLabels: readonly string[],
+  save: (patch: ReturnType<typeof buildRestoreDeviceDefaultsPatch>) => void,
+) {
+  const message =
+    changedLabels.length <= 8
+      ? `This will reset: ${changedLabels.join(", ")}.`
+      : `This will reset ${changedLabels.length} settings: ${changedLabels.slice(0, 8).join(", ")}, and ${changedLabels.length - 8} more.`;
+  Dialog.confirm({
+    title: "Restore default settings?",
+    message: `${message}\n\nConnections, credentials, account data, and cached threads stay intact.`,
+    confirmText: "Restore Defaults",
+    destructive: true,
+    onConfirm: () => save(buildRestoreDeviceDefaultsPatch()),
+  });
+}
 
 export function RestoreDeviceDefaultsSection() {
   const insets = useSafeAreaInsets();
@@ -27,21 +43,7 @@ export function RestoreDeviceDefaultsSection() {
 
   const restore = () => {
     if (!ready || changedLabels.length === 0) return;
-    const message =
-      changedLabels.length <= 8
-        ? `This will reset: ${changedLabels.join(", ")}.`
-        : `This will reset ${changedLabels.length} settings: ${changedLabels.slice(0, 8).join(", ")}, and ${changedLabels.length - 8} more.}`;
-    Dialog.confirm({
-      title: "Restore default settings?",
-      message: `${message}\n\nConnections, credentials, account data, and cached threads stay intact.`,
-      confirmText: "Restore Defaults",
-      destructive: true,
-      onConfirm: () => {
-        // Crash reports send before the save completes; the preference write applies it after.
-        void setCrashReportsEnabled(true);
-        savePreferences({ transform: restoreDevicePreferencesTransform });
-      },
-    });
+    confirmRestoreDeviceDefaults(changedLabels, savePreferences);
   };
 
   return (
@@ -79,22 +81,7 @@ export function RestoreDeviceDefaultsInlineRow() {
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   if (!ready || changedLabels.length === 0) return null;
 
-  const restore = () => {
-    const message =
-      changedLabels.length <= 8
-        ? `This will reset: ${changedLabels.join(", ")}.`
-        : `This will reset ${changedLabels.length} settings: ${changedLabels.slice(0, 8).join(", ")}, and ${changedLabels.length - 8} more.}`;
-    Dialog.confirm({
-      title: "Restore default settings?",
-      message: `${message}\n\nConnections, credentials, account data, and cached threads stay intact.`,
-      confirmText: "Restore Defaults",
-      destructive: true,
-      onConfirm: () => {
-        void setCrashReportsEnabled(true);
-        savePreferences({ transform: restoreDevicePreferencesTransform });
-      },
-    });
-  };
+  const restore = () => confirmRestoreDeviceDefaults(changedLabels, savePreferences);
 
   return (
     <Pressable

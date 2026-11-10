@@ -19,6 +19,7 @@ export function ListChoiceRow(props: {
   readonly disabled?: boolean;
   readonly onPress: () => void;
   readonly resetVisible?: boolean;
+  readonly resetLabel?: string;
   readonly resetDisabled?: boolean;
   readonly onReset?: () => void;
 }) {
@@ -27,7 +28,7 @@ export function ListChoiceRow(props: {
   // Disabled rows and clean rows hide the button: it only offers an action when dirty.
   const reset =
     showReset && props.disabled !== true && props.resetDisabled === false ? (
-      <SettingResetButton label={props.label} onPress={props.onReset} />
+      <SettingResetButton label={props.resetLabel ?? props.label} onPress={props.onReset} />
     ) : null;
   return (
     <RowPressable

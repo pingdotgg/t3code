@@ -209,7 +209,7 @@ export function WorkingSectionSettings() {
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
           resetVisible={AsyncResult.isSuccess(preferences) && !preferences.waiting}
-          resetDisabled={!workingShelfEnabled}
+          resetDisabled={workingShelfEnabled}
           onReset={() => savePreferences({ workingShelfEnabled: true })}
         />
       </SettingsSection>

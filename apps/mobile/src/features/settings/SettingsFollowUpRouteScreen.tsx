@@ -57,6 +57,7 @@ export function SettingsFollowUpRouteScreen() {
             disabled={!preferencesReady}
             onPress={() => savePreferences({ followUpBehavior: option.behavior })}
             resetVisible={index === 0}
+            resetLabel="follow-up behavior"
             resetDisabled={selectedBehavior === DEFAULT_FOLLOW_UP_BEHAVIOR}
             onReset={() => savePreferences({ followUpBehavior: DEFAULT_FOLLOW_UP_BEHAVIOR })}
           />

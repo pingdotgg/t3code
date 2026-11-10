@@ -4,7 +4,6 @@ import {
   buildRestoreDeviceDefaultsPatch,
   getChangedDevicePreferenceLabels,
   isDevicePreferencesDefault,
-  restoreDevicePreferencesTransform,
 } from "./device-defaults";
 
 describe("device defaults", () => {
@@ -17,12 +16,14 @@ describe("device defaults", () => {
     const labels = getChangedDevicePreferenceLabels({ themeMode: "dark", baseFontSize: 20 });
     expect(labels).toEqual(["Color scheme", "Text size"]);
     expect(isDevicePreferencesDefault({ themeMode: "dark" })).toBe(false);
+    expect(getChangedDevicePreferenceLabels({ markdownFontSize: 20 })).toEqual(["Text size"]);
   });
 
   it("detects custom terminal and code font sizes", () => {
-    expect(
-      getChangedDevicePreferenceLabels({ terminalFontSize: 14, codeFontSize: 12 }),
-    ).toEqual(["Terminal font size", "Code font size"]);
+    expect(getChangedDevicePreferenceLabels({ terminalFontSize: 14, codeFontSize: 12 })).toEqual([
+      "Terminal font size",
+      "Code font size",
+    ]);
   });
 
   it("builds a patch that restores every device preference", () => {
@@ -43,27 +44,16 @@ describe("device defaults", () => {
     expect(patch.followUpBehavior).toBe("steer");
     expect(patch.composerEnterBehavior).toBe("send");
     expect(patch.microphones).toEqual([]);
-    expect(patch.planModeEnabled).toBe(false);
-    expect(patch.crashReportsEnabled).toBe(true);
+    expect(patch.androidNavigationStyle).toBeNull();
+    expect("crashReportsEnabled" in patch).toBe(false);
   });
 
-  it("restored patch reads as default", () => {
-    const patch = buildRestoreDeviceDefaultsPatch();
-    expect(isDevicePreferencesDefault({ ...patch, androidNavigationStyle: undefined })).toBe(true);
-    expect(
-      getChangedDevicePreferenceLabels({ ...patch, androidNavigationStyle: undefined }),
-    ).toEqual([]);
-  });
-
-  it("restore transform clears the navigation style key", () => {
-    const restored = restoreDevicePreferencesTransform({
-      themeMode: "dark",
-      androidNavigationStyle: "material",
-    });
-    expect(restored.themeMode).toBe("system");
-    expect("androidNavigationStyle" in restored).toBe(false);
-    expect(isDevicePreferencesDefault({ ...restored, androidNavigationStyle: undefined })).toBe(
-      true,
-    );
+  it("restoring over saved preferences reads as default", () => {
+    const current = { themeMode: "dark", androidNavigationStyle: "material" } as const;
+    // Mirrors MobilePreferencesStore.update: next = { ...current, ...patch }.
+    const saved = { ...current, ...buildRestoreDeviceDefaultsPatch() };
+    expect(saved.androidNavigationStyle).toBeNull();
+    expect(isDevicePreferencesDefault(saved)).toBe(true);
+    expect(getChangedDevicePreferenceLabels(saved)).toEqual([]);
   });
 });

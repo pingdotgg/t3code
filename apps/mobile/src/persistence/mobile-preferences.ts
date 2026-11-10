@@ -98,7 +98,7 @@ export interface Preferences {
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
-  readonly androidNavigationStyle?: AndroidNavigationStyle;
+  readonly androidNavigationStyle?: AndroidNavigationStyle | null;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -184,7 +184,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
-    androidNavigationStyle?: AndroidNavigationStyle;
+    androidNavigationStyle?: AndroidNavigationStyle | null;
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -265,7 +265,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ) {
     preferences.themeMode = parsed.themeMode;
   }
-  if (parsed.androidNavigationStyle === "one-ui" || parsed.androidNavigationStyle === "material") {
+  if (
+    parsed.androidNavigationStyle === "one-ui" ||
+    parsed.androidNavigationStyle === "material" ||
+    parsed.androidNavigationStyle === null
+  ) {
     preferences.androidNavigationStyle = parsed.androidNavigationStyle;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;

@@ -1,7 +1,7 @@
 export type AndroidNavigationStyle = "one-ui" | "material";
 
 export function resolveAndroidNavigationStyle(
-  preference: AndroidNavigationStyle | undefined,
+  preference: AndroidNavigationStyle | null | undefined,
   manufacturer: string | null,
   previewEnabled: boolean,
 ): AndroidNavigationStyle {

@@ -67,6 +67,7 @@ export function SettingsProjectGroupingRouteScreen() {
               disabled={!preferencesReady}
               onPress={() => savePreferences(mobileProjectGroupingModePatch(option.mode))}
               resetVisible={index === 0}
+              resetLabel="project grouping"
               resetDisabled={selectedMode === "repository"}
               onReset={() => savePreferences(mobileProjectGroupingModePatch("repository"))}
             />
