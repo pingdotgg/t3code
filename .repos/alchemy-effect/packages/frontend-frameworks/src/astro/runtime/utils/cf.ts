@@ -1,7 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
- * Vendored from `@astrojs/cloudflare` v14.1.3 (`src/utils/cf.ts`).
+ * Vendored from `@astrojs/cloudflare` v14.4.2 (`src/utils/cf.ts`).
  *
  * Re-exports all pure helpers from `cf-helpers.ts` and adds
  * `injectSessionBinding` which depends on the virtual module.
