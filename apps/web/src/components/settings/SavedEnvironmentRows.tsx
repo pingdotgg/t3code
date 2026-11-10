@@ -127,7 +127,7 @@ export function SavedBackendListRow({
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const navigate = useNavigate();
-  // The Welcome page only scans this computer; this opens it for the connected one.
+  // Opens the Welcome page for this row's computer, which then scans that computer's history.
   const canImportSessions =
     useEnvironmentScope(environmentId, AuthOrchestrationOperateScope) && enabled && isConnected;
   const errorTraceId = environment.connection.traceId;
