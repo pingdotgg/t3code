@@ -7,7 +7,7 @@ import {
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -35,7 +35,10 @@ const mcpSession = {
   browserToolsAvailable: true,
 };
 
-class ExtensionReadError extends Data.TaggedError("ExtensionReadError")<{}> {}
+class ExtensionReadError extends Schema.TaggedError<ExtensionReadError>()(
+  "ExtensionReadError",
+  {},
+) {}
 
 describe("pi T3 MCP injection", () => {
   it("always adds the permission bridge and configures MCP when available", () => {
