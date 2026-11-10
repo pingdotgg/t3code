@@ -23,7 +23,7 @@ export function MarkdownThreadLink(props: {
 }) {
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
-   const written = useLinkedThreadShell(writtenRef);
+  const written = useLinkedThreadShell(writtenRef);
   // A linked machine's threads are reachable only through its server, not from this client.
   const reachable = useEnvironmentIdentities().some(
     (environment) => environment.environmentId === writtenRef.environmentId,
