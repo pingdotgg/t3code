@@ -366,6 +366,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      // The server recreates No project on demand, so deleting it only deletes every thread in it.
+      if (yield* folders.isScratchProject(input.projectId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "The built-in No project cannot be deleted. Delete or archive its threads individually instead.",
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {

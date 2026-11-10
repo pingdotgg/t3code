@@ -53,6 +53,7 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly isScratchProject?: true;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -159,7 +160,10 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratchProject: (id) => Effect.succeed(input.isScratchProject === true && id === projectId),
+    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -662,6 +666,41 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("a forced MCP delete refuses the built-in No project and keeps its threads", () =>
+  Effect.gen(function* () {
+    const deleted: Array<ProjectId> = [];
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+      isScratchProject: true,
+    });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mergeAll(
+        Layer.mock(Project.ProjectService)({
+          delete: (input) =>
+            Effect.sync(() => void deleted.push(input.projectId)).pipe(
+              Effect.andThen(Effect.die("deleted")),
+            ),
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_delete", { projectId: harness.projectId, force: true })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(deleted).toEqual([]);
   }),
 );
 
