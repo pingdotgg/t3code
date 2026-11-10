@@ -274,14 +274,6 @@ layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
 Stop on a thread also stops the subagents it delegated to.
 
-With Codex, a delegated task's thread is archived in Codex's own history once the
-task has finished, the parent agent has its result, and the thread has sat idle.
-T3 Code keeps the full history, and a follow-up to the task continues the same
-Codex conversation.
-
-Threads from before this change stay in Codex's history. To archive one, run
-`codex archive <session-id>` with the same Codex home on the machine hosting it.
-
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.

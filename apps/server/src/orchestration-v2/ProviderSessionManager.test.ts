@@ -12,15 +12,11 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2Run,
-  type OrchestrationV2Subagent,
   type Project,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
-  MessageId,
-  NodeId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -443,10 +439,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly unloads?: Queue.Queue<string>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
-    /** Offers `unload:<native id>`, `archive:<native id>` and `close`; also gives the runtime archiveThread. */
-    readonly nativeThreadExits?: Queue.Queue<string>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -456,9 +451,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       closeCount: current.closeCount + 1,
     })).pipe(
       Effect.andThen(
-        options.nativeThreadExits === undefined
-          ? Effect.void
-          : Queue.offer(options.nativeThreadExits, "close"),
+        options.unloads === undefined ? Effect.void : Queue.offer(options.unloads, "close"),
       ),
     ),
   );
@@ -563,7 +556,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               interruptCount: current.interruptCount + 1,
             })).pipe(Effect.andThen(options.interruptTurn ?? Effect.void)),
-          unloadThread: ({ providerThread }) =>
+          unloadThread: ({ providerThread, archive }) =>
             (options.beforeUnload ?? Effect.void).pipe(
               Effect.andThen(
                 Ref.update(state, (current) => ({
@@ -575,27 +568,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 })),
               ),
               Effect.andThen(
-                options.nativeThreadExits === undefined
+                options.unloads === undefined
                   ? Effect.void
                   : Queue.offer(
-                      options.nativeThreadExits,
-                      `unload:${providerThread.nativeThreadRef?.nativeId}`,
+                      options.unloads,
+                      `${archive === true ? "archive" : "unload"}:${providerThread.nativeThreadRef?.nativeId}`,
                     ),
               ),
             ),
-          ...(options.nativeThreadExits === undefined
-            ? {}
-            : {
-                archiveThread: ({
-                  providerThread,
-                }: {
-                  providerThread: OrchestrationV2ProviderThread;
-                }) =>
-                  Queue.offer(
-                    options.nativeThreadExits!,
-                    `archive:${providerThread.nativeThreadRef?.nativeId}`,
-                  ).pipe(Effect.asVoid),
-              }),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
@@ -634,9 +614,9 @@ function layerTest(input: {
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly unloads?: Queue.Queue<string>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
-  readonly nativeThreadExits?: Queue.Queue<string>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -674,13 +654,11 @@ function layerTest(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-      ...(input.nativeThreadExits === undefined
-        ? {}
-        : { nativeThreadExits: input.nativeThreadExits }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -4265,6 +4243,161 @@ it.effect(
     }),
 );
 
+it.effect.each([true, false])(
+  "ProviderSessionManagerV2 archives an idle delegated child once its parent has the result (session kept open: %s)",
+  (keptOpen) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread-provider-session-manager-archive-parent");
+        const parentRunId = idAllocator.derive.run({ threadId: parentThreadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now })],
+        });
+        for (const delivery of ["pending", "delivered"] as const) {
+          const threadId = ThreadId.make(`thread-provider-session-manager-archive-${delivery}`);
+          const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+          const taskId = idAllocator.derive.rootNode({ runId });
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${delivery}`,
+          });
+          const created = yield* makeThreadCreatedEvent({
+            idAllocator,
+            threadId,
+            now,
+            delegatedBy: parentThreadId,
+          });
+          yield* eventSink.write({
+            events: [
+              {
+                ...created,
+                payload: { ...created.payload, forkedFrom: { type: "node", nodeId: taskId } },
+              },
+              {
+                id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+                type: "subagent.updated",
+                threadId: parentThreadId,
+                nodeId: taskId,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: taskId,
+                  threadId: parentThreadId,
+                  runId: parentRunId,
+                  parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver: CODEX_DRIVER,
+                  providerInstanceId: modelSelection.instanceId,
+                  providerThreadId: null,
+                  childThreadId: threadId,
+                  nativeTaskRef: null,
+                  prompt: "Delegated work",
+                  title: null,
+                  model: null,
+                  completionDelivery: { state: delivery, observedByRunId: null },
+                  status: "completed",
+                  result: "Done.",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* runtime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "agent",
+              creationSource: "server",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "Delegated work",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          // The pump marks the thread idle before subscribers see its terminal.
+          const subscription = yield* runtime.subscribeEvents!;
+          yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: `native-turn-${delivery}`,
+            }),
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* subscription.events.pipe(Stream.runHead);
+        }
+
+        yield* TestClock.adjust("1 second");
+        if (keptOpen) {
+          assert.deepEqual([yield* Queue.take(unloads), yield* Queue.take(unloads)].toSorted(), [
+            "archive:native-delivered",
+            "unload:native-pending",
+          ]);
+          return;
+        }
+        // The release may also unload the pending child, but it archives only the delivered one.
+        const exits: Array<string> = [];
+        for (
+          let exit = yield* Queue.take(unloads);
+          exit !== "close";
+          exit = yield* Queue.take(unloads)
+        ) {
+          exits.push(exit);
+        }
+        assert.deepEqual(
+          exits.filter((exit) => exit.startsWith("archive:")),
+          ["archive:native-delivered"],
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            unloads,
+            // Another thread's work keeps the shared session open past the children's idle unloads.
+            hasPendingBackgroundWork: Effect.succeed(keptOpen),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 re-attaching a thread waits for its in-flight unload, then reloads it",
   () =>
@@ -4357,333 +4490,6 @@ it.effect(
       yield* effect.pipe(
         Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnload })),
         Effect.scoped,
-      );
-    }),
-);
-
-// An app-owned delegated child whose task completed, linked to its parent's task record.
-const writeDelegatedChild = Effect.fnUntraced(function* (input: {
-  readonly parentId: ThreadId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly name: string;
-  readonly delivery: "pending" | "acknowledged";
-  /** Initial tasks link through `forkedFrom`; follow-ups through the run's `delegatedTaskId`. */
-  readonly link: "forkedFrom" | "run";
-}) {
-  const eventSink = yield* EventSink.EventSinkV2;
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const now = yield* DateTime.now;
-  const threadId = ThreadId.make(`thread-provider-session-manager-archive-${input.name}`);
-  const parentRunId = idAllocator.derive.run({ threadId: input.parentId, ordinal: 1 });
-  const taskId = NodeId.make(`node-task-${input.name}`);
-  const providerThread = makeProviderThread({
-    idAllocator,
-    threadId,
-    providerSessionId: input.providerSessionId,
-    now,
-    nativeThreadId: `native-${input.name}`,
-  });
-  const taskEvent = Effect.fnUntraced(function* (
-    delivery: "pending" | "acknowledged" | "delivered",
-  ) {
-    return {
-      id: yield* idAllocator.allocate.event({ threadId: input.parentId }),
-      type: "subagent.updated" as const,
-      threadId: input.parentId,
-      runId: parentRunId,
-      nodeId: taskId,
-      driver: CODEX_DRIVER,
-      providerInstanceId: modelSelection.instanceId,
-      occurredAt: now,
-      payload: {
-        id: taskId,
-        threadId: input.parentId,
-        runId: parentRunId,
-        parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: CODEX_DRIVER,
-        providerInstanceId: modelSelection.instanceId,
-        providerThreadId: null,
-        childThreadId: threadId,
-        nativeTaskRef: null,
-        prompt: "Implement it.",
-        title: null,
-        model: null,
-        completionDelivery: { state: delivery, observedByRunId: null },
-        status: "completed",
-        result: "Done.",
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-      } satisfies OrchestrationV2Subagent,
-    };
-  });
-  const created = yield* makeThreadCreatedEvent({
-    idAllocator,
-    threadId,
-    now,
-    delegatedBy: input.parentId,
-  });
-  const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-  yield* eventSink.write({
-    events: [
-      {
-        ...created,
-        payload: {
-          ...created.payload,
-          activeProviderThreadId: providerThread.id,
-          ...(input.link === "forkedFrom"
-            ? { forkedFrom: { type: "node" as const, nodeId: taskId } }
-            : {}),
-        },
-      },
-      {
-        id: yield* idAllocator.allocate.event({ threadId }),
-        type: "provider-thread.updated",
-        threadId,
-        driver: CODEX_DRIVER,
-        occurredAt: now,
-        payload: providerThread,
-      },
-      {
-        id: yield* idAllocator.allocate.event({ threadId }),
-        type: "run.updated",
-        threadId,
-        runId,
-        occurredAt: now,
-        payload: {
-          id: runId,
-          threadId,
-          ordinal: 1,
-          providerInstanceId: modelSelection.instanceId,
-          modelSelection,
-          providerThreadId: providerThread.id,
-          userMessageId: MessageId.make(`message-${input.name}`),
-          rootNodeId: null,
-          activeAttemptId: null,
-          status: "completed",
-          requestedAt: now,
-          startedAt: now,
-          completedAt: now,
-          checkpointId: null,
-          contextHandoffId: null,
-          ...(input.link === "run" ? { delegatedTaskId: taskId } : {}),
-        } satisfies OrchestrationV2Run,
-      },
-      yield* taskEvent(input.delivery),
-    ],
-  });
-  return { threadId, providerThread, taskEvent };
-});
-
-// Runs one completed turn; the manager has scheduled its idle work once a subscriber sees the terminal.
-const runTurn = Effect.fnUntraced(function* (input: {
-  readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
-  readonly threadId: ThreadId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly end?: boolean;
-}) {
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-  const { threadId, providerThread, runtime } = input;
-  const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-  yield* runtime.startTurn({
-    appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
-    threadId,
-    runId,
-    runOrdinal: 1,
-    providerTurnOrdinal: 1,
-    attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-    rootNodeId: idAllocator.derive.rootNode({ runId }),
-    providerThread,
-    message: {
-      createdBy: "agent",
-      creationSource: "server",
-      messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
-      text: "turn",
-      attachments: [],
-    },
-    modelSelection,
-    runtimePolicy,
-  });
-  if (input.end === false) return;
-  yield* endTurn(input);
-});
-
-const endTurn = Effect.fnUntraced(function* (input: {
-  readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
-  readonly providerThread: OrchestrationV2ProviderThread;
-}) {
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const subscription = yield* input.runtime.subscribeEvents!;
-  const providerSessionId = input.providerThread.providerSessionId!;
-  yield* Queue.offer((yield* Ref.get(input.state)).eventQueues.get(String(providerSessionId))!, {
-    type: "turn.terminal",
-    driver: CODEX_DRIVER,
-    providerThreadId: input.providerThread.id,
-    providerTurnId: idAllocator.derive.providerTurn({
-      driver: CODEX_DRIVER,
-      nativeTurnId: `turn-${input.providerThread.id}`,
-    }),
-    runOrdinal: 1,
-    status: "completed",
-    failure: null,
-    threadDisposition: "reusable",
-  });
-  yield* subscription.events.pipe(Stream.runHead);
-});
-
-it.effect(
-  "ProviderSessionManagerV2 archives a delegated child only once its parent took its result",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const exits = yield* Queue.unbounded<string>();
-      const settings = yield* ServerSettings.ServerSettingsService.pipe(
-        Effect.provide(ServerSettings.layerTest()),
-      );
-      const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const now = yield* DateTime.now;
-        const parentId = ThreadId.make("thread-provider-session-manager-archive-parent");
-        const providerSessionId = idAllocator.derive.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-        });
-        const parentThread = {
-          ...makeProviderThread({ idAllocator, threadId: parentId, providerSessionId, now }),
-          nativeThreadRef: null,
-        };
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: parentId, now })],
-        });
-        const child = { parentId, providerSessionId, link: "forkedFrom" } as const;
-        const delivered = yield* writeDelegatedChild({
-          ...child,
-          name: "delivered",
-          delivery: "acknowledged",
-        });
-        const late = yield* writeDelegatedChild({ ...child, name: "late", delivery: "pending" });
-        const runtime = yield* manager.open({
-          threadId: parentId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        for (const { threadId } of [delivered, late]) {
-          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-        }
-        const resumeDelivered = runtime.resumeThread({
-          providerThread: delivered.providerThread,
-          threadId: delivered.threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* resumeDelivered;
-        yield* runTurn({
-          state,
-          runtime,
-          threadId: parentId,
-          providerThread: parentThread,
-          end: false,
-        });
-        for (const { threadId, providerThread } of [delivered, late]) {
-          yield* runTurn({ state, runtime, threadId, providerThread });
-        }
-
-        // The busy parent keeps the session; each child reaches its own idle unload.
-        yield* TestClock.adjust("1 second");
-        const idleExits = [yield* Queue.take(exits), yield* Queue.take(exits)].sort();
-        assert.deepEqual(idleExits, ["archive:native-delivered", "unload:native-late"]);
-        // Archiving dropped the loaded cache, so reuse resumes (and unarchives) natively.
-        // An archive is an unload, so a Linked environments change after it needs no extra unload.
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        yield* resumeDelivered;
-        assert.equal((yield* Ref.get(state)).resumeCount, 2);
-
-        // The late result lands after its child unloaded; the session's idle release archives it.
-        yield* eventSink.write({ events: [yield* late.taskEvent("delivered")] });
-        yield* endTurn({ state, runtime, providerThread: parentThread });
-        yield* TestClock.adjust("1 second");
-        for (const exit of ["archive:native-delivered", "archive:native-late", "close"]) {
-          assert.equal(yield* Queue.take(exits), exit);
-        }
-      });
-
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({
-            state,
-            idleTimeoutMs: 1000,
-            nativeThreadExits: exits,
-            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
-          }),
-        ),
-      );
-    }),
-);
-
-it.effect(
-  "ProviderSessionManagerV2 keeps a delegated child's session until its parent takes the result",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const exits = yield* Queue.unbounded<string>();
-      const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const now = yield* DateTime.now;
-        // The parent runs elsewhere, so nothing else keeps the child's session alive.
-        const parentId = ThreadId.make("thread-provider-session-manager-remote-parent");
-        const providerSessionId = idAllocator.derive.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-        });
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: parentId, now })],
-        });
-        const child = yield* writeDelegatedChild({
-          parentId,
-          providerSessionId,
-          name: "awaiting-child",
-          delivery: "pending",
-          link: "run",
-        });
-        const runtime = yield* manager.open({
-          threadId: child.threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* runTurn({ state, runtime, ...child });
-
-        // The child unloads without archiving, and its result's pending delivery pins the session.
-        yield* TestClock.adjust("1 second");
-        assert.deepEqual([yield* Queue.take(exits), yield* Queue.take(exits)].sort(), [
-          "probe",
-          "unload:native-awaiting-child",
-        ]);
-        // A busy parent takes the result after the idle timeout; the pinned session archives it.
-        yield* eventSink.write({ events: [yield* child.taskEvent("delivered")] });
-        yield* TestClock.adjust("1 second");
-        for (const exit of ["probe", "archive:native-awaiting-child", "close"]) {
-          assert.equal(yield* Queue.take(exits), exit);
-        }
-      });
-
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({
-            state,
-            idleTimeoutMs: 1000,
-            nativeThreadExits: exits,
-            hasPendingBackgroundWork: Queue.offer(exits, "probe").pipe(Effect.as(false)),
-          }),
-        ),
       );
     }),
 );

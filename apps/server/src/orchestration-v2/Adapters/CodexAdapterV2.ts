@@ -7183,7 +7183,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return false;
           }),
           // Untraced: the run's event stream calls this once per provider event.
-          hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
+          hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread) {
             const contexts = [
               ...(yield* Ref.get(activeTurns)).values(),
               ...(yield* Ref.get(settledTurns)).values(),
@@ -7191,34 +7191,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const roots = contexts.filter(
               (context) => context.providerThread.id === providerThread.id,
             );
-            // Settled ancestors leave these maps, so replacement checks walk each live turn's lineage.
-            const owned = (context: ActiveCodexTurnContext) => {
-              if (options?.includeSubagents !== true) {
-                return roots.some(
-                  (root) => context === root || isDescendantCodexTurn(context, root),
-                );
-              }
-              for (
-                let ancestor: ActiveCodexTurnContext | undefined = context;
-                ancestor !== undefined;
-                ancestor = ancestor.subagent?.parentContext
-              ) {
-                if (ancestor.providerThread.id === providerThread.id) return true;
-              }
-              return false;
-            };
-            if (options?.includeSubagents === true) {
-              for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
-                if (
-                  isOrchestrationV2WorkActive(subagent.task.status) &&
-                  owned(subagent.parentContext)
-                ) {
-                  return true;
-                }
-              }
-            }
             for (const context of contexts) {
-              if (!owned(context)) continue;
+              if (!roots.some((root) => context === root || isDescendantCodexTurn(context, root)))
+                continue;
               if (yield* turnHasRetainedBackgroundWork(context.nativeTurnId)) return true;
               if (
                 context.subagent !== null &&
@@ -7449,7 +7424,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              // Archive also unloads; resumeNativeThread unarchives on the next turn.
+              if (unloadInput.archive === true) {
+                yield* client.request("thread/archive", { threadId: nativeThreadId });
+              } else {
+                yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              }
             },
             (effect, unloadInput) =>
               effect.pipe(
@@ -7459,26 +7439,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : new ProviderAdapter.ProviderAdapterProtocolError({
                         driver: CODEX_PROVIDER,
                         detail: `Failed to unload Codex thread for provider thread ${unloadInput.providerThread.id}`,
-                        cause,
-                      }),
-                ),
-              ),
-          ),
-          // Archived threads leave the active Codex thread list; resumeNativeThread unarchives them.
-          archiveThread: Effect.fn("CodexAdapterV2.archiveThread")(
-            function* (archiveInput) {
-              const nativeThreadId = yield* getNativeThreadId(archiveInput.providerThread);
-              sessionApprovals.delete(nativeThreadId);
-              yield* client.request("thread/archive", { threadId: nativeThreadId });
-            },
-            (effect, archiveInput) =>
-              effect.pipe(
-                Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterProtocolError"
-                    ? cause
-                    : new ProviderAdapter.ProviderAdapterProtocolError({
-                        driver: CODEX_PROVIDER,
-                        detail: `Failed to archive Codex thread for provider thread ${archiveInput.providerThread.id}`,
                         cause,
                       }),
                 ),
