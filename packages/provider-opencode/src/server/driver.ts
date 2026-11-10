@@ -509,23 +509,28 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     );
     // Ready catalogs are never re-probed on an interval, so edits to the global config
-    // would otherwise need a manual refresh. Mirrors OpenCode's global config resolution;
-    // a missing directory just skips watching.
+    // would otherwise need a manual refresh. Mirrors OpenCode's config resolution, which
+    // loads OPENCODE_CONFIG_DIR on top of the global directory; a missing directory just
+    // skips watching.
     if (effectiveConfig.enabled) {
-      const configDir =
-        processEnv.OPENCODE_CONFIG_DIR ||
-        pathService.join(
-          processEnv.XDG_CONFIG_HOME ||
-            pathService.join(processEnv.HOME || processEnv.USERPROFILE || homeDirectory, ".config"),
-          "opencode",
-        );
-      yield* fileSystem.watch(configDir).pipe(
-        Stream.filter((event) => OPENCODE_CONFIG_FILES.has(pathService.basename(event.path))),
-        Stream.debounce("200 millis"),
-        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
-        Effect.ignore,
-        Effect.forkScoped,
+      const globalConfigDir = pathService.join(
+        processEnv.XDG_CONFIG_HOME ||
+          pathService.join(processEnv.HOME || processEnv.USERPROFILE || homeDirectory, ".config"),
+        "opencode",
       );
+      const configDirs = new Set([
+        globalConfigDir,
+        processEnv.OPENCODE_CONFIG_DIR || globalConfigDir,
+      ]);
+      for (const configDir of configDirs) {
+        yield* fileSystem.watch(configDir).pipe(
+          Stream.filter((event) => OPENCODE_CONFIG_FILES.has(pathService.basename(event.path))),
+          Stream.debounce("200 millis"),
+          Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+          Effect.ignore,
+          Effect.forkScoped,
+        );
+      }
     }
 
     return {
