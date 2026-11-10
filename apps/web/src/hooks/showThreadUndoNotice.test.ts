@@ -87,5 +87,23 @@ describe("thread undo notice", () => {
     );
     await notice().undo();
     expect(cancelAnnouncement).toHaveBeenCalledWith("thread-undo-notice");
+    expect(announce).toHaveBeenLastCalledWith("Pinned 2 threads", "thread-undo-result");
+  });
+
+  it("announces only the undos that succeeded", async () => {
+    const { add, options } = setup();
+    vi.mocked(announce).mockClear();
+    showThreadUndoNotice({ ...options, action: "Settled" });
+    showThreadUndoNotice({
+      ...options,
+      action: "Settled",
+      claim: ThreadUndo.begin("pin", "env/failing"),
+      undo: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    });
+    await notice().undo();
+    expect(add).toHaveBeenCalledOnce();
+    expect(announce).toHaveBeenLastCalledWith("Unsettled 1 thread", "thread-undo-result");
   });
 });

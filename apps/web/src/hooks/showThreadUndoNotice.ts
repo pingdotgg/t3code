@@ -28,9 +28,20 @@ type UndoNotice = {
 
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
-function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
+const UNDONE_ACTION: Record<UndoOptions["action"], string> = {
+  Settled: "Unsettled",
+  Snoozed: "Unsnoozed",
+  Unpinned: "Pinned",
+  Archived: "Unarchived",
+  Discarded: "Restored",
+};
+
+function threadUndoNoticeSummary(
+  notice: Pick<UndoNotice, "action" | "count">,
+  verb: string = notice.action,
+): string {
   const noun = notice.action === "Discarded" ? "draft" : "thread";
-  return `${notice.action} ${notice.count} ${noun}${notice.count === 1 ? "" : "s"}`;
+  return `${verb} ${notice.count} ${noun}${notice.count === 1 ? "" : "s"}`;
 }
 
 export function threadUndoLabel(keybindings: Parameters<typeof shortcutLabelForCommand>[0]) {
@@ -87,7 +98,7 @@ function refreshNotice() {
       // Claim before awaiting to prevent repeated actions restoring a group twice.
       for (const entry of current) entry.claim.finish();
       refreshNotice();
-      await Promise.all(
+      const restored = await Promise.all(
         current.map(async ({ undo, failureTitle }) => {
           const reportFailure = (error: unknown) => {
             toastManager.add(
@@ -100,14 +111,22 @@ function refreshNotice() {
           };
           try {
             const result = await undo();
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              reportFailure(squashAtomCommandFailure(result));
-            }
+            if (result._tag === "Success") return true;
+            if (!isAtomCommandInterrupted(result)) reportFailure(squashAtomCommandFailure(result));
           } catch (error) {
             reportFailure(error);
           }
+          return false;
         }),
       );
+      const count = restored.filter(Boolean).length;
+      // A separate source, so a new notice shown while the undo ran isn't replaced.
+      if (count > 0) {
+        announce(
+          threadUndoNoticeSummary({ action: latest.action, count }, UNDONE_ACTION[latest.action]),
+          "thread-undo-result",
+        );
+      }
     },
   });
 }
