@@ -205,22 +205,31 @@ export function createThreadTriageOutbox<R, E>(input: {
       // A change is only marked as sent while it can be sent, so Undo can still cancel the rest.
       if (lifetime.ended || !isLive(registry, environmentId)) return;
       // Marked before sending, so an Undo after a lost reply or a restart asks the server.
-      const marked = await write(registry, (current) =>
-        current.some((item) => item.commandId === entry.commandId && item.attempted !== true)
+      let markedHere = false;
+      const marked = await write(registry, (current) => {
+        markedHere = current.some(
+          (item) => item.commandId === entry.commandId && item.attempted !== true,
+        );
+        return markedHere
           ? current.map((item) =>
               item.commandId === entry.commandId ? { ...item, attempted: true as const } : item,
             )
-          : current,
-      );
+          : current;
+      });
       if (lifetime.ended || !AsyncResult.isSuccess(marked)) return;
       // Storage no longer has it: cancelled, replaced, sent by another tab, or its environment
       // was removed.
       if (!marked.value.some((item) => item.commandId === entry.commandId)) continue;
-      // A change that never left the device loses the mark this pass made, so Undo can cancel it.
+      // A change that never left the device loses the mark this pass made, so Undo can cancel
+      // it. A mark from an earlier pass or another tab stays: that send may have arrived.
       const unmark = async () => {
-        if (entry.attempted === true) return;
+        if (!markedHere) return;
         await write(registry, (current) =>
-          current.map((item) => (item.commandId === entry.commandId ? entry : item)),
+          current.map(({ attempted, ...item }) =>
+            item.commandId === entry.commandId || attempted !== true
+              ? item
+              : { ...item, attempted },
+          ),
         );
       };
       // Checked after the last wait, so the shell judged is the one the send goes through.

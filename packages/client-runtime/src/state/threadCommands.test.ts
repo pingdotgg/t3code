@@ -770,6 +770,30 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
+  it.effect("keeps another tab's sent mark when this tab could not send", () =>
+    Effect.gen(function* () {
+      const flipped = yield* Queue.unbounded<void>();
+      const storage: { value: string | null; onModify?: () => void } = { value: null };
+      const h = yield* queued("settle", storage);
+      let calls = 0;
+      // Between this tab's read and its mark, another tab marks the change and sends it. Then
+      // this tab's shell stops being synchronized.
+      storage.onModify = () => {
+        if (++calls !== 2) return;
+        storage.value = storage.value!.replace('"seen"', '"attempted":true,"seen"');
+        h.registry.set(h.statusAtom(ENVIRONMENT_ID), "synchronizing");
+        Queue.offerUnsafe(flipped, undefined);
+      };
+      yield* h.reconnect();
+      yield* Queue.take(flipped);
+      const undone = h.commands.unsettle.run(h.registry, undo);
+      const request = yield* Queue.take(h.requests);
+      expect(request.command.type).toBe("thread.unsettle");
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => undone))._tag).toBe("Success");
+    }),
+  );
+
   it.effect("sends a change another tab queued after this tab loaded", () =>
     Effect.gen(function* () {
       const storage = { value: null as string | null };
