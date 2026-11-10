@@ -5,7 +5,6 @@ import {
   ProviderInstanceId,
   SourceControlProviderKind,
   ThreadId,
-  type ChangeRequest,
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -26,7 +25,11 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
@@ -37,7 +40,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -49,32 +54,59 @@ import { EventId } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 
-// A real GitManager over a local repository whose branch is pushed to a bare remote. The
-// GitHub host is a fake that records each pull request list request it receives.
-const makeHostBackedGitManager = (
+const GITHUB_REMOTE = "https://github.com/pingdotgg/t3code.git";
+
+// The real GitManager and GitHub driver over a local repository whose origin names GitHub but
+// pushes to a bare remote. Only the network and the gh CLI are fakes: GitHub answers each
+// GraphQL request from memory and records it, and gh hands out a token.
+const makeGitHubBackedGitManager = (
   branch: string,
-  pullRequest: Omit<ChangeRequest, "provider" | "state" | "updatedAt">,
+  pullRequest: { readonly number: number; readonly title: string; readonly url: string },
 ) =>
   Effect.gen(function* () {
-    const kind = SourceControlProviderKind.make("github");
     const hostRequests: Array<string> = [];
-    const unused = () => Effect.die("not used by pull request discovery");
-    const host: SourceControlProvider["Service"] = {
-      kind,
-      listChangeRequests: (input) =>
-        Effect.sync(() => {
-          hostRequests.push(input.headSelector);
-          return input.headSelector.endsWith(pullRequest.headRefName)
-            ? [{ ...pullRequest, provider: kind, state: "open" as const, updatedAt: Option.none() }]
-            : [];
-        }),
-      getChangeRequest: unused,
-      createChangeRequest: unused,
-      getRepositoryCloneUrls: unused,
-      createRepository: unused,
-      getDefaultBranch: unused,
-      checkoutChangeRequest: unused,
+    const openPullRequest = {
+      ...pullRequest,
+      baseRefName: "main",
+      headRefName: branch,
+      headRefOid: "f".repeat(40),
+      state: "OPEN",
+      isDraft: false,
+      mergedAt: null,
+      closedAt: null,
+      isCrossRepository: false,
+      updatedAt: "2026-08-01T00:00:00Z",
+      headRepository: { name: "t3code", nameWithOwner: "pingdotgg/t3code" },
+      headRepositoryOwner: { __typename: "Organization", login: "pingdotgg" },
     };
+    const gitHub = HttpClient.make((request) =>
+      Effect.sync(() => {
+        const sent: { readonly variables?: Readonly<Record<string, unknown>> } =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : {};
+        const variables = sent.variables ?? {};
+        // A batched document aliases each lookup's variables and result as `_<n>_`.
+        const aliases = [
+          ...new Set(Object.keys(variables).flatMap((key) => /^_\d+_/.exec(key) ?? [])),
+        ];
+        const lookups = aliases.length === 0 ? [""] : aliases;
+        const heads = lookups.map((alias) => String(variables[`${alias}head`]));
+        hostRequests.push(`${request.method} ${request.url} ${heads.join(",")}`);
+        const data = Object.fromEntries(
+          lookups.map((alias, index) => [
+            `${alias}repository`,
+            { pullRequests: { nodes: heads[index] === branch ? [openPullRequest] : [] } },
+          ]),
+        );
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ data }), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }),
+    );
     const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
     const stores = yield* Layer.build(
       Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
@@ -87,16 +119,7 @@ const makeHostBackedGitManager = (
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
         ServerSettings.ServerSettingsService.layerTest(),
-        Layer.succeed(
-          SourceControlProviderRegistry.SourceControlProviderRegistry,
-          SourceControlProviderRegistry.SourceControlProviderRegistry.of({
-            resolveLink: () => undefined,
-            get: () => Effect.succeed(host),
-            resolveHandle: () => Effect.succeed({ provider: host, context: null }),
-            resolve: () => Effect.succeed(host),
-            discover: Effect.succeed([]),
-          }),
-        ),
+        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
       ).pipe(
         Layer.provideMerge(
           GitVcsDriver.layer.pipe(
@@ -110,6 +133,36 @@ const makeHostBackedGitManager = (
         Layer.provideMerge(platform),
       ),
     );
+    const vcsProcess = Context.get(services, VcsProcess.VcsProcess);
+    const sourceControlHost = TestSourceControlHost.layer({
+      process: {
+        run: (input) =>
+          input.command === "gh"
+            ? Effect.succeed(
+                TestSourceControlHost.processOutput(input.args[0] === "auth" ? "token\n" : ""),
+              )
+            : vcsProcess.run(input),
+      },
+    });
+    const driver = yield* GitHubDriver.driver.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          sourceControlHost,
+          SourceControlRateLimit.layer,
+          Layer.succeed(HttpClient.HttpClient, gitHub),
+          platform,
+        ),
+      ),
+      // GH_HOST, GH_REPO or a token in the test's own environment must not steer the lookup.
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    const registry = yield* SourceControlProviderRegistry.makeWithProviders([
+      {
+        kind: GitHubDriver.driver.kind,
+        provider: driver.sourceControl,
+        discovery: driver.discovery,
+      },
+    ]).pipe(Effect.provide(sourceControlHost), Effect.provideContext(services));
     const workspaceRoot = yield* Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -126,12 +179,17 @@ const makeHostBackedGitManager = (
       yield* git(repository, ["config", "user.name", "Test User"]);
       yield* git(repository, ["commit", "--allow-empty", "-m", "initial"]);
       yield* git(repository, ["checkout", "-b", branch]);
-      yield* git(repository, ["remote", "add", "origin", remote]);
+      yield* git(repository, ["remote", "add", "origin", GITHUB_REMOTE]);
+      yield* git(repository, ["remote", "set-url", "--push", "origin", remote]);
       yield* git(repository, ["push", "-u", "origin", branch]);
       return repository;
     }).pipe(Effect.provideContext(services));
     const manager = yield* GitManager.make.pipe(
-      Effect.provideContext(Context.merge(services, stores)),
+      Effect.provideContext(
+        Context.merge(services, stores).pipe(
+          Context.add(SourceControlProviderRegistry.SourceControlProviderRegistry, registry),
+        ),
+      ),
     );
     return { workspaceRoot, git: manager, hostRequests };
   });
@@ -283,7 +341,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
-  it.effect.each([
+  // Live clock: real git subprocesses, and the GitHub driver batches lookups over a short window.
+  it.live.each([
     {
       commit: "a finished turn",
       // Checkpoint capture commits the thread-start and baseline checkpoints, the run's own
@@ -307,14 +366,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   ])("reads the branch pull request from the host once for $commit", ({ events }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { workspaceRoot, git, hostRequests } = yield* makeHostBackedGitManager(
+        const { workspaceRoot, git, hostRequests } = yield* makeGitHubBackedGitManager(
           "feature/turn",
           {
             number: 7,
             title: "Turn work",
-            url: "https://github.com/acme/project/pull/7",
-            baseRefName: "main",
-            headRefName: "feature/turn",
+            url: "https://github.com/pingdotgg/t3code/pull/7",
           },
         );
         let thread: OrchestrationV2ThreadShell = {
@@ -378,15 +435,15 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
-                canonicalKey: "github.com/acme/project",
+                canonicalKey: "github.com/pingdotgg/t3code",
                 locator: {
                   source: "git-remote" as const,
                   remoteName: "origin",
-                  remoteUrl: "git@github.com:acme/project.git",
+                  remoteUrl: GITHUB_REMOTE,
                 },
                 provider: SourceControlProviderKind.make("github"),
-                owner: "acme",
-                name: "project",
+                owner: "pingdotgg",
+                name: "t3code",
               }),
           }),
           Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -418,7 +475,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(hostRequests).toEqual(oneLookup);
           expect(thread.branchPullRequest).toMatchObject({
             number: 7,
-            url: "https://github.com/acme/project/pull/7",
+            url: "https://github.com/pingdotgg/t3code/pull/7",
           });
         }).pipe(Effect.provide(dependencies));
       }),
