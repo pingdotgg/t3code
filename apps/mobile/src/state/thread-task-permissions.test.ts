@@ -355,7 +355,18 @@ describe("mobile task permissions", () => {
     const screenshot = { id: "screenshot" } as DraftComposerImageAttachment;
     const screenshotContext = {
       version: 1,
-      records: [{ kind: "image", attachmentId: "screenshot" }],
+      records: [
+        {
+          version: 1,
+          kind: "image",
+          contextId: "ctx-screenshot",
+          label: "screenshot.png",
+          attachmentId: "screenshot",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ],
     } as unknown as OrchestrationMessageContext;
     // The thread gets the composer's mode and model only on its next send.
     const selection: ModelSelection = {
