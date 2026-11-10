@@ -73,6 +73,7 @@ import type {
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -4106,6 +4107,31 @@ function gatewayCooldownResetAt(
     : undefined;
 }
 
+// A proxy at a custom endpoint can rewrite the client version it forwards and reject the
+// CLI as outdated even though the session runs a newer one.
+function claudeEndpointVersionMismatchMessage(input: {
+  readonly result: string;
+  readonly sessionVersion: string | undefined;
+  readonly baseUrl: string | undefined;
+}): string | undefined {
+  const baseUrl = input.baseUrl?.trim();
+  if (!baseUrl || input.sessionVersion === undefined) return undefined;
+  const rejection =
+    /^API Error: \d{3} (Claude Code (\d+\.\d+\.\d+) does not support this model; version \d+\.\d+\.\d+ or newer is required\.?)/.exec(
+      input.result,
+    );
+  const reportedVersion = rejection?.[2];
+  if (
+    rejection?.[1] === undefined ||
+    reportedVersion === undefined ||
+    compareSemverVersions(input.sessionVersion, reportedVersion) <= 0
+  ) {
+    return undefined;
+  }
+  const endpoint = URL.canParse(baseUrl) ? new URL(baseUrl).host : "the custom API endpoint";
+  return `The API endpoint ${endpoint} reported Claude Code ${reportedVersion}, but this session runs Claude Code ${input.sessionVersion}. The endpoint (for example a proxy) is rewriting the client version; update it rather than Claude Code. Endpoint response: ${rejection[1]}`;
+}
+
 function providerFailureFromResult(
   message: SDKResultMessage,
   receivedAt: DateTime.Utc,
@@ -4446,6 +4472,7 @@ interface ClaudeLiveQueryContext {
   receivedInit: boolean;
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
+  claudeCodeVersion: string | undefined;
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
@@ -10083,9 +10110,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The CLI also labels 403 authentication_failed; show its text because login cannot grant access.
             const permissionDenied =
               message.subtype === "success" && message.api_error_status === 403;
+            const endpointVersionMismatch =
+              message.subtype === "success" && message.terminal_reason === "api_error"
+                ? claudeEndpointVersionMismatchMessage({
+                    result: message.result,
+                    sessionVersion: liveQuery.claudeCodeVersion,
+                    baseUrl: adapterOptions.environment.ANTHROPIC_BASE_URL,
+                  })
+                : undefined;
             const failureHint = permissionDenied
               ? message.result
               : (context.authenticationFailureMessage ??
+                endpointVersionMismatch ??
                 (usageLimited
                   ? "Claude usage limit reached. Send the message again once the limit resets."
                   : undefined));
@@ -11077,6 +11113,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
             capabilities: new Set(),
+            claudeCodeVersion: undefined,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             handedOffSubagents: new Set(),
@@ -11117,6 +11154,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
+                    context.claudeCodeVersion = message.claude_code_version;
                   }
                   if (
                     message.type === "system" &&
