@@ -641,6 +641,16 @@ jobs:
             exit 1
           fi
 
+      # A --path submission doesn't keep its archive on EAS; this is the only downloadable copy.
+      - name: Keep the AAB
+        if: steps.record.outputs.built != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-store-aab-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/t3code.aab
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Submit to Google Play
         if: steps.record.outputs.built != 'true'
         working-directory: apps/mobile
