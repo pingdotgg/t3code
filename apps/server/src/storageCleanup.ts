@@ -16,6 +16,7 @@ import type {
   StorageCleanupReportEntry,
   ThreadId,
 } from "@t3tools/contracts";
+import { usageLimitNoticeResetAt } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Context from "effect/Context";
@@ -168,23 +169,29 @@ function heldForLimitRecovery(
   if (
     thread.status !== "failed" ||
     thread.lastErrorClass !== "usage_limit" ||
-    !thread.usageLimitResetAt ||
     thread.archivedAt !== null ||
     thread.settledOverride === "settled"
   )
     return false;
-  const resetMs = Date.parse(thread.usageLimitResetAt);
+  const stoppedAtMs = DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt);
   const recovery = thread.limitRecovery;
-  if (recovery?.runId === thread.latestRunId && recovery.resetAt === thread.usageLimitResetAt)
+  // A refused continuation's armed retry stands in for a missing or expired reset.
+  const resetAt = usageLimitNoticeResetAt({
+    runId: thread.latestRunId,
+    resetAt: thread.usageLimitResetAt,
+    stoppedAtMs,
+    recovery,
+    snoozedUntilMs: thread.snoozedUntil ? DateTime.toEpochMillis(thread.snoozedUntil) : null,
+    nowMs: now,
+  });
+  if (!resetAt) return false;
+  const resetMs = Date.parse(resetAt);
+  if (recovery?.runId === thread.latestRunId && recovery.resetAt === resetAt)
     // An auto-resume holds until its continuation replaces the failed run.
     return recovery.autoResume || (recovery.snooze === true && resetMs > now);
   // The recovery worker arms this failure on a later tick; hold it until then.
   // Like the worker, skip a reset that had already passed when the run ended.
-  if (
-    !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
-  )
-    return false;
+  if (!Number.isFinite(resetMs) || resetMs <= stoppedAtMs) return false;
   return settings.autoResumeLimitedThreads || (settings.snoozeLimitedThreads && resetMs > now);
 }
 

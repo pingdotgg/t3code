@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2LimitRecovery,
   OrchestrationV2ProviderFailure,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
@@ -151,6 +152,29 @@ export function usageLimitContinuationChain(
     chain.push(current);
   }
   return chain;
+}
+
+/**
+ * The reset a usage-limit notice offers for `runId`, which stopped at `stoppedAtMs`: the
+ * provider's reset when it is later. Otherwise a recovery still armed for the run (auto-resume
+ * on, or its snooze still ahead) carries the server's retry time; else the provider's reset.
+ */
+export function usageLimitNoticeResetAt(input: {
+  readonly runId: string | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly stoppedAtMs: number;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+  readonly snoozedUntilMs: number | null;
+  readonly nowMs: number;
+}): string | null {
+  const { runId, resetAt, stoppedAtMs, recovery, snoozedUntilMs, nowMs } = input;
+  if (resetAt != null && Date.parse(resetAt) > stoppedAtMs) return resetAt;
+  if (runId == null || recovery?.runId !== runId) return resetAt ?? null;
+  const retryMs = Date.parse(recovery.resetAt);
+  const armed =
+    recovery.autoResume ||
+    (recovery.snooze === true && snoozedUntilMs === retryMs && retryMs > nowMs);
+  return armed && retryMs > stoppedAtMs ? recovery.resetAt : (resetAt ?? null);
 }
 
 /** Retains a limited run's outcome when higher-ordinal runs never started. */

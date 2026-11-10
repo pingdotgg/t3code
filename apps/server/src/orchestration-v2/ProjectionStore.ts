@@ -4107,9 +4107,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND (
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
-                  -- A per-thread resume of the run this continuation retries carries over.
+                  -- A per-thread resume of the run a refused continuation retries carries over.
                   OR (
-                    json_extract(t.payload_json, '$.limitRecovery.runId') IS json_extract(r.payload_json, '$.usageLimitContinuationOfRunId')
+                    ${refusedContinuation}
+                    AND json_extract(t.payload_json, '$.limitRecovery.runId') IS json_extract(r.payload_json, '$.usageLimitContinuationOfRunId')
                     AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
                   )
                 )

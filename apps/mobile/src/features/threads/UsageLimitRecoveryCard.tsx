@@ -17,7 +17,7 @@ import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { AppText as Text } from "../../components/ui/AppText";
-import { useDeadlinePassed } from "../../lib/clock";
+import { useDeadlinePassed, useNowAfter } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -34,11 +34,15 @@ export function UsageLimitRecoveryCard({
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
   const stoppedAt = thread.latestRun?.completedAt ?? thread.updatedAt;
+  const snoozedUntilMs = thread.snoozedUntil ? Date.parse(thread.snoozedUntil) : null;
+  const nowMs = useNowAfter(snoozedUntilMs);
   const resetAt = usageLimitNoticeResetAt({
     runId,
     resetAt: thread.runtime?.usageLimitResetAt,
-    stoppedAt,
+    stoppedAtMs: Date.parse(stoppedAt),
     recovery,
+    snoozedUntilMs,
+    nowMs,
   });
   const canSchedule =
     thread.settledOverride !== "settled" &&

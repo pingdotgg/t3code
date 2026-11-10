@@ -673,8 +673,12 @@ function ThreadDetailBody(
       resetAt: usageLimitNoticeResetAt({
         runId: limitRunId,
         resetAt: props.selectedThread.runtime?.usageLimitResetAt,
-        stoppedAt: props.selectedThread.latestRun?.completedAt ?? props.selectedThread.updatedAt,
+        stoppedAtMs: Date.parse(
+          props.selectedThread.latestRun?.completedAt ?? props.selectedThread.updatedAt,
+        ),
         recovery: props.selectedThread.limitRecovery,
+        snoozedUntilMs: snoozedUntil === null ? null : Date.parse(snoozedUntil),
+        nowMs: Date.parse(lifecycleNow),
       }),
       recovery: props.selectedThread.limitRecovery,
       snoozedUntil,

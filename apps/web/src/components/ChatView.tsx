@@ -202,6 +202,7 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
+import { useNowAfter } from "../hooks/useDeadline";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -982,14 +983,20 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit"
       ? (activeThreadShell?.latestRun ?? null)
       : null;
+  const snoozedUntilMs = activeThreadShell?.snoozedUntil
+    ? Date.parse(activeThreadShell.snoozedUntil)
+    : null;
+  const limitRecoveryNowMs = useNowAfter(snoozedUntilMs);
   const limitRecoveryResetAt =
     limitRecoveryRun === null || activeThreadShell === null
       ? null
       : usageLimitNoticeResetAt({
           runId: limitRecoveryRun.runId,
           resetAt: serverRuntime?.usageLimitResetAt,
-          stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
+          stoppedAtMs: Date.parse(limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt),
           recovery: activeThreadShell.limitRecovery,
+          snoozedUntilMs,
+          nowMs: limitRecoveryNowMs,
         });
   // The recovery banner offers Wake now for a snooze it set.
   const limitRecoveryHoldsSnooze = limitRecoveryOwnsSnooze({

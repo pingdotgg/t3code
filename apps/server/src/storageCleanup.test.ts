@@ -212,6 +212,21 @@ describe("V2 storage cleanup eligibility", () => {
       resetIn: DAY_MS,
       idle: true,
     },
+    ...(["missing", "expired"] as const).flatMap((providerReset) => [
+      {
+        name: `with the provider reset ${providerReset} and an armed retry`,
+        providerReset,
+        autoResume: true,
+        resetIn: 120_000,
+        idle: false,
+      },
+      {
+        name: `with the provider reset ${providerReset} and a cancelled retry`,
+        providerReset,
+        resetIn: 120_000,
+        idle: true,
+      },
+    ]),
   ])(
     "treats a usage-limited thread $name as idle: $idle",
     ({
@@ -221,8 +236,19 @@ describe("V2 storage cleanup eligibility", () => {
       autoResumeSetting = false,
       settled,
       settingsOff,
+      providerReset,
       resetIn,
       idle,
+    }: {
+      autoResume?: boolean;
+      snooze?: boolean;
+      armed?: boolean;
+      autoResumeSetting?: boolean;
+      settled?: boolean;
+      settingsOff?: boolean;
+      providerReset?: "missing" | "expired";
+      resetIn: number;
+      idle: boolean;
     }) => {
       const runId = RunId.make("run-1");
       const resetAt = DateTime.formatIso(at(resetIn));
@@ -232,7 +258,12 @@ describe("V2 storage cleanup eligibility", () => {
             ...candidateWithStatus("failed"),
             latestRunId: runId,
             lastErrorClass: "usage_limit",
-            usageLimitResetAt: resetAt,
+            usageLimitResetAt:
+              providerReset === "missing"
+                ? null
+                : providerReset === "expired"
+                  ? DateTime.formatIso(at(-11 * DAY_MS))
+                  : resetAt,
             settledOverride: settled ? "settled" : null,
             limitRecovery: armed ? { runId, resetAt, autoResume, snooze } : null,
           },
