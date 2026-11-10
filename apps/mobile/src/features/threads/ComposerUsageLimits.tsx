@@ -1,11 +1,10 @@
+import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
-
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
 export function ComposerUsageLimits({
   report,
@@ -37,7 +36,7 @@ export function ComposerUsageLimits({
           const resetCreditInput =
             account.resetCreditInput ??
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
+          const driverLabel = providerClients.get(account.driver)?.label ?? account.driver;
           return (
             <AccountLimits
               key={account.id}
