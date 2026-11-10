@@ -1,9 +1,16 @@
 /**
- * A one-use pairing code for linking, minted on the environment being linked to with the
- * user's own session there, so a link card can be answered without fetching a code by hand.
- * It carries exactly what an agent sign-in with the chosen access needs.
+ * One-use pairing codes minted on an environment with the user's own session there: a code
+ * for linking, so a link card can be answered without fetching a code by hand, and a code
+ * that approves one app's sign-in at a set level. Each carries exactly what an agent
+ * sign-in with the chosen access needs.
  */
-import { type AuthMcpClientAccess, type EnvironmentId, mcpClientScopes } from "@t3tools/contracts";
+import {
+  type AuthCreatePairingCredentialInput,
+  type AuthMcpClientAccess,
+  type AuthPairingCredentialResult,
+  type EnvironmentId,
+  mcpClientScopes,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
@@ -22,6 +29,7 @@ import { createEnvironmentCommand, squashAtomCommandFailure } from "./runtime.ts
 
 const MINT_TIMEOUT_MS = 8_000;
 const PEER_PAIRING_CODE_LABEL = "T3 Code link";
+const MCP_APPROVAL_CODE_LABEL = "App sign-in";
 
 /** Minting failed; the user can still paste a code from the other environment. */
 export class PeerPairingCodeError extends Schema.TaggedError<PeerPairingCodeError>()(
@@ -38,10 +46,10 @@ export class PeerPairingCodeError extends Schema.TaggedError<PeerPairingCodeErro
   }
 }
 
-const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")(function* (
+const mintPairingCredential = Effect.fn("clientRuntime.state.mintPairingCredential")(function* (
   prepared: PreparedConnection,
-  access: AuthMcpClientAccess,
-): Effect.fn.Return<string, PeerPairingCodeError, HttpClient.HttpClient> {
+  payload: AuthCreatePairingCredentialInput,
+): Effect.fn.Return<AuthPairingCredentialResult, PeerPairingCodeError, HttpClient.HttpClient> {
   const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(
     RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
@@ -54,11 +62,7 @@ const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")
     method: "POST",
     url: (urls) => urls.pairingCredential(),
     timeoutMs: MINT_TIMEOUT_MS,
-    request: ({ client, headers }) =>
-      client.pairingCredential({
-        headers,
-        payload: { label: PEER_PAIRING_CODE_LABEL, scopes: mcpClientScopes(access) },
-      }),
+    request: ({ client, headers }) => client.pairingCredential({ headers, payload }),
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -72,7 +76,20 @@ const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")
         }),
     ),
   );
-  return minted.credential;
+  return minted;
+});
+
+// Untraced: mintPairingCredential owns the span.
+const mintOnEnvironment = Effect.fnUntraced(function* (payload: AuthCreatePairingCredentialInput) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+  if (Option.isNone(prepared)) {
+    return yield* new PeerPairingCodeError({
+      reason: "unavailable",
+      cause: "The environment is not connected.",
+    });
+  }
+  return yield* mintPairingCredential(prepared.value, payload);
 });
 
 /**
@@ -86,17 +103,10 @@ export function createPeerPairingCodeMinter<R, E>(
 ) {
   const mint = createEnvironmentCommand(runtime, {
     label: "environment-data:peer-pairing-code:mint",
-    execute: Effect.fn(function* (access: AuthMcpClientAccess) {
-      const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-      const prepared = yield* SubscriptionRef.get(supervisor.prepared);
-      if (Option.isNone(prepared)) {
-        return yield* new PeerPairingCodeError({
-          reason: "unavailable",
-          cause: "The environment is not connected.",
-        });
-      }
-      return yield* mintPeerPairingCode(prepared.value, access);
-    }),
+    execute: (access: AuthMcpClientAccess) =>
+      mintOnEnvironment({ label: PEER_PAIRING_CODE_LABEL, scopes: mcpClientScopes(access) }).pipe(
+        Effect.map((minted) => minted.credential),
+      ),
   });
   return async (
     environmentId: EnvironmentId,
@@ -107,4 +117,18 @@ export function createPeerPairingCodeMinter<R, E>(
       ? Result.succeed(result.value)
       : Result.fail(squashAtomCommandFailure(result));
   };
+}
+
+/**
+ * Mints a hidden code that approves one app's sign-in at `access`, and only that. Servers
+ * without `mcpApprovalCodes` ignore the level, so check the capability first.
+ */
+export function createMcpApprovalCodeCommand<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+) {
+  return createEnvironmentCommand(runtime, {
+    label: "environment-data:mcp-approval-code:mint",
+    execute: (access: AuthMcpClientAccess) =>
+      mintOnEnvironment({ label: MCP_APPROVAL_CODE_LABEL, access }),
+  });
 }
