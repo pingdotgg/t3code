@@ -5159,7 +5159,8 @@ describe("PiAdapterV2", () => {
         messageId: steerMessageId,
       });
 
-      // An extension command Pi handles queues no user message; a later expanded skill must not be taken for it.
+      // An extension command Pi handles queues no user message; a later expanded skill must not be
+      // taken for it, even from Pi before 0.99, whose acks carry no disposition.
       const steer = (messageId: string, text: string) =>
         runtime.steerTurn({
           threadId: THREAD_ID,
@@ -5174,28 +5175,32 @@ describe("PiAdapterV2", () => {
             creationSource: "web",
           },
         });
-      const ack = (disposition?: string) =>
+      const ackFor = (request: PiRpcRecord, disposition?: string) =>
         fake.emit({
           type: "response",
+          id: request["id"],
           command: "prompt",
           success: true,
           ...(disposition === undefined ? {} : { data: { disposition } }),
         });
-      yield* ack();
-      yield* ack("queued");
       yield* steer("message:thread-pi-test:notify", "/notify");
-      yield* fake.takeRequest("prompt");
-      yield* ack("handled");
+      const notifyPrompt = yield* fake.takeRequest("prompt");
+      yield* steer("message:thread-pi-test:skill", "/skill:review");
+      const skillPrompt = yield* fake.takeRequest("prompt");
+      yield* ackFor(notifyPrompt);
       const notified = yield* takeEvent((event) => event.type === "user_message.delivered");
       assert.deepInclude(notified, { messageId: "message:thread-pi-test:notify" as never });
-      yield* steer("message:thread-pi-test:skill", "/skill:review");
-      yield* fake.takeRequest("prompt");
-      yield* ack("queued");
+      yield* ackFor(skillPrompt);
       yield* fake.emit({
         type: "message_start",
         message: {
           role: "user",
-          content: [{ type: "text", text: "<skill>Review the diff</skill>" }],
+          content: [
+            {
+              type: "text",
+              text: '<skill name="review" location="/skills/review/SKILL.md">\nReview the diff\n</skill>',
+            },
+          ],
         },
       });
       const skill = yield* takeEvent((event) => event.type === "user_message.delivered");
@@ -5207,14 +5212,6 @@ describe("PiAdapterV2", () => {
       const dialogPrompt = yield* fake.takeRequest("prompt");
       yield* steer("message:thread-pi-test:waiting", "/skill:plan");
       const waitingPrompt = yield* fake.takeRequest("prompt");
-      const ackFor = (request: PiRpcRecord, disposition: string) =>
-        fake.emit({
-          type: "response",
-          id: request["id"],
-          command: "prompt",
-          success: true,
-          data: { disposition },
-        });
       yield* ackFor(waitingPrompt, "queued");
       yield* fake.emit({
         type: "message_start",
@@ -5247,6 +5244,63 @@ describe("PiAdapterV2", () => {
         const started = yield* takeEvent((event) => event.type === "user_message.delivered");
         assert.deepInclude(started, { messageId: messageId as never });
       }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports a steer delivered when Pi starts it before the turn's own prompt", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      // The turn's extension command awaits a dialog, so Pi has not acked it.
+      yield* startTurn(runtime, providerThread, "default", [], "/confirm");
+      const confirmPrompt = yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      assert.isTrue(running.type === "provider_turn.updated");
+      const steerMessageId = "message:thread-pi-test:template" as never;
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId:
+          running.type === "provider_turn.updated" ? running.providerTurn.id : (null as never),
+        message: {
+          messageId: steerMessageId,
+          text: "/plan",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      const templatePrompt = yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "response",
+        id: templatePrompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "started" },
+      });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_start",
+        message: { role: "user", content: [{ type: "text", text: "Plan the work" }] },
+      });
+      const delivered = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(delivered, { messageId: steerMessageId });
+      yield* fake.emit({
+        type: "response",
+        id: confirmPrompt["id"],
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

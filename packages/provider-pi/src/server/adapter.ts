@@ -211,6 +211,18 @@ function contentText(content: unknown): string {
     .join("");
 }
 
+// Pi expands `/skill:<name> <args>` to `<skill name="<name>" location=…>…</skill>\n\n<args>`.
+function isPiSkillExpansionOf(prompt: string, text: string): boolean {
+  if (!prompt.startsWith("/skill:")) return false;
+  const space = prompt.indexOf(" ");
+  const name = prompt.slice("/skill:".length, space === -1 ? undefined : space);
+  const args = space === -1 ? "" : prompt.slice(space + 1).trim();
+  return (
+    text.startsWith(`<skill name="${name}" location="`) &&
+    (args === "" || text.includes(`</skill>\n\n${args}`))
+  );
+}
+
 const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
 
 function isBoundedStructuredToolValue(value: unknown): boolean {
@@ -376,14 +388,16 @@ interface ActivePiTurn {
   failure: ReturnType<typeof makeProviderFailure> | null;
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
-  /** Steers Pi has not started: acked ones first in Pi's queue (ack) order, then unacked ones. */
-  readonly unreadSteers: Array<{
-    readonly messageId: MessageId;
+  /**
+   * Prompts Pi has not started as a user message, the turn's own (null id) and its steers: acked
+   * ones first in Pi's queue (ack) order, then unacked ones.
+   */
+  readonly unstartedPrompts: Array<{
+    readonly messageId: MessageId | null;
     readonly text: string;
     /** Pi acked it as queued or started; a pending extension command has no user message yet. */
     queuedMessage: boolean;
   }>;
-  sawUserMessage: boolean;
 }
 
 interface PiTurnTreeRefs {
@@ -1959,18 +1973,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             if (role !== "user") return;
-            // Pi starts a queued steer as a user message with its text, as Pi's own queue matches it.
-            // An expanded prompt template no longer matches, so after the turn's prompt take the
-            // oldest steer Pi acked as queuing a message.
+            // Pi starts a prompt as a user message with its text, or its skill expansion. Any other
+            // expansion (a prompt template, an input hook) is taken as the oldest prompt Pi acked as
+            // queuing a message.
             const text = contentText(recordField(event["message"], "content"));
-            const matched = turn.unreadSteers.findIndex((steer) => steer.text === text);
-            const index =
-              matched === -1 && turn.sawUserMessage
-                ? turn.unreadSteers.findIndex((steer) => steer.queuedMessage)
-                : matched;
-            turn.sawUserMessage = true;
-            const [steer] = index === -1 ? [] : turn.unreadSteers.splice(index, 1);
-            if (steer !== undefined) yield* emitSteerDelivered(turn, steer.messageId);
+            const prompts = turn.unstartedPrompts;
+            let index = prompts.findIndex((prompt) => prompt.text === text);
+            if (index === -1) {
+              index = prompts.findIndex((prompt) => isPiSkillExpansionOf(prompt.text, text));
+            }
+            if (index === -1) index = prompts.findIndex((prompt) => prompt.queuedMessage);
+            const [started] = index === -1 ? [] : prompts.splice(index, 1);
+            if (started?.messageId != null) yield* emitSteerDelivered(turn, started.messageId);
             return;
           }
           case "message_update": {
@@ -2269,30 +2283,37 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingPrompt?.kind === "steer" && responseTurn?.settleWhenIdle === true) {
               yield* scheduleSettleProbe(responseTurn, true);
             }
-            const steerIndex =
-              pendingPrompt?.steerMessageId === undefined || responseTurn === null
+            const promptIndex =
+              pendingPrompt === undefined || responseTurn === null
                 ? -1
-                : responseTurn.unreadSteers.findIndex(
-                    (steer) => steer.messageId === pendingPrompt.steerMessageId,
+                : responseTurn.unstartedPrompts.findIndex(
+                    (prompt) => prompt.messageId === (pendingPrompt.steerMessageId ?? null),
                   );
-            // A handled steer (an extension command) or a rejected one never starts a user message.
-            const steerQueuedNothing =
+            const [ackedPrompt] =
+              promptIndex === -1 ? [] : responseTurn!.unstartedPrompts.splice(promptIndex, 1);
+            const disposition = recordString(recordField(event, "data"), "disposition");
+            // A handled prompt (an extension command) or a rejected one never starts a user message.
+            // Pi before 0.99 acks without a disposition, so a slash command other than a skill may
+            // have been handled: settle it now rather than let it take a later prompt's start.
+            const queuedNothing =
               event["success"] === false ||
-              recordString(recordField(event, "data"), "disposition") === "handled";
-            if (responseTurn !== null && steerIndex !== -1 && steerQueuedNothing) {
-              const [steer] = responseTurn.unreadSteers.splice(steerIndex, 1);
-              if (steer !== undefined && event["success"] === true) {
-                yield* emitSteerDelivered(responseTurn, steer.messageId);
+              disposition === "handled" ||
+              (disposition === undefined &&
+                ackedPrompt !== undefined &&
+                ackedPrompt.text.startsWith("/") &&
+                !ackedPrompt.text.startsWith("/skill:"));
+            if (ackedPrompt !== undefined && queuedNothing) {
+              if (ackedPrompt.messageId !== null && event["success"] === true) {
+                yield* emitSteerDelivered(responseTurn!, ackedPrompt.messageId);
               }
-            } else if (responseTurn !== null && steerIndex !== -1) {
-              // Pi queues in ack order, so queued steers lead the list in that order.
-              const [steer] = responseTurn.unreadSteers.splice(steerIndex, 1);
-              const queuedEnd = responseTurn.unreadSteers.findIndex((s) => !s.queuedMessage);
-              responseTurn.unreadSteers.splice(
-                queuedEnd === -1 ? responseTurn.unreadSteers.length : queuedEnd,
-                0,
-                { ...steer!, queuedMessage: true },
-              );
+            } else if (ackedPrompt !== undefined) {
+              // Pi queues in ack order, so queued prompts lead the list in that order.
+              const prompts = responseTurn!.unstartedPrompts;
+              const queuedEnd = prompts.findIndex((prompt) => !prompt.queuedMessage);
+              prompts.splice(queuedEnd === -1 ? prompts.length : queuedEnd, 0, {
+                ...ackedPrompt,
+                queuedMessage: true,
+              });
             }
             if (event["success"] === true) {
               // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
@@ -2864,8 +2885,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               activeProviderRetry: null,
               failure: null,
               rejectedPromptFailure: null,
-              unreadSteers: [],
-              sawUserMessage: false,
+              unstartedPrompts:
+                payload === null
+                  ? []
+                  : [{ messageId: null, text: payload.message, queuedMessage: false }],
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
             yield* Effect.gen(function* () {
@@ -2990,7 +3013,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   });
                   yield* emitSteerDelivered(turn, steerInput.message.messageId);
                 } else if (payload !== null) {
-                  turn.unreadSteers.push({
+                  turn.unstartedPrompts.push({
                     messageId: steerInput.message.messageId,
                     text: payload.message,
                     queuedMessage: false,
