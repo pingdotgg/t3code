@@ -300,6 +300,7 @@ function actionPatchedQuery<Input, A, E>(
         registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
         (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
       );
+    // Each cached reader reuses the applyActionReply or showDetailInLists tracing boundary.
     const show = Effect.fnUntraced(function* (registry: AtomRegistry.AtomRegistry, next: A) {
       registry.update(
         atom,
@@ -348,7 +349,7 @@ function actionPatchedQuery<Input, A, E>(
       ...(options.observesDetail !== true
         ? {}
         : {
-            // Rows the read does not hold, or a stale read, wait for the listing's own refresh.
+            // Per-reader work reuses the showDetailInLists tracing boundary.
             observe: Effect.fnUntraced(function* (registry, environmentId, reference, summary) {
               if (
                 environmentId !== target.environmentId ||
@@ -767,20 +768,27 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     summary: PullRequestSummary,
     now: number,
   ) => {
-    if (reference.expectedAccountId !== undefined) return;
+    if (reference.expectedAccountId !== undefined) return false;
     const { projectId, host, repository, number } = reference;
     const key = JSON.stringify([projectId, host?.toLowerCase(), repository.toLowerCase(), number]);
-    registry.update(shownSummaryAtoms(environmentId), (previous) => {
-      const shown = unexpired(previous, now);
-      const held = shown.get(key);
-      if (held !== undefined && isStalePullRequestReply(held.summary, summary)) return shown;
-      const listed = pickDefined(summary, [...listedFields, "observedAt"]) as ListedSummary;
-      return new Map(shown).set(key, {
+    const atom = shownSummaryAtoms(environmentId);
+    const previous = registry.get(atom);
+    const shown = unexpired(previous, now);
+    const held = shown.get(key);
+    if (held !== undefined && isStalePullRequestReply(held.summary, summary)) {
+      if (shown !== previous) registry.set(atom, shown);
+      return false;
+    }
+    const listed = pickDefined(summary, [...listedFields, "observedAt"]) as ListedSummary;
+    registry.set(
+      atom,
+      new Map(shown).set(key, {
         reference,
         summary: listed,
         expiresAt: now + shownSummaryTtlMs,
-      });
-    });
+      }),
+    );
+    return true;
   };
   const withShownSummaries = (
     registry: AtomRegistry.AtomRegistry,
@@ -828,7 +836,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   ) {
     if (target.input.expectedAccountId !== undefined) return;
     const now = yield* Clock.currentTimeMillis;
-    retainSummary(registry, target.environmentId, target.input, value, now);
+    if (!retainSummary(registry, target.environmentId, target.input, value, now)) return;
     for (const reader of actionReplyReaders(registry)) {
       yield* reader.observe?.(registry, target.environmentId, target.input, value) ?? Effect.void;
     }

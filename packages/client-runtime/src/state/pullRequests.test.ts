@@ -1250,6 +1250,18 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         { target, reply: commented },
       ]);
       expect(reads).toEqual(["list:merged", "detail"]);
+
+      // Equal host dates still need the detail's read time, not the listing's older one.
+      hostDetail = { ...commented, isDraft: true, title: "Older read", observedAt: 250 };
+      registry.refresh(atoms.detail(target));
+      yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
+        { title: commented.title, isDraft: false, updatedAt: commented.updatedAt, observedAt: 100 },
+      ]);
+      expect(replies).toEqual([
+        { target, reply: actionReply },
+        { target, reply: commented },
+      ]);
     }),
   ),
 );
