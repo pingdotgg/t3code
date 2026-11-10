@@ -1346,6 +1346,66 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "tracks a shell a reconnect-discarded subagent launches after its kept shell ends",
+    () =>
+      Effect.gen(function* () {
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const { runtime, thread } = yield* resumed([
+          ...heldSubagentShell(),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [CHILD]: { type: "running" } }),
+          out("shell.get", { id: "sh_child", "location[directory]": WORK }),
+          reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          // The kept shell's report wakes the subagent, which launches another shell.
+          shellReport(CHILD, "sh_child", "completed", "DONE"),
+          event("session.execution.started", { sessionID: CHILD }),
+          ...shellLaunched(CHILD, "sh_followup"),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          drained,
+        ]).pipe(recordOffers(offers));
+        const watch = yield* watchCalls(runtime, thread);
+        yield* watch.until(() => watch.state.variant === "drained");
+        assert.deepEqual(watch.state.roster, [{ taskId: "sh_followup", kind: "command" }]);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps no held shell whose end arrived before its launch result", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const launch = shellLaunched(CHILD, "sh_child");
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...backgroundLaunch(CHILD).slice(3),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...launch.slice(0, -1),
+        shellReport(CHILD, "sh_child", "completed", "DONE"),
+        launch.at(-1)!,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        heldVariant("held"),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: false }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("retries a held subagent's shell whose remove failed on the next Stop", () =>
     Effect.gen(function* () {
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
@@ -1439,6 +1499,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.state.variant === "drained");
       assert.isFalse(watch.state.pending);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("tracks a shell a held subagent launches while Stop's last pass interrupts it", () =>
+    Effect.gen(function* () {
+      const late = shellLaunched(CHILD, "sh_late");
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        event("session.execution.started", { sessionID: SESSION }),
+        ...backgroundLaunch(CHILD).slice(3),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...shellLaunched(CHILD, "sh_first"),
+        ...late.slice(0, -1),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        heldVariant("held"),
+        removeShell("sh_first"),
+        shellReport(CHILD, "sh_first", "error", "Shell.NotFoundError"),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        late.at(-1)!,
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        removeShell("sh_late"),
+        shellReport(CHILD, "sh_late", "error", "Shell.NotFoundError"),
+        event("session.execution.started", { sessionID: CHILD }),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        // The removal woke the subagent again; it launches a shell before that execution ends.
+        ...shellLaunched(CHILD, "sh_escape"),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        drained,
+      ]).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, [{ taskId: "sh_escape", kind: "command" }]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
   );
 
@@ -1640,6 +1744,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(watch.terminals, ["interrupted"]);
       assert.deepEqual(watch.state.roster, []);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops the turn within the outer Stop deadline while a shell removal stalls", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        removeShell("sh_1"),
+        reply("shell.remove", "<hang>"),
+        heldVariant("removing"),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      yield* runtime
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* watch.until(() => watch.state.variant === "removing");
+      // Short of the removal's own 10-second timeout, which on its own would use up the deadline.
+      yield* TestClock.adjust("3 seconds");
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["interrupted"]);
     }).pipe(Effect.scoped),
   );
 

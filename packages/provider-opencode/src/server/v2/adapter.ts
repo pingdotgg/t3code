@@ -46,6 +46,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -550,6 +551,7 @@ const claudeUsageLimit = (message: string | undefined) =>
     : undefined;
 
 const INTERRUPT_TIMEOUT = "10 seconds";
+const FOREGROUND_STOP_DELAY = "3 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
@@ -745,6 +747,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     /** Held events whose session had no state yet, so their shells were not counted on arrival. */
     const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
     const strays = new Map<string, ThreadState>();
+    /** Sessions of discarded wakes by the caller that tracks their shells, kept after their interrupt. */
+    const adopted = new Map<string, ThreadState>();
     const busy = new Set<string>();
     const idleWaiters = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
@@ -2412,20 +2416,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return false;
     };
 
-    // A shell a discarded wake handed to its caller still reports its end to the session that launched it.
-    const releaseAdoptedShell = Effect.fnUntraced(function* (
+    // A discarded wake's sessions stay owned by its caller, which tracks the shells they launch.
+    const trackAdoptedShells = Effect.fnUntraced(function* (
       event: OpenCode2Client.OpenCode2StreamEvent,
     ) {
+      const caller = adopted.get(sessionOfEvent(event) ?? "");
+      if (event.type === "session.tool.success") {
+        if (caller !== undefined && trackShellLaunch(caller, event.data.metadata, undefined)) {
+          yield* syncRosterAncestors(caller);
+        }
+        return;
+      }
       if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return;
       const { metadata } = event.data.item.payload;
       if (stringField(metadata, "source") !== "shell") return;
       const shellId = stringField(metadata, "shellID") ?? "";
+      let released = false;
       for (const state of threads.values()) {
         if (!state.shells.delete(shellId)) continue;
+        released = true;
         // The report wakes that session; Stop's stray pass ends what a removal started.
         if (state.stopped.has(shellId)) strays.set(event.data.sessionID, state);
         yield* syncRosterAncestors(state);
       }
+      if (!released) caller?.endedShells.add(shellId);
     });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
@@ -2464,6 +2478,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const strayCaller = strays.get(event.data.parentID);
         if (strayCaller !== undefined) {
           strays.set(event.data.sessionID, strayCaller);
+          adopted.set(event.data.sessionID, strayCaller);
           return;
         }
         const owner = ownerOf(event.data.parentID);
@@ -2486,7 +2501,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           held.running = false;
         }
       } else {
-        if (tracked === undefined) yield* releaseAdoptedShell(event);
+        if (tracked === undefined) yield* trackAdoptedShells(event);
         yield* route(event, sessionId);
       }
       if (shellsChanged) yield* syncRosterAncestors(tracked);
@@ -3384,18 +3399,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const heldShells = (wakes: ReadonlyArray<Wake>) => {
       const inputs = new Map<string, Readonly<Record<string, unknown>>>();
       const running = new Map<string, string | undefined>();
+      // As in endedShells, an end can arrive before its launch result.
+      const ended = new Set<string>();
       for (const event of wakes.flatMap((wake) => wake.events)) {
         if (!untracked.has(event)) continue;
         if (event.type === "session.tool.called") inputs.set(event.data.id, event.data.input);
         if (event.type === "session.tool.success") {
           const shellId = launchedShell(event.data.metadata);
-          if (shellId !== undefined)
+          if (shellId !== undefined && !ended.delete(shellId))
             running.set(shellId, shellCommandOf(inputs.get(event.data.id)));
         }
         if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
           const { metadata } = event.data.item.payload;
-          if (stringField(metadata, "source") === "shell") {
-            running.delete(stringField(metadata, "shellID") ?? "");
+          const shellId = stringField(metadata, "shellID") ?? "";
+          if (stringField(metadata, "source") === "shell" && !running.delete(shellId)) {
+            ended.add(shellId);
           }
         }
       }
@@ -3414,6 +3432,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         announced.delete(childId);
         childOwners.delete(childId);
         strays.set(childId, caller);
+        adopted.set(childId, caller);
         retired.add(childId);
         threads.get(info.parentID ?? "")?.stopped.add(childId);
       };
@@ -3607,10 +3626,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           removed.push(...reached);
         }
       });
-      yield* removeShells();
       // Wakes wait for the foreground stop, which may end the same execution of the thread's session.
-      const stopped = yield* stopSessions(false);
+      const cleanup = yield* Effect.forkChild(Effect.andThen(removeShells(), stopSessions(false)));
+      // Cleanup normally goes first, but a stalled request must not hold the foreground stop past
+      // the caller's 15-second deadline.
+      yield* Fiber.await(cleanup).pipe(Effect.timeout(FOREGROUND_STOP_DELAY), Effect.ignore);
       const foreground = yield* Effect.exit(stopForeground);
+      const stopped = yield* Fiber.join(cleanup);
       if (Exit.isSuccess(foreground) && foreground.value) stopped.add(state.sessionId);
       yield* awaitEnds(stopped);
       // Checked under the lock, so no shell launched before Stop settles outlives it. A pass that does
@@ -4189,6 +4211,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           childOwners.delete(child);
           threads.delete(child);
         }
+        for (const [child, caller] of adopted) if (rootOf(caller) === state) adopted.delete(child);
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
