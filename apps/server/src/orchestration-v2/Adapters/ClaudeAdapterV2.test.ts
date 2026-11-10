@@ -9,6 +9,7 @@ import { beforeEach, vi } from "vite-plus/test";
 
 import type {
   ElicitationRequest,
+  ElicitationResult,
   Query as ClaudeQuery,
   SDKMessage,
   SDKResultMessage,
@@ -55,6 +56,7 @@ import {
 } from "@t3tools/contracts";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -2465,7 +2467,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
-                  messages: Stream.empty,
+                  messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
@@ -2807,7 +2809,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
-                  messages: Stream.empty,
+                  messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
@@ -5703,6 +5705,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           options: [
             { decision: "cancel", label: "Cancel" },
             { decision: "decline", label: "Decline" },
+            { decision: "acceptForSession", label: "Always allow this session" },
             { decision: "accept", label: "Approve" },
           ],
         });
@@ -5732,16 +5735,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect.each(["acceptForSession", "acceptAlways"] as const)(
-      "declines an unsupported %s decision",
-      (decision) =>
-        Effect.gen(function* () {
-          const { harness, elicit, awaitCard } = yield* startElicitationTurn();
-          const answer = yield* elicit(approvalOnly);
-          const request = yield* awaitCard(1);
-          yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
-          assert.deepEqual(yield* Fiber.join(answer), { action: "decline" });
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    it.effect("declines an unsupported acceptAlways decision", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(approvalOnly);
+        const request = yield* awaitCard(1);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "acceptAlways",
+        });
+        assert.deepEqual(yield* Fiber.join(answer), { action: "decline" });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("answers a repeated prompt from a session grant without a card", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard, runtimeRequests } = yield* startElicitationTurn();
+        const first = yield* elicit(approvalOnly);
+        const request = yield* awaitCard(1);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "acceptForSession",
+        });
+        const granted = { action: "accept", content: {} } satisfies ElicitationResult;
+        assert.deepEqual(yield* Fiber.join(first), granted);
+
+        assert.deepEqual(yield* Fiber.join(yield* elicit(approvalOnly)), granted);
+        assert.equal(runtimeRequests().length, 1);
+
+        const otherMessage = yield* elicit({ ...approvalOnly, message: "Deploy api?" });
+        yield* awaitCard(2);
+        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
+        yield* awaitCard(3);
+        assert.isUndefined(otherMessage.pollUnsafe());
+        assert.isUndefined(otherServer.pollUnsafe());
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
     it.effect("declines URL and value forms without a card", () =>
@@ -10049,6 +10077,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attachments: [],
             }),
           );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_background_command",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: WAKE_TOOL_USE_ID,
+                    name: "Bash",
+                    input: {
+                      command: "python3 audit.py > audit.log 2>&1",
+                      run_in_background: true,
+                    },
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "background-command-launch",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
           yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
           yield* Queue.offer(harness.sdkMessages, turnOneResult);
           yield* harness.awaitTerminal(1);
@@ -10060,6 +10114,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(
             (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0]?.taskId,
             WAKE_TASK_ID,
+          );
+
+          const command = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.nativeItemRef?.nativeId === WAKE_TOOL_USE_ID,
+          );
+          assert.equal(command?.type, "turn_item.updated");
+          if (command?.type !== "turn_item.updated") return;
+          const details = {
+            command: "python3 audit.py > audit.log 2>&1",
+            itemId: command.turnItem.id,
+          };
+          assert.deepInclude(
+            afterStart.at(-1)?.providerThread.pendingBackgroundTasks?.[0],
+            details,
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [{ task_id: WAKE_TASK_ID, task_type: "local_bash", description: "Audit" }],
+              uuid: "background-command-snapshot",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          assert.deepInclude(
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks?.[0],
+            details,
           );
 
           yield* Queue.offer(
@@ -10882,6 +10967,134 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* changes.until(() => continuationRequests.length === 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
+    name: string,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: `t3-claude-v2-${name}-`,
+    });
+    const deadStreamEnded = yield* Deferred.make<void>();
+    let opened = 0;
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir,
+      // startTurn reads the auto-compact window from settings between opening the query and
+      // attaching the turn; holding that read until the CLI's stream has ended pins the race.
+      fileSystem: {
+        ...fileSystem,
+        readFileString: (filePath, encoding) =>
+          opened === 1 && filePath.endsWith("settings.json")
+            ? Deferred.await(deadStreamEnded).pipe(
+                Effect.andThen(fileSystem.readFileString(filePath, encoding)),
+              )
+            : fileSystem.readFileString(filePath, encoding),
+      },
+      path: yield* Path.Path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator,
+      continuationRequests: { offer: () => Effect.void },
+      queryRunner: {
+        allocateSessionId: Effect.succeed(`native-${name}`),
+        open: () =>
+          Effect.gen(function* () {
+            opened += 1;
+            const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+            return {
+              // The first CLI exits without writing a frame.
+              messages:
+                opened === 1
+                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  : Stream.fromQueue(sdkMessages),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Queue.shutdown(sdkMessages),
+            };
+          }),
+        forkSession: () => Effect.die("unused forkSession"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make(`thread-${name}`);
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-${name}`),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const now = yield* DateTime.now;
+    const turnInput = (attempt: string, providerTurnOrdinal: number) =>
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now,
+        attemptId: RunAttemptId.make(`attempt-${name}-${attempt}`),
+        text: "Continue with the plan.",
+        attachments: [],
+        providerTurnOrdinal,
+      });
+    return { runtime, turnInput };
+  });
+
+  it.effect("fails a turn whose Claude query ends before its first frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-dies-before-frame",
+        );
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isFailure(started),
+          "a turn whose Claude query ended before its first frame started running on the dead query",
+        );
+        if (Exit.isFailure(started)) {
+          assert.include(
+            Cause.pretty(started.cause),
+            "Claude provider query ended before the turn could start.",
+          );
+        }
+        const followUp = yield* harness.runtime
+          .startTurn(harness.turnInput("b", 2))
+          .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isSuccess(followUp),
+          `the turn whose query ended before its first frame is still active: ${
+            Exit.isFailure(followUp) ? Cause.pretty(followUp.cause) : ""
+          }`,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

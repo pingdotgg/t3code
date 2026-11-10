@@ -1,7 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
@@ -24,8 +27,8 @@ export function ThreadHeader(props: {
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
-    useAdaptiveWorkspaceLayout();
+  const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
   const { items: lifecycleItems, sheet: lifecycleSheet } = useThreadLifecycleMenu(
@@ -67,7 +70,6 @@ export function ThreadHeader(props: {
         menus={menus}
         titleMenu={titleMenu ?? undefined}
         hideBottomBorder
-        compact={composerKeyboardActive}
       />
       {lifecycleSheet}
     </>
