@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderInstanceId,
@@ -53,6 +54,12 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
+  const rpc = /^\/api\/rpc\/([^/]+)\/([^/]+)$/.exec(path);
+  if (method === "POST" && rpc !== null)
+    return {
+      type: "rpc.call",
+      input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
+    };
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
@@ -250,7 +257,9 @@ const makeReplayAdapter = (
     );
   });
 
-const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+const layerReplayHost = TestProviderHost.layer().pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 const layerReplayHostWithAttachments = (
   attachmentsDir: string,
@@ -278,13 +287,18 @@ function layerRegistry(
     makeReplayAdapter(transcript, { external: true, ...options }).pipe(
       Effect.map((adapter) => ProviderAdapterRegistry.layerFromAdapters([adapter])),
     ),
-  ).pipe(Layer.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer, NodeCrypto.layer),
+    ),
+  );
 }
 
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
+    readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
@@ -299,7 +313,7 @@ export const openCode2ReplayRuntime = (
       {
         provider: OPENCODE_PROVIDER,
         protocol: OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
+        version: options?.version ?? "2.0.18",
         scenario: "opencode2_adapter",
         entries,
       },
@@ -329,6 +343,7 @@ export const openCode2ReplayRuntime = (
             ),
         IdAllocator.layer,
         NodeServices.layer,
+        NodeCrypto.layer,
       ),
     ),
   );

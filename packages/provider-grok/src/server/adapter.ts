@@ -14,7 +14,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -79,6 +79,8 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
 
+const isXAiPromptFailureText = Schema.is(XAiPromptFailureText);
+
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
@@ -128,7 +130,7 @@ export interface GrokAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -306,10 +308,9 @@ export function makeGrokAcpAdapterFlavor(
         cause,
         ...(isAcpRequestError(cause)
           ? {
-              message:
-                cause.cause instanceof XAiPromptFailureText
-                  ? cause.cause.message
-                  : cause.errorMessage,
+              message: isXAiPromptFailureText(cause.cause)
+                ? cause.cause.message
+                : cause.errorMessage,
               code: String(cause.code),
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }
@@ -357,7 +358,7 @@ export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
 
 export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
