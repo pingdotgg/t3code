@@ -33,8 +33,7 @@ export default {
     const props = (ctx as { props?: SecretsStoreStoreServiceProps }).props;
     const encodedHeader = request.headers.get(HEADER_KV_NAMESPACE);
     const storeId =
-      props?.storeId ??
-      (encodedHeader !== null ? decodeURIComponent(encodedHeader) : undefined);
+      props?.storeId ?? (encodedHeader !== null ? decodeURIComponent(encodedHeader) : undefined);
     if (storeId === undefined) {
       return new Response("Missing Secrets Store id", { status: 400 });
     }
