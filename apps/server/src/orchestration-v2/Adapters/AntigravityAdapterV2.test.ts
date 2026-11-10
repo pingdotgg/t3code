@@ -1392,15 +1392,11 @@ describe("AntigravityAdapterV2 lost agent connection", () => {
     return { first, second, promptRuntimes };
   }).pipe(Effect.provide(layerSession), Effect.scoped);
 
-  it.effect("fails the turn instead of completing it with the error as the reply", () =>
+  it.effect("fails the turn and runs the next one on a fresh agent process", () =>
     Effect.gen(function* () {
-      const { first } = yield* runTwoTurnsAfterConnectionLoss;
+      const { first, second, promptRuntimes } = yield* runTwoTurnsAfterConnectionLoss;
       const terminal = first.at(-1);
-      assert.equal(
-        terminal?.type === "turn.terminal" ? terminal.status : null,
-        "failed",
-        "a lost agent connection must fail the turn",
-      );
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "failed");
       assert.include(
         terminal?.type === "turn.terminal" ? terminal.failure?.message : undefined,
         "Agent connection was lost",
@@ -1411,15 +1407,9 @@ describe("AntigravityAdapterV2 lost agent connection", () => {
           : [],
       );
       assert.notInclude(replies.join("\n"), connectionLost, "the error is not the agent's reply");
-    }),
-  );
-
-  it.effect("runs the next turn on a fresh agent process", () =>
-    Effect.gen(function* () {
-      const { second, promptRuntimes } = yield* runTwoTurnsAfterConnectionLoss;
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn must not reuse the dead process");
-      const terminal = second.at(-1);
-      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      const next = second.at(-1);
+      assert.equal(next?.type === "turn.terminal" ? next.status : null, "completed");
     }),
   );
 });
