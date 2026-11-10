@@ -20,14 +20,14 @@ function t3Home() {
   return path.resolve(raw);
 }
 
-const TRANSIENT = new Set([408, 429, 500, 502, 503, 504]);
+const isTransient = (status) => status === 408 || status === 429 || status >= 500;
 
 async function get(url) {
   let response;
   for (let attempt = 1; ; attempt++) {
     try {
       response = await fetch(url);
-      if (attempt === 4 || !TRANSIENT.has(response.status)) break;
+      if (attempt === 4 || !isTransient(response.status)) break;
       await response.body?.cancel();
     } catch (error) {
       if (attempt === 4) throw error;

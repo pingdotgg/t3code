@@ -74,12 +74,12 @@ exit 7
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
-  let failures = 0;
+  const failures: Array<number> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (failures > 0) {
-      failures -= 1;
-      response.writeHead(504).end("upstream timed out");
+    const failure = failures.shift();
+    if (failure !== undefined) {
+      response.writeHead(failure).end("upstream timed out");
     } else if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
@@ -105,8 +105,8 @@ exit 7
     corruptChecksum: () => {
       checksum = "0".repeat(64);
     },
-    failNextRequest: () => {
-      failures = 1;
+    failNextRequests: (...statuses: Array<number>) => {
+      failures.push(...statuses);
     },
   };
 });
@@ -351,7 +351,7 @@ fs.readFileSync = (file, ...rest) => {
   );
   // regression: #32897
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "installs when GitHub answers the first release request with HTTP 504",
+    "installs when GitHub answers the first release requests with HTTP 504 and 524",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -362,7 +362,7 @@ fs.readFileSync = (file, ...rest) => {
           outputDir: path.join(root, "out"),
         });
         const release = yield* serveFakeRelease(root);
-        release.failNextRequest();
+        release.failNextRequests(504, 524);
         const home = path.join(root, "home");
         const installed = yield* run(
           process.execPath,
@@ -380,7 +380,7 @@ fs.readFileSync = (file, ...rest) => {
         assert.equal(
           installed.exitCode,
           0,
-          `the launcher gave up after one 504: ${installed.stderr}`,
+          `the launcher gave up on a transient 5xx: ${installed.stderr}`,
         );
         assert.equal(installed.stdout.trim(), VERSION);
         assert.equal(
