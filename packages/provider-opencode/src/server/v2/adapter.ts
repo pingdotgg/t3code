@@ -363,9 +363,14 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
-// Code Mode search matches a namespace only as a whole path segment and returns nothing otherwise.
+// Code Mode search matches a namespace only as a whole path segment and returns nothing otherwise,
+// and threads sharing a directory need distinct server names, so `t3-code` cannot be the namespace.
 const mcpServerInstructions = (name: string) =>
-  `T3 Code's MCP server in this thread is \`${name}\`. Use that full name, not \`t3-code\`, wherever a server or tool namespace is asked for.`;
+  [
+    `T3 Code's MCP server in this thread is \`${name}\`, and that full name is its tool namespace.`,
+    `Code Mode \`search\` returns an empty list, not an error, for \`t3-code\` or any other partial namespace, so pass \`${name}\` even where a request writes \`t3-code\`.`,
+    "An empty search result does not mean a T3 Code tool is missing: search again without `namespace`.",
+  ].join(" ");
 
 // Last match wins: deny all threads' T3 servers, then allow only this thread's.
 const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>

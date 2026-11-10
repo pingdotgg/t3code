@@ -2932,7 +2932,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           value: [
             buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
             t3OrchestrationSystemPrompt(true, false),
-            `T3 Code's MCP server in this thread is \`${server}\`. Use that full name, not \`t3-code\`, wherever a server or tool namespace is asked for.`,
+            [
+              `T3 Code's MCP server in this thread is \`${server}\`, and that full name is its tool namespace.`,
+              `Code Mode \`search\` returns an empty list, not an error, for \`t3-code\` or any other partial namespace, so pass \`${server}\` even where a request writes \`t3-code\`.`,
+              "An empty search result does not mean a T3 Code tool is missing: search again without `namespace`.",
+            ].join(" "),
           ].join("\n\n"),
         }),
         reply("session.instructions.entry.put", null),
