@@ -477,6 +477,18 @@ describe("XAiAcpExtension", () => {
         ...toolCall,
         data: {
           ...toolCall.data,
+          rawOutput: {
+            ...toolCall.data.rawOutput,
+            command: `git commit -m "${"x".repeat(61)}🎉 ship it"`,
+          },
+        },
+      }).title,
+    ).toBe(`git commit -m "${"x".repeat(61)}...`);
+    expect(
+      normalizeXAiAcpToolCallState({
+        ...toolCall,
+        data: {
+          ...toolCall.data,
           rawOutput: { ...toolCall.data.rawOutput, exit_code: 2 },
         },
       }).status,

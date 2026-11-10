@@ -559,7 +559,10 @@ function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined 
     nonEmptyString(rawInput?.command) ??
     nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.command);
   if (command !== undefined) {
-    return command.length > 80 ? `${command.slice(0, 77)}...` : command;
+    if (command.length <= 80) return command;
+    const splitsPair =
+      /[\uD800-\uDBFF]/.test(command.charAt(76)) && /[\uDC00-\uDFFF]/.test(command.charAt(77));
+    return `${command.slice(0, splitsPair ? 76 : 77)}...`;
   }
   return nonEmptyString(toolCall.title);
 }
@@ -1295,14 +1298,19 @@ function xAiPromptFailure(
       code: -32603,
       errorMessage: "Grok ended the turn with an error.",
       operation: "receive-response",
-      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
+      ...(agentResult === undefined
+        ? {}
+        : { cause: new XAiPromptFailureText({ message: agentResult }) }),
     });
   }
   return null;
 }
 
 /** Keep unbounded provider text out of structured attributes; read only at presentation. */
-export class XAiPromptFailureText extends Error {}
+export class XAiPromptFailureText extends Schema.TaggedError<XAiPromptFailureText>()(
+  "XAiPromptFailureText",
+  { message: Schema.String },
+) {}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
