@@ -339,11 +339,14 @@ function launchdManager(input: {
         args: ["kickstart", serviceTarget],
       },
     ],
+    // A failed stop can leave the job loaded, so bootstrap may be rejected; kickstart still
+    // starts it, and fails on its own when bootstrap left nothing loaded.
     restart: [
       {
         step: "restarting the service after a failed update",
         command: "launchctl",
         args: ["bootstrap", domainTarget, unitPath],
+        optional: true,
       },
       {
         step: "starting the launch agent after a failed update",

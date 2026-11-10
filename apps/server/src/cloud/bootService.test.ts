@@ -112,6 +112,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     active: boolean;
     // launchd can load a bootstrapped job yet leave its RunAtLoad spawn pending.
     bootstrapSpawns: boolean;
+    launchdLoaded: boolean;
     launchdRunning: boolean;
   } = {
     failCommand: undefined,
@@ -119,6 +120,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     enabled: true,
     active: true,
     bootstrapSpawns: true,
+    launchdLoaded: false,
     launchdRunning: false,
   };
   const runner = ProcessRunner.ProcessRunner.of({
@@ -129,23 +131,27 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
-      const failed = command === control.failCommand;
+      const launchdVerb = input.command === "launchctl" ? input.args[0] : undefined;
+      // launchd rejects bootstrap of a loaded job and kickstart of an unloaded one.
+      const failed =
+        command === control.failCommand ||
+        (launchdVerb === "bootstrap" && control.launchdLoaded) ||
+        (launchdVerb === "kickstart" && !control.launchdLoaded);
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
-      if (command.startsWith("launchctl bootout ")) control.launchdRunning = false;
-      if (!failed && command.startsWith("launchctl bootstrap "))
+      if (launchdVerb === "bootout") {
+        control.launchdRunning = false;
+        if (!failed) control.launchdLoaded = false;
+      }
+      if (!failed && launchdVerb === "bootstrap") {
+        control.launchdLoaded = true;
         control.launchdRunning = control.bootstrapSpawns;
-      if (
-        !failed &&
-        input.command === "launchctl" &&
-        input.args[0] === "kickstart" &&
-        input.args.at(-1) === "gui/501/com.t3tools.t3code.service"
-      )
-        control.launchdRunning = true;
+      }
+      if (!failed && launchdVerb === "kickstart") control.launchdRunning = true;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -890,6 +896,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
+      control.launchdLoaded = false;
       control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
 
       yield* service.install();
@@ -924,7 +931,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   );
 
   // regression: #29522
-  it.effect.each(["install", "restart", "withStopped"] as const)(
+  it.effect.each(["install", "restart", "withStopped", "withStopped after a failed stop"] as const)(
     "runs a launch agent that launchd leaves pending after bootstrap via %s",
     (operation) =>
       Effect.gen(function* () {
@@ -932,11 +939,17 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         yield* service.install();
         control.bootstrapSpawns = false;
 
-        yield* operation === "install"
-          ? service.install()
-          : operation === "restart"
-            ? service.restart
-            : service.withStopped(Effect.void);
+        if (operation === "withStopped after a failed stop") {
+          // The bootout timed out with the job still loaded, so recovery's bootstrap is rejected.
+          control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+          yield* service.withStopped(Effect.void).pipe(Effect.flip);
+        } else {
+          yield* operation === "install"
+            ? service.install()
+            : operation === "restart"
+              ? service.restart
+              : service.withStopped(Effect.void);
+        }
 
         expect(control.launchdRunning, "launch agent is loaded but not running").toBe(true);
       }),
