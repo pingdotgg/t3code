@@ -6079,7 +6079,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (dispatchMode.type === "restart_active" && !isActiveRun(target)) ||
           ((target.status === "running" || target.status === "waiting") &&
             turn !== undefined &&
-            turn.status === "completed"))
+            (turn.status === "completed" ||
+              (dispatchMode.type === "restart_active" &&
+                turn.status !== "pending" &&
+                turn.status !== "running"))))
       ) {
         dispatchMode = { type: "start_immediately" };
       }

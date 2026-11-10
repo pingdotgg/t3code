@@ -1816,48 +1816,70 @@ it.effect("starts a restart sent into a run that Stop reached once the stop sett
 );
 
 // regression: #32891 a restart that arrives after the turn ended is lost
-it.effect.each(["completed", "interrupted"] as const)(
-  "starts a restart that missed the turn (%s) as a new turn",
-  (status) =>
+it.effect.each([
+  { status: "completed", settled: true, starts: true },
+  { status: "interrupted", settled: true, starts: true },
+  { status: "interrupted", settled: false, starts: true },
+  // A provider failure holds the queue, so the restart waits like any queued message.
+  { status: "failed", settled: false, starts: false },
+  { status: "cancelled", settled: false, starts: true },
+] as const)(
+  "keeps a restart that missed the turn ($status, run settled: $settled) as a new turn",
+  ({ status, settled: runSettled, starts }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          `restart-after-${status}`,
+          `restart-after-${status}-${runSettled ? "settled" : "unsettled"}`,
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           const threadId = yield* startFirstTurn;
           const first = started[0]!;
-          const settled = yield* orchestrator.streamDomainEvents.pipe(
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+          const turnEnded = yield* orchestrator.streamDomainEvents.pipe(
             Stream.filter(
               (event) =>
-                event.type === "run.updated" &&
-                event.payload.id === first.runId &&
-                event.payload.status === (status === "completed" ? "waiting" : "interrupted"),
+                event.type === "provider-turn.updated" &&
+                event.payload.id === turn.id &&
+                event.payload.status === status,
             ),
             Stream.take(1),
             Stream.runDrain,
             Effect.forkScoped,
           );
-          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
           yield* Queue.offer(events, {
             type: "provider_turn.updated",
             driver,
             providerTurn: { ...turn, status, completedAt: yield* DateTime.now },
           });
-          yield* Queue.offer(events, {
-            type: "turn.terminal",
-            driver,
-            providerThreadId: turn.providerThreadId,
-            providerTurnId: turn.id,
-            runOrdinal: first.runOrdinal,
-            status,
-            failure: null,
-            threadDisposition: "reusable",
+          yield* Fiber.join(turnEnded);
+          const settleRun = Effect.gen(function* () {
+            const settled = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === first.runId &&
+                  event.payload.status !== "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal: first.runOrdinal,
+              status,
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(settled);
+            yield* worker.drain();
           });
-          yield* Fiber.join(settled);
-          yield* worker.drain();
+          if (runSettled) yield* settleRun;
 
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1872,11 +1894,27 @@ it.effect.each(["completed", "interrupted"] as const)(
             creationSource: "web",
           });
           yield* worker.drain();
+          if (!runSettled) {
+            const restartLeftQueue = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.userMessageId === "message:restart" &&
+                  (starts ? event.payload.status !== "queued" : event.payload.queueHeld === true),
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            yield* settleRun;
+            yield* Fiber.join(restartLeftQueue);
+            yield* worker.drain();
+          }
 
           assert.deepEqual(steered, []);
           assert.deepEqual(
             started.map((turn) => turn.message.text),
-            ["first", "restart"],
+            starts ? ["first", "restart"] : ["first"],
           );
         }).pipe(Effect.provide(layer));
       }),
