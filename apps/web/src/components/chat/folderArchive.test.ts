@@ -102,6 +102,8 @@ describe("collectFolderEntries", () => {
       "src/lib/deep/",
       "src/output/",
     ]);
+    const zip = await buildFolderZip(collection, { maxZipBytes: 50 * 1024 * 1024 });
+    expect((await boundedZip(await zip.arrayBuffer())).has("src/output/")).toBe(true);
     expect(collection.skipped).toEqual([
       { name: ".git", count: 1 },
       { name: "node_modules", count: 2 },
