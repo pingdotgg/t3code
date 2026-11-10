@@ -820,7 +820,7 @@ export function ServerBrowserSurface(props: {
     >
       <div
         className={cn(
-          "relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1 surface-grain",
+          "relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
           visible ? "visible" : "invisible",
           controlPosition === "bottom" ? "order-last border-t" : "border-b",
         )}
