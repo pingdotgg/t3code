@@ -59,13 +59,19 @@ const { useChatKeyboard } = (await import(
 )) as typeof import("react-native-keyboard-controller/lib/typescript/components/KeyboardChatScrollView/useChatKeyboard/index.ios");
 
 type LiftBehavior = NonNullable<KeyboardChatScrollViewProps["keyboardLiftBehavior"]>;
+type Header = Pick<KeyboardChatScrollViewProps, "contentInset" | "obscuredStartInset">;
 
-// Header inset 80, composer padding 80, and a 300pt keyboard over a 678pt feed.
+// The header props ThreadFeed passes: a native top inset on iOS 26+, a list-header spacer before.
+const nativeInset = (top: number): Header => ({ contentInset: { top }, obscuredStartInset: top });
+const headerSpacer = (top: number): Header => ({ obscuredStartInset: top });
+
+// Composer padding 80 and a 300pt keyboard over a 678pt feed.
 // The feed input sits at `inputTop` on screen while the feed rests at `restOffset`.
 function renderFeed(
   restOffset: number,
   inputTop: number,
   keyboardLiftBehavior: LiftBehavior = "whenAtEnd",
+  header: Header = nativeInset(80),
 ) {
   native.scroll.value = restOffset;
   let focused = INPUT_TAG;
@@ -81,7 +87,8 @@ function renderFeed(
       blankSpace: { value: 0 } as never,
       extraContentPadding: { value: 80 } as never,
       adjustedInsetCompensation: 0,
-      adjustedStartInsetCompensation: 80,
+      adjustedStartInsetCompensation: 0,
+      ...header,
     });
     chat.onLayout({} as LayoutChangeEvent);
     contentOffsetY = chat.contentOffsetY;
@@ -135,14 +142,30 @@ it.each(liftBehaviors)(
   },
 );
 
-it.each(liftBehaviors)(
-  "returns the feed to its offset after moving a partly hidden input down below the header (%s)",
-  (behavior) => {
-    using feed = renderFeed(1322, 60, behavior);
-
-    expect([feed.open(), feed.hide()]).toEqual([1302, 1322]);
+it.each([
+  ...liftBehaviors.flatMap((behavior) =>
+    [nativeInset(80), headerSpacer(80)].map((header) => ({
+      name: `moves a partly hidden input below the header (${behavior}, ${header.contentInset ? "native inset" : "header spacer"})`,
+      behavior,
+      header,
+      restOffset: 1322,
+      inputTop: 60,
+      expected: [1302, 1322],
+    })),
+  ),
+  {
+    name: "leaves a feed resting at its top inset alone for an input in view",
+    behavior: "whenAtEnd" as const,
+    header: nativeInset(100),
+    restOffset: -100,
+    inputTop: 150,
+    expected: [-100, -100],
   },
-);
+])("$name, then returns the feed to its offset", (row) => {
+  using feed = renderFeed(row.restOffset, row.inputTop, row.behavior, row.header);
+
+  expect([feed.open(), feed.hide()]).toEqual(row.expected);
+});
 
 it("returns the feed to its offset when focus moves from an unlifted composer to a feed input", () => {
   using feed = renderFeed(500, 500);
