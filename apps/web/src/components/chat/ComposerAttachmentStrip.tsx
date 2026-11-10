@@ -16,7 +16,8 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { retryAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { formatAttachmentUploadProgress } from "../../lib/attachmentUploadState";
+import type { AttachmentUploadState } from "../../lib/attachmentUploadState";
+import { useAttachmentUploadProgress } from "../../hooks/useAttachmentUploadProgress";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import {
   type PendingSnapShotAnimation,
@@ -46,6 +47,18 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+
+function ComposerAttachmentUploadProgress({
+  id,
+  upload,
+  fallback,
+}: {
+  id: string;
+  upload: AttachmentUploadState | undefined;
+  fallback?: string;
+}) {
+  return useAttachmentUploadProgress(id, upload) ?? fallback ?? null;
+}
 
 function ComposerImageFallback() {
   return (
@@ -267,9 +280,11 @@ export function ComposerAttachmentMediaRow({
               )}
               {(!ready || upload?.status === "uploading") && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                  {upload?.status === "uploading"
-                    ? formatAttachmentUploadProgress(upload.progress)
-                    : "Preparing"}
+                  {upload?.status === "uploading" ? (
+                    <ComposerAttachmentUploadProgress id={image.id} upload={upload} />
+                  ) : (
+                    "Preparing"
+                  )}
                 </span>
               )}
               {ready && upload?.status === "failed" && (
@@ -367,7 +382,7 @@ export function ComposerAttachmentMediaRow({
             </button>
             {upload?.status === "uploading" && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                {formatAttachmentUploadProgress(upload.progress)}
+                <ComposerAttachmentUploadProgress id={file.id} upload={upload} />
               </span>
             )}
             {upload?.status === "failed" && (
@@ -461,13 +476,21 @@ export function ComposerAttachmentFileList({
               {file.name}
             </button>
             <span className="shrink-0 text-xs text-secondary-label">
-              {needsReattach
-                ? canReattachFile
-                  ? "Attach again"
-                  : "Remove to send"
-                : upload?.status === "uploading"
-                  ? formatAttachmentUploadProgress(upload.progress)
-                  : formatAttachmentSize(file.sizeBytes)}
+              {needsReattach ? (
+                canReattachFile ? (
+                  "Attach again"
+                ) : (
+                  "Remove to send"
+                )
+              ) : upload?.status === "uploading" ? (
+                <ComposerAttachmentUploadProgress
+                  id={file.id}
+                  upload={upload}
+                  fallback={formatAttachmentSize(file.sizeBytes)}
+                />
+              ) : (
+                formatAttachmentSize(file.sizeBytes)
+              )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
