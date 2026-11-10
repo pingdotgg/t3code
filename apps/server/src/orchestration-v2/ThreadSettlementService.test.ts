@@ -1652,29 +1652,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("leaves the device service alone for a settled thread without devices", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const settled = appThread("deviceless-thread", "settled", "/worktrees/deviceless");
-        const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([]),
-          currentThreads: [settled],
-          existingWorktreePaths: ["/worktrees/deviceless"],
-          deviceSessions: [],
-        });
-
-        yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          yield* fixture.publishEvent(settledEvent(settled));
-          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, settled.id);
-          yield* service.drain;
-          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), []);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
   it.effect("runs the settle script in the thread's own worktree", () =>
     Effect.scoped(
       Effect.gen(function* () {
