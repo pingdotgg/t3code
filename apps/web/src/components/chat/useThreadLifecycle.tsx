@@ -13,6 +13,7 @@ import {
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -76,6 +77,7 @@ import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-e
 import { Atom } from "effect/reactivity";
 import { environmentThreadDetails } from "../../state/threads";
 import { openSideChatTab } from "../../lib/sideChatPane";
+import { runInNewLayoutTab } from "../../layout/layoutStore";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
@@ -139,6 +141,7 @@ interface ThreadLifecycleInput {
  * banners, opening related threads, and standalone slash commands.
  */
 export function useThreadLifecycle(input: ThreadLifecycleInput) {
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const {
     environmentId,
     routeThreadKey,
@@ -399,7 +402,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     finishRestore();
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       window.requestAnimationFrame(() => {
-        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
+        if (paneFocusedRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
+          composerRef.current?.focusAtEnd();
+        }
       });
     }
   };
@@ -491,10 +496,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       return;
     }
     if (activeThreadRef && openSideChatTab(activeThreadRef, shell)) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-    });
+    const open = () =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+    // This thread's own child opens as a ghost tab beside it, as from the Lineage card.
+    const isChild =
+      activeThreadRef !== null &&
+      threadEnvironmentId === activeThreadRef.environmentId &&
+      shell?.lineage.parentThreadId === activeThreadRef.threadId;
+    void (isChild ? runInNewLayoutTab(open, { ghostOf: activeThreadRef }) : open());
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
@@ -605,7 +617,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onOpenThread: onOpenRelatedThreadStable,
       })
     : null;
-  // The relative times read the clock; nowMinute re-renders them on the minute.
+  // Derive the formatter clock from the minute subscription so render stays pure.
+  const statusNowMs = Date.parse(`${nowMinute}:00.000Z`);
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
@@ -626,7 +639,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   ) : activeThreadSettled ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
-      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt, statusNowMs)}` : "Settled"}
       clockMinute={nowMinute}
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
       actionDisabled={!canOperateThread || isUnsettling}

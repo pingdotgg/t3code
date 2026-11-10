@@ -17,13 +17,13 @@ const toggleVariants = cva(
         default: "h-9 min-w-9 px-[calc(--spacing(2)-1px)] sm:h-8 sm:min-w-8",
         tile: "h-14 min-w-14 px-[calc(--spacing(2.5)-1px)]",
         lg: "h-10 min-w-10 px-[calc(--spacing(2.5)-1px)] sm:h-9 sm:min-w-9",
+        "segmented-wide":
+          "h-6 min-w-0 rounded-md px-2.5 text-control [&_svg:not([class*='size-'])]:size-3.5",
         segmented:
           "h-6 min-w-0 rounded-item px-2.5 text-label [&_svg:not([class*='size-'])]:[scale:calc(13/18)] sm:[&_svg:not([class*='size-'])]:[scale:calc(13/16)]",
         sm: "h-8 min-w-8 px-[calc(--spacing(1.5)-1px)] sm:h-7 sm:min-w-7",
       },
       variant: {
-        "segmented-flat":
-          "border-transparent rounded-row text-muted-foreground hover:text-foreground data-pressed:[background:var(--raised-fill)] data-pressed:text-foreground",
         // Chrome-less like an icon button: a muted icon, the hover fill, and
         // the selected fill while pressed.
         default:
@@ -35,6 +35,9 @@ const toggleVariants = cva(
         // An item of the segmented control: muted until pressed, then raised.
         segmented:
           "border-transparent text-muted-foreground transition-colors hover:text-foreground data-pressed:surface-raised data-pressed:text-foreground",
+        // A segmented item whose pressed pill is a sibling the group slides under it.
+        "segmented-slide":
+          "border-transparent text-muted-foreground transition-colors hover:text-foreground data-pressed:text-foreground",
       },
     },
   },

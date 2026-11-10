@@ -1,18 +1,17 @@
+import { useAtomValue } from "@effect/atom-react";
+import { useRef, useState } from "react";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { RefreshIcon } from "../ui/refresh-icon";
 import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
-import { memo, useRef, useState } from "react";
-import { InfoIcon, XIcon } from "lucide-react";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
-import { Button, InlineButton } from "../ui/button";
+import { BotOffIcon, CircleAlertIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { RefreshIcon } from "../ui/refresh-icon";
+import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
@@ -93,16 +92,102 @@ export function getProviderStatusMessage(status: ServerProvider): string {
       : `${providerName} provider has limited availability.`;
 }
 
-export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+/**
+ * The selected provider's status as a tray notice: signed out, no models,
+ * unsupported version, or degraded. The provider's own message follows the
+ * title; a clipped one opens in the notice's details popover.
+ */
+export function providerStatusBannerItem({
   environmentId,
   onDismiss,
   onOpenProviderSetup,
+  onOpenTerminal,
   status,
 }: {
   environmentId: EnvironmentId;
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
+  /** Offered for a signed-out provider whose sign-in runs in its CLI. */
+  onOpenTerminal?: () => void;
   status: ServerProvider | null;
+}): ComposerBannerStackItem | null {
+  const bannerKey = getProviderStatusBannerKey(status);
+  if (!status || bannerKey === null) {
+    return null;
+  }
+
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const incompatible = getIncompatibleVersion(status);
+  const hasNoModels =
+    status.status === "warning" &&
+    status.installed &&
+    status.auth.status !== "unauthenticated" &&
+    status.models.length === 0;
+  const title = isUnauthenticated
+    ? `${providerName} signed out`
+    : incompatible
+      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+      : hasNoModels
+        ? `${providerName} has no models`
+        : status.status === "error"
+          ? `${providerName} unavailable`
+          : `${providerName} limited`;
+  const message = incompatible?.message ?? getProviderStatusMessage(status);
+  const isWarning =
+    isUnauthenticated ||
+    hasNoModels ||
+    (incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null));
+  const openSetup = onOpenProviderSetup && hasProviderSetup(status) ? onOpenProviderSetup : null;
+  const { instanceId } = status;
+
+  return {
+    id: `provider-status:${bannerKey}`,
+    textSize: "body",
+    variant: isWarning ? "warning" : "error",
+    icon: isUnauthenticated ? (
+      <KeyRoundIcon />
+    ) : hasNoModels ? (
+      <BotOffIcon />
+    ) : isWarning ? (
+      <TriangleAlertIcon />
+    ) : (
+      <CircleAlertIcon />
+    ),
+    title,
+    description: message,
+    actions: (
+      <>
+        {openSetup ? (
+          <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
+            Provider setup
+          </Button>
+        ) : isUnauthenticated && onOpenTerminal ? (
+          <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
+            Open terminal
+          </Button>
+        ) : null}
+        <ProviderStatusRefreshButton
+          key={`${environmentId}:${instanceId}`}
+          environmentId={environmentId}
+          instanceId={instanceId}
+          providerName={providerName}
+        />
+      </>
+    ),
+    dismissLabel: `Dismiss ${providerName} provider ${status.status}`,
+    onDismiss,
+  };
+}
+
+function ProviderStatusRefreshButton({
+  environmentId,
+  instanceId,
+  providerName,
+}: {
+  environmentId: EnvironmentId;
+  instanceId: ProviderInstanceId;
+  providerName: string;
 }) {
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -110,83 +195,24 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   });
   const refreshingRef = useRef(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
   const refresh = async () => {
-    if (!status || !canRefresh || refreshingRef.current) return;
+    if (!canRefresh || refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshing(true);
-    await refreshProviders({
-      environmentId,
-      input: { instanceId: status.instanceId, refreshModels: true },
-    });
+    await refreshProviders({ environmentId, input: { instanceId, refreshModels: true } });
     refreshingRef.current = false;
     setIsRefreshing(false);
   };
-
-  if (!status || getProviderStatusBannerKey(status) === null) {
-    return null;
-  }
-
-  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
-  const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
-  const incompatible = getIncompatibleVersion(status);
-  const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
-    : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
-  const message = incompatible?.message ?? getProviderStatusMessage(status);
-  const isWarning =
-    incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
-
   return (
-    <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
-      <Alert
-        variant={isWarning ? "warning" : "error"}
-        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
-        surface="tray"
-        controlAlignment="first-line"
-      >
-        <InfoIcon />
-        <AlertTitle>{title}</AlertTitle>
-        <AlertDescription>
-          <div className="flex flex-col gap-2">
-            <Tooltip>
-              <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
-              <TooltipPopup side="top" className="whitespace-pre-wrap">
-                {message}
-              </TooltipPopup>
-            </Tooltip>
-            <div className="flex flex-wrap items-center justify-end gap-3">
-              {onOpenProviderSetup && hasProviderSetup(status) ? (
-                <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-                  Open provider setup
-                </InlineButton>
-              ) : null}
-              <Button
-                aria-label={`Refresh ${providerName} provider status`}
-                disabled={!canRefresh || isRefreshing}
-                onClick={() => void refresh()}
-                size="xs"
-                variant="secondary"
-              >
-                <RefreshIcon />
-                {isRefreshing ? "Refreshing..." : "Refresh"}
-              </Button>
-            </div>
-          </div>
-        </AlertDescription>
-        <AlertAction>
-          <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
-            onClick={onDismiss}
-            size="icon-xs"
-            variant="ghost-muted"
-          >
-            <XIcon />
-          </Button>
-        </AlertAction>
-      </Alert>
-    </div>
+    <Button
+      aria-label={`Refresh ${providerName} provider status`}
+      disabled={!canRefresh || isRefreshing}
+      onClick={() => void refresh()}
+      size="xs"
+      variant="secondary"
+    >
+      <RefreshIcon />
+      {isRefreshing ? "Refreshing..." : "Refresh"}
+    </Button>
   );
-});
+}

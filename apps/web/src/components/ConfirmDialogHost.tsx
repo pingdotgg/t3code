@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { Trash2Icon } from "lucide-react";
+import { useRef, useSyncExternalStore } from "react";
 
 import {
   completeConfirmDialogClose,
@@ -6,6 +7,7 @@ import {
   respondToConfirmDialog,
   subscribeConfirmDialogHost,
 } from "../confirmDialog";
+import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -57,8 +59,16 @@ export function ConfirmDialogHost() {
     readConfirmDialogState,
   );
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
+  const openerRef = useRef<Element | null>(null);
+
+  const copy =
+    state.status !== "idle" && state.title
+      ? { title: state.title, description: state.message.trim() || null }
+      : resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
+  const confirmLabel = (state.status === "idle" ? undefined : state.confirmLabel) ?? "Confirm";
+  // A destructive "Delete ..." action carries the trash icon.
+  const showDeleteIcon = confirmVariant === "destructive" && /^delete\b/i.test(confirmLabel);
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
 
@@ -72,7 +82,24 @@ export function ConfirmDialogHost() {
         if (!open) completeConfirmDialogClose();
       }}
     >
-      <AlertDialogPopup>
+      <AlertDialogPopup
+        className="sm:max-w-105"
+        initialFocus={() => {
+          openerRef.current = document.activeElement;
+          return true;
+        }}
+        finalFocus={() => {
+          const opener = openerRef.current;
+          if (opener?.isConnected && !opener.closest("[data-layout-strip]")) return true;
+          if (returnKeyboardToFocusedPane()) return false;
+          // A chat pane takes it in its composer.
+          return (
+            document.querySelector<HTMLElement>(
+              "[data-layout-pane-focused] [contenteditable='true']",
+            ) ?? true
+          );
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           {copy.description ? (
@@ -81,10 +108,13 @@ export function ConfirmDialogHost() {
             </AlertDialogDescription>
           ) : null}
         </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
-          <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+        <AlertDialogFooter variant="bare">
+          <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
+            Cancel
+          </AlertDialogClose>
+          <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
+            {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
+            {confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

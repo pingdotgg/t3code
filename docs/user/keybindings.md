@@ -119,13 +119,14 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
-`rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
-open; the default `mod+t` uses it to open the panel's new-tab menu.
+`draftThreadRoute`, `turnRunning`, `assistantSelection`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
+`rightPanelOpen` is true while a side pane is open. `mod+t` opens a new tab in the
+focused pane.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
+`assistantSelection` is true while a citable passage of an assistant response is selected.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
-desktop app. Unknown keys evaluate to `false`.
+desktop app. `isMac` is true on macOS. Unknown keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. The thread jumps do not run while the model picker is open.
@@ -178,10 +179,11 @@ they never leave the app; the browser's own buttons still can.
 
 ## Reserved shortcuts
 
-In the desktop app, `mod+w` closes the focused terminal or the active right-panel
-tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
-closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
-shortcut such as `alt+w`.
+In the desktop app, `mod+w` closes the focused terminal, the active side-pane tab,
+or the focused tab. It never closes the window. In a browser,
+`mod+t`, `mod+n` and `mod+w` belong to the browser; use `+`, the tab menu, or rebind
+`tab.new` and `tab.close` (`mod+alt+w` also closes a tab). The layout keys are in
+[Tabs, panes and workspaces](./layout.md).
 
 `mod+shift+t` reopens the last closed tab across the app, including files,
 diffs, pull requests, browsers, and devices, in the order you closed them.

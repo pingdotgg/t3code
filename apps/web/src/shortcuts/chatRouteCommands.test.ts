@@ -26,8 +26,8 @@ function project(id: string): Project {
 
 describe("new thread commands", () => {
   it.each([
-    { mode: "normal", count: 2, command: "chat.new", picker: false },
-    { mode: "boring", count: 2, command: "chat.new", picker: false },
+    { mode: "normal", count: 2, command: "chat.new", picker: true },
+    { mode: "boring", count: 2, command: "chat.new", picker: true },
     { mode: "boring", count: 1, command: "chat.new", picker: false },
     { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
@@ -41,7 +41,9 @@ describe("new thread commands", () => {
     using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
     using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
     using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
-    const router = { state: { matches: [] } } as unknown as AnyRouter;
+    const router = {
+      state: { matches: [], location: { pathname: "/", search: {} } },
+    } as unknown as AnyRouter;
     using stack = new DisposableStack();
     stack.defer(installChatRouteCommands(router));
     const commands = register.mock.calls[0]![0];

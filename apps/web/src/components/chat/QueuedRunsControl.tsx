@@ -15,7 +15,8 @@ import type {
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import {
-  ArrowUpIcon,
+  GripVerticalIcon,
+  CornerUpRightIcon,
   CalendarClockIcon,
   ChevronDownIcon,
   Clock3Icon,
@@ -24,7 +25,15 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
@@ -33,6 +42,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
@@ -99,8 +109,14 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
+  // The row being dragged and the row it would land before (null: the end).
+  const [drag, setDrag] = useState<{ runId: RunId; beforeRunId: RunId | null } | null>(null);
+  const draggedRunId = drag?.runId ?? null;
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
+  const queueListRef = useRef<HTMLOListElement>(null);
+  const previousRowTops = useRef(new Map<string, number>());
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const steerInFlightRef = useRef(false);
   // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
@@ -223,6 +239,26 @@ export function QueuedRunsControl({
     },
   }));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates queue rows from their previous layout after a drag preview or persisted reorder
+  useLayoutEffect(() => {
+    const nextTops = new Map<string, number>();
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const row of queueListRef.current?.querySelectorAll<HTMLElement>("[data-queue-key]") ??
+      []) {
+      const key = row.dataset.queueKey!;
+      const nextTop = row.offsetTop;
+      const previousTop = previousRowTops.current.get(key);
+      nextTops.set(key, nextTop);
+      if (!reducedMotion && previousTop !== undefined && previousTop !== nextTop) {
+        row.animate(
+          [{ transform: `translateY(${previousTop - nextTop}px)` }, { transform: "translateY(0)" }],
+          { duration: 160, easing: "ease-out" },
+        );
+      }
+    }
+    previousRowTops.current = nextTops;
+  });
+
   if (items.length === 0) return null;
 
   const remove = async (runId: RunId) => {
@@ -234,20 +270,48 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const previewItems = [...items];
+  const draggedIndex = previewItems.findIndex((item) => item.runId === draggedRunId);
+  if (draggedRunId !== null && draggedIndex >= 0) {
+    const [dragged] = previewItems.splice(draggedIndex, 1);
+    const beforeIndex = previewItems.findIndex((item) => item.runId === drag?.beforeRunId);
+    previewItems.splice(beforeIndex < 0 ? previewItems.length : beforeIndex, 0, dragged!);
+  }
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
-  const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
+  const visibleItems =
+    collapsible && !showAll ? previewItems.slice(0, QUEUE_VISIBLE_ROWS - 1) : previewItems;
 
   return (
     <section
       aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
-      className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+      className="surface-composer-banner flex w-full min-w-0 flex-col px-2 py-1 text-meta"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          setDrag(null);
+        }
+      }}
+      onDragOver={(event) => {
+        if (draggedRunId) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        if (drag && drag.runId !== drag.beforeRunId)
+          void reorder({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, runId: drag.runId, beforeRunId: drag.beforeRunId },
+          });
+        setDrag(null);
+      }}
     >
       <span className="sr-only" aria-live="polite">
         {items.length} queued
       </span>
-      <ol className="flex flex-col items-end gap-3" id={queueListId}>
+      <ol ref={queueListRef} className="flex flex-col" id={queueListId}>
         {visibleItems.map((item, position) => {
           const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
             ? ""
@@ -260,12 +324,65 @@ export function QueuedRunsControl({
           return (
             <li
               key={item.key}
+              data-queue-key={item.key}
               aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
-              className="group/queued flex w-full flex-col items-end gap-1"
+              className={cn(
+                "group/queued flex min-h-7 w-full min-w-0 items-center gap-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
+                draggedRunId === item.runId && "bg-foreground/8 shadow-md",
+              )}
+              onDragOver={(event) => {
+                if (drag && item.runId !== drag.runId) {
+                  event.preventDefault();
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  setDrag({
+                    runId: drag.runId,
+                    beforeRunId:
+                      event.clientY < bounds.top + bounds.height / 2
+                        ? item.runId
+                        : (previewItems
+                            .slice(position + 1)
+                            .find((next) => next.runId !== drag.runId)?.runId ?? null),
+                  });
+                }
+              }}
             >
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                // Puts the grip's ink, not its padding, on the composer's text line.
+                className="-ms-2 sm:-ms-1.5"
+                aria-label={`Reorder queued message ${position + 1}`}
+                disabled={item.runId === null || busyRunId !== null}
+                draggable={item.runId !== null}
+                onDragStart={(event) => {
+                  if (!item.runId) return;
+                  event.dataTransfer.setData("text/plain", item.runId);
+                  event.dataTransfer.effectAllowed = "move";
+                  setShowAll(true);
+                  setDrag({ runId: item.runId, beforeRunId: items[position + 1]?.runId ?? null });
+                }}
+                onDragEnd={() => setDrag(null)}
+                onKeyDown={(event) => {
+                  if (!item.runId || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                  event.preventDefault();
+                  const next = position + (event.key === "ArrowUp" ? -1 : 2);
+                  if (next < 0 || (position === items.length - 1 && event.key === "ArrowDown"))
+                    return;
+                  void reorder({
+                    environmentId: props.environmentId,
+                    input: {
+                      threadId: props.threadId,
+                      runId: item.runId,
+                      beforeRunId: items[next]?.runId ?? null,
+                    },
+                  });
+                }}
+              >
+                <GripVerticalIcon />
+              </Button>
               <QueuedMessage
                 environmentId={props.environmentId}
                 message={item.message}
@@ -289,8 +406,8 @@ export function QueuedRunsControl({
                             }
                           }}
                         >
-                          <ArrowUpIcon />
-                          Send now
+                          <CornerUpRightIcon />
+                          {workflow?.canSendNow ? "Send now" : "Steer"}
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
@@ -358,6 +475,7 @@ export function QueuedRunsControl({
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"
+                            className="-me-1 sm:-me-[3px]"
                             disabled={item.runId === null || busyRunId !== null}
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
@@ -377,7 +495,7 @@ export function QueuedRunsControl({
         })}
       </ol>
       {collapsible ? (
-        <div className="self-end pe-1 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+        <div className="self-end pe-2.25 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
           <InlineButton
             tone="muted"
             aria-expanded={showAll}
@@ -440,6 +558,7 @@ function QueuedMessage(props: {
           }
         : null;
   const bodyVisible = fold === null || expanded;
+  const thumbnail = props.thumbnails[0];
 
   return (
     <>
@@ -452,13 +571,13 @@ function QueuedMessage(props: {
       {/* Dashed: a turn that has not been sent yet. */}
       <div
         className={cn(
-          "flex min-w-0 max-w-[80%] flex-col rounded-card border border-dashed text-body surface-card",
+          "min-w-0 flex-1 text-body",
           props.isEditing
             ? "border-primary/60 text-foreground"
             : attribution === "guest"
               ? "border-guest/50 text-muted-foreground"
               : "border-muted-foreground/40 text-muted-foreground",
-          fold === null && "px-3 py-2",
+          fold === null && "py-1",
           fold !== null && expanded && "w-full",
         )}
       >
@@ -474,20 +593,18 @@ function QueuedMessage(props: {
         {bodyVisible ? (
           <div
             className={cn(
-              "flex flex-col gap-2",
+              "flex min-w-0 items-center gap-2",
               fold !== null && "max-h-96 overflow-auto px-3 pb-2",
             )}
           >
-            {props.thumbnails.length > 0 ? (
-              <span className="flex flex-wrap items-center gap-1">
-                {props.thumbnails.map((thumbnail) => (
-                  <span
-                    key={thumbnail.key}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
-                  >
+            {thumbnail ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center gap-1" />}>
+                  <span className="size-[1lh] shrink-0 overflow-hidden rounded-md border border-border/70 bg-background">
                     {thumbnail.url ? (
-                      <img
+                      <AttachmentImage
                         src={thumbnail.url}
+                        name={thumbnail.name}
                         alt={thumbnail.name}
                         className="size-full object-cover"
                       />
@@ -495,19 +612,29 @@ function QueuedMessage(props: {
                       <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
                     )}
                   </span>
-                ))}
-              </span>
+                  {props.thumbnails.length > 1 ? <span>+{props.thumbnails.length - 1}</span> : null}
+                </TooltipTrigger>
+                <TooltipPopup className="whitespace-pre-wrap">
+                  {props.thumbnails.map((image) => image.name).join("\n")}
+                </TooltipPopup>
+              </Tooltip>
             ) : null}
             {/* In full, like a sent turn: a queued message is read before it is sent. */}
             {props.previewText ? (
-              <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
+              <p
+                className={
+                  fold && expanded ? "min-w-0 whitespace-pre-wrap wrap-anywhere" : "truncate"
+                }
+              >
+                {props.previewText}
+              </p>
             ) : null}
           </div>
         ) : null}
       </div>
-      <div className="flex items-center gap-0.5 pe-1 text-meta text-muted-foreground">
+      <div className="flex shrink-0 items-center gap-0.5 text-meta text-dim-foreground">
         {props.message ? (
-          <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
+          <span className="flex items-center gap-1">
             {attribution === "agent" && senderThreadId ? (
               <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
                 Open thread
@@ -526,11 +653,13 @@ function QueuedMessage(props: {
                 Open automation
               </InlineButton>
             ) : null}
-            <TimelineRowTimestamp
-              createdAt={DateTime.formatIso(props.message.createdAt)}
-              timestampFormat={props.timestampFormat}
-              alwaysVisible
-            />
+            <span className="sr-only">
+              <TimelineRowTimestamp
+                createdAt={DateTime.formatIso(props.message.createdAt)}
+                timestampFormat={props.timestampFormat}
+                alwaysVisible
+              />
+            </span>
           </span>
         ) : null}
         {props.children}

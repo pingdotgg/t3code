@@ -217,6 +217,14 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
   });
 
+  it("keeps layout settings reachable from every settings scope", () => {
+    const setting = getSettingsSearchTargetScope("layout-template")!;
+    expect(setting.scope).toBeNull();
+    for (const kind of ["all", "environment", "project", "checkout", "unavailable"] as const) {
+      expect(isSettingsSearchScopeAvailable(setting.scope, kind)).toBe(true);
+    }
+  });
+
   it("keeps environment-wide settings out of project scopes", () => {
     const updates = getSettingsSearchTargetScope("provider-update-checks")!;
     expect(updates.scope).toBe("environment-defaults");

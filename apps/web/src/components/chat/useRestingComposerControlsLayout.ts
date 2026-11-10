@@ -1,6 +1,9 @@
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResize } from "~/lib/observeResize";
-import { resolveRestingComposerControlsLayout } from "../composerFooterLayout";
+import {
+  resolveRestingComposerControlsLayout,
+  type RestingComposerControlsLayout,
+} from "../composerFooterLayout";
 import { useLayoutEffect, useRef, useState } from "react";
 
 export function useRestingComposerControlsLayout(
@@ -13,15 +16,18 @@ export function useRestingComposerControlsLayout(
     controlsRef.current = element;
     setControls(element);
   };
-  const [layout, setLayout] = useState<{
-    hiddenCount: number;
-    iconOnlyCount?: number;
-    visible: boolean;
-  }>({ hiddenCount: 0, visible: true });
+  const [layout, setLayout] = useState<RestingComposerControlsLayout>({
+    hiddenCount: 0,
+    visible: true,
+  });
 
   const measure = () => {
     const currentHost = useControlsAsHost ? controls : host;
     if (currentHost === null || !controls) return;
+    // A hidden tab still lays out at the full stage width. Measuring it there
+    // leaves labels sized for that width, and no resize corrects them once the
+    // tab returns at its old size.
+    if (!controls.checkVisibility()) return;
 
     const measurement = measureRestingComposerControls(controls);
     if (!measurement) return;
@@ -39,12 +45,15 @@ export function useRestingComposerControlsLayout(
       });
       return next.hiddenCount === current.hiddenCount &&
         next.iconOnlyCount === current.iconOnlyCount &&
+        next.pickerIconOnly === current.pickerIconOnly &&
         next.visible === current.visible
         ? current
         : next;
     });
   };
 
+  // Measure in ResizeObserver after layout is computed, then commit before paint. Mount or mutation
+  // measurements would force the whole chat to lay out.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes control resize, DOM mutations and font loading to measure which controls fit
   useLayoutEffect(() => {
     const currentHost = useControlsAsHost ? controls : host;
@@ -62,16 +71,15 @@ export function useRestingComposerControlsLayout(
         ],
         measure,
       );
-      measure();
     };
     observeControls();
     const mutations = new MutationObserver(observeControls);
     mutations.observe(controls, { childList: true, subtree: true, characterData: true });
-    document.fonts.addEventListener("loadingdone", measure);
+    document.fonts.addEventListener("loadingdone", observeControls);
     return () => {
       stopObserving();
       mutations.disconnect();
-      document.fonts.removeEventListener("loadingdone", measure);
+      document.fonts.removeEventListener("loadingdone", observeControls);
     };
   }, [host, controls, useControlsAsHost, measure]);
 
@@ -80,6 +88,7 @@ export function useRestingComposerControlsLayout(
     attachControls,
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
+    pickerIconOnly: layout.pickerIconOnly ?? false,
     controlsVisible: layout.visible,
   };
 }

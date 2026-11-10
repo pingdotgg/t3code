@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
+import { resolveContextStripCompaction } from "./BranchToolbar.logic";
 import {
   resolveRestingComposerControlsLayout,
+  resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
 
@@ -30,16 +31,35 @@ describe("context strip labels and resting composer controls", () => {
     });
     expect(layout).toEqual({ hiddenCount: 0, visible: true });
 
-    const compact = resolveContextStripLabelsCompact({
-      compact: true,
+    const compaction = resolveContextStripCompaction({
+      current: "labels",
       neededWidth: chromeWidth + labelWidth + naturalWidth,
       availableWidth: stripWidth,
+      labelsSavedWidth: labelWidth,
     });
-    expect(compact).toBe(true);
+    expect(compaction).toBe("labels");
 
     expect(
-      resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(compact) }),
+      resolveRestingComposerControlsLayout({
+        ...measurement,
+        hostWidth: hostWidth(compaction !== "none"),
+      }),
     ).toEqual(layout);
+  });
+
+  it("compacts the branch before the full controls collapse", () => {
+    const strip = (availableWidth: number, current: "labels" | "branch") =>
+      resolveContextStripCompaction({
+        current,
+        neededWidth: chromeWidth + labelWidth + naturalWidth,
+        availableWidth,
+        labelsSavedWidth: labelWidth,
+      });
+    const compactLabelsWidth = chromeWidth + naturalWidth;
+    expect(strip(compactLabelsWidth, "labels")).toBe("labels");
+    expect(strip(compactLabelsWidth - 1, "labels")).toBe("branch");
+    expect(strip(compactLabelsWidth + 15, "branch")).toBe("branch");
+    expect(strip(compactLabelsWidth + 16, "branch")).toBe("labels");
   });
 });
 
@@ -92,5 +112,66 @@ describe("progressive composer controls", () => {
         previous = next;
       }
     }
+  });
+});
+
+describe("resolveRestingComposerControlsLayout with icon-only controls", () => {
+  // Picker 115 with its label, 34 as an icon. Effort 80 / 30,
+  // access 99 / 30, overflow 30, gap 2.
+  const tray = {
+    gap: 2,
+    naturalFixedWidth: 115,
+    minimumFixedWidth: 52,
+    iconOnlyFixedWidth: 34,
+    blockWidths: [80, 99],
+    iconOnlyBlockWidths: [30, 30],
+    overflowWidth: 30,
+  };
+
+  it("drops trailing labels before the model label", () => {
+    // 115 + 80 + 99 + 2 * 2 = 298
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 298 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 0,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 115 + 80 + 30 + 4 = 229
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 229 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 1,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 115 + 30 + 30 + 4 = 179
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 179 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 34 + 30 + 30 + 4 = 98
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 178 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      pickerIconOnly: true,
+      visible: true,
+    });
+  });
+
+  it("moves blocks into overflow only once every control is an icon", () => {
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 97 })).toEqual({
+      hiddenCount: 2,
+      iconOnlyCount: 2,
+      pickerIconOnly: true,
+      visible: true,
+    });
+    const minimumWidth = resolveRestingComposerControlsMinimumWidth(tray);
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth }).visible).toBe(
+      true,
+    );
+    expect(
+      resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth - 1 }).visible,
+    ).toBe(false);
   });
 });

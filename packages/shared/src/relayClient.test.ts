@@ -1,3 +1,4 @@
+import type { RelayClientInstallProgressEvent } from "@t3tools/contracts";
 import { sha256 } from "@noble/hashes/sha2";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -429,11 +430,11 @@ describe("RelayClient", () => {
           },
         });
 
-        const progress: Array<string> = [];
+        const progress: Array<RelayClientInstallProgressEvent> = [];
         const installed = yield* manager.installWithProgress((event) =>
           Effect.sync(() => {
             if (event.type === "progress") {
-              progress.push(event.stage);
+              progress.push(event);
             }
           }),
         );
@@ -448,13 +449,13 @@ describe("RelayClient", () => {
           "test-cloudflared-binary",
         );
         expect(progress).toEqual([
-          "checking",
-          "waiting_for_lock",
-          "downloading",
-          "verifying",
-          "installing",
-          "validating",
-          "activating",
+          { type: "progress", stage: "checking" },
+          { type: "progress", stage: "waiting_for_lock" },
+          { type: "progress", stage: "downloading" },
+          { type: "progress", stage: "verifying", downloadedBytes: bytes.byteLength },
+          { type: "progress", stage: "installing", checksumVerified: true },
+          { type: "progress", stage: "validating" },
+          { type: "progress", stage: "activating" },
         ]);
         expect(yield* manager.resolve).toEqual(installed);
       }).pipe(
@@ -486,9 +487,24 @@ describe("RelayClient", () => {
         },
       });
 
-      const error = yield* manager.install.pipe(Effect.flip);
+      const progress: Array<RelayClientInstallProgressEvent> = [];
+      const error = yield* manager
+        .installWithProgress((event) =>
+          Effect.sync(() => {
+            progress.push(event);
+          }),
+        )
+        .pipe(Effect.flip);
       expect(error).toBeInstanceOf(RelayClient.RelayClientInstallError);
       expect(error.reason).toBe("invalid_checksum");
+      expect(progress).toContainEqual({
+        type: "progress",
+        stage: "verifying",
+        downloadedBytes: new TextEncoder().encode("tampered").byteLength,
+      });
+      expect(
+        progress.some((event) => event.type === "progress" && event.checksumVerified === true),
+      ).toBe(false);
       expect(
         yield* fileSystem.exists(
           `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`,

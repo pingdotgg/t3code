@@ -5,10 +5,13 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useCommandPaletteMount, useCommandPaletteStore } from "../commandPaletteStore";
+import { Dialog, DialogPopup } from "../components/ui/dialog";
 import { installCommandPaletteCommands } from "./commandPaletteCommands";
 
 const keybindings = compileResolvedKeybindingsConfig([
   { key: "mod+k", command: "commandPalette.toggle" },
+  { key: "mod+p", command: "filePicker.toggle" },
+  { key: "mod+shift+f", command: "projectSearch.toggle" },
 ]);
 
 function MountedPalette() {
@@ -21,6 +24,54 @@ function setup() {
 }
 
 describe("command palette shortcuts", () => {
+  it.each([
+    { appPage: true, expected: true },
+    { appPage: false, expected: false },
+  ])(
+    "opens over an app page but yields to a dialog: appPage=$appPage",
+    async ({ appPage, expected }) => {
+      setup();
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+      await using screen = await render(
+        <>
+          <MountedPalette />
+          <Dialog open>
+            <DialogPopup aria-label="Settings" data-app-modal={appPage ? "" : undefined}>
+              <input aria-label="Setting" />
+            </DialogPopup>
+          </Dialog>
+        </>,
+        { router: "/settings/appearance" },
+      );
+      using commands = new DisposableStack();
+      commands.defer(
+        installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+      );
+
+      await userEvent.keyboard("{Control>}k{/Control}");
+
+      expect(useCommandPaletteStore.getState().open).toBe(expected);
+    },
+  );
+  it.each([
+    { mode: "files", keys: "{Control>}p{/Control}" },
+    { mode: "content", keys: "{Control>}{Shift>}f{/Shift}{/Control}" },
+  ])("close direct $mode search on Escape", async ({ mode, keys }) => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+
+    await userEvent.keyboard(keys);
+    expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode });
+
+    await userEvent.keyboard("{Escape}");
+    expect(useCommandPaletteStore.getState()).toMatchObject({ open: false, mode });
+  });
+
   it("stay inert on routes without the palette", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");

@@ -2,7 +2,7 @@ import { DEFAULT_CLIENT_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/cont
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
@@ -13,6 +13,17 @@ import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock(import("../connection/catalog"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentCatalog: {
+      ...actual.environmentCatalog,
+      catalogValueAtom: Atom.make({ isReady: true, entries: new Map() }) as never,
+    },
+  };
+});
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
@@ -37,6 +48,39 @@ function project(id: string): Project {
 }
 
 describe("sidebar header new thread", () => {
+  it("does not render the thread list when terminal focus changes without held modifiers", async () => {
+    vi.mocked(useProjects).mockReturnValue([]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <input aria-label="Outside" />
+        <div data-terminal-owner="drawer">
+          <input aria-label="Terminal" />
+        </div>
+      </SidebarProvider>,
+    );
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Outside"]')!.focus(),
+    );
+    vi.mocked(useProjects).mockClear();
+
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Terminal"]')!.focus(),
+    );
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Outside"]')!.focus(),
+    );
+
+    expect(useProjects).not.toHaveBeenCalled();
+  });
   it.each([
     { mode: "normal", count: 2, shift: false, picker: false },
     { mode: "boring", count: 2, shift: false, picker: false },

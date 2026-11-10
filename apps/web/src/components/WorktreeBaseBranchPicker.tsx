@@ -6,7 +6,12 @@ import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
-import { resolveBranchTriggerLabel, sanitizeNewRefName } from "./BranchToolbar.logic";
+import {
+  groupLabelsForPickerItems,
+  orderRefNamesByGroup,
+  resolveBranchTriggerLabel,
+  sanitizeNewRefName,
+} from "./BranchToolbar.logic";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
 import { ComboboxTrigger } from "./ui/combobox";
@@ -56,7 +61,10 @@ export function WorktreeBaseBranchPicker({
     startFromOrigin,
   });
   const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
-  const items = [...branchByName.keys()];
+  const items = orderRefNamesByGroup(branches.refs);
+  const groupLabels = groupLabelsForPickerItems(items, (name) =>
+    branchByName.get(name)?.isRemote ? "Remote" : "Local",
+  );
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =
     branches.error ??
@@ -89,7 +97,8 @@ export function WorktreeBaseBranchPicker({
       onLoadNext={branches.loadNext}
       statusText={statusText}
       originControl={{ checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }}
-      popupProps={{ align: "start", side: "bottom", className: "flex w-80 flex-col" }}
+      popupProps={{ align: "start", side: "bottom", className: "flex w-90 flex-col" }}
+      getItemType={(name) => (groupLabels.has(name) ? "ref-with-label" : "ref")}
       renderItem={(name, index) => {
         const branch = branchByName.get(name);
         return branch ? (
@@ -97,6 +106,8 @@ export function WorktreeBaseBranchPicker({
             branch={branch}
             projectCwd={cwd}
             index={index}
+            selected={branch.name === value}
+            groupLabel={groupLabels.get(name) ?? null}
             onClick={() => {
               onValueChange(branch.name);
               handleOpenChange(false);

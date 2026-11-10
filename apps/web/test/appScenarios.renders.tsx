@@ -72,11 +72,7 @@ const SIDE_CHAT = { ...threadWithHistory("thread-side", HISTORY_TURNS), sideChat
 installFakeEnvironment([...THREADS, SIDE_CHAT]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
-// A returning user: the first-run gate would otherwise wait on onboarding evidence.
-__setClientSettingsForTests({
-  ...DEFAULT_CLIENT_SETTINGS,
-  onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-});
+__setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
 
 async function quiet() {
   let seen = -1;
@@ -209,11 +205,12 @@ it("app-stream-assistant-turn", async () => {
       .element(page.getByText(`word${STREAM_DELTAS - 1}`, { exact: false }))
       .toBeVisible();
   });
-  // Only the streaming row changes. The timeline renders for the new item and its layout, not
-  // per delta, and history rows not at all.
+  // Only the streaming working-window text changes. The timeline renders for the new item
+  // and its layout, not per delta, and history rows not at all.
   expect(counted.components.ConversationTimeline).toBeLessThanOrEqual(3);
   expect(counted.components.UserTimelineRow).toBeUndefined();
-  expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
+  expect(counted.components.AssistantTimelineRow).toBeUndefined();
+  expect(counted.components.WorkingWindowText).toBe(STREAM_DELTAS);
   // Each delta adds a paragraph; finished blocks keep their render.
   expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
@@ -281,7 +278,7 @@ it("app-switch-thread", async () => {
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
 const toggleDiff = (to: "open" | "close") => async () => {
   await userEvent.keyboard("{Control>}d{/Control}");
-  const diff = page.getByRole("group", { name: "Diff layout" });
+  const diff = page.getByRole("button", { name: /^(Stacked|Split) diff view$/ });
   if (to === "open") await expect.element(diff).toBeVisible();
   else await expect.element(diff).not.toBeInTheDocument();
 };

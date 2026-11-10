@@ -24,7 +24,7 @@ import {
   selectHistory,
   historicalMessage,
 } from "@t3tools/provider-core/server/handoffBudget";
-import { projectContextHandoffForWire } from "./WireProjection.ts";
+import { projectContextHandoffForWire } from "@t3tools/shared/wireProjection";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));

@@ -4,7 +4,6 @@ import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
-import { useDevArtworkPreview } from "../devArtworkPreview";
 import { primaryServerConfigAtom } from "../state/server";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
@@ -37,15 +36,10 @@ export function resolveEnvironmentIdentificationPillLabel(
 export function useEnvironmentStageLabel(): string {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const devArtworkPreview = useDevArtworkPreview();
-
-  return (
-    devArtworkPreview ??
-    resolveServerBackedAppStageLabel({
-      primaryServerVersion,
-      fallbackStageLabel: APP_STAGE_LABEL,
-    })
-  );
+  return resolveServerBackedAppStageLabel({
+    primaryServerVersion,
+    fallbackStageLabel: APP_STAGE_LABEL,
+  });
 }
 
 export function useSidebarStageBackdropVariant(
@@ -115,10 +109,6 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
 
 function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
-}
-
-export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
-  return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
 }
 
 const NIGHTLY_STARS: ReadonlyArray<{

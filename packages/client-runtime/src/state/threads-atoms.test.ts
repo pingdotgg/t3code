@@ -280,13 +280,18 @@ describe("createEnvironmentThreadStateAtoms", () => {
       yield* Queue.offer(first.events, { kind: "synchronized" });
       yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
       const before = currentThread(h.registry, h.stateAtom);
+      const historyBefore = h.registry.get(h.details.historyAtom(h.ref));
       unmount();
       yield* Deferred.await(first.closed);
       const remount = h.registry.mount(h.stateAtom);
       expect(currentThread(h.registry, h.stateAtom)).toBe(before);
+      const unmountHistory = h.registry.mount(h.details.historyAtom(h.ref));
+      expect(h.registry.get(h.details.historyAtom(h.ref))).toBe(historyBefore);
       const next = yield* Queue.take(h.subscriptions);
+      expect(h.registry.get(h.details.historyAtom(h.ref))).toBe(historyBefore);
       expect(next.afterSequence).toBe(8);
       expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
+      unmountHistory();
       remount();
       yield* Deferred.await(next.closed);
     }),

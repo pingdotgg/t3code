@@ -35,9 +35,9 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
+import { PanelEmptyState } from "../PanelEmptyState";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import {
@@ -183,11 +183,13 @@ function LinkRowImpl({
               <TooltipTrigger render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}>
                 #{link.number}
               </TooltipTrigger>
+              {/* The repository lives here, not on the meta line, so the branches get its room. */}
               <TooltipPopup>
-                <span className="grid gap-1">
+                <span className="flex flex-col gap-0.5">
+                  <span>{link.repository}</span>
                   <span>{SOURCE_LABELS[link.source]}</span>
                   <span>
-                    <RelativeTime timestamp={link.linkedAt} />
+                    linked <RelativeTime timestamp={link.linkedAt} />
                   </span>
                 </span>
               </TooltipPopup>
@@ -265,12 +267,6 @@ function LinkRowImpl({
               ) : null}
               {snapshot !== null ? (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
-                      <MiddleTruncate value={link.repository} showTitle={false} />
-                    </TooltipTrigger>
-                    <TooltipPopup>{link.repository}</TooltipPopup>
-                  </Tooltip>
                   <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
                 </>
               ) : (
@@ -298,7 +294,8 @@ function LinkRowImpl({
           "pointer-events-none opacity-0 group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
           "has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100",
           "has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
-          "group-has-[[data-pull-request-action-pending=true]]/pr-row:hidden",
+          // The row's quick actions come right before this span.
+          "[[data-pull-request-action-pending=true]~&]:hidden",
           speedMode && hasQuickActions && "hidden",
         )}
       >
@@ -433,24 +430,29 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   if (linkCount === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No linked pull requests</p>
-        <p className="max-w-60 text-xs text-muted-foreground">
-          Pull requests the agent opens from this thread land here. Link one yourself from a URL or
-          a number.
-        </p>
-        <Button size="sm" variant="secondary" onClick={openLinkDialog}>
-          <PlusIcon className="size-3.5" />
-          Link pull request
-        </Button>
+      <div className="flex h-full flex-col">
+        <PanelEmptyState
+          icon={<PullRequestGlyph.link />}
+          title="No linked pull requests"
+          description="Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number."
+          action={
+            <Button size="sm" variant="secondary" onClick={openLinkDialog}>
+              <PlusIcon className="size-3.5" />
+              Link pull request
+            </Button>
+          }
+        />
       </div>
     );
   }
 
   return (
     <PullRequestSpeedModeContext value={speedMode}>
-      <div className="flex h-full min-h-0 flex-col">
+      {/* The list scrolls up under a pane's tab row (--surface-top-inset). */}
+      <div
+        className="flex h-[calc(100%+var(--surface-top-inset,0px))] min-h-0 flex-col"
+        data-surface-reaches-under-header=""
+      >
         {/* Threads that run a stack or a sweep link hundreds of pull requests; only the rows in
           view are mounted. */}
         <LegendList<PullRequestListLine>
@@ -475,11 +477,19 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           )}
           estimatedItemSize={44}
           drawDistance={440}
-          className="min-h-0 flex-1 overscroll-contain p-1.5"
+          className="min-h-0 flex-1 overscroll-contain p-1.5 pt-under-header-1.5"
         />
-        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
+        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-meta text-muted-foreground">
           <Tooltip>
-            <TooltipTrigger render={<span />}>{linkCount} linked</TooltipTrigger>
+            <TooltipTrigger render={<span className="flex min-w-0 flex-wrap gap-x-2" />}>
+              <span>{linkCount} linked</span>
+              <span>{openCount} open</span>
+              {lastSynced ? (
+                <span>
+                  synced <RelativeTime timestamp={lastSynced} />
+                </span>
+              ) : null}
+            </TooltipTrigger>
             <TooltipPopup>
               <span className="flex flex-col gap-0.5">
                 <span>{openCount} open</span>

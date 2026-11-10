@@ -117,6 +117,7 @@ export function AddCodexAccountDialog({
                 description="Shown in the provider list and model picker."
                 control={
                   <Input
+                    size="settings"
                     aria-label="Account name"
                     value={name}
                     disabled={pending}

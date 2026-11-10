@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
 import { render } from "../../../test/render";
 import {
@@ -54,13 +55,42 @@ describe("ThemeImportDialog", () => {
       </StrictMode>,
     );
 
+    await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
     await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
 
-    await expect.element(page.getByRole("heading", { name: "Nightfall" })).toBeVisible();
-    expect(searchOpenVsxThemes).toHaveBeenCalledWith(
-      "night",
-      expect.objectContaining({ sortBy: "downloadCount" }),
+    await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
+    // A slow runner can debounce on a prefix like "ni"; wait for the full query.
+    await vi.waitFor(() =>
+      expect(searchOpenVsxThemes).toHaveBeenLastCalledWith(
+        "night",
+        expect.objectContaining({ sortBy: "downloadCount" }),
+      ),
     );
+
+    let completeSearch!: (themes: OpenVsxThemeExtension[]) => void;
+    const pendingSearch = new Promise<OpenVsxThemeExtension[]>((resolve) => {
+      completeSearch = resolve;
+    });
+    let notifySearchStarted!: (signal: AbortSignal) => void;
+    const searchStarted = new Promise<AbortSignal>((resolve) => {
+      notifySearchStarted = resolve;
+    });
+    searchOpenVsxThemes.mockImplementationOnce(
+      (_query: string, options: { signal: AbortSignal }) => {
+        notifySearchStarted(options.signal);
+        return pendingSearch;
+      },
+    );
+    await userEvent.type(page.getByLabelText("Search Open VSX themes"), "fall");
+    const searchSignal = await searchStarted;
+    await userEvent.click(page.getByRole("button", { name: "Back", exact: true }));
+    expect(searchSignal.aborted).toBe(true);
+    completeSearch([extension]);
+
+    await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
+    await expect.element(page.getByLabelText("Search Open VSX themes")).toHaveValue("");
+    await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
+    await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
   });
 });
 
@@ -99,6 +129,7 @@ it.each(["Update existing", "Keep both"])(
       themeFile("Dusk", "#f97316"),
       new File(["{"], "broken.json", { type: "application/json" }),
     ]);
+    await userEvent.click(page.getByRole("button", { name: "Add theme", exact: true }));
 
     await expect.element(page.getByText("Already installed")).toBeVisible();
     await expect.element(page.getByText(/^broken\.json:/)).toBeVisible();
@@ -137,6 +168,48 @@ function themeJsonc(name: string, background: string) {
     "tokenColors": [],
   }`;
 }
+
+it("keeps edits to a staged theme when adding another file", async () => {
+  using _themes = isolateThemes();
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(input, themeFile("Dawn"));
+  const editor = page.getByRole("textbox", { name: "Theme JSON" });
+  await expect.element(editor).toHaveValue(JSON.stringify(theme("Dawn")));
+  const edited = JSON.stringify(theme("Edited Dawn", "#f97316"));
+  await editor.fill(edited);
+  await userEvent.upload(input, themeFile("Dusk"));
+  await expect.element(page.getByText("Dusk.json", { exact: true })).toBeVisible();
+  await expect.element(editor).toHaveValue(edited);
+  await page.getByRole("button", { name: "Add theme", exact: true }).click();
+  expect(getCustomThemes().map((theme) => theme.label)).toEqual(["Dusk", "Edited Dawn"]);
+});
+
+it("does not import a staged theme after its editor is cleared", async () => {
+  using _themes = isolateThemes();
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(input, themeFile("Dawn"));
+  const editor = page.getByRole("textbox", { name: "Theme JSON" });
+  await expect.element(editor).toHaveValue(JSON.stringify(theme("Dawn")));
+  await editor.fill("");
+  await expect.element(page.getByRole("button", { name: "Add theme", exact: true })).toBeDisabled();
+  expect(getCustomThemes()).toEqual([]);
+});
 
 describe("ThemeImportDialog JSONC imports", () => {
   it.each(["paste", "file"])("imports a VS Code JSONC theme from %s", async (source) => {
@@ -182,6 +255,11 @@ describe("ThemeImportDialog JSONC imports", () => {
         type: "application/json",
       }),
     ]);
+
+    await expect
+      .element(page.getByRole("button", { name: "Add theme", exact: true }))
+      .toBeEnabled();
+    await page.getByRole("button", { name: "Add theme", exact: true }).click();
 
     await vi.waitFor(() => {
       expect(getCustomThemes().map((theme) => theme.label)).toEqual(["JSONC Night", "JSONC Day"]);

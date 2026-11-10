@@ -8,16 +8,9 @@ import { cn } from "~/lib/utils";
 // and rim, with the icon in the tone and the text in the normal tiers.
 const alertVariants = cva("relative rounded-lg px-3.5 py-3 text-body text-foreground", {
   defaultVariants: {
-    surface: "default",
     variant: "default",
   },
   variants: {
-    // "floating" lifts the alert over content; alert-floating tints from data-variant.
-    surface: {
-      default: "",
-      floating: "alert-floating",
-      tray: "surface-tray! rounded-[18px] before:hidden [&_[data-slot=alert-description]]:font-medium [&_[data-slot=alert-icon]>svg]:size-3!",
-    },
     variant: {
       default:
         "surface-tint [--surface-tint:var(--muted-foreground)] [&_svg]:text-muted-foreground",
@@ -57,7 +50,6 @@ function alertChildSlot(child: React.ReactElement): string | undefined {
 function Alert({
   className,
   variant,
-  surface,
   controlAlignment = "center",
   children,
   ...props
@@ -86,7 +78,7 @@ function Alert({
 
   return (
     <div
-      className={cn(alertVariants({ surface, variant }), className)}
+      className={cn(alertVariants({ variant }), className)}
       data-slot="alert"
       data-variant={variant ?? "default"}
       role="alert"

@@ -13,8 +13,6 @@ const badgeVariants = cva(
     },
     variants: {
       size: {
-        control:
-          "h-7 min-w-7 rounded-[var(--control-radius)] px-[calc(--spacing(2)-1px)] text-sm sm:h-6 sm:min-w-6 sm:text-xs",
         default: "h-5.5 min-w-5.5 px-[calc(--spacing(1)-1px)] text-caption sm:h-4.5 sm:min-w-4.5",
         lg: "h-6.5 min-w-6.5 px-[calc(--spacing(1.5)-1px)] text-meta sm:h-5.5 sm:min-w-5.5",
         // Fractional leading rounds font metrics and raises fixed-height labels, especially under zoom.
@@ -32,13 +30,11 @@ const badgeVariants = cva(
         error: "bg-error-tint text-error-foreground",
         info: "bg-info-tint text-info-foreground",
         merged: "bg-merged-tint text-merged-foreground",
-        outline:
-          "border-border bg-transparent text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
+        outline: "surface-outline text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
         // Neutral: the quiet fill with a muted label.
-        secondary:
-          "bg-badge-neutral bg-(image:--badge-neutral-fill) text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
+        secondary: "surface-badge text-muted-foreground [button&,a&]:hover:surface-ghost-hover",
         success: "bg-success-tint text-success-foreground",
-        unavailable: "bg-badge-neutral bg-(image:--badge-neutral-fill) text-dim-foreground",
+        unavailable: "surface-badge text-dim-foreground",
         // Quieter than unavailable: the faintest neutral fill with a dim label (snoozed rows).
         quiet: "bg-badge-quiet text-dim-foreground",
         warning: "bg-warning-tint text-warning-foreground",

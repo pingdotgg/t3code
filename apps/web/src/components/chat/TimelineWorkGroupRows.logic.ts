@@ -1,13 +1,17 @@
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-function formatWorkingTimer(startIso: string, endIso: string): string | null {
+export function formatWorkingTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);
   const endedAtMs = Date.parse(endIso);
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
     return null;
   }
 
-  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
+  return formatWorkingDuration(endedAtMs - startedAtMs);
+}
+
+export function formatWorkingDuration(elapsedMs: number): string {
+  const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   if (elapsedSeconds < 60) {
     return `${elapsedSeconds}s`;
   }
@@ -15,6 +19,10 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return formatDuration(elapsedSeconds * 1_000);
 }
 
-export function formatWorkingTimerNow(startIso: string): string {
+export function formatWorkingTimerNow(startIso: string, clock = false): string {
+  if (clock) {
+    const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(startIso)) / 1000)) || 0;
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
 }

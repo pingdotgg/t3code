@@ -22,8 +22,8 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { memo } from "react";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import {
   Menu,
@@ -42,6 +42,7 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { DESCRIPTOR_PRESETS_BY_KIND } from "../settings/customModelEditor.logic";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -70,25 +71,39 @@ function savedOptionLabel(id: string): string {
   );
 }
 
+/**
+ * Read-only descriptors for saved values whose model metadata is unavailable
+ * (provider not installed, catalog not loaded, or model missing from it).
+ * A value from the driver's known preset keeps that preset's labels and
+ * choices; anything else shows verbatim.
+ */
 function buildUnavailableModelOptionDescriptors(
   selections: ProviderOptions | null | undefined,
+  provider?: ProviderDriverKind,
 ): ReadonlyArray<ProviderOptionDescriptor> {
-  return (selections ?? []).map((selection) =>
-    typeof selection.value === "boolean"
-      ? {
-          id: selection.id,
-          label: savedOptionLabel(selection.id),
-          type: "boolean" as const,
-          currentValue: selection.value,
-        }
-      : {
-          id: selection.id,
-          label: savedOptionLabel(selection.id),
-          type: "select" as const,
-          options: [{ id: selection.value, label: selection.value }],
-          currentValue: selection.value,
-        },
-  );
+  const presets = provider ? DESCRIPTOR_PRESETS_BY_KIND[provider] : undefined;
+  return (selections ?? []).map((selection) => {
+    if (typeof selection.value === "boolean") {
+      return {
+        id: selection.id,
+        label: savedOptionLabel(selection.id),
+        type: "boolean" as const,
+        currentValue: selection.value,
+      };
+    }
+    const value = selection.value;
+    const choices = presets?.find((preset) => preset.id === selection.id)?.choices;
+    return {
+      id: selection.id,
+      label: savedOptionLabel(selection.id),
+      type: "select" as const,
+      options:
+        choices?.some((choice) => choice.id === value) === true
+          ? choices.map(({ id, label }) => ({ id, label }))
+          : [{ id: value, label: value }],
+      currentValue: value,
+    };
+  });
 }
 
 type TraitsPersistence =
@@ -121,13 +136,15 @@ function getSelectedTraits(
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
   const modelIsUnavailable =
-    provider === "opencode" &&
-    !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
+    provider === "opencode"
+      ? !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider))
+      : resolveSelectableModel(provider, model, models) === null;
   const descriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
         includePlanAgent
           ? modelOptions
           : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
+        provider,
       )
     : getProviderOptionDescriptors({
         caps,
@@ -375,9 +392,7 @@ export function useTraitsSelection({
 export const ULTRATHINK_IN_BODY_NOTE =
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.';
 
-const TraitsMenuContent = memo(function TraitsMenuContentImpl(
-  props: TraitsSelectionInput & { reasoningOnly?: boolean },
-) {
+export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?: boolean }) {
   const traits = useTraitsSelection(props);
   const {
     descriptors,
@@ -388,12 +403,12 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(
     hasAnyControls,
     modelIsUnavailable,
   } = traits;
-
   const inReasoningMenu = (descriptor: ProviderOptionDescriptor) =>
     !props.reasoningOnly ||
     isReasoningControl(descriptor) ||
     descriptor.id === "serviceTier" ||
-    descriptor.id === "fastMode";
+    descriptor.id === "fastMode" ||
+    descriptor.id === "ultracode";
   const selectDescriptors = allSelectDescriptors.filter(inReasoningMenu);
   const booleanDescriptors = allBooleanDescriptors.filter(inReasoningMenu);
 
@@ -492,9 +507,32 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(
       ))}
     </>
   );
-});
+}
 
-export const TraitsPicker = memo(function TraitsPicker({
+/** The traits trigger's text ("High", "High · Fast"), or null when the model has no traits. */
+export function resolveTraitsTriggerLabel(input: {
+  provider: ProviderDriverKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  modelOptions: ProviderOptions | null | undefined;
+  includePlanAgent?: boolean | undefined;
+}): string | null {
+  const visibility = getTraitsSectionVisibility({
+    ...input,
+    promptUltrathink: "none",
+    allowPromptInjectedEffort: false,
+  });
+  if (!visibility.hasAnyControls) return null;
+  // The trigger label already pairs speed with reasoning ("High Fast").
+  const { label } = buildTraitsTriggerDisplay({
+    descriptors: visibility.descriptors,
+    primarySelectDescriptorId: visibility.primarySelectDescriptor?.id ?? null,
+    ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
+  });
+  return label.length > 0 ? label : null;
+}
+
+export function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
@@ -590,9 +628,9 @@ export const TraitsPicker = memo(function TraitsPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start">
+      <MenuPopup spacing="relaxed" align="start">
         <TraitsMenuContent {...props} />
       </MenuPopup>
     </Menu>
   );
-});
+}

@@ -54,6 +54,40 @@ const MODEL_PICKER_KEYBINDING_COMMANDS = [
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 
+/**
+ * The layout keyboard map: cmd makes (split), alt+cmd looks (focus, fill,
+ * widths), ctrl+alt+cmd moves. Same map as niri, with alt+cmd as the
+ * modifier.
+ */
+export const LAYOUT_KEYBINDING_COMMANDS = [
+  "layout.splitRight",
+  "layout.splitDown",
+  "layout.fill",
+  "layout.focusLeft",
+  "layout.focusRight",
+  "layout.focusUp",
+  "layout.focusDown",
+  "layout.moveLeft",
+  "layout.moveRight",
+  "layout.moveUp",
+  "layout.moveDown",
+  "layout.focusFirstColumn",
+  "layout.focusLastColumn",
+  "layout.cycleColumnWidth",
+  "layout.centerColumn",
+  "layout.pullLeft",
+  "layout.pullRight",
+  "layout.shortcutSheet",
+  "layout.focusWorkspaceDown",
+  "layout.focusWorkspaceUp",
+  "layout.moveToWorkspaceDown",
+  "layout.moveToWorkspaceUp",
+  "layout.moveWorkspaceDown",
+  "layout.moveWorkspaceUp",
+  "layout.overview",
+] as const;
+export type LayoutKeybindingCommand = (typeof LAYOUT_KEYBINDING_COMMANDS)[number];
+
 export const STATIC_KEYBINDING_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
@@ -66,13 +100,13 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.new",
   "terminal.close",
   "rightPanel.toggle",
-  "rightPanel.new",
   "threadPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.close",
   "view.reopenClosed",
   "pullRequest.copyNumber",
   "diff.toggle",
+  "pullRequests.toggle",
   "preview.toggle",
   "preview.refresh",
   "preview.focusUrl",
@@ -103,8 +137,15 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "chat.newWithoutProject",
+  "chat.citeSelection",
+  "tab.new",
+  "tab.next",
+  "tab.previous",
+  "tab.close",
+  ...LAYOUT_KEYBINDING_COMMANDS,
   "chat.find",
   "editor.openFavorite",
+  "git.commitPush",
   "usage.cost",
   "usage.tokens",
   "usage.limits",
@@ -125,8 +166,15 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
+/**
+ * Commands that no longer do anything. They still decode, so a keybindings.json
+ * that names one stays valid; settings no longer offers them.
+ */
+const RETIRED_KEYBINDING_COMMANDS = ["rightPanel.new", "rightPanel.toggleMaximized"] as const;
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
+  Schema.Literals(RETIRED_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;

@@ -1,10 +1,8 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type {
-  ProviderApprovalDecision,
-  RuntimeRequestId,
-  WorktreeSetupSnapshot,
-} from "@t3tools/contracts";
 import {
+  type ProviderApprovalDecision,
+  type RuntimeRequestId,
+  type WorktreeSetupSnapshot,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
@@ -90,12 +88,15 @@ export interface TimelineRowSharedState {
   onFileDownload: (attachment: ChatFileAttachment) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
-  onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
+  onToggleWorkEntry: (anchorKey: string) => void;
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
+  onToggleWorkingHistory: (key: string) => void;
+  onWorkingHistoryCollapsing: (collapsing: boolean) => void;
+  onFocusComposer: (() => void) | null;
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -103,16 +104,29 @@ export interface TimelineRowActivityState {
   isWorking: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
+  turnEnded: boolean;
+  activeTurnStartedAt: string | null;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  /** The setup card is on screen with its own header, so the working row steps aside. */
+  worktreeSetupCardOwnsHeader: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;
+  /** The approval or question the running turn waits on; it pauses the clock. */
+  pendingRequest: TimelinePendingRequest | null;
+  /** Background work that outlived the latest turn, named on its fold. */
+  usageLimit: TimelineUsageLimit | null;
+  /** The latest run's error as the composer banner shows it. */
+  threadErrorMessage: string | null;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+
+/** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
+export const TimelineWakeUpsRailCtx = createContext<ReadonlyMap<string, "body" | "end">>(new Map());
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -121,7 +135,7 @@ export interface WorkGroupViewState {
 
 export const WorkGroupViewCtx = createContext<{
   state: WorkGroupViewState;
-  onToggleEntry: (collapsed: boolean) => void;
+  onToggleEntry: () => void;
 } | null>(null);
 
 export type TimelineWorkEntry = Extract<
@@ -130,3 +144,18 @@ export type TimelineWorkEntry = Extract<
 >["groupedEntries"][number];
 
 export type TimelineRow = MessagesTimelineRow;
+
+/** The latest run stopped at a usage limit; its fold offers to snooze until the reset. */
+export interface TimelineUsageLimit {
+  readonly runId: RunId;
+  readonly resetAt: string | null;
+  readonly snoozed: boolean;
+  readonly onToggleSnooze: (() => void) | null;
+}
+
+export interface TimelinePendingRequest {
+  readonly kind: "approval" | "question";
+  readonly label: string;
+  readonly createdAt: string;
+  readonly blocking?: boolean;
+}

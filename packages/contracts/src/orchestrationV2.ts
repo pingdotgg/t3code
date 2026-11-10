@@ -84,7 +84,7 @@ import {
   ToolActivityIcon,
   ToolActivitySource,
 } from "./providerRuntime.ts";
-import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import { ContextBreakdown, ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -224,6 +224,7 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   promptCacheTtlMs: Schema.optional(PositiveInt),
   autoCompactThreshold: Schema.optional(PositiveInt),
   promptCacheExpiresAt: Schema.optional(Schema.String),
+  breakdown: Schema.optional(ContextBreakdown),
   updatedAt: Schema.String,
 });
 export type OrchestrationV2ProviderTurnTokenUsage =
@@ -1696,6 +1697,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2170,6 +2173,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /**
+   * Settled user and assistant messages. Only the archived shell snapshot
+   * fills it (Settings › Archive); live shells omit it.
+   */
+  messageCount: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -2537,6 +2545,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

@@ -16,6 +16,13 @@ export interface PendingUserInputDraftAnswer {
 
 export type PendingUserInputAnswer = string | ReadonlyArray<string>;
 
+/** Providers may group questions into one request or issue several requests at once. */
+export function countPendingUserInputQuestions(
+  requests: ReadonlyArray<{ readonly questions: ReadonlyArray<PendingUserInputQuestion> }>,
+): number {
+  return requests.reduce((count, request) => count + request.questions.length, 0);
+}
+
 function normalizeDraftAnswer(value: string | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();

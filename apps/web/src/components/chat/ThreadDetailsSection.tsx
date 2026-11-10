@@ -15,6 +15,7 @@ export function ThreadDetailsSection({
   summary,
   action,
   variant = "card",
+  spacing = "default",
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
   title: string;
@@ -22,9 +23,10 @@ export function ThreadDetailsSection({
   summary?: ReactNode;
   action?: ReactNode;
   variant?: "card" | "workspace" | "usage";
+  spacing?: "default" | "relaxed";
 }) {
   const contentId = useId();
-  const [collapsed, setCollapsed] = useLocalStorage(
+  const [isCollapsed, setCollapsed] = useLocalStorage(
     "thread-details:collapsed:" + title,
     false,
     Schema.Boolean,
@@ -66,7 +68,11 @@ export function ThreadDetailsSection({
     >
       {card ? (
         <div
-          className={cn("flex items-center gap-1 pb-1 ps-3 pe-1", action ? "h-7.5" : "h-6.5")}
+          className={cn(
+            "flex items-center gap-1 ps-3",
+            action ? "pe-0" : "pe-1",
+            isCollapsed ? "h-7" : spacing === "relaxed" ? "h-7.5 pb-1" : "h-6.5 pb-1",
+          )}
           draggable
           onDragStart={(event) => {
             event.dataTransfer.setData("application/x-t3-details-card", title);
@@ -75,30 +81,33 @@ export function ThreadDetailsSection({
         >
           <ThreadDetailsControl
             part="heading"
-            aria-expanded={!collapsed}
+            aria-expanded={!isCollapsed}
             aria-controls={contentId}
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={() => setCollapsed(!isCollapsed)}
           >
-            <span>{title}</span>
+            <span className="shrink-0">{title}</span>
             {summary ? (
-              <span className="ms-auto truncate text-caption text-dim-foreground">{summary}</span>
+              <span className="ms-auto truncate text-caption text-muted-foreground">{summary}</span>
             ) : null}
           </ThreadDetailsControl>
           {action}
         </div>
       ) : null}
-      <div
-        id={contentId}
-        ref={contentRef}
-        hidden={card && collapsed}
-        className={cn(
-          "flex flex-col",
-          card && "surface-composer rounded-lg p-0.5",
-          card && collapsed && "hidden",
-        )}
-      >
-        {children}
-      </div>
+      {/* A card with only a heading (Lineage keeping its menu) draws no empty tray. */}
+      {children == null ? null : (
+        <div
+          id={contentId}
+          ref={contentRef}
+          hidden={card && isCollapsed}
+          className={cn(
+            "flex flex-col",
+            card && "surface-composer rounded-lg p-0.5",
+            card && isCollapsed && "hidden",
+          )}
+        >
+          {children}
+        </div>
+      )}
     </section>
   );
 }

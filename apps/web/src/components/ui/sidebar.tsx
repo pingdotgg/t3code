@@ -5,7 +5,6 @@ import { PanelLeft, PanelLeftClose } from "lucide";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { Input, type InputProps } from "~/components/ui/input";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -15,7 +14,12 @@ import {
   SheetPopup,
   SheetTitle,
 } from "~/components/ui/sheet";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  TooltipScrollDismissArea,
+} from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import {
@@ -131,109 +135,95 @@ function moveFocusOutOfCollapsingSidebar() {
 
 const SIDEBAR_SLIDE_ID = "sidebar-slide";
 
-function sidebarSlideElements(slot: string) {
-  return Array.from(
-    document.querySelectorAll<HTMLElement>(`[data-panel-animations="true"] [data-slot="${slot}"]`),
+function sidebarSlideTargets() {
+  const scope = '[data-panel-animations="true"]';
+  const containers = document.querySelectorAll<HTMLElement>(
+    `${scope} [data-slot="sidebar-container"]`,
   );
+  const insets = document.querySelectorAll<HTMLElement>(`${scope} [data-slot="sidebar-inset"]`);
+  return [
+    ...Array.from(containers, (element) => ({ element, parent: null, inset: false })),
+    ...Array.from(insets).flatMap((inset) => [
+      { element: inset, parent: null, inset: true },
+      ...Array.from(
+        inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-children] > *"),
+        (element) => ({ element, parent: inset, inset: false }),
+      ),
+    ]),
+  ].map((target) => ({ ...target, start: target.element.getBoundingClientRect().left }));
 }
 
-function sidebarSlideSurface(inset: HTMLElement): HTMLElement | null {
-  const surface = inset.previousElementSibling;
-  return surface instanceof HTMLElement && surface.dataset.slot === "sidebar-slide-surface"
-    ? surface
-    : null;
+function sidebarSlideAnchors(insets: HTMLElement[]) {
+  return insets.flatMap((inset) => [
+    ...Array.from(inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-hold]"), (element) => ({
+      element,
+      inset,
+      via: null,
+    })),
+    ...Array.from(
+      inset.querySelectorAll<HTMLElement>(
+        "[data-sidebar-slide-children] > * [data-sidebar-slide-stay]",
+      ),
+      (element) => ({
+        element,
+        inset,
+        via: element.closest<HTMLElement>("[data-sidebar-slide-children] > *"),
+      }),
+    ),
+  ]);
 }
 
-function sidebarInsetVisibleLeft(inset: HTMLElement) {
-  const left = inset.getBoundingClientRect().left;
-  const surface = sidebarSlideSurface(inset);
-  if (surface?.getAnimations().some((animation) => animation.id === SIDEBAR_SLIDE_ID)) {
-    return Math.min(left, surface.getBoundingClientRect().left);
-  }
-  const clip = /inset\(([^)]*)\)/.exec(getComputedStyle(inset).clipPath)?.[1];
-  const sides = clip?.split(" round ")[0]?.trim().split(/\s+/) ?? [];
-  const clipLeft = Number.parseFloat(sides[3] ?? sides[1] ?? sides[0] ?? "0");
-  return left + (Number.isFinite(clipLeft) ? clipLeft : 0);
+function siblingSlot(element: Element | null, slot: string): HTMLElement | null {
+  return element instanceof HTMLElement && element.dataset.slot === slot ? element : null;
 }
 
-function isOpaqueColor(color: string) {
-  const alpha = /(?:,|\/)\s*([\d.]+%?)\s*\)$/.exec(color)?.[1];
-  return alpha === undefined || Number.parseFloat(alpha) >= (alpha.endsWith("%") ? 100 : 1);
-}
-
-function sidebarInsetPaint(inset: HTMLElement, x: number, y: number) {
-  const element = document
-    .elementsFromPoint(x, y)
-    .find(
-      (candidate) =>
-        inset.contains(candidate) && isOpaqueColor(getComputedStyle(candidate).backgroundColor),
-    );
-  const style = getComputedStyle(element ?? inset);
-  return {
-    backgroundColor: style.backgroundColor,
-    backgroundImage: style.backgroundImage,
-    backgroundSize: style.backgroundSize,
-  };
-}
-
-function sidebarInsetEdgeRows(inset: HTMLElement, rect: DOMRect) {
-  const notchFeet = Array.from(
-    inset.querySelectorAll<HTMLElement>('[data-pane-notch-corner=""]'),
-  ).filter(
-    (element) =>
-      element.offsetWidth > 0 && Math.abs(element.getBoundingClientRect().left - rect.left) <= 1,
+function sidebarInsetEdgeRows(inset: HTMLElement, rect: DOMRect, underNotch: boolean) {
+  const rows = Array.from(inset.querySelectorAll<HTMLElement>("[data-layout-pane-id]")).flatMap(
+    (pane) => {
+      const paneRect = pane.getBoundingClientRect();
+      if (paneRect.width === 0 || paneRect.right < rect.right - 1 || paneRect.left >= rect.right) {
+        return [];
+      }
+      const notch = underNotch
+        ? pane.querySelector<HTMLElement>('[data-pane-notch="right"]')
+        : null;
+      const top = notch?.offsetWidth ? notch.getBoundingClientRect().bottom : paneRect.top;
+      return [{ top: Math.max(top, rect.top), bottom: Math.min(paneRect.bottom, rect.bottom) }];
+    },
   );
-  const panes = Array.from(inset.querySelectorAll<HTMLElement>("[data-layout-pane-id]"));
-  const rows = (panes.length > 0 ? panes : [inset]).flatMap((pane) => {
-    const paneRect = pane.getBoundingClientRect();
-    if (paneRect.width === 0 || paneRect.left > rect.left + 1 || paneRect.right <= rect.left) {
-      return [];
-    }
-    const notchFoot = notchFeet.find((element) => {
-      const footTop = element.getBoundingClientRect().top;
-      return footTop >= paneRect.top - 1 && footTop < paneRect.bottom;
-    });
-    const top = Math.max(notchFoot?.getBoundingClientRect().top ?? paneRect.top, rect.top);
-    const bottom = Math.min(paneRect.bottom, rect.bottom);
-    return [{ top, bottom, notchFoot }];
-  });
-  return rows.length > 0 ? rows : [{ top: rect.top, bottom: rect.bottom, notchFoot: undefined }];
+  return rows.length > 0 ? rows : [{ top: rect.top, bottom: rect.bottom }];
 }
 
-function revealSidebarInset(inset: HTMLElement, offset: number, timing: KeyframeAnimationOptions) {
+function fillSidebarInsetEdge(
+  inset: HTMLElement,
+  offset: number,
+  timing: KeyframeAnimationOptions,
+) {
+  const opening = offset < 0;
+  const edge = opening
+    ? siblingSlot(inset.previousElementSibling, "sidebar-slide-surface")
+    : siblingSlot(inset.nextElementSibling, "sidebar-slide-frame");
+  if (!edge) return;
   const rect = inset.getBoundingClientRect();
-  const radius = getComputedStyle(inset).borderBottomLeftRadius;
-  const clip = (left: number) =>
-    `inset(${-rect.top}px ${rect.right - window.innerWidth}px 0 ${left}px round 0 0 ${radius} ${radius})`;
-  inset.animate({ clipPath: [clip(offset), clip(0)] }, timing);
-}
-
-function coverSidebarInset(inset: HTMLElement, offset: number, timing: KeyframeAnimationOptions) {
-  const surface = sidebarSlideSurface(inset);
-  if (!surface) return;
-  const rect = inset.getBoundingClientRect();
-  const radius = Number.parseFloat(getComputedStyle(inset).borderBottomLeftRadius) || 0;
-  surface.style.left = `${rect.left - offset}px`;
-  surface.style.width = `${offset + radius}px`;
-  const rows = sidebarInsetEdgeRows(inset, rect);
-  surface.replaceChildren(
-    ...rows.map(({ top, bottom }) => {
-      const piece = document.createElement("div");
-      piece.className = "absolute inset-x-0 rounded-pane";
-      Object.assign(piece.style, {
-        top: `${top}px`,
-        height: `${bottom - top}px`,
-        ...sidebarInsetPaint(inset, rect.left + 2, top + 2),
+  edge.style.left = `${opening ? rect.right + offset : rect.right}px`;
+  edge.style.width = `${opening ? -offset : window.innerWidth - rect.right}px`;
+  edge.replaceChildren(
+    ...sidebarInsetEdgeRows(inset, rect, opening).flatMap(({ top, bottom }) => {
+      if (opening) {
+        const piece = document.createElement("div");
+        piece.className = "absolute inset-x-0 rounded-pane bg-background";
+        Object.assign(piece.style, { top: `${top}px`, height: `${bottom - top}px` });
+        return [piece];
+      }
+      return (["top", "bottom"] as const).map((corner) => {
+        const piece = document.createElement("div");
+        piece.dataset.corner = corner;
+        piece.style.top = `${corner === "top" ? top : bottom}px`;
+        return piece;
       });
-      return piece;
     }),
   );
-  for (const { notchFoot } of rows)
-    notchFoot?.animate({ visibility: ["hidden", "hidden"] }, timing);
-  surface.animate(
-    { opacity: [1, 1], transform: ["translateX(0)", `translateX(${offset}px)`] },
-    timing,
-  );
+  edge.animate({ opacity: [1, 1] }, timing);
 }
 
 function cancelSidebarSlide(elements: Iterable<Element | null>) {
@@ -251,28 +241,24 @@ function slideSidebar(commit: () => void) {
     commit();
     return;
   }
-  const containers = sidebarSlideElements("sidebar-container").map((element) => ({
-    element,
-    start: element.getBoundingClientRect().left,
-  }));
-  const insets = sidebarSlideElements("sidebar-inset").map((element) => ({
-    element,
-    start: sidebarInsetVisibleLeft(element),
-  }));
+  const targets = sidebarSlideTargets();
   commit();
-  const first = containers[0];
+  const first = targets[0];
   if (!first) return;
   sidebarSlidePending = true;
   window.requestAnimationFrame(() => {
     sidebarSlidePending = false;
+    const insets = targets.filter(({ inset }) => inset).map(({ element }) => element);
+    const anchors = sidebarSlideAnchors(insets);
     cancelSidebarSlide([
-      ...containers.map(({ element }) => element),
-      ...insets.flatMap(({ element }) => [
-        element,
-        sidebarSlideSurface(element),
-        ...element.querySelectorAll('[data-pane-notch-corner=""]'),
-      ]),
+      ...targets.map(({ element }) => element),
+      ...anchors.map(({ element }) => element),
+      ...insets.flatMap((inset) => [inset.previousElementSibling, inset.nextElementSibling]),
     ]);
+    const offsets = new Map(
+      targets.map(({ element, start }) => [element, start - element.getBoundingClientRect().left]),
+    );
+    const anchorStarts = anchors.map(({ element }) => element.getBoundingClientRect());
     const duration = Number.parseFloat(
       getComputedStyle(first.element).getPropertyValue("--panel-animation-duration"),
     );
@@ -281,17 +267,35 @@ function slideSidebar(commit: () => void) {
       easing: "ease-out",
       id: SIDEBAR_SLIDE_ID,
     };
-    for (const { element, start } of containers) {
-      const offset = start - element.getBoundingClientRect().left;
+    const slides = new Map<HTMLElement, number>();
+    for (const { element, parent, inset } of targets) {
+      const ownOffset = offsets.get(element) ?? 0;
+      if (parent && Math.abs(ownOffset) < 0.5) continue;
+      const offset = ownOffset - (parent ? (offsets.get(parent) ?? 0) : 0);
       if (!element.isConnected || Math.abs(offset) < 0.5) continue;
+      if (inset) fillSidebarInsetEdge(element, offset, timing);
       element.animate({ transform: [`translateX(${offset}px)`, "translateX(0)"] }, timing);
+      slides.set(element, offset);
     }
-    for (const { element, start } of insets) {
-      const offset = element.getBoundingClientRect().left - start;
-      if (!element.isConnected || Math.abs(offset) < 0.5) continue;
-      if (offset < 0) revealSidebarInset(element, -offset, timing);
-      else coverSidebarInset(element, offset, timing);
-    }
+    anchors.forEach(({ element, inset, via }, index) => {
+      const start = anchorStarts[index];
+      const insetOffset = slides.get(inset) ?? 0;
+      const viaOffset = via ? (slides.get(via) ?? 0) : 0;
+      if (!start || (via ? viaOffset === 0 : insetOffset === 0)) return;
+      const contained = element.getBoundingClientRect();
+      const x = start.left - contained.left;
+      const y = start.top - contained.top;
+      const from = via ? x + insetOffset : x;
+      element.animate(
+        {
+          transform: [
+            `translate(${from}px, ${y}px)`,
+            `translate(${x + insetOffset + viaOffset}px, ${y}px)`,
+          ],
+        },
+        timing,
+      );
+    });
   });
 }
 
@@ -594,7 +598,10 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       <MorphIcon
-        className="size-4 text-sidebar-toggle"
+        className={cn(
+          "size-4",
+          props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+        )}
         icon={isOpen ? PanelLeftClose : PanelLeft}
         strokeWidth={2.25}
       />
@@ -777,20 +784,15 @@ function SidebarRail({
   );
 }
 
-function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
-  return (
-    <Input
-      className={cn(
-        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:text-label [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-placeholder [&_[data-slot=input]]:placeholder:font-normal",
-        className,
-      )}
-      unstyled
-      {...props}
-    />
-  );
-}
-
-function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
+/**
+ * `pane` draws the single inset pane. `split` keeps the same insets but draws
+ * nothing, for a layout whose panes each draw their own pane with gaps.
+ */
+function SidebarInset({
+  className,
+  variant = "pane",
+  ...props
+}: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
   return (
     <>
       <div
@@ -800,15 +802,22 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
       />
       <main
         className={cn(
-          "relative flex min-w-0 w-full flex-1 flex-col bg-background surface-grain",
+          "relative flex min-w-0 w-full flex-1 flex-col",
+          variant === "pane" && "bg-background surface-grain",
           // The inset pane (pen mSaSF) on the window chrome: 12px from the window
           // and from the sidebar's content, centered on the chrome row at the top.
           // It stretches in the flex wrapper, so the route's own height yields.
-          "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:rounded-pane md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+          "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+          variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
           className,
         )}
         data-slot="sidebar-inset"
         {...props}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-y-0 hidden bg-(--app-chrome-background) opacity-0 surface-grain md:peer-data-[variant=inset]:block"
+        data-slot="sidebar-slide-frame"
       />
     </>
   );
@@ -855,6 +864,7 @@ function SidebarContent({
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
+        render={<TooltipScrollDismissArea suppressHoverWhileScrolling />}
         hideScrollbars
         scrollFade
         scrollFadePadding={false}
@@ -892,10 +902,18 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
+function SidebarMenu({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"ul"> & { size?: "default" | "compact" }) {
   return (
     <ul
-      className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+      className={cn(
+        "flex w-full min-w-0 flex-col",
+        size === "compact" ? "gap-0.5" : "gap-1",
+        className,
+      )}
       data-sidebar="menu"
       data-slot="sidebar-menu"
       {...props}
@@ -933,6 +951,7 @@ const sidebarMenuButtonVariants = cva(
           "h-(--workspace-titlebar-control-size) rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] text-label has-[>svg:first-child]:ps-[calc(var(--sidebar-row-content-inset)+1px)] has-[>svg:first-child]:gap-[calc(var(--sidebar-control-gap)-1px)]",
         project:
           "h-8 gap-2.5 rounded-[var(--control-radius)] px-(--sidebar-row-content-inset) text-label",
+        compact: "h-7.5 gap-2 rounded-lg px-2 text-label",
         icon: "size-8 justify-center rounded-[var(--control-radius)] p-0",
         sm: "h-7 rounded-control p-2 text-meta",
       },
@@ -1056,7 +1075,6 @@ function SidebarMenuSubButton({
 
 export {
   createSidebarOpenStore,
-  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,
