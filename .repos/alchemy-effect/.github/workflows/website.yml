@@ -24,7 +24,6 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "tsconfig.json"
-      - "turbo.json"
       - ".github/workflows/website.yml"
   pull_request:
     # Label changes create and remove previews without needing another push.
@@ -45,7 +44,6 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "tsconfig.json"
-      - "turbo.json"
       - ".github/workflows/website.yml"
 
 concurrency:
@@ -66,23 +64,24 @@ env:
     (github.ref == 'refs/heads/main' && 'main' || github.ref_name) }}
 
 jobs:
-  deploy:
-    name: Deploy
-    # Deploy every push to main. Release commits (`chore(release): x.y.z`)
-    # and dispatches with `prod` toggled deploy production; other main
-    # commits deploy to main.alchemy.run. On PRs, require BOTH:
-    #   - the PR is internal (forks can't access bot/Cloudflare secrets
-    #     so `create-github-app-token` would error immediately), AND
-    #   - the PR carries the `deploy-website` label (opt-in — most PRs
-    #     don't need a website preview, so default to skipping).
+  website:
+    name: Website
+    # Pushes to main and dispatches always deploy. Release commits
+    # (`chore(release): x.y.z`) and dispatches with `prod` toggled deploy
+    # production; other main commits deploy to main.alchemy.run.
+    #
+    # Pull requests only run when internal (forks can't access the bot or
+    # Cloudflare secrets) and either carry the opt-in `deploy-website` label
+    # or just lost it. Label events for other labels are ignored. The job
+    # then deploys the preview while the PR is open and labeled, and
+    # destroys it otherwise (closed, or the label was removed).
     if: >-
-      (github.event_name != 'pull_request' ||
-       (github.event.pull_request.head.repo.full_name == github.repository &&
-        contains(github.event.pull_request.labels.*.name, 'deploy-website') &&
-        github.event.action != 'closed' &&
-        github.event.action != 'unlabeled' &&
-        (github.event.action != 'labeled' ||
-         github.event.label.name == 'deploy-website')))
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (contains(github.event.pull_request.labels.*.name, 'deploy-website') ||
+        github.event.action == 'unlabeled') &&
+       ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        github.event.label.name == 'deploy-website'))
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -106,7 +105,24 @@ jobs:
           app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
           private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
 
+      # Decide from the PR's current state, not the triggering event, so
+      # queued label events converge to the latest desired state even when
+      # GitHub reorders them.
+      - name: Decide deploy or destroy
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "mode=deploy" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          active="$(gh api "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.number }}" \
+            --jq '[.state == "open", any(.labels[]; .name == "deploy-website")] | all')"
+          echo "mode=$([ "$active" = true ] && echo deploy || echo destroy)" >> "$GITHUB_OUTPUT"
+
       - name: Restore Astro build cache
+        if: steps.mode.outputs.mode == 'deploy'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: website/node_modules/.astro
@@ -116,15 +132,6 @@ jobs:
             website-astro-full-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-
             website-astro-full-${{ runner.os }}-main-
 
-      - name: Restore Turbo cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
-            turbo-${{ runner.os }}-${{ github.repository_id }}-
-
       - name: Setup pnpm, Node.js, Bun and install dependencies
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
@@ -132,21 +139,20 @@ jobs:
           install: true
           require-lockfile: true
 
-      - name: Check current preview state
-        if: github.event_name == 'pull_request'
-        id: preview-state
+      # Docs on main.alchemy.run and PR previews install this commit's preview
+      # packages; production keeps npm (see website/plugins/preview-install.ts).
+      - name: Set preview package tag
+        if: steps.mode.outputs.mode == 'deploy' && env.STAGE != 'prod'
         env:
-          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          active="$(gh api "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.number }}" \
-            --jq '[.state == "open", any(.labels[]; .name == "deploy-website")] | all')"
-          echo "active=$active" >> "$GITHUB_OUTPUT"
+          if [ -n "$PR" ]; then tag="pr:$PR:${SHA:0:7}"; else tag="$SHA"; fi
+          echo "PREVIEW_PACKAGE_TAG=$tag" >> "$GITHUB_ENV"
 
       # Main/prod use the production account; PR stages use the test account.
       - name: Deploy
-        if: >-
-          github.event_name != 'pull_request' ||
-          steps.preview-state.outputs.active == 'true'
+        if: steps.mode.outputs.mode == 'deploy'
         working-directory: website
         run: bun alchemy deploy --stage "$STAGE" --yes
         env:
@@ -167,68 +173,22 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
           BUILD_SHA: ${{ github.sha }}
 
-  cleanup:
-    name: Cleanup
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      ((github.event.action == 'closed' &&
-        contains(github.event.pull_request.labels.*.name, 'deploy-website')) ||
-       (github.event.action == 'unlabeled' &&
-        github.event.label.name == 'deploy-website'))
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Checkout distilled
-        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
-
-      - name: Generate bot token
-        id: bot-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
-          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
-
-      - name: Setup pnpm, Node.js, Bun
-        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
-        with:
-          cache: true
-          install: false
-
-      - name: Install dependencies
-        # Destroy evaluates the stack and calls providers; it does not build or
-        # bundle anything. Skip native postinstalls and the root prepare build.
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Check current preview state
-        id: preview-state
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          active="$(gh api "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.number }}" \
-            --jq '[.state == "open", any(.labels[]; .name == "deploy-website")] | all')"
-          echo "active=$active" >> "$GITHUB_OUTPUT"
-
-      # Allowlist, not denylist: cleanup must only ever destroy pr-N stages,
+      # Allowlist, not denylist: destroy must only ever remove pr-N stages,
       # so refuse anything else outright (prod/main/preview-base) even if a
       # future STAGE refactor changes what a pull_request event resolves to.
-      - name: Safety Check
-        if: steps.preview-state.outputs.active != 'true'
+      - name: Safety check
+        if: steps.mode.outputs.mode == 'destroy'
         run: |-
           case "${{ env.STAGE }}" in
             pr-[0-9]*) ;;
             *)
-              echo "ERROR: cleanup only destroys pr-* stages, got '${{ env.STAGE }}'"
+              echo "ERROR: destroy only removes pr-* stages, got '${{ env.STAGE }}'"
               exit 1
               ;;
           esac
 
-      - name: Destroy Preview Environment
-        if: steps.preview-state.outputs.active != 'true'
+      - name: Destroy preview
+        if: steps.mode.outputs.mode == 'destroy'
         working-directory: website
         run: bun alchemy destroy --stage "$STAGE" --yes
         env:

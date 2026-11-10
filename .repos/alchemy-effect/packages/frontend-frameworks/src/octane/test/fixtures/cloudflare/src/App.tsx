@@ -18,10 +18,7 @@ export function App() {
         increment
       </button>
       <p id="count">count:{count}</p>
-      <button
-        id="greet"
-        onClick={async () => setGreeting(await requestGreeting("Worker"))}
-      >
+      <button id="greet" onClick={async () => setGreeting(await requestGreeting("Worker"))}>
         Call server
       </button>
       <p id="greeting">{greeting}</p>

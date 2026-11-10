@@ -1,6 +1,6 @@
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { GlobeIcon } from "lucide-react";
-import { Children, Fragment, memo, useState, type ReactNode } from "react";
+import { Children, memo, useState, type ReactNode } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
@@ -55,18 +55,16 @@ function leadingExternalLinkTextLength(text: string): number {
   return Array.from(text.slice(0, 2))[0]?.length ?? 0;
 }
 
-// Long words such as URLs can break after any character so they fit narrow
-// table columns. Short ones, like a PR number, stay whole.
+// Keep short labels such as PR numbers intact in narrow table columns.
 function breakableExternalLinkText(text: string): ReactNode[] {
   return Array.from(text.matchAll(/\s+|\S+/g), ({ 0: word, index: start }) =>
-    word.length <= 16
-      ? word
-      : Array.from(word, (character, offset) => (
-          <Fragment key={`${start + offset}:${character}`}>
-            {character}
-            <wbr />
-          </Fragment>
-        )),
+    word.length <= 16 ? (
+      word
+    ) : (
+      <span key={start} className="[overflow-wrap:anywhere]">
+        {word}
+      </span>
+    ),
   );
 }
 
@@ -110,8 +108,7 @@ export function MarkdownExternalLinkContent({
 
   return (
     <>
-      {/* Only the favicon/element boundary stays unbreakable; the element's own words still wrap. */}
-      <span className="whitespace-nowrap [&>*]:whitespace-normal">
+      <span className="[overflow-wrap:anywhere]">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
