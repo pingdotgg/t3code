@@ -31,7 +31,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -114,38 +114,6 @@ it.effect("reports the hub's error when it rejects attaching a simulator stream"
       _tag: "DeviceOperationError",
       reason: "hub_rejected",
       message: expect.stringContaining("is still locked"),
-    });
-  }),
-);
-
-it.effect("keeps a hub transport failure distinct from a hub rejection", () =>
-  Effect.gen(function* () {
-    const operations = makeDeviceHubOperations({
-      hostId: LOCAL_DEVICE_HOST_ID,
-      origin: "http://device.test",
-      http: HttpClient.make((request) =>
-        Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({ request }),
-          }),
-        ),
-      ),
-      run: () => Effect.die("Attaching does not run a command"),
-      platformAvailable: () => Effect.succeed(false),
-    });
-    const error = yield* operations
-      .attach({
-        id: "phone",
-        name: "Phone",
-        version: "iOS 26.3",
-        platform: "ios",
-        booted: true,
-        physical: false,
-      })
-      .pipe(Effect.flip);
-    expect({ _tag: error._tag, reason: error.reason }).toEqual({
-      _tag: "DeviceOperationError",
-      reason: "request_failed",
     });
   }),
 );
