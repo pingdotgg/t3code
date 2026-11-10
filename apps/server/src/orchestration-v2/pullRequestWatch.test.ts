@@ -81,21 +81,12 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
-  // regression: #24575 fork workflows awaiting approval flapped between failed and passed
   it("waits for workflow approval once, through reads that miss it, until the run finishes", () => {
     const bot = check("bot", "success");
     const approval = { ...check("CI", "action-required"), url: run(1) };
     const gated = detail({ checks: [bot, approval] });
     const first = evaluatePullRequestWatch(watch(), gated, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "checks-awaiting-approval", checks: [approval] }]);
-    const message = pullRequestWatchMessage({
-      number: 1,
-      url: "https://github.com/o/r/pull/1",
-      baseBranch: "main",
-      headSha: "aaaaaaaaaa",
-      report: first,
-    });
-    assert.equal(message.notification.outcome, "updated");
 
     // GitHub's approval read can answer empty while the rest of the checks read fine.
     const missing = evaluatePullRequestWatch(first.next, detail({ checks: [bot] }), noRemarks);

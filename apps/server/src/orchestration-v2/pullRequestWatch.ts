@@ -56,10 +56,7 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
-  // "action-required" waits on someone, such as a maintainer approving a fork's workflows, so the
-  // agent is told once per head and nothing passes meanwhile. A placeholder is a host that could
-  // not tell, so it counts as no check and never confirms a pass, though a failed, pending, or
-  // awaited check beside it ends one.
+  // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
@@ -73,10 +70,7 @@ export function evaluatePullRequestWatch(
     }
     failedChecks = failed.map((check) => check.name);
 
-    // GitHub lists runs awaiting approval in a separate read that can come back empty, so a run
-    // stays awaited through reads that miss it until reported GitHub jobs, and pending checks
-    // without a URL, finish. One known only by name needs a completed check with that name before
-    // its hold can clear.
+    // Approval reads can omit gated runs. Keep each hold until its jobs finish.
     const awaitingNow = [...new Set(awaiting.map(approvalKey))];
     const nameUnfinished = (name: string) => {
       const matching = checks.filter((check) => check.name === name);
