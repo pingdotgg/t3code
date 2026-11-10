@@ -22,7 +22,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -39,8 +39,14 @@ export function subagentThreadTitle(input: {
   if (detail === undefined) {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }
-  const clipped = detail.length > 72 ? `${detail.slice(0, 69)}...` : detail;
-  return clipped;
+  if (detail.length <= 72) return detail;
+  let end = 69;
+  const previous = detail.charCodeAt(end - 1);
+  const next = detail.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${detail.slice(0, end)}...`;
 }
 
 export function makeSubagentChildThread(input: {
@@ -170,8 +176,19 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+/** A delegated result, led by a note when the provider reported running another model than requested. */
+export function withExecutedModelNote(
+  result: string,
+  requestedModel: string,
+  executedModel: string | null | undefined,
+): string {
+  return executedModel == null || executedModel === requestedModel
+    ? result
+    : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
+}
+
 export function subagentResultForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): {
   readonly text: string;
@@ -230,8 +247,15 @@ export function subagentResultForRun(
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
+  const executedModel = latestProviderTurnForAttempt(
+    projection.providerTurns,
+    run.activeAttemptId,
+  )?.model;
   return {
-    text,
+    text:
+      executedModel === undefined
+        ? text
+        : withExecutedModelNote(text, run.modelSelection.model, executedModel),
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };

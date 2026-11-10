@@ -440,6 +440,14 @@ it.each(["turn-item order", "timestamp fallback", "timestamp tie"] as const)(
       ordering === "timestamp tie" ? progress.message.id : report.message.id,
     );
     assert.equal(result.turnItemId, ordering === "turn-item order" ? report.turnItem.id : null);
+    const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
+    assert.equal(
+      subagentResultForRun(
+        { ...projection, messages: [report.message], providerTurns: [reported as never] },
+        run,
+      ).text,
+      "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nAll steps passed.",
+    );
   },
 );
 
