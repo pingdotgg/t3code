@@ -61,13 +61,13 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntry =>
   entry.type === "runtime_exit" ? entry : { ...entry, label };
 /** MCP rules are last-match-wins; allow this thread after denying all T3 servers. */
-const mcpRules = (name: string) => [
-  { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+const mcpRules = [
+  { action: "t3-code*", resource: "*", effect: "deny" },
+  { action: "t3-code_*", resource: "*", effect: "allow" },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 
-const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
+const t3Rules = [...FULL_ACCESS, ...mcpRules];
 
 const BUILD_PATHS = [
   {
@@ -109,19 +109,19 @@ const agentList = (directory: string) => ({
   ],
 });
 
-const autoEditRules = (name: string) => [
+const autoEditRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "allow" },
   { action: "external_directory", resource: "*", effect: "ask" },
   ...BUILD_PATHS,
-  ...mcpRules(name),
+  ...mcpRules,
 ];
 
-const planRules = (name: string) => [
+const planRules = [
   { action: "*", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS,
-  ...mcpRules(name),
+  ...mcpRules,
 ];
 
 const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown>, title: string) => ({
@@ -185,7 +185,7 @@ const catalogModel = (id: string, name: string) => ({
 const createdSession = (
   directory: string,
   name: string,
-  permissions: ReadonlyArray<unknown> = t3Rules(name),
+  permissions: ReadonlyArray<unknown> = t3Rules,
 
   narrows = false,
 ): ReadonlyArray<ProviderReplayEntry> => [
@@ -311,7 +311,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             ...answeredPrompt("FIRST"),
 
             out("session.get", { sessionID: SESSION }),
-            reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
+            reply("session.get", sessionInfo(cwd, t3Rules, name)),
             out("session.switchModel", {
               sessionID: SESSION,
               model: { providerID: "opencode", id: "mimo-v2.6-flash-free" },
@@ -370,16 +370,16 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...answeredPrompt("FIRST"),
 
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
+          reply("session.get", sessionInfo(cwd, t3Rules, name)),
           out("agent.list", "<any>"),
           reply("agent.list", agentList(cwd)),
-          out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
+          out("session.update", { sessionID: SESSION, permissions: autoEditRules }),
           reply("session.update", null),
           ...answeredPrompt("SECOND"),
 
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd, autoEditRules(name), name)),
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          reply("session.get", sessionInfo(cwd, autoEditRules, name)),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules }),
           reply("session.update", null),
           ...answeredPrompt("THIRD"),
         ],
@@ -409,15 +409,15 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(cwd, name, planRules(name), true),
+          ...createdSession(cwd, name, planRules, true),
 
           out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
           reply("session.switchAgent", null),
           ...instructionsWritten,
           ...answeredPrompt("PLANNED"),
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd, planRules(name), name)),
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          reply("session.get", sessionInfo(cwd, planRules, name)),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules }),
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),

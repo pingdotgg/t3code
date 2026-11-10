@@ -21,8 +21,11 @@ directory must not share one T3 MCP entry.
   after an idle period. See the [1.x adapter](../../packages/provider-opencode/src/server/adapter.ts).
 - **2.x** serves every directory from one
   [server per instance](../../packages/provider-opencode/src/server/v2/OpenCode2Server.ts). Each thread
-  registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
-  thread's entry. See the [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
+  registers its own MCP entry, and session permission rules deny every other thread's entry. MCP
+  entries are per directory, so the first thread in a directory gets `t3-code` and the others
+  `t3-code-<thread>`: Code Mode `search` matches a namespace only as a whole name and silently
+  returns nothing for `t3-code` otherwise. See the
+  [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
 
 External OpenCode servers remain externally owned and can require an external restart to pick up
 configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic

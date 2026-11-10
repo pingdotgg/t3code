@@ -41,6 +41,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -91,8 +92,8 @@ const event = (
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
 const mcpRules = [
-  { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
+  { action: "t3-code*", resource: "*", effect: "deny" },
+  { action: "t3-code_*", resource: "*", effect: "allow" },
 ];
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
 const TITLE = "Prime check";
@@ -2829,30 +2830,43 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #33542 a failed refresh released t3-code while the thread kept using it
   it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
     Effect.gen(function* () {
+      const OTHER = "ses_f148ca2deffeOtherSession000";
+      const child = ThreadId.make(
+        "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
+      );
+      const fallback = "t3-code-aa73fa1e03099934";
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
-      const add = out("mcp.add", {
-        server,
-        "location[directory]": WORK,
-        config: {
-          type: "remote",
-          url: "http://127.0.0.1:3773/mcp",
-          headers: { Authorization: "Bearer thread-credential" },
-          oauth: false,
-        },
-      });
+      for (const [id, credential] of [
+        [threadId, "Bearer thread-credential"],
+        [child, "Bearer other-credential"],
+      ] as const) {
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId: id,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: credential,
+          browserToolsAvailable: false,
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(id));
+      }
+      const server = "t3-code";
+      const addAs = (name: string, credential: string) =>
+        out("mcp.add", {
+          server: name,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: credential },
+            oauth: false,
+          },
+        });
+      const add = addAs(server, "Bearer thread-credential");
       const turn = [
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
@@ -2872,6 +2886,51 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
         reply("session.instructions.entry.put", null),
         ...turn,
+        // The failed refresh kept A's t3-code registration, so B must not take that name.
+        out("session.get", { sessionID: OTHER }),
+        replyData("session.get", sessionInfo({ id: OTHER })),
+        out("permission.list", { sessionID: OTHER }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID: OTHER }),
+        replyData("session.form.list", []),
+        out("session.update", {
+          sessionID: OTHER,
+          permissions: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "t3-code*", resource: "*", effect: "deny" },
+            { action: `${fallback}_*`, resource: "*", effect: "allow" },
+          ],
+        }),
+        reply("session.update", null),
+        addAs(fallback, "Bearer other-credential"),
+        reply("mcp.add", null),
+        out("session.instructions.entry.put", {
+          sessionID: OTHER,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
+        out("session.prompt", { sessionID: OTHER, text: "<any>" }),
+        replyData("session.prompt", {
+          id: "msg_recorded_turn_b",
+          sessionID: OTHER,
+          time: { created: 1790656601410 },
+          type: "user",
+          payload: { text: "hi" },
+          delivery: "steer",
+        }),
+        event("session.execution.succeeded", { sessionID: OTHER }),
+        add,
+        reply("mcp.add", null),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
+        ...turn,
+        out("mcp.remove", { server: fallback, "location[directory]": WORK }),
+        reply("mcp.remove", null),
         out("mcp.remove", { server, "location[directory]": WORK }),
         reply("mcp.remove", null),
       ]);
@@ -2880,68 +2939,154 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       }
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
-    Effect.gen(function* () {
-      const child = ThreadId.make(
-        "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
-      );
-      const server = "t3-code-aa73fa1e03099934";
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId: child,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(child));
-      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
-        ...opening,
-        out("session.get", { sessionID: SESSION }),
-        replyData(
-          "session.get",
-          sessionInfo({
-            permissions: [
-              { action: "*", resource: "*", effect: "allow" },
-              { action: "t3-code-*", resource: "*", effect: "deny" },
-              { action: `${server}_*`, resource: "*", effect: "allow" },
-            ],
-          }),
-        ),
-        ...noOpenRequests,
-        out("mcp.add", {
-          server,
-          "location[directory]": WORK,
-          config: {
-            type: "remote",
-            url: "http://127.0.0.1:3773/mcp",
-            headers: { Authorization: "Bearer thread-credential" },
-            oauth: false,
-          },
-        }),
-        reply("mcp.add", null),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        out("mcp.remove", { server, "location[directory]": WORK }),
-        reply("mcp.remove", null),
-      ]);
-      const thread = yield* runtime.resumeThread({
-        providerThread: { ...providerThread(yield* DateTime.now), appThreadId: child },
+      const other = yield* runtime.resumeThread({
+        providerThread: {
+          ...providerThread(yield* DateTime.now),
+          id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+          appThreadId: child,
+          nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: OTHER, strength: "strong" },
+        },
         threadId: child,
         modelSelection: bigPickle,
         runtimePolicy: policy(),
       });
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn({ ...turnInput(thread), threadId: child });
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      yield* runtime.unloadThread!({ providerThread: thread });
+      const otherEnded = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({ ...turnInput(other), threadId: child });
+      assert.equal((yield* Fiber.join(otherEnded))?.status, "completed");
+      const again = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(again))?.status, "completed");
+      yield* runtime.unloadThread!({ providerThread: other });
     }).pipe(Effect.scoped),
+  );
+
+  // regression: #33542 Code Mode search found nothing under the namespace `t3-code`
+  it.effect(
+    "names a thread's MCP server t3-code unless another thread in its directory has it",
+    () =>
+      Effect.gen(function* () {
+        const OTHER = "ses_f148ca2deffeOtherSession000";
+        const child = ThreadId.make(
+          "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
+        );
+        const fallback = "t3-code-aa73fa1e03099934";
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        for (const [id, credential] of [
+          [threadId, "Bearer first-credential"],
+          [child, "Bearer second-credential"],
+        ] as const) {
+          yield* mcpSessions.set({
+            environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+            threadId: id,
+            providerSessionId: "mcp:opencode2-adapter",
+            providerInstanceId: instanceId,
+            endpoint: "http://127.0.0.1:3773/mcp",
+            authorizationHeader: credential,
+            browserToolsAvailable: false,
+          });
+          yield* Effect.addFinalizer(() => mcpSessions.clear(id));
+        }
+        const add = (server: string, credential: string) => [
+          out("mcp.add", {
+            server,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:3773/mcp",
+              headers: { Authorization: credential },
+              oauth: false,
+            },
+          }),
+          reply("mcp.add", null),
+        ];
+        const instructions = [
+          buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+          t3OrchestrationSystemPrompt(true, false),
+        ];
+        const runtime = yield* openCode2ReplayRuntime([
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          ...noOpenRequests,
+          ...add("t3-code", "Bearer first-credential"),
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "t3-code",
+            value: instructions.join("\n\n"),
+          }),
+          reply("session.instructions.entry.put", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.get", { sessionID: OTHER }),
+          replyData("session.get", sessionInfo({ id: OTHER })),
+          out("permission.list", { sessionID: OTHER }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: OTHER }),
+          replyData("session.form.list", []),
+          out("session.update", {
+            sessionID: OTHER,
+            permissions: [
+              { action: "*", resource: "*", effect: "allow" },
+              { action: "t3-code*", resource: "*", effect: "deny" },
+              { action: `${fallback}_*`, resource: "*", effect: "allow" },
+            ],
+          }),
+          reply("session.update", null),
+          ...add(fallback, "Bearer second-credential"),
+          out("session.instructions.entry.put", {
+            sessionID: OTHER,
+            key: "t3-code",
+            value: [
+              ...instructions,
+              [
+                `T3 Code's MCP server in this thread is \`${fallback}\`, and that full name is its tool namespace.`,
+                `Code Mode \`search\` returns an empty list, not an error, for \`t3-code\` here, so pass \`${fallback}\` even where a request writes \`t3-code\`.`,
+                "An empty search result does not mean a T3 Code tool is missing: search again without `namespace`.",
+              ].join(" "),
+            ].join("\n\n"),
+          }),
+          reply("session.instructions.entry.put", null),
+          out("session.prompt", { sessionID: OTHER, text: "<any>" }),
+          replyData("session.prompt", {
+            id: "msg_recorded_turn_b",
+            sessionID: OTHER,
+            time: { created: 1790656601410 },
+            type: "user",
+            payload: { text: "hi" },
+            delivery: "steer",
+          }),
+          event("session.execution.succeeded", { sessionID: OTHER }),
+          out("mcp.remove", { server: fallback, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+          out("mcp.remove", { server: "t3-code", "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        const first = yield* runtime.resumeThread({
+          providerThread: providerThread(yield* DateTime.now),
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: policy(),
+        });
+        const firstEnded = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(first));
+        assert.equal((yield* Fiber.join(firstEnded))?.status, "completed");
+        const second = yield* runtime.resumeThread({
+          providerThread: {
+            ...providerThread(yield* DateTime.now),
+            id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+            appThreadId: child,
+            nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: OTHER, strength: "strong" },
+          },
+          threadId: child,
+          modelSelection: bigPickle,
+          runtimePolicy: policy(),
+        });
+        const secondEnded = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn({ ...turnInput(second), threadId: child });
+        assert.equal((yield* Fiber.join(secondEnded))?.status, "completed");
+        yield* runtime.unloadThread!({ providerThread: second });
+      }).pipe(Effect.scoped),
   );
 
   // regression: #16142 OpenCode 2 threads were missing T3 Code's MCP tools
@@ -4420,15 +4565,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.fork", { sessionID: SESSION }),
         replyData("session.fork", sessionInfo({ id: FORK })),
-        out("session.update", {
-          sessionID: FORK,
-          permissions: [
-            { action: "*", resource: "*", effect: "allow" },
-            { action: "t3-code-*", resource: "*", effect: "deny" },
-            { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
-          ],
-        }),
-        reply("session.update", null),
         // OpenCode makes the fork where its source runs; the target thread runs elsewhere.
         out("session.move", { sessionID: FORK, directory: target }),
         reply("session.move", null),
@@ -4541,8 +4677,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("message.list", { data: [continuedHistory.data[0]], cursor: {} }),
         out("session.fork", { sessionID: SESSION, before: "msg_report" }),
         replyData("session.fork", sessionInfo({ id: FORK })),
-        out("session.update", { sessionID: FORK, permissions: "<any>" }),
-        reply("session.update", null),
       ]);
       const forked = yield* runtime.forkThread({
         sourceProviderThread: thread,
