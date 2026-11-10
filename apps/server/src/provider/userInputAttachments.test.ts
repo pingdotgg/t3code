@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -82,6 +83,62 @@ describe("question answer paths", () => {
                     return yield* fs.stat(file);
                   })
                 : fs.stat(file),
+          }),
+        );
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each(["interrupted", "failed"])(
+    "extracts two documents at once and frees a slot when one is %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const [first, second, third] = ["first", "second", "third"].map((name) =>
+          NodePath.join(config.attachmentsDir, `${name}.rtf`),
+        );
+        NodeFS.writeFileSync(first!, String.raw`{\rtf1 First}`);
+        NodeFS.writeFileSync(second!, "invalid document");
+        NodeFS.writeFileSync(third!, String.raw`{\rtf1 Third}`);
+        const started = yield* Queue.unbounded<string>();
+        const releases = new Map<string, Deferred.Deferred<void>>();
+        for (const path of [first!, second!, third!])
+          releases.set(path, yield* Deferred.make<void>());
+        yield* Effect.gen(function* () {
+          const documents = yield* DocumentText.DocumentText;
+          const leaving = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const staying = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const freed = yield* documents.ensure(second!).pipe(Effect.forkChild);
+          expect(new Set([yield* Queue.take(started), yield* Queue.take(started)])).toEqual(
+            new Set([first, second]),
+          );
+          const waiting = yield* documents.ensure(third!).pipe(Effect.forkChild);
+          yield* Fiber.interrupt(leaving);
+          if (outcome === "interrupted") yield* Fiber.interrupt(freed);
+          else {
+            yield* Deferred.succeed(releases.get(second!)!, undefined);
+            expect(yield* Fiber.join(freed)).toBeUndefined();
+          }
+          expect(yield* Queue.take(started)).toBe(third);
+          yield* Deferred.succeed(releases.get(first!)!, undefined);
+          yield* Deferred.succeed(releases.get(third!)!, undefined);
+          expect(yield* Fiber.join(staying)).toBe(first + ".txt");
+          expect(yield* Fiber.join(waiting)).toBe(third + ".txt");
+          expect(yield* Queue.size(started)).toBe(0);
+          expect(NodeFS.existsSync(second + ".txt")).toBe(false);
+          expect(
+            NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+          ).toEqual([]);
+        }).pipe(
+          Effect.provide(Layer.fresh(DocumentText.layer)),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (file) =>
+              Effect.gen(function* () {
+                yield* Queue.offer(started, file);
+                yield* Deferred.await(releases.get(file)!);
+                return yield* fs.stat(file);
+              }),
           }),
         );
       }).pipe(Effect.provide(layer)),
