@@ -247,10 +247,11 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           fail(id, -32602, "tools/call needs a tool name and object arguments.");
           return;
         }
+        // postMessage keeps undefined, which the RPC's JSON codec rejects; receive already
+        // refused messages JSON cannot encode, so this round trip cannot throw.
+        const jsonArgs: Record<string, unknown> = JSON.parse(JSON.stringify(args));
         answer(id, () =>
-          options
-            .callTool({ name, arguments: args as Record<string, unknown> })
-            .then(normalizeMcpAppToolResult),
+          options.callTool({ name, arguments: jsonArgs }).then(normalizeMcpAppToolResult),
         );
         return;
       }

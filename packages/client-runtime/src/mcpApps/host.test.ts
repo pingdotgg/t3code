@@ -211,7 +211,8 @@ describe("makeMcpAppHost", () => {
       callTool: async (input) => {
         if (input.name === "delete_everything")
           throw new McpAppHostRefusal({ message: "Declined by the user." });
-        received.push(encodeForRpc({ threadId: "thread-1", itemId: "item-1", ...input }).arguments);
+        encodeForRpc({ threadId: "thread-1", itemId: "item-1", ...input });
+        received.push(input.arguments);
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -261,8 +262,14 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 3, method: "sampling/createMessage", params: {} });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/message", params: { role: "assistant" } });
+    host.receive({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "poll", arguments: { since: 1n } },
+    });
     expect(sent.map((message) => (message.error as { code: number }).code)).toEqual([
-      -32602, -32601, -32602,
+      -32602, -32601, -32602, -32600,
     ]);
   });
 
