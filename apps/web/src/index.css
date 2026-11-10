@@ -579,12 +579,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     padding-block-end: calc(var(--pane-notch-height) - var(--workspace-topbar-height));
   }
 
-  /* The conversation scrolls through the header, hiding only behind its
-     chrome-colored notches. The header still owns pointer and drag handling. */
-  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] [data-chat-header] {
-    background: none;
-  }
-
   /* Other pane headers keep their surface above their scrolling bodies. */
   [data-slot="sidebar"][data-variant="inset"]
     ~ [data-slot="sidebar-inset"]
