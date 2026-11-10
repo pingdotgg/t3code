@@ -178,7 +178,18 @@ export const makeRelayChannels = () => {
     if (Option.isNone(result)) {
       return HttpServerResponse.text("The environment did not answer in time.", { status: 504 });
     }
-    const { "content-type": contentType, ...headers } = withoutHopByHop(result.value.headers);
+    const {
+      "content-type": contentType,
+      "set-cookie": _cookie,
+      ...forwarded
+    } = withoutHopByHop(result.value.headers);
+    // Every carried environment shares the relay's origin, and anyone can link one: its responses
+    // may not run script there or set cookies the relay and other environments would see.
+    const headers: Record<string, string> = {
+      ...forwarded,
+      "content-security-policy": "sandbox",
+      "x-content-type-options": "nosniff",
+    };
     // A root-relative redirect from the environment stays under its prefix.
     if (headers.location?.startsWith("/") && !headers.location.startsWith("//")) {
       headers.location = `${target.prefix}${headers.location}`;

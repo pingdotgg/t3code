@@ -57,7 +57,7 @@ const connectEnvironment = (port: number, token: string) =>
               type: "http-response",
               id: frame.id,
               status: 302,
-              headers: { "content-type": "text/plain", location: "/next" },
+              headers: { "content-type": "text/plain", location: "/next", "set-cookie": "s=1" },
               body: Buffer.from(echo).toString("base64"),
             }),
           );
@@ -75,6 +75,8 @@ const get = (port: number, path: string) =>
       status: response.status,
       body: await response.text(),
       location: response.headers.get("location"),
+      cookie: response.headers.get("set-cookie"),
+      csp: response.headers.get("content-security-policy"),
     };
   });
 
@@ -89,11 +91,15 @@ describe("makeRelayChannels", () => {
         status: 302,
         body: `GET /api/state?x=1 ${prefix}`,
         location: `${prefix}/next`,
+        cookie: null,
+        csp: "sandbox",
       });
       expect(yield* get(port, "/v1/metadata")).toEqual({
         status: 200,
         body: "relay api",
         location: null,
+        cookie: null,
+        csp: null,
       });
     }).pipe(Effect.scoped, Effect.provide(makeLayer())),
   );
