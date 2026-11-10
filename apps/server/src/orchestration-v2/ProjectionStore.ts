@@ -101,6 +101,7 @@ import {
   isConversationHistoryItem,
   THREAD_HISTORY_MAX_RAW_TURNS,
   missingInterruptRequests,
+  DEFERRED_WORK_ITEM_TYPES,
   deferWorkHistoryRows,
   selectDeferredWorkPage,
   encodeThreadHistoryCursor,
@@ -344,6 +345,7 @@ export interface ProjectionRecordFilter {
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly turnItemNodeIds?: ReadonlyArray<NodeId>;
   readonly runIds?: ReadonlyArray<RunId>;
+  /** Without `includeLatestRun`, reads through a status index and sorts the matches, so keep it to statuses few runs hold. */
   readonly runStatuses?: ReadonlyArray<OrchestrationV2Run["status"]>;
   /** Keeps the thread's highest-ordinal run even when `runStatuses` excludes it. */
   readonly includeLatestRun?: true;
@@ -3032,6 +3034,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT ordinal, (SELECT MAX(ordinal) FROM user_anchors) AS latest FROM boundary
               `;
       const boundary = anchors[0]!;
+      // Folding needs whole segments, so the window would walk every item since the boundary.
+      // Non-deferrable types always keep their own row, so the window stays above the newest
+      // `tailRows` of them. Start at the latest segment start of each run that reaches that
+      // point, clamped to it so runless rows below stay in the scan.
+      const tailRows = Math.max(window.rowLimit, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT);
+      const tailWorkStart = sql<{ readonly ordinal: number | null }>`
+                ${eligible}, visible_tail AS (
+                  SELECT ordinal FROM eligible
+                  WHERE ordinal >= ${boundary.ordinal}
+                    AND type NOT IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
+                  ORDER BY ordinal DESC
+                  LIMIT ${tailRows}
+                ), tail AS (
+                  SELECT MIN(ordinal) AS ordinal FROM visible_tail HAVING COUNT(*) >= ${tailRows}
+                ), tail_runs AS (
+                  SELECT DISTINCT item.run_id
+                  FROM tail CROSS JOIN eligible AS item
+                  WHERE item.ordinal >= tail.ordinal AND item.run_id IS NOT NULL
+                )
+                SELECT MIN(MIN(COALESCE(
+                  (
+                    SELECT start.ordinal FROM eligible AS start
+                    WHERE start.run_id = tail_runs.run_id AND start.type = 'user_message'
+                      AND start.ordinal <= tail.ordinal
+                    ORDER BY start.ordinal DESC LIMIT 1
+                  ),
+                  (
+                    SELECT MIN(first.ordinal) FROM orchestration_v2_projection_turn_items AS first
+                    WHERE first.thread_id = ${threadId} AND first.run_id = tail_runs.run_id
+                  ),
+                  tail.ordinal
+                ), tail.ordinal)) AS ordinal
+                FROM tail LEFT JOIN tail_runs
+              `;
+      // A negative or fractional limit makes SQLite's LIMIT disagree with `tailRows`; keep the old start.
+      const workStart =
+        window.deferWork === true &&
+        boundary.latest !== null &&
+        Number.isSafeInteger(window.rowLimit) &&
+        window.rowLimit >= 0
+          ? Math.max(boundary.ordinal, (yield* tailWorkStart)[0]?.ordinal ?? 0)
+          : boundary.ordinal;
       return sql`
                 ${eligible}, blocked_runs AS MATERIALIZED (
                   SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
@@ -3039,7 +3083,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND ${window.deferWork ? 1 : 0} = 1
                     AND run_id IN (
                       SELECT run_id FROM eligible
-                      WHERE ordinal >= ${boundary.ordinal} AND run_id IS NOT NULL
+                      WHERE ordinal >= ${workStart} AND run_id IS NOT NULL
                     )
                     AND (type IN ('run_interrupt_request', 'run_interrupt_result')
                       OR (type = 'error' AND status = 'failed' AND parent_item_id IS NULL))
@@ -3048,14 +3092,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
-                      AND type IN ('command_execution', 'reasoning', 'file_change', 'file_search', 'web_search', 'dynamic_tool')
+                      AND type IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
                       AND NOT (${inlineWorkOutput})
                       AND run_id NOT IN (SELECT run_id FROM blocked_runs)
                       THEN 1 ELSE 0 END AS can_defer
                   FROM eligible AS item
                   WHERE ${window.deferWork ? 1 : 0} = 1
                     AND ${boundary.latest === null ? 0 : 1} = 1
-                    AND ordinal >= ${boundary.ordinal}
+                    AND ordinal >= ${workStart}
                 ), deferred_work AS (
                   SELECT run_id, segment, attempt_id, MIN(ordinal) AS first_ordinal,
                     MAX(ordinal) AS last_ordinal, COUNT(*) AS item_count
@@ -3090,6 +3134,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM window_items
                   WHERE ordinal >= ${boundary.ordinal}
                   ORDER BY ordinal DESC, turn_item_id DESC
+                  -- Every LIMIT here and in latest_user_turn must stay <= tailRows, or rows below workStart go missing.
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
                     WHEN (SELECT row_count FROM latest_user_turn)
@@ -3122,6 +3167,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               `;
     });
+
+    // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
+    // every row of the thread to find the few ids.
+    const threadColumn = (ids: ReadonlyArray<unknown> | undefined, column = "thread_id") =>
+      sql.literal(ids === undefined ? column : `+${column}`);
 
     const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
       function* (
@@ -3356,21 +3406,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.runIds)} = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
               ${
                 filter?.runStatuses === undefined
-                  ? sql``
-                  : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
-                    OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
+                  ? sql`ORDER BY ordinal ASC`
+                  : filter.includeLatestRun !== true
+                    ? // `+ordinal` stops SQLite from walking every run in the (thread_id, ordinal)
+                      // index to skip a sort; a status index reads only matching runs.
+                      sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                    ORDER BY +ordinal ASC`
+                    : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                    OR run_id = (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
                         AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
                       ORDER BY ordinal DESC
                       LIMIT 1
-                    )))`
+                    ))
+                    ORDER BY ordinal ASC`
               }
-            ORDER BY ordinal ASC
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_runs
@@ -3420,7 +3475,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_nodes AS node
-            WHERE node.thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.nodeIds, "node.thread_id")} = ${threadId}
               ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
               ${
                 filter?.omitSettledLeafNodes === true
@@ -3459,7 +3514,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_subagents AS subagent
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.subagentIds)} = ${threadId}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
               ${
@@ -3594,7 +3649,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
                 SELECT payload_json FROM orchestration_v2_projection_messages
-                WHERE thread_id = ${threadId}
+                WHERE ${threadColumn(filter?.messageIds)} = ${threadId}
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
