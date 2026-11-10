@@ -27,6 +27,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -366,15 +367,11 @@ export const make = Effect.gen(function* () {
       case "thread.metadata-updated":
         return worker.enqueue({ threadId: event.threadId, refresh: false });
       case "thread.unsettled":
-      case "checkpoint.captured":
         return worker.enqueue({ threadId: event.threadId, refresh: true });
+      // Checkpoint capture and rollback commit their checkpoints with this run update, so it
+      // alone reads the host once per finished or rolled-back run.
       case "run.updated":
-        if (
-          event.payload.status === "completed" ||
-          event.payload.status === "failed" ||
-          event.payload.status === "cancelled" ||
-          event.payload.status === "interrupted"
-        ) {
+        if (isTerminalRunStatus(event.payload.status)) {
           return worker.enqueue({ threadId: event.threadId, refresh: true });
         }
         break;

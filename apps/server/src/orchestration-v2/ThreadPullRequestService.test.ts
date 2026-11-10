@@ -165,8 +165,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
 
           // A finished turn still discovers the pull request for its branch.
           yield* Queue.offer(domainEvents, {
-            type: "checkpoint.captured",
+            type: "run.updated",
             threadId: thread.id,
+            payload: { status: "completed" },
           } as OrchestrationV2DomainEvent);
           yield* Deferred.await(turnLookup);
           yield* service.drain;
@@ -176,6 +177,128 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* service.drain;
 
           expect(lookups.slice(lookupsBeforeIdle)).toEqual([]);
+        }).pipe(Effect.provide(dependencies));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      commit: "a finished turn",
+      // Checkpoint capture commits the thread-start and baseline checkpoints, the run's own
+      // checkpoint and the run's end together.
+      events: [
+        { type: "checkpoint.captured" },
+        { type: "checkpoint.captured" },
+        { type: "checkpoint.captured" },
+        { type: "run.updated", payload: { status: "completed" } },
+      ],
+    },
+    {
+      commit: "a rollback",
+      events: [
+        { type: "checkpoint.captured", payload: { status: "stale" } },
+        { type: "checkpoint.captured", payload: { status: "stale" } },
+        { type: "run.updated", payload: { status: "rolled_back" } },
+      ],
+    },
+  ])("reads the branch pull request from the host once for $commit", ({ events }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = { ...threadShell("turn-thread"), branch: "feature/turn" };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const startupLookup = yield* Deferred.make<void>();
+        const startupDrained = yield* Deferred.make<void>();
+        const commitDelivered = yield* Deferred.make<void>();
+        // A refreshed lookup skips the cache and reads the host; a cached one does not.
+        const hostReads: Array<string> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.unwrap(
+              Deferred.await(startupDrained).pipe(
+                Effect.as(
+                  Stream.fromIterable(
+                    events.map(
+                      (event) => ({ ...event, threadId: thread.id }) as OrchestrationV2DomainEvent,
+                    ),
+                  ),
+                ),
+              ),
+            ).pipe(
+              Stream.concat(
+                Stream.unwrap(
+                  Deferred.succeed(commitDelivered, undefined).pipe(Effect.as(Stream.never)),
+                ),
+              ),
+            ),
+            getPullRequestSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads: [thread],
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (input, options) =>
+              options?.refresh === true
+                ? Effect.sync(() => {
+                    hostReads.push(input.branch);
+                    return null;
+                  })
+                : Deferred.succeed(startupLookup, undefined).pipe(Effect.as(null)),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Deferred.await(startupLookup);
+          yield* service.drain;
+          yield* Deferred.succeed(startupDrained, undefined);
+          yield* Deferred.await(commitDelivered);
+          yield* service.drain;
+
+          expect(hostReads).toEqual([thread.branch]);
         }).pipe(Effect.provide(dependencies));
       }),
     ),
@@ -408,8 +531,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
 
           // The child's own turn still discovers its pull request.
           yield* Queue.offer(domainEvents, {
-            type: "checkpoint.captured",
+            type: "run.updated",
             threadId: child.id,
+            payload: { status: "completed" },
           } as OrchestrationV2DomainEvent);
           yield* Deferred.await(childLookup);
           yield* service.drain;
