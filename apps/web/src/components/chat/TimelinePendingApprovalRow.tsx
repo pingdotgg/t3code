@@ -5,7 +5,7 @@ import {
 import { FileDiffIcon, FileMinusIcon, FilePlusIcon, ShieldIcon } from "lucide-react";
 import { memo, use, useState } from "react";
 import { type PendingApproval } from "../../session-logic";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { formatWorkspaceRelativeDetail, formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { cn } from "../../lib/utils";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -99,6 +99,10 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   const diffOpen = diffRequestId === approval.requestId;
   const { onRespondToApproval, workspaceRoot } = use(TimelineRowCtx);
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
+  const detail =
+    approval.requestKind === "file-change"
+      ? formatWorkspaceRelativeDetail(approval.detail, workspaceRoot)
+      : approval.detail;
   const canRespond = approval.responseCapability === "live";
   const files = approval.requestKind === "file-change" ? (approval.files ?? []) : [];
   const diffFiles = files.filter((file, index) =>
@@ -131,7 +135,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
           data-approval-detail="complete"
           tabIndex={0}
         >
-          {approval.detail || presentation.label}
+          {detail || presentation.label}
         </div>
       }
     >
