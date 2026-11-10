@@ -883,12 +883,14 @@ it.effect("working runs exclude queued and finished runs", () =>
     });
     assert.isTrue(yield* store.hasWorkingRuns());
 
+    // Recovery skips deleted threads, so their leftover roster must not hold the host awake.
+    const { thread } = yield* store.getThreadProjection(threadId);
     yield* store.apply({
-      id: EventId.make("working-runs:background-cleared"),
-      type: "provider-thread.updated",
+      id: EventId.make("working-runs:thread-deleted"),
+      type: "thread.deleted",
       threadId,
       occurredAt: now,
-      payload: { ...providerThread, pendingBackgroundTasks: [] },
+      payload: { ...thread, deletedAt: now },
     });
     assert.isFalse(yield* store.hasWorkingRuns());
   }).pipe(Effect.provide(layerTest)),

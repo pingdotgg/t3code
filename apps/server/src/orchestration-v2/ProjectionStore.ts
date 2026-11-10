@@ -7244,8 +7244,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT 1
             FROM orchestration_v2_projection_provider_threads AS provider_thread
             JOIN json_each(provider_thread.payload_json, '$.pendingBackgroundTasks') AS task
-            WHERE json_extract(task.value, '$.awaited') = 1
-               OR json_extract(task.value, '$.kind') IN ('subagent', 'background_task')
+            LEFT JOIN orchestration_v2_projection_threads AS thread
+              ON thread.thread_id = provider_thread.thread_id
+            WHERE thread.deleted_at IS NULL
+              AND (
+                json_extract(task.value, '$.awaited') = 1
+                OR json_extract(task.value, '$.kind') IN ('subagent', 'background_task')
+              )
           )
         ) AS working
       `;
