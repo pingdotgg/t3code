@@ -5191,6 +5191,94 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("does not replace a newer goal event with an older goal RPC response", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["release-goal-read"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("rpc.call", "<any>"),
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("paused") }),
+          event(
+            "rpc.opencode.goal.changed",
+            { sessionID: SESSION, goal: nativeGoal("paused") },
+            "release-goal-read",
+          ),
+          reply("rpc.call", { output: nativeGoal("active") }),
+        ],
+        { version: "2.2.5", replayGate: gate },
+      );
+      const changed = yield* Deferred.make<void>();
+      const events = yield* runtime.events.pipe(
+        Stream.tap((e) =>
+          e.type === "provider_thread.updated" && e.providerThread.goal?.status === "paused"
+            ? Deferred.succeed(changed, undefined)
+            : Effect.void,
+        ),
+        Stream.takeUntil((e) => e.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const input = turnInput(thread);
+      const starting = yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: "/goal" } })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(changed);
+      gate.release("release-goal-read");
+      yield* Fiber.join(starting);
+      const collected = yield* Fiber.join(events);
+      const updated = collected.findLast((e) => e.type === "provider_thread.updated");
+      assert.equal(
+        updated?.type === "provider_thread.updated"
+          ? updated.providerThread.goal?.status
+          : undefined,
+        "paused",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["unreadable", "stalled"] as const)(
+    "settles a completed execution after reconnect when goal refresh is %s",
+    (failure) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["goal-refresh-stalled"]);
+        const reconnect = reconnected({}, "succeeded");
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
+            ...reconnect.slice(0, 2),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", failure === "stalled" ? "<hang>" : { output: { unreadable: true } }),
+            ...(failure === "stalled"
+              ? [
+                  event(
+                    "rpc.opencode.goal.changed",
+                    { sessionID: SESSION, goal: null },
+                    "goal-refresh-stalled",
+                  ),
+                ]
+              : []),
+            ...reconnect.slice(2),
+          ],
+          { version: "2.2.5", replayGate: gate },
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        if (failure === "stalled") {
+          yield* Effect.promise(() => gate.waitForReached("goal-refresh-stalled"));
+          gate.release("goal-refresh-stalled");
+          yield* TestClock.adjust("5 seconds");
+        }
+        const collected = yield* Fiber.join(events);
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.each(["show", "pause", "clear"] as const)(
     "settles OpenCode /goal %s without waiting for an execution",
     (control) =>

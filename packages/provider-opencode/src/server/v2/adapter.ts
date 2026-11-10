@@ -291,6 +291,7 @@ interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
   publishedBackgroundWork?: boolean;
+  goalRevision: number;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -769,6 +770,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ): ThreadState => ({
       sessionId,
       providerThread,
+      goalRevision: 0,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
@@ -865,6 +867,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       goal: typeof NativeGoal.Type,
     ) {
+      state.goalRevision += 1;
       state.providerThread = {
         ...state.providerThread,
         goal:
@@ -882,13 +885,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const readGoal = Effect.fn("OpenCode2Adapter.readGoal")(function* (state: ThreadState) {
+      const revision = state.goalRevision;
       const result = yield* client.rpc.call({
         rpcID: "opencode.goal",
         method: "get",
         location: { directory: state.directory },
         input: { sessionID: state.sessionId },
       });
-      yield* updateGoal(state, yield* decodeGoal(result.output));
+      const goal = yield* decodeGoal(result.output);
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+        }),
+      );
     });
 
     const setSessionStatus =
@@ -2637,15 +2646,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
-    const reconcile = Effect.gen(function* () {
-      if (supportsNativeGoals()) {
-        for (const state of threads.values()) {
-          yield* readGoal(state).pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.ignore({ log: true }),
-          );
-        }
-      }
+    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* (
+      freshGoals: ReadonlySet<ThreadState>,
+    ) {
       // Read deepest sessions first; subagent turns end before their waiting parents.
       const running = [...threads]
         .filter(([, state]) => state.active !== undefined)
@@ -2675,9 +2678,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
         if (sessionId in active || state.active !== turn) continue;
-        yield* endExecution(
-          state,
-          turn,
+        const terminal: TurnTerminal =
           ended?.outcome === "succeeded"
             ? { status: turn.interrupted ? "interrupted" : "completed" }
             : ended?.outcome === "failed"
@@ -2689,8 +2690,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     class: "provider_error",
                   }),
                 }
-              : { status: "interrupted" },
-        );
+              : { status: "interrupted" };
+        if (supportsNativeGoals() && !freshGoals.has(state)) yield* finishTurn(state, terminal);
+        else yield* endExecution(state, turn, terminal);
       }
       for (const state of background) {
         for (const call of runningCalls(state)) {
@@ -2748,7 +2750,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      const freshGoals = new Set<ThreadState>();
+      if (supportsNativeGoals()) {
+        yield* Effect.forEach(
+          [...threads.values()],
+          (state) =>
+            readGoal(state).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  freshGoals.add(state);
+                }),
+              ),
+              Effect.ignore({ log: true }),
+            ),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
+      }
+      yield* lock.withPermit(reconcile(freshGoals)).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
       Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
@@ -3618,9 +3636,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const state = register(providerThread, native, cwd ?? native.location.directory);
           if (!loaded) yield* stopLeftoverRequests(state);
           if (!loaded && supportsNativeGoals()) {
-            yield* lock
-              .withPermit(readGoal(state))
-              .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
+            yield* readGoal(state).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            );
           }
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
           if (cwd != null && native.location.directory !== cwd) {
