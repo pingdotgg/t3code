@@ -1292,8 +1292,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility surface-neutral-pill {
   @apply surface-pill;
   --pill-fill: var(--button-pill-fill, var(--ss-default-pill-fill));
-  --pill-foreground: var(--ss-default-pill-foreground);
-  --pill-icon: var(--ss-default-pill-icon);
+  --pill-foreground: var(--button-pill-foreground, var(--ss-default-pill-foreground));
+  --pill-icon: var(--button-pill-icon, var(--ss-default-pill-icon));
   --pill-rim: var(--button-pill-rim, var(--ss-default-pill-rim, var(--ss-default-raised-rim)));
   --pill-shadow: var(--button-pill-shadow, var(--ss-default-pill-shadow));
 }
@@ -1376,6 +1376,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 @utility surface-selected-soft {
   background: var(--selected-soft-fill);
+}
+@utility surface-pane-tab {
+  background: var(--pane-tab-fill, transparent);
+  box-shadow: var(--pane-tab-shadow, none);
 }
 
 /* Glossy fills with a hard split at half height: checked controls, the
@@ -3143,7 +3147,7 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
 html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
-  background: var(--code-background);
+  background: var(--style-code-fill, var(--code-background));
   color: var(--code-foreground);
 }
 
@@ -3302,26 +3306,32 @@ html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
 }
 
 html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
-  --app-panel-fill: var(--background);
+  --app-panel-fill: var(--style-panel-fill, var(--background));
 }
 
 html:root[data-theme-id="t3-code-classic"] .surface-dialog {
-  background: color-mix(in srgb, var(--background) 80%, transparent);
-  border-color: var(--border);
-  backdrop-filter: blur(12px) saturate(1.14);
+  background: var(
+    --style-overlay-background,
+    color-mix(in srgb, var(--background) 80%, transparent)
+  );
+  border-color: var(--style-border, var(--border));
+  backdrop-filter: var(--style-backdrop, blur(12px) saturate(1.14));
 
   @variant dark {
-    backdrop-filter: blur(16px) saturate(1.08);
+    backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
   }
 }
 
 html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
-  background: color-mix(in srgb, var(--popover) 83.6%, transparent);
-  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
-  backdrop-filter: blur(12px) saturate(1.14);
+  background: var(
+    --style-overlay-background,
+    color-mix(in srgb, var(--popover) 83.6%, transparent)
+  );
+  border-color: var(--style-border, color-mix(in srgb, var(--foreground) 10%, transparent));
+  backdrop-filter: var(--style-backdrop, blur(12px) saturate(1.14));
 
   @variant dark {
-    backdrop-filter: blur(16px) saturate(1.08);
+    backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
   }
 }
 
@@ -4298,6 +4308,22 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --button-pill-fill: var(--pill-fill);
   --button-pill-rim: var(--pill-rim, var(--raised-rim));
   --button-pill-shadow: var(--pill-shadow);
+  --button-pill-foreground: var(--pill-foreground);
+  --button-pill-icon: var(--pill-icon);
+  --style-code-fill: var(--well-fill);
+  --style-panel-fill: var(--popover-fill);
+  --style-settings-background: var(--card-settings-fill) padding-box, var(--raised-rim) border-box;
+  --style-overlay-background: var(--popover-fill) padding-box, var(--popover-rim) border-box;
+  --style-border: transparent;
+  --style-backdrop: none;
+  --pane-tab-fill: var(--raised-fill);
+  --pane-tab-shadow: var(--raised-shadow);
+  --contrast-muted-foreground: light-dark(
+    var(--muted-foreground),
+    color-mix(in srgb, var(--muted-foreground) 45%, var(--foreground))
+  );
+  --contrast-placeholder: var(--contrast-muted-foreground);
+  --contrast-dim-foreground: var(--contrast-muted-foreground);
   --popover-fill: var(--style-container-fill, var(--raised-fill));
   --card-background: initial;
   --card-settings-background: initial;
