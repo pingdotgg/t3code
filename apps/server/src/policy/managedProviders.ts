@@ -23,6 +23,7 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { zcodeClient } from "@t3tools/provider-zcode/client";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
 interface KnownDriver {
@@ -50,6 +51,7 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
   museClient,
   openCodeClient,
   piClient,
+  zcodeClient,
   acpRegistryClient,
 ];
 
