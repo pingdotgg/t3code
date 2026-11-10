@@ -25,9 +25,14 @@ const LABEL_MAX_LENGTH = 80;
 export function reportLabel(label: string | undefined): string | undefined {
   const firstLine = label?.trim().split("\n")[0]?.trim();
   if (firstLine === undefined || firstLine.length === 0) return undefined;
-  return firstLine.length > LABEL_MAX_LENGTH
-    ? `${firstLine.slice(0, LABEL_MAX_LENGTH - 1)}…`
-    : firstLine;
+  if (firstLine.length <= LABEL_MAX_LENGTH) return firstLine;
+  let end = LABEL_MAX_LENGTH - 1;
+  const previous = firstLine.charCodeAt(end - 1);
+  const next = firstLine.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${firstLine.slice(0, end)}…`;
 }
 
 const KIND_NOUN: Record<BackgroundWork["kind"], readonly [string, string]> = {
@@ -217,6 +222,7 @@ export function notificationTurnItem(
     createdBy: _createdBy,
     creationSource: _creationSource,
     scheduledTaskId: _scheduledTaskId,
+    modelSwitch: _modelSwitch,
     ...base
   } = item;
   return { ...base, type: "notification", ...notification };

@@ -1,9 +1,9 @@
+import * as NodeNet from "node:net";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as NodeNet from "node:net";
 import { hashDirectory, type MemoOptions } from "../Command/Memo.ts";
 import { havePropsChanged, isResolved } from "../Diff.ts";
 import * as LocalProvider from "../Local/LocalProvider.ts";
@@ -47,9 +47,7 @@ interface FrameworkBuildOutputSlice {
   readonly serverModules: Array<{ readonly name: string }> | undefined;
 }
 
-export class FrameworkServerError extends Data.TaggedError(
-  "FrameworkServerError",
-)<{
+export class FrameworkServerError extends Data.TaggedError("FrameworkServerError")<{
   readonly framework: string;
   readonly message: string;
   readonly cause?: unknown;
@@ -62,9 +60,7 @@ const definedEnv = (
   env === undefined
     ? undefined
     : Object.fromEntries(
-        Object.entries(env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
       );
 
 /**
@@ -311,9 +307,7 @@ export const ServerProviderLive = () =>
         hashDirectory({
           cwd: root,
           memo:
-            props.memo === true ||
-            props.memo === undefined ||
-            props.memo === false
+            props.memo === true || props.memo === undefined || props.memo === false
               ? {}
               : props.memo,
         }).pipe(
@@ -333,14 +327,8 @@ export const ServerProviderLive = () =>
           memo: {
             // Next.js serves from its project root, not a dedicated output directory.
             exclude:
-              path.resolve(distDir) ===
-              path.resolve(initialCwd, props.root ?? ".")
-                ? [
-                    "**/node_modules/**",
-                    "**/.git/**",
-                    "**/.alchemy/**",
-                    ".next/cache/**",
-                  ]
+              path.resolve(distDir) === path.resolve(initialCwd, props.root ?? ".")
+                ? ["**/node_modules/**", "**/.git/**", "**/.alchemy/**", ".next/cache/**"]
                 : [],
             lockfile: false,
           },
@@ -353,12 +341,10 @@ export const ServerProviderLive = () =>
         const root = path.resolve(initialCwd, props.root ?? ".");
         const distDir = built.distDirectory ?? path.join(root, "dist");
         if (!(yield* fs.exists(distDir))) {
-          return yield* Effect.fail(
-            new FrameworkServerError({
-              framework: props.framework,
-              message: `The build produced no output directory at ${distDir}`,
-            }),
-          );
+          return yield* new FrameworkServerError({
+            framework: props.framework,
+            message: `The build produced no output directory at ${distDir}`,
+          });
         }
         const entryName = built.serverModules?.[0]?.name;
         return {
@@ -402,9 +388,7 @@ export const ServerProviderLive = () =>
           if (!(yield* fs.exists(distDir))) return { action: "update" };
           const outHash = yield* hashOutput(news, distDir);
           return {
-            action: Equal.equals(outHash, output.hash.output)
-              ? "noop"
-              : "update",
+            action: Equal.equals(outHash, output.hash.output) ? "noop" : "update",
           };
         }),
         reconcile: Effect.fn(function* ({ news }) {
@@ -419,10 +403,7 @@ export const ServerProviderLive = () =>
           // Some frameworks (Next.js) serve from the project root itself.
           // Only dedicated output directories inside that root are disposable.
           // Canonical paths also protect roots reached through a symlink.
-          const relative = path.relative(
-            yield* fs.realPath(root),
-            yield* fs.realPath(distDir),
-          );
+          const relative = path.relative(yield* fs.realPath(root), yield* fs.realPath(distDir));
           if (
             relative === "" ||
             relative === ".." ||
@@ -466,22 +447,18 @@ const resolveDevPort = Effect.fn(function* (options: {
   const { framework, port, host, strictPort } = options;
   if (yield* isPortFree(port, host)) return port;
   if (strictPort) {
-    return yield* Effect.fail(
-      new FrameworkServerError({
-        framework,
-        message: `Port ${port} is already in use and \`dev.strictPort\` is set`,
-      }),
-    );
+    return yield* new FrameworkServerError({
+      framework,
+      message: `Port ${port} is already in use and \`dev.strictPort\` is set`,
+    });
   }
   for (let candidate = port + 1; candidate <= port + 100; candidate++) {
     if (yield* isPortFree(candidate, host)) return candidate;
   }
-  return yield* Effect.fail(
-    new FrameworkServerError({
-      framework,
-      message: `No free port found between ${port} and ${port + 100}`,
-    }),
-  );
+  return yield* new FrameworkServerError({
+    framework,
+    message: `No free port found between ${port} and ${port + 100}`,
+  });
 });
 
 /**
@@ -494,10 +471,7 @@ const resolveDevPort = Effect.fn(function* (options: {
  * server itself still listens on every interface.
  */
 const normalizeAdvertisedUrl = (url: string) =>
-  url.replace(
-    /^(https?:\/\/)(?:0\.0\.0\.0|\[::\]|\[0+(?::0+){7}\])(?=[:/]|$)/,
-    "$1localhost",
-  );
+  url.replace(/^(https?:\/\/)(?:0\.0\.0\.0|\[::\]|\[0+(?::0+){7}\])(?=[:/]|$)/, "$1localhost");
 
 /**
  * The `alchemy dev` variant: runs the framework's own dev server (native
@@ -508,10 +482,7 @@ const normalizeAdvertisedUrl = (url: string) =>
 export const ServerProviderLocal = () =>
   LocalProvider.make(
     Server,
-    import.meta.resolve(
-      `./ServerLocal${moduleExtension(import.meta.url)}`,
-      import.meta.url,
-    ),
+    import.meta.resolve(`./ServerLocal${moduleExtension(import.meta.url)}`, import.meta.url),
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
