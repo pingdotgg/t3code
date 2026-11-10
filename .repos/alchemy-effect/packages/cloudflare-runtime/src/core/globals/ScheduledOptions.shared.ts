@@ -10,7 +10,13 @@
  * - `format=json` — respond with the full `FetcherScheduledResult` JSON
  *   instead of the plain-text outcome
  */
-export const PATH_SCHEDULED = "/cdn-cgi/handler/scheduled";
+export const PATH_SCHEDULED = "/cdn-cgi/local/scheduled";
+
+/**
+ * Miniflare's former `CorePaths.SCHEDULED`. Kept for tooling that still
+ * triggers scheduled handlers there.
+ */
+export const PATH_SCHEDULED_HANDLER = "/cdn-cgi/handler/scheduled";
 
 /**
  * Legacy Miniflare path for triggering scheduled handlers

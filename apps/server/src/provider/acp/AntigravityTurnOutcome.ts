@@ -8,6 +8,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
@@ -44,19 +45,33 @@ interface LastStep {
   readonly payload: Uint8Array | null;
 }
 
+class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLogError>()(
+  "AntigravitySessionLogError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the Antigravity session log.";
+  }
+}
+
+const sessionLogError = (cause: unknown) => new AntigravitySessionLogError({ cause });
+
 const readSteps = <A>(file: string, read: (database: NodeSqlite.DatabaseSync) => A) =>
-  Effect.try(() => {
-    const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
-    try {
-      database.exec("PRAGMA busy_timeout = 100");
-      const hasSteps =
-        database
-          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
-          .get() !== undefined;
-      return hasSteps ? read(database) : undefined;
-    } finally {
-      database.close();
-    }
+  Effect.try({
+    try: () => {
+      const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
+      try {
+        database.exec("PRAGMA busy_timeout = 100");
+        const hasSteps =
+          database
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
+            .get() !== undefined;
+        return hasSteps ? read(database) : undefined;
+      } finally {
+        database.close();
+      }
+    },
+    catch: sessionLogError,
   });
 
 const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
@@ -178,22 +193,25 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     DateTime.now.pipe(Effect.map((now) => turnOutcome(result.stopReason, undefined, now)));
   if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
   const segments = [...conversationSegments, `${sessionId}.db`];
-  const before = yield* Effect.tryPromise(async () => {
-    const root = await antigravityProfileRoot(profileDirectory);
-    if (root === undefined) return undefined;
-    if ((await antigravityManagedPath(root, conversationSegments, "directory")) === undefined) {
-      return undefined;
-    }
-    const database = await antigravityManagedPath(root, segments, "file");
-    // A path that exists but fails the proof is a link or other foreign entry.
-    if (database === undefined) {
-      const present = await NodeFSP.lstat(NodePath.join(root, ...segments)).then(
-        () => true,
-        () => false,
-      );
-      return present ? undefined : { root, identity: undefined, startIndex: -1 };
-    }
-    return { root, identity: database.info, startIndex: undefined };
+  const before = yield* Effect.tryPromise({
+    try: async () => {
+      const root = await antigravityProfileRoot(profileDirectory);
+      if (root === undefined) return undefined;
+      if ((await antigravityManagedPath(root, conversationSegments, "directory")) === undefined) {
+        return undefined;
+      }
+      const database = await antigravityManagedPath(root, segments, "file");
+      // A path that exists but fails the proof is a link or other foreign entry.
+      if (database === undefined) {
+        const present = await NodeFSP.lstat(NodePath.join(root, ...segments)).then(
+          () => true,
+          () => false,
+        );
+        return present ? undefined : { root, identity: undefined, startIndex: -1 };
+      }
+      return { root, identity: database.info, startIndex: undefined };
+    },
+    catch: sessionLogError,
   }).pipe(Effect.orElseSucceed(() => undefined));
   if (before === undefined) {
     yield* Effect.logWarning("The Antigravity session log is not this session's own file.");
@@ -213,9 +231,10 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     result: EffectAcpSchema.PromptResponse,
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
-    const after = yield* Effect.tryPromise(() =>
-      antigravityManagedPath(before.root, segments, "file"),
-    ).pipe(Effect.orElseSucceed(() => undefined));
+    const after = yield* Effect.tryPromise({
+      try: () => antigravityManagedPath(before.root, segments, "file"),
+      catch: sessionLogError,
+    }).pipe(Effect.orElseSucceed(() => undefined));
     const sameFile =
       after !== undefined &&
       (before.identity === undefined ||
