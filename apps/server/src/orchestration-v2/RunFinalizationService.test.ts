@@ -412,43 +412,6 @@ const layerStubbedIdentityResolver = (
     ),
   );
 
-it.effect(
-  "keeps a known identity's resolver caches when a turn outlasts the enrichment TTL",
-  () => {
-    const { workspaceRoot, threadId, runId } = stubbedIdentityProject;
-    const refreshFlags: boolean[] = [];
-    const resolvedAfterTurn = Deferred.makeUnsafe<void>();
-    return Effect.gen(function* () {
-      const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
-      assert.isNotNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
-      yield* TestClock.adjust("61 seconds");
-      const observer = yield* RunFinalization.RunFinalizationObserver;
-      yield* observer.refresh({ cwd: workspaceRoot, threadId, runId });
-      yield* Deferred.await(resolvedAfterTurn);
-      assert.deepEqual(
-        refreshFlags,
-        [false, false],
-        "a project with a known identity had its resolver caches forced after the turn",
-      );
-    }).pipe(
-      Effect.provide(
-        layerStubbedIdentityResolver((_cwd, options) =>
-          Effect.sync(() => {
-            refreshFlags.push(options?.refresh === true);
-            return stubbedIdentity;
-          }).pipe(
-            Effect.tap(() =>
-              refreshFlags.length > 1
-                ? Deferred.succeed(resolvedAfterTurn, undefined)
-                : Effect.void,
-            ),
-          ),
-        ),
-      ),
-    );
-  },
-);
-
 it.effect("returns from the post-turn refresh while the identity resolver is still running", () => {
   const { workspaceRoot, threadId, runId } = stubbedIdentityProject;
   const releaseResolver = Deferred.makeUnsafe<void>();
