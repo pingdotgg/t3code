@@ -66,6 +66,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -2632,8 +2633,12 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 
   // The forked transcript keeps the parent's /goal, so its Stop hook would block side-chat turns.
-  it.effect("clears an inherited goal on a side chat fork before its first turn", () =>
-    Effect.scoped(
+  it.effect("clears an inherited goal on a side chat fork before its first turn", () => {
+    const warnings: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push([message].flat());
+    });
+    return Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2643,7 +2648,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         const prompts: Array<{ readonly session: string | undefined; readonly text: string }> = [];
         const closedSessions: Array<string | undefined> = [];
         let goalClearUuid: string | undefined;
-        let goalClearReply: "success" | "error" | "end" | "silent" = "success";
+        let goalClearReply: "success" | "error" | "end" | "silent" | "offer-fails" = "success";
         const goalClearOffered = yield* Deferred.make<void>();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -2675,6 +2680,8 @@ describe("ClaudeAdapterV2 native fork", () => {
                       if (!text.startsWith("/goal clear")) return;
                       goalClearUuid = message.uuid;
                       if (goalClearReply === "end") return yield* Queue.end(messages);
+                      if (goalClearReply === "offer-fails")
+                        return yield* Effect.die("offer failed");
                       if (goalClearReply === "silent") {
                         return yield* Deferred.succeed(goalClearOffered, undefined);
                       }
@@ -2819,10 +2826,11 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.strictEqual(sideChat.nativeMetadata?.forkHeadMessageId, goalClearUuid);
 
         // The clear is best effort: a side chat whose clear fails still opens at the inherited head.
-        for (const reply of ["error", "end", "silent"] as const) {
+        for (const reply of ["error", "end", "silent", "offer-fails"] as const) {
           goalClearReply = reply;
           prompts.length = 0;
           closedSessions.length = 0;
+          warnings.length = 0;
           const threadId = ThreadId.make(`thread-claude-goal-side-chat-${reply}`);
           const failedRuntime = yield* adapter.openSession({
             threadId: sourceThreadId,
@@ -2840,6 +2848,13 @@ describe("ClaudeAdapterV2 native fork", () => {
           }
           const failedSideChat = yield* Fiber.join(fork);
           assert.deepEqual(closedSessions, ["side-chat-native-session"], reply);
+          assert.include(
+            warnings.map((message) => message[0]),
+            "orchestration-v2.claude-side-chat-goal-clear-failed",
+            reply,
+          );
+          // The errored result's free text can quote the transcript, so it stays out of logs.
+          assert.notInclude(JSON.stringify(warnings), "Goal cleared:", reply);
           assert.strictEqual(
             failedSideChat.nativeMetadata?.forkHeadMessageId,
             "inherited-fork-head",
@@ -2872,11 +2887,12 @@ describe("ClaudeAdapterV2 native fork", () => {
             McpProviderSessions.layer,
             NodeServices.layer,
             NodeCrypto.layer,
+            Logger.layer([logger]),
           ),
         ),
       ),
-    ),
-  );
+    );
+  });
 });
 
 function makeFakeClaudeCli(answerSetServers = true) {
