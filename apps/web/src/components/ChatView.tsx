@@ -3687,7 +3687,7 @@ export default function ChatView(props: ChatViewProps) {
                         className="empty:hidden"
                       />
                       {hasThreadNow ? (
-                        <div className="ps-2.5 pe-3.25 pt-2">
+                        <div className="surface-composer-banner ps-2.5 pe-3.25 pt-2">
                           <ThreadNow
                             key={routeThreadKey}
                             attention={attentionNow}
