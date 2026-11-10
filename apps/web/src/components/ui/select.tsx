@@ -36,6 +36,7 @@ const selectTriggerVariants = cva(
         xs: "h-7 gap-1 rounded-md ps-[calc(--spacing(2)-1px)] pe-[calc(--spacing(1)-0.5px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
       },
     },
+    compoundVariants: [{ variant: "well", size: "compact", className: "text-prompt" }],
   },
 );
 

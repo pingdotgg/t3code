@@ -373,7 +373,8 @@ function AboutVersionSection() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label="Update track"
                 disabled={switchChannel !== null || updateRun !== null}
@@ -409,7 +410,12 @@ function AboutVersionSection() {
                 );
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Update track">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label="Update track"
+              >
                 <SelectValue>{HOSTED_APP_CHANNEL_LABEL}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -750,7 +756,7 @@ function AutoSettleDaysInput({
   return (
     <InputGroup className="w-full sm:w-24">
       <InputGroupInput
-        size="sm"
+        size="settings"
         type="number"
         min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
@@ -784,25 +790,28 @@ function useTranslatedSearchableSetting() {
 }
 
 /** Restores every device setting from the settings and appearance headers. */
-export function RestoreDeviceDefaultsButton({
-  onRestored,
-  compact = false,
-}: {
-  onRestored?: () => void;
-  compact?: boolean;
-}) {
+export function RestoreDeviceDefaultsButton({ onRestored }: { onRestored?: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
-    <Button
-      size={compact ? "icon-sm" : "xs"}
-      variant="ghost"
-      aria-label={compact ? "Restore device defaults" : undefined}
-      disabled={changedSettingLabels.length === 0}
-      onClick={() => void restoreDefaults()}
-    >
-      <RotateCcwIcon className="size-3.5" />
-      {compact ? null : <span>Restore device defaults</span>}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          size="standard"
+          variant="ghost"
+          aria-label="Restore device defaults"
+          disabled={changedSettingLabels.length === 0}
+          onClick={() => void restoreDefaults()}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          <span className="max-sm:sr-only">Restore device defaults</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {changedSettingLabels.length === 0
+          ? "Device settings already use their defaults."
+          : "Restore device defaults"}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -897,7 +906,12 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={gt("Project order")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-44"
+                aria-label={gt("Project order")}
+              >
                 <SelectValue>
                   {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarProjectSortOrder])}
                 </SelectValue>
@@ -1045,7 +1059,8 @@ export function GeneralSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full sm:w-40"
                   aria-label={gt("Quit shortcut behavior")}
                 >
@@ -1136,7 +1151,8 @@ export function GeneralSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label={gt("Timestamp format")}
               >
@@ -1222,7 +1238,8 @@ export function ChatSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-auto min-w-0 max-w-full"
                 aria-label="Send shortcut"
               >
@@ -1305,7 +1322,12 @@ export function ChatSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-auto min-w-0" aria-label="Follow-up behavior">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-auto min-w-0"
+                aria-label="Follow-up behavior"
+              >
                 <SelectValue>
                   {settings.followUpBehavior === "queue" ? "Queue" : "Steer"}
                 </SelectValue>
@@ -1461,7 +1483,12 @@ function DiffColorsSettingsRow() {
                 updateSettings({ diffColorScheme: value });
             }}
           >
-            <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Diff colors">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              className="w-full min-w-0"
+              aria-label="Diff colors"
+            >
               <span
                 aria-hidden="true"
                 className={
@@ -1515,7 +1542,12 @@ export function DiffsSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Diff layout">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label="Diff layout"
+              >
                 <SelectValue>{DIFF_LAYOUT_LABELS[settings.diffLayout]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1579,7 +1611,8 @@ export function DiffsSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label="Default diff file state"
               >
@@ -1667,7 +1700,12 @@ function ScopedCompactIdleThreadsRow() {
             if (mode) updateSettings({ idleCompaction: mode.value });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
+          <SelectTrigger
+            variant="well"
+            size="compact"
+            className="w-full sm:w-56"
+            aria-label="Compact idle threads"
+          >
             <SelectValue>
               {(value: string | null) =>
                 value === null
@@ -1777,7 +1815,7 @@ export function ThreadsSettingsPanel() {
           }
           control={
             <DraftInput
-              size="sm"
+              size="settings"
               className="w-full sm:w-72"
               value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
               onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
@@ -2091,7 +2129,12 @@ export function ThreadsSettingsPanel() {
                   }
                 }}
               >
-                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Response streaming">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full sm:w-56"
+                  aria-label="Response streaming"
+                >
                   <SelectValue>
                     {(value: ResponseStreamingMode | null) =>
                       value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
