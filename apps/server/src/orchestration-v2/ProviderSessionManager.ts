@@ -213,6 +213,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly ownProviderThreadIds: ReadonlyArray<ProviderThreadId>;
     readonly throughRunOrdinal: number;
+    /** Keeps the session when it succeeds with true, checked atomically with the removal. */
+    readonly keepIf?: Effect.Effect<boolean>;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
   }) => Effect.Effect<boolean, ProviderSessionManagerV2Error>;
@@ -994,47 +996,48 @@ export const layerWithOptions = (
           if (candidate === undefined) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
-          const remove = Effect.zip(
-            Ref.modify(sessions, (current) => {
-              const existing = current.get(key);
-              if (existing !== candidate) {
-                return [existing === undefined ? "gone" : "changed", current] as const;
-              }
-              if (
-                input.onlyIfIdleGeneration !== undefined &&
-                (existing.busyTurns.size > 0 ||
-                  existing.idleGeneration !== input.onlyIfIdleGeneration)
-              ) {
-                return ["kept", current] as const;
-              }
-              const own = input.keepIfBusyOtherThan;
-              if (
-                own !== undefined &&
-                [...existing.busyTurns].some((turnKey) => !isOwnBusyTurn(turnKey, own))
-              ) {
-                // The caller settled its own turns; one whose end never arrives must not keep
-                // the session from going idle once the turn it was kept for ends.
-                const kept = new Map(current);
-                kept.set(key, {
-                  ...existing,
-                  busyTurns: new Set(
-                    [...existing.busyTurns].filter((turnKey) => !isOwnBusyTurn(turnKey, own)),
-                  ),
-                });
-                return ["kept", kept] as const;
-              }
-              const updated = new Map(current);
-              updated.delete(key);
-              return ["removed", updated] as const;
-            }),
-            DateTime.now,
+          const remove = (keepRequested: boolean) =>
+            Effect.zip(
+              Ref.modify(sessions, (current) => {
+                const existing = current.get(key);
+                if (existing !== candidate) {
+                  return [existing === undefined ? "gone" : "changed", current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyTurns.size > 0 ||
+                    existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return ["kept", current] as const;
+                }
+                const own = input.keepIfBusyOtherThan;
+                if (
+                  keepRequested ||
+                  (own !== undefined &&
+                    [...existing.busyTurns].some((turnKey) => !isOwnBusyTurn(turnKey, own)))
+                ) {
+                  if (own === undefined) return ["kept", current] as const;
+                  // The caller settled its own turns; one whose end never arrives must not keep
+                  // the session from going idle once the turn it was kept for ends.
+                  const kept = new Map(current);
+                  kept.set(key, {
+                    ...existing,
+                    busyTurns: new Set(
+                      [...existing.busyTurns].filter((turnKey) => !isOwnBusyTurn(turnKey, own)),
+                    ),
+                  });
+                  return ["kept", kept] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(key);
+                return ["removed", updated] as const;
+              }),
+              DateTime.now,
+            );
+          const [outcome, releasedAt] = yield* (input.keepIf ?? Effect.succeed(false)).pipe(
+            Effect.flatMap(remove),
+            candidate.requestEventPermit.withPermits(1),
           );
-          const [outcome, releasedAt] = yield* Effect.gen(function* () {
-            if (input.keepIf !== undefined && (yield* input.keepIf)) {
-              return ["kept" as const, yield* DateTime.now] as const;
-            }
-            return yield* remove;
-          }).pipe(candidate.requestEventPermit.withPermits(1));
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
@@ -2669,6 +2672,7 @@ export const layerWithOptions = (
               providerThreadIds: input.ownProviderThreadIds,
               throughRunOrdinal: input.throughRunOrdinal,
             },
+            ...(input.keepIf === undefined ? {} : { keepIf: input.keepIf }),
           });
           // Scope, not presence: open can install a replacement under the same id meanwhile, and
           // a kept entry is rewritten with the same scope.

@@ -1309,6 +1309,8 @@ const make = Effect.gen(function* () {
             providerSessionId,
             ownProviderThreadIds,
             throughRunOrdinal,
+            // A promoted follow-up may not have marked its turn busy yet.
+            keepIf: laterRunActive.pipe(Effect.orElseSucceed(() => true)),
             reason: "manual_shutdown",
             detail: FORCE_STOP_REASON,
           })
