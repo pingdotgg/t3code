@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DeviceBootError,
+  DeviceError,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
@@ -13,11 +14,13 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -26,6 +29,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
@@ -36,6 +40,7 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -43,7 +48,7 @@ const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBoo
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
 it.effect.each([400, 500])(
-  "distinguishes screenshot HTTP rejection (%s) from transport failure",
+  "retries a hub-rejected (%s) screenshot with simctl only on iOS 26 and older",
   (status) =>
     Effect.gen(function* () {
       const operations = makeDeviceHubOperations({
@@ -54,21 +59,25 @@ it.effect.each([400, 500])(
             HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
           ),
         ),
-        run: () => Effect.die("Screenshot does not run a command"),
-        androidAvailable: Effect.succeed(false),
+        run: () => Effect.succeed({ code: 0, stdout: "iVBORw==", stderr: "" }),
+        platformAvailable: () => Effect.succeed(false),
       });
-      const result = yield* operations
-        .screenshot({
-          id: "phone",
-          name: "Phone",
-          version: "iOS 26.3",
-          platform: "ios",
-          booted: true,
-          physical: false,
-        })
-        .pipe(Effect.result);
-      expect(result).toMatchObject({
+      const screenshot = (version: string) =>
+        operations
+          .screenshot({
+            id: "phone",
+            name: "Phone",
+            version,
+            platform: "ios",
+            booted: true,
+            physical: false,
+          })
+          .pipe(Effect.result);
+      expect(yield* screenshot("iOS 27.0")).toMatchObject({
         failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+      expect(yield* screenshot("iOS 26.3")).toMatchObject({
+        success: new Uint8Array([137, 80, 78, 71]),
       });
     }),
 );
@@ -99,7 +108,9 @@ const fixture = Effect.fn("fixture")(function* (
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
+  const iosAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
   const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
@@ -164,6 +175,11 @@ const fixture = Effect.fn("fixture")(function* (
       if (request.url.endsWith("/grid/api/start")) {
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
       }
+      if (listing.hangs) {
+        return yield* Deferred.succeed(listing.requested, undefined).pipe(
+          Effect.andThen(Effect.never),
+        );
+      }
       return HttpClientResponse.fromWeb(
         request,
         Response.json({
@@ -201,7 +217,8 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        androidAvailable: Ref.get(androidAvailable),
+        platformAvailable: (platform) =>
+          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -314,6 +331,7 @@ const fixture = Effect.fn("fixture")(function* (
   };
   return {
     service,
+    host,
     starts,
     agentStarts,
     agentStops,
@@ -325,6 +343,8 @@ const fixture = Effect.fn("fixture")(function* (
     encoderResult,
     discoveryErrors,
     androidAvailable,
+    iosAvailable,
+    listing,
     endDevice,
   };
 });
@@ -358,6 +378,61 @@ describe("device setup consent", () => {
         detail: startupError.message,
       });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      name: "a Windows host",
+      exitCode: 1,
+      stderr: "private diagnostics",
+      expected:
+        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+    },
+    {
+      name: "a Windows host returning 9009",
+      exitCode: 9009,
+      stderr: "private diagnostics",
+      expected:
+        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+    },
+    {
+      name: "missing Node on a Windows host with a POSIX shell",
+      exitCode: 1,
+      stderr: "private diagnostics\nNode is missing from the non-interactive SSH PATH",
+      expected:
+        "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+    },
+  ])(
+    "reports SSH probe failure on $name through readiness and host status",
+    ({ exitCode, stderr, expected }) =>
+      Effect.gen(function* () {
+        const failure = new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step: "probe",
+          cause: new SshDeviceHost.SshWindowsHostError({
+            cause: new SshCommandError({
+              command: ["ssh", "private arguments"],
+              exitCode,
+              stderr,
+              message: "private diagnostics",
+            }),
+          }),
+        });
+        const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* readiness.pipe(Effect.flip);
+          expect(error).toMatchObject({ reason: expected, cause: failure });
+          expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+            status: "failed",
+            detail: expected,
+          });
+        }
+      }).pipe(Effect.scoped),
   );
 
   it.effect("listing and provider startup do not start helpers before consent", () =>
@@ -534,6 +609,86 @@ describe("device setup consent", () => {
   );
 });
 
+const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
+  label: (provider) => Effect.succeed(provider),
+  read: (references) => Effect.succeed(references.map(() => undefined)),
+  invalidate: () => Effect.void,
+});
+
+it.effect.each([1, 9009])(
+  "Test connection preserves Windows exit %s guidance across the wire",
+  (exitCode) =>
+    Effect.gen(function* () {
+      const { host } = yield* fixture();
+      const service = yield* DeviceService.make.pipe(
+        Effect.provideService(DeviceHost.DeviceHost, host),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () => Effect.die("Testing SSH does not install local tools"),
+        }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
+            const config = command.args.includes("-G");
+            const windows = command.args.includes("echo %OS% $env:OS");
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(123),
+                stdout: Stream.make(
+                  new TextEncoder().encode(
+                    config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
+                  ),
+                ),
+                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
+                all: Stream.empty,
+                exitCode: Effect.succeed(
+                  ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
+                ),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                stdin: Sink.drain,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              }),
+            );
+          }),
+        ),
+      );
+      const error = yield* service
+        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostUnavailableError",
+        hostId: "windows",
+        hostLabel: "Windows test",
+        reason:
+          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+      });
+      const codec = Schema.fromJsonString(DeviceError);
+      const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
+      expect(decoded.message).toBe(
+        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+      );
+      expect(decoded.message).not.toContain("private SSH diagnostics");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest(),
+          layerSecretResolver,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
+          NodeCrypto.layer,
+          NetService.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+);
+
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
@@ -689,6 +844,101 @@ it.effect("keeps the cause from the hub's error in discovery warnings, without t
   }).pipe(Effect.scoped),
 );
 
+it.effect(
+  "keeps the last simulators while simctl cannot list them, and drops them once it can",
+  () =>
+    Effect.gen(function* () {
+      const { service, devices, discoveryErrors } = yield* fixture();
+      const simulator = {
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      } as const;
+      devices.push(simulator, { ...simulator, id: DeviceId.make("pixel"), platform: "android" });
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      yield* service.agentReadinessIfSupported();
+      devices.length = 0;
+      yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
+      const failed = yield* service.list;
+      expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
+      expect(failed.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: simctlMessage,
+        incompletePlatforms: ["ios"],
+      });
+      yield* service.agentReadinessIfSupported();
+      expect((yield* service.state).hostStatuses.local).toEqual(failed.hostStatuses.local);
+      yield* Ref.set(discoveryErrors, []);
+      const recovered = yield* service.list;
+      expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+      expect(recovered.hostStatuses.local).toEqual({ status: "ready" });
+    }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  {
+    ios: true,
+    android: true,
+    incompletePlatforms: ["ios", "android"],
+    kept: ["iphone", "Pixel_API_35"],
+  },
+  { ios: true, android: false, incompletePlatforms: ["ios"], kept: ["iphone"] },
+  { ios: false, android: true, incompletePlatforms: ["android"], kept: ["Pixel_API_35"] },
+] as const)(
+  "keeps the devices of listable platforms when the hub does not answer within 40 seconds (iOS: $ios, Android SDK: $android)",
+  ({ ios, android, incompletePlatforms, kept }) =>
+    Effect.gen(function* () {
+      const { service, devices, listing, androidAvailable, iosAvailable } = yield* fixture();
+      yield* Ref.set(androidAvailable, android);
+      yield* Ref.set(iosAvailable, ios);
+      devices.push({
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      });
+      yield* service.configure({ enabled: true });
+      listing.hangs = true;
+      const listed = yield* service.list.pipe(Effect.forkScoped);
+      yield* Deferred.await(listing.requested);
+      yield* TestClock.adjust("40 seconds");
+      const timedOut = yield* Fiber.join(listed);
+      expect(timedOut.devices.map((device) => device.id)).toEqual(kept);
+      expect(timedOut.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: "The device hub did not answer within 40 seconds.",
+        incompletePlatforms,
+      });
+    }).pipe(Effect.scoped),
+);
+
+it.effect("does not open a retained pre-boot entry when the post-boot listing is incomplete", () =>
+  Effect.gen(function* () {
+    const afterBoot = { run: Effect.void as Effect.Effect<void> };
+    const android = yield* fixture(Effect.suspend(() => afterBoot.run));
+    afterBoot.run = Effect.sync(() => {
+      android.listing.hangs = true;
+    });
+    yield* android.service.configure({ enabled: true });
+    const opening = yield* android.service
+      .open({
+        threadId: ThreadId.make("boot-timeout"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip, Effect.forkScoped);
+    yield* Deferred.await(android.listing.requested);
+    yield* TestClock.adjust("40 seconds");
+    expect((yield* Fiber.join(opening))._tag).toBe("DeviceNotFoundError");
+    expect((yield* android.service.state).sessions).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -824,7 +1074,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -986,7 +1236,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         agentEndpoint: () =>
           Effect.succeed({
@@ -1108,7 +1358,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1180,7 +1430,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1437,7 +1687,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer, NodeCrypto.layer),
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
     ),
   ),
 );
@@ -1496,6 +1751,7 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({ enableDeviceSupport: true }),
+        layerSecretResolver,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
         NodeCrypto.layer,
         NetService.layer,
