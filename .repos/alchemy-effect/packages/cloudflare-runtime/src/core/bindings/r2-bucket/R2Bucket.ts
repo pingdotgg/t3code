@@ -1,19 +1,15 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const R2BucketWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/r2-bucket/R2Bucket.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/r2-bucket/R2Bucket.worker"),
 };
 const R2BucketS3Worker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/r2-bucket/R2BucketS3.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/r2-bucket/R2BucketS3.worker"),
 };
 import * as Storage from "../../globals/Storage.ts";
 import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
@@ -59,9 +55,7 @@ export class R2Bucket extends Plugin.Service<
   }
 >()("cloudflare-runtime/plugin/R2Bucket") {}
 
-const r2Designator = (
-  props: R2ServiceProps,
-): WorkerdConfig.ServiceDesignator => ({
+const r2Designator = (props: R2ServiceProps): WorkerdConfig.ServiceDesignator => ({
   name: SERVICE_R2,
   props: { json: JSON.stringify(props) },
 });
@@ -75,27 +69,24 @@ export const R2BucketLive = Layer.effect(
     const enableControlEndpoints = yield* Plugin.UnsafeEnableControlEndpoints;
 
     const makeStorageService = Effect.gen(function* () {
-      const storageDiskPath =
-        "disk" in storage ? storage.disk?.path : undefined;
+      const storageDiskPath = "disk" in storage ? storage.disk?.path : undefined;
       if (!storageDiskPath) {
-        return yield* new ConfigError({
+        return yield* ConfigError.make({
           subtag: "R2Bucket",
-          message:
-            "Cannot configure R2 persistence: the Storage service has no disk path.",
+          message: "Cannot configure R2 persistence: the Storage service has no disk path.",
           hint: "Configure a disk-backed storage layer (`Storage.layerDisk` or `Storage.layerTemp`).",
         });
       }
       const persistPath = path.join(storageDiskPath, "r2");
       yield* fs.makeDirectory(persistPath, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigError({
-              subtag: "R2Bucket",
-              message: `Failed to create R2 persistence directory "${persistPath}": ${cause.message}`,
-              hint: "Ensure the storage directory is writable.",
-              detail: { persistPath },
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          ConfigError.make({
+            subtag: "R2Bucket",
+            message: `Failed to create R2 persistence directory "${persistPath}": ${cause.message}`,
+            hint: "Ensure the storage directory is writable.",
+            detail: { persistPath },
+            cause,
+          }),
         ),
       );
       return {
@@ -118,22 +109,14 @@ export const R2BucketLive = Layer.effect(
         for (const [bucketName, credentials] of s3Buckets) {
           const binding = `BUCKET_${index++}`;
           buckets[bucketName] = { binding, credentials };
-          bindings.push({
-            name: binding,
-            r2Bucket: r2Designator({ bucketName }),
-          });
+          bindings.push({ name: binding, r2Bucket: r2Designator({ bucketName }) });
         }
         return {
           name: "r2:s3",
           worker: {
             compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
-            modules: formatInternalWorkerModules(
-              yield* Effect.promise(R2BucketS3Worker.worker),
-            ),
-            bindings: [
-              { name: BINDING_R2_S3_BUCKETS, json: JSON.stringify(buckets) },
-              ...bindings,
-            ],
+            modules: formatInternalWorkerModules(yield* Effect.promise(R2BucketS3Worker.worker)),
+            bindings: [{ name: BINDING_R2_S3_BUCKETS, json: JSON.stringify(buckets) }, ...bindings],
           },
           upstreamBindingName: BINDING_R2_S3_UPSTREAM,
           order: 1,
@@ -169,7 +152,7 @@ export const R2BucketLive = Layer.effect(
           defer: Effect.gen(function* () {
             if (!used) return {};
             if (s3Conflicts.size > 0) {
-              return yield* new ConfigError({
+              return yield* ConfigError.make({
                 subtag: "R2Bucket",
                 message: `R2 bucket(s) ${[...s3Conflicts].map((name) => `"${name}"`).join(", ")} were bound with different S3 credentials.`,
                 hint: "Use the same `s3Credentials` for every binding of a bucket.",
@@ -184,9 +167,7 @@ export const R2BucketLive = Layer.effect(
                 // `node:crypto` is used to synchronously compute multipart etags
                 // Node.js compatibility is default-on for the 2026-08-31
                 // internal compatibility date.
-                modules: formatInternalWorkerModules(
-                  yield* Effect.promise(R2BucketWorker.worker),
-                ),
+                modules: formatInternalWorkerModules(yield* Effect.promise(R2BucketWorker.worker)),
                 durableObjectNamespaces: [
                   {
                     className: R2_OBJECT_CLASS_NAME,
@@ -201,25 +182,16 @@ export const R2BucketLive = Layer.effect(
                     name: BINDING_R2_OBJECT,
                     durableObjectNamespace: { className: R2_OBJECT_CLASS_NAME },
                   },
-                  {
-                    name: BINDING_R2_BLOBS,
-                    service: { name: SERVICE_R2_STORAGE },
-                  },
+                  { name: BINDING_R2_BLOBS, service: { name: SERVICE_R2_STORAGE } },
                   ...(enableControlEndpoints
-                    ? [
-                        {
-                          name: BINDING_R2_ENABLE_CONTROL_ENDPOINTS,
-                          json: "true",
-                        },
-                      ]
+                    ? [{ name: BINDING_R2_ENABLE_CONTROL_ENDPOINTS, json: "true" }]
                     : []),
                 ],
               },
             };
             return {
               services: [storageService, r2Service],
-              middlewares:
-                s3Buckets.size > 0 ? [yield* makeS3Middleware(s3Buckets)] : [],
+              middlewares: s3Buckets.size > 0 ? [yield* makeS3Middleware(s3Buckets)] : [],
             };
           }),
         };
@@ -248,22 +220,12 @@ export const local = (props: R2BucketProps): BindingHook<R2Bucket> =>
         { bucketName: props.id ?? props.binding },
         { s3Credentials: props.s3Credentials },
       ),
-      (service): WorkerdConfig.Worker_Binding => ({
-        name: props.binding,
-        r2Bucket: service,
-      }),
+      (service): WorkerdConfig.Worker_Binding => ({ name: props.binding, r2Bucket: service }),
     ),
   );
 
-export const remote = (
-  binding: string,
-  bucketName: string,
-  jurisdiction?: string,
-) =>
+export const remote = (binding: string, bucketName: string, jurisdiction?: string) =>
   makeRemoteBinding(
     { name: binding, type: "r2_bucket", bucketName, jurisdiction, raw: true },
-    (service) => ({
-      name: binding,
-      r2Bucket: service,
-    }),
+    (service) => ({ name: binding, r2Bucket: service }),
   );
