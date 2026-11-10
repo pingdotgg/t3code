@@ -10,6 +10,11 @@ import {
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import {
+  MISTRAL_VIBE_RATE_LIMITED,
+  mistralVibePromptFailure,
+  registerMistralVibeAcpExtensions,
+} from "./mistralVibeAcp.ts";
+import {
   copilotClientCapabilitiesMeta,
   extractCopilotSubagentUpdate,
   isCopilotLostSessionError,
@@ -21,6 +26,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -55,7 +61,6 @@ import {
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
-  type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
@@ -83,48 +88,21 @@ export interface AcpRegistryAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-// Mistral Vibe's application rate-limit code, outside ACP.
-const MISTRAL_VIBE_RATE_LIMITED = -31001;
-
-const MistralVibeSessionRetrying = Schema.Struct({
-  sessionId: Schema.String,
-  category: Schema.Literals(["rate_limited", "server_error", "timed_out", "connection", "unknown"]),
-  detail: Schema.String,
-});
-
-/** Mistral Vibe (v2.25.5) reports SDK backoff through this ACP extension. */
-export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionContext) {
-  return context.runtime.handleExtNotification(
-    "_session/retrying",
-    MistralVibeSessionRetrying,
-    (notice) =>
-      context.reportProviderRetry({
-        sessionId: notice.sessionId,
-        failure: makeProviderFailure({
-          message: notice.detail,
-          class:
-            notice.category === "rate_limited"
-              ? "usage_limit"
-              : notice.category === "unknown"
-                ? "provider_error"
-                : "transport_error",
-          retryable: true,
-        }),
-      }),
-  );
-}
-
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  if (
+    isAcpRequestError(cause) &&
+    agentId === "mistral-vibe" &&
+    cause.code === MISTRAL_VIBE_RATE_LIMITED
+  ) {
+    return mistralVibePromptFailure(cause, DateTime.toEpochMillis(Effect.runSync(DateTime.now)));
+  }
   return makeProviderFailure({
     cause,
     ...(isAcpRequestError(cause)
       ? {
           message: cause.errorMessage,
           code: String(cause.code),
-          class:
-            agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
-              ? ("usage_limit" as const)
-              : ("provider_error" as const),
+          class: "provider_error" as const,
         }
       : { class: "provider_error" as const }),
   });

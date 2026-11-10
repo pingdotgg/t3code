@@ -432,6 +432,15 @@ describe("AcpRegistryAdapterV2", () => {
       code: "-31001",
       retryable: null,
     });
+    const withReset = acpRegistryPromptFailure(
+      "mistral-vibe",
+      new EffectAcpErrors.AcpRequestError({
+        code: -31001,
+        errorMessage: "Rate limit exceeded. Your usage window resets at 2127-01-01T00:00:00Z.",
+      }),
+    );
+    assert.equal(withReset.class, "usage_limit");
+    assert.equal(withReset.resetAt, "2127-01-01T00:00:00.000Z");
     assert.equal(acpRegistryPromptFailure("other-agent", limit).class, "provider_error");
     assert.equal(
       acpRegistryPromptFailure("mistral-vibe", new Error("private defect")).message,

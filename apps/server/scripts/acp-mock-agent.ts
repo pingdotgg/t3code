@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 
@@ -972,6 +973,10 @@ const program = Effect.gen(function* () {
       }
 
       if (vibeRetryOutcome !== undefined) {
+        // Mistral's 429 text names when the quota window resets; the mock does the same.
+        const vibeRetryResetsAt = DateTime.formatIso(
+          DateTime.add(yield* DateTime.now, { minutes: 5 }),
+        );
         if (vibeRetryOutcome === "recovered") {
           yield* Effect.sync(() =>
             writeJsonRpcNotification("session/update", {
@@ -1008,14 +1013,14 @@ const program = Effect.gen(function* () {
             writeJsonRpcNotification("_session/retrying", {
               sessionId: noticeSessionId,
               category: "rate_limited",
-              detail: "Rate limit reached. Retrying. api_key=private-key",
+              detail: `Rate limit reached. Retrying. Your usage window resets at ${vibeRetryResetsAt}. api_key=private-key`,
             }),
           );
         }
         if (vibeRetryOutcome === "failed") {
           return yield* new AcpError.AcpRequestError({
             code: -31001,
-            errorMessage: "Rate limit exceeded for mistral (model: mistral-vibe-cli-latest).",
+            errorMessage: `Rate limit exceeded for mistral (model: mistral-vibe-cli-latest). Your usage window resets at ${vibeRetryResetsAt}.`,
           });
         }
         if (vibeRetryOutcome === "completed") {

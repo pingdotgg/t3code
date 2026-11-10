@@ -3,8 +3,8 @@ export {
   ACP_REGISTRY_PROVIDER,
   acpRegistryPromptFailure,
   makeAcpRegistryAdapterV2,
-  registerMistralVibeAcpExtensions,
 } from "./server/adapter.ts";
+export { registerMistralVibeAcpExtensions } from "./server/mistralVibeAcp.ts";
 export {
   extractDevinSubagentUpdate,
   normalizeDevinSessionUpdate,

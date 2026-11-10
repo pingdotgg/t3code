@@ -2099,6 +2099,11 @@ describe("AcpAdapterV2", () => {
         assert.equal(new Set(retries.map((item) => item.id)).size, 1);
         assert.include(running[0]!.failure.message, "Rate limit reached");
         assert.notInclude(running[0]!.failure.message, "private-key");
+        assert.isDefined(running[0]!.failure.resetAt);
+        assert.isAbove(
+          Date.parse(running[0]!.failure.resetAt!),
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
         const terminal = events.find((event) => event.type === "turn.terminal");
         assert.isDefined(terminal);
         if (terminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
@@ -2106,6 +2111,11 @@ describe("AcpAdapterV2", () => {
           assert.equal(terminal.status, "failed");
           assert.equal(terminal.failure?.class, "usage_limit");
           assert.include(terminal.failure?.message ?? "", "Rate limit exceeded for mistral");
+          assert.isDefined(terminal.failure?.resetAt);
+          assert.isAbove(
+            Date.parse(terminal.failure!.resetAt!),
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
           if (terminal.status === "failed") assert.equal(terminal.retry?.attempt, 2);
         } else if (outcome === "cancelled") {
           assert.equal(terminal.status, "cancelled");
