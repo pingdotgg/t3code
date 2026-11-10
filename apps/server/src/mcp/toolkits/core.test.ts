@@ -260,6 +260,8 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+const fullAccessThreadId = ThreadId.make("mcp-core-full-access-thread");
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -280,6 +282,24 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
+    // Only a full-access thread may have the server read a file for it.
+    const byPath = (name: string, caller: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({
+          name,
+          arguments: { path: "/t3-missing-dir/revenue.html", title: "Revenue", height: 240 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          // html_preview reports failures as plain text, html_render as a declared failure.
+          Effect.map((result) => (result.isError ? JSON.stringify(result.content) : undefined)),
+        );
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    for (const name of ["html_preview", "html_render"]) {
+      expect(yield* byPath(name, scope), name).toContain("only full-access threads");
+      expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
+    }
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
@@ -295,13 +315,15 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () =>
+            getThreadShell: (id) =>
               Effect.succeed({
-                id: threadId,
+                id,
                 deletedAt: null,
                 archivedAt: null,
                 activeRunId: RunId.make("mcp-core-run"),
                 providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
+                interactionMode: "default",
               } as OrchestrationV2ThreadShell),
           }),
         ),
