@@ -1276,6 +1276,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   border-color: var(--outline-stroke, var(--contrast-border)) !important;
   background: var(--outline-fill, transparent);
 }
+@utility surface-badge {
+  background: var(--badge-background, var(--badge-neutral-fill, var(--badge-neutral)));
+  box-shadow: var(--badge-shadow, none);
+}
 @utility surface-floating {
   @apply shadow-sm;
   border-color: var(
@@ -3446,6 +3450,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --popover-fill: initial;
+  --card-shadow: initial;
+  --selected-shadow: initial;
+  --sidebar-selected-shadow: initial;
+  --badge-background: initial;
+  --badge-shadow: initial;
   --checked-indicator-border: initial;
   --kbd-destructive-fill: initial;
   --kbd-destructive-shadow: initial;
@@ -4278,6 +4288,30 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --button-pill-fill: var(--pill-fill);
   --button-pill-rim: var(--pill-rim, var(--raised-rim));
   --button-pill-shadow: var(--pill-shadow);
+  --popover-fill: var(--style-container-fill, var(--raised-fill));
+  --card-background: initial;
+  --card-settings-background: initial;
+  --card-fill: var(--style-container-fill, var(--raised-fill)) !important;
+  --card-settings-fill: var(--card-fill) !important;
+  --card-shadow: var(--raised-shadow);
+  --popover-rim: var(--raised-rim) !important;
+  --popover-shadow: var(--raised-shadow) !important;
+  --tooltip-shadow: var(--raised-shadow) !important;
+  --palette-shadow: var(--raised-shadow) !important;
+  --dialog-shadow: var(--raised-shadow) !important;
+  --app-panel-fill: var(--popover-fill);
+  --app-panel-stroke: transparent;
+  --app-panel-shadow: var(--raised-shadow);
+  --command-input-fill: var(--well-fill);
+  --command-input-shadow: none;
+  --command-footer-fill: var(--well-fill);
+  --command-footer-shadow: none;
+  --badge-background:
+    var(--raised-fill) padding-box, var(--raised-rim) border-box, var(--raised-fill) border-box;
+  --badge-shadow: var(--raised-shadow);
+  --table-header-fill: var(--raised-fill);
+  --inline-code-fill: var(--well-fill);
+  --composer-banner-fill: var(--raised-fill);
 }
 
 :root[data-surface-style]:not(:where([data-surface-style="gradient-rim"])) > body,
