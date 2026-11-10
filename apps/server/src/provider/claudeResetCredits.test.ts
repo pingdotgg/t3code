@@ -38,7 +38,7 @@ const respond = (status: number, body: unknown) =>
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
 
 describe("claudeResetCreditsToContract", () => {
-  it("counts live grants and pins the next usable one", () => {
+  it("counts live grants, pins the next usable one and lists waiting grants", () => {
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract(
         {
@@ -54,6 +54,8 @@ describe("claudeResetCreditsToContract", () => {
             grant({ id: "empty", ends_at: "" }),
             grant({ id: "Not Valid" }),
             grant({ id: "grant_b", resets_left: 3, usable_now: false }),
+            grant({ id: "at_limit", usable_now: false, use_requires_limit: true }),
+            grant({ id: "spent", resets_left: 0 }),
           ],
         },
         NOW,
@@ -62,7 +64,12 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
-      grants: [{ id: "grant_a", availableCount: 2, expiresAt: "2026-10-01T00:00:00.000Z" }],
+      grants: [
+        { id: "grant_a", availableCount: 2, expiresAt: "2026-10-01T00:00:00.000Z" },
+        { id: "paused", availableCount: 1, waiting: "paused" },
+        { id: "grant_b", availableCount: 3, waiting: "unavailable" },
+        { id: "at_limit", availableCount: 1, waiting: "afterLimit" },
+      ],
     });
   });
 
@@ -108,10 +115,13 @@ describe("claudeResetCreditsToContract", () => {
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract(
-        { eligible: true, next_grant_id: "grant_a", grants: [grant({ usable_now: false })] },
+        { eligible: true, next_grant_id: "grant_a", grants: [grant({ paused: true })] },
         NOW,
       ),
-    ).toEqual({ availableCount: 0 });
+    ).toEqual({
+      availableCount: 0,
+      grants: [{ id: "grant_a", availableCount: 1, waiting: "paused" }],
+    });
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract({ eligible: true, grants: [grant({})] }, NOW),
     ).toEqual({

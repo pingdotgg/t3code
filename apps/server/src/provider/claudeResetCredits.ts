@@ -35,6 +35,7 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  use_requires_limit: Schema.optional(Schema.NullOr(Schema.Boolean)),
   clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
   gives_back_weekly: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
@@ -138,32 +139,42 @@ function bankedCredits(
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
-  const live = (parsed.value.grants ?? [])
+  const current = (parsed.value.grants ?? [])
     .flatMap((raw) => Option.toArray(decodeGrant(raw)))
     .filter(
       (grant) =>
-        !grant.paused &&
-        grant.usable_now &&
-        (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
+        grant.resets_left > 0 && (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
+  const waitingReason = (grant: (typeof current)[number]) =>
+    grant.paused
+      ? ("paused" as const)
+      : grant.usable_now
+        ? undefined
+        : grant.use_requires_limit
+          ? ("afterLimit" as const)
+          : ("unavailable" as const);
+  const live = current.filter((grant) => waitingReason(grant) === undefined);
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
-  if (!next) return { availableCount: 0 };
-  const expiresAt = (grant: typeof next) => {
+  const expiresAt = (grant: (typeof current)[number]) => {
     const date = grant.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(date) ? DateTime.formatIso(date.value) : undefined;
   };
-  const nextExpiresAt = expiresAt(next);
-  const grants = live.map((grant) => {
+  // Without Claude's next grant nothing is offered, but waiting grants are still listed.
+  const grants = (next ? current : current.filter(waitingReason)).map((grant) => {
     const grantExpiresAt = expiresAt(grant);
     const clears = grant.clears?.map((bucket) => claudeUsageWindowId(bucket, overageIncluded));
+    const waiting = waitingReason(grant);
     return {
       id: grant.id,
       availableCount: grant.resets_left,
       ...(grantExpiresAt ? { expiresAt: grantExpiresAt } : {}),
       ...(clears?.length ? { clearsWindowIds: clears } : {}),
       ...(grant.gives_back_weekly ? { givesBackWeekly: true } : {}),
+      ...(waiting ? { waiting } : {}),
     };
   });
+  if (!next) return { availableCount: 0, ...(grants.length > 0 ? { grants } : {}) };
+  const nextExpiresAt = expiresAt(next);
   return {
     availableCount: live.reduce((sum, grant) => sum + grant.resets_left, 0),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),

@@ -244,8 +244,8 @@ export function ResetCredits(props: {
   });
   const [busyCreditId, setBusyCreditId] = useState<string | null | undefined>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const { grants } = resetCreditsForWindow(credits, windows);
-  if (dense && grants.length === 0 && status === null) return null;
+  const { grants, waiting } = resetCreditsForWindow(credits, windows);
+  if (dense && grants.length === 0 && !waiting && status === null) return null;
   const busy = busyCreditId !== null;
 
   const redeem = async (creditId: string | undefined) => {
@@ -279,7 +279,7 @@ export function ResetCredits(props: {
 
   return (
     <View className="gap-2">
-      {grants.length === 0 ? (
+      {grants.length === 0 && !waiting ? (
         <Text className="text-xs text-foreground-tertiary">No reset credits banked</Text>
       ) : null}
       {grants.map((grant) => {
@@ -318,6 +318,7 @@ export function ResetCredits(props: {
           </View>
         );
       })}
+      {waiting ? <Text className="text-xs text-foreground-tertiary">{waiting}</Text> : null}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
           This connection cannot manage provider accounts.

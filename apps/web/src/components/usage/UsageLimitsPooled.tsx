@@ -200,24 +200,27 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
-      {credits.count > 0 && redeem ? (
+      {(credits.count > 0 && redeem) || credits.waiting ? (
         <div className="flex flex-col gap-2 border-t border-border/60 pt-2.5 text-muted-foreground">
-          {credits.grants.map((grant) => (
-            <div key={grant.id ?? "all"} className="flex items-start gap-3">
-              <span className="min-w-0 text-foreground tabular-nums">
-                {resetCreditsSummary(grant, now, true)}
-              </span>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={redeem.busy || !redeem.canManageProviders}
-                className="ms-auto shrink-0"
-                onClick={() => onRedeem(grant.id)}
-              >
-                {redeem.busy && redeem.creditId === grant.id ? "Using…" : "Use reset"}
-              </Button>
-            </div>
-          ))}
+          {redeem
+            ? credits.grants.map((grant) => (
+                <div key={grant.id ?? "all"} className="flex items-start gap-3">
+                  <span className="min-w-0 text-foreground tabular-nums">
+                    {resetCreditsSummary(grant, now, true)}
+                  </span>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={redeem.busy || !redeem.canManageProviders}
+                    className="ms-auto shrink-0"
+                    onClick={() => onRedeem(grant.id)}
+                  >
+                    {redeem.busy && redeem.creditId === grant.id ? "Using…" : "Use reset"}
+                  </Button>
+                </div>
+              ))
+            : null}
+          {credits.waiting ? <span>{credits.waiting}</span> : null}
         </div>
       ) : null}
     </div>

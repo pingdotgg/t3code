@@ -1575,6 +1575,37 @@ describe("reset credits per window", () => {
     });
   });
 
+  it("shows one row per kind, spends the one expiring first and sums waiting resets", () => {
+    const fableLate = {
+      ...fable,
+      id: "fable-late",
+      availableCount: 2,
+      expiresAt: "2026-10-01T00:00:00.000Z",
+    };
+    const weekly = { id: "weekly:juniper_tide", availableCount: 1, clearsWindowIds: ["seven_day"] };
+    const account = {
+      availableCount: 5,
+      nextCreditId: "weekly:juniper_tide",
+      grants: [
+        weekly,
+        fableLate,
+        fable,
+        { ...standard, availableCount: 1 },
+        { id: "later", availableCount: 2, waiting: "afterLimit" as const },
+        { id: "held", availableCount: 1, waiting: "paused" as const },
+      ],
+    };
+    const summary = resetCreditsForWindow(account, windows);
+    expect(summary.grants.map(({ id, count, scope }) => ({ id, count, scope }))).toEqual([
+      { id: "weekly:juniper_tide", count: 1, scope: "Weekly" },
+      { id: "launch-fable", count: 3, scope: "Fable" },
+      { id: "standard", count: 1, scope: undefined },
+    ]);
+    expect(summary.count).toBe(5);
+    expect(summary.waiting).toBe("+3 not usable yet: 2 once you hit a limit they refill, 1 paused");
+    expect(resetCreditsForWindow(account, windows, "seven_day").count).toBe(2);
+  });
+
   it("treats credits without grant details as clearing every window", () => {
     expect(
       resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, windows, "seven_day"),

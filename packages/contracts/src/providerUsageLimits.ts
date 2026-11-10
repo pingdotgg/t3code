@@ -28,6 +28,8 @@ export const ServerProviderResetCreditGrant = Schema.Struct({
   clearsWindowIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Also removes the cleared windows' usage from the weekly window it does not clear. */
   givesBackWeekly: Schema.optional(Schema.Boolean),
+  /** Set when the grant can't be used now; it is left out of `availableCount`. */
+  waiting: Schema.optional(Schema.Literals(["afterLimit", "paused", "unavailable"])),
 });
 export type ServerProviderResetCreditGrant = typeof ServerProviderResetCreditGrant.Type;
 

@@ -899,8 +899,33 @@ export interface WindowResetCredits {
   readonly count: number;
   /** The scope every counted grant shares, for a compact badge. */
   readonly scope: string | undefined;
+  /** One row per kind of reset; `id` is the one of that kind that expires first. */
   readonly grants: ReadonlyArray<ResetCreditGrantSummary>;
+  /** The account's resets that can't be used now, e.g. "+3 not usable yet: 1 paused". */
+  readonly waiting: string | undefined;
 }
+
+const WAITING_TEXT = {
+  afterLimit: "once you hit a limit they refill",
+  paused: "paused",
+  unavailable: "not usable right now",
+} as const;
+
+function waitingSummary(credits: ServerProviderResetCredits): string | undefined {
+  const counts = new Map<keyof typeof WAITING_TEXT, number>();
+  for (const grant of credits.grants ?? []) {
+    if (grant.waiting && grant.availableCount > 0) {
+      counts.set(grant.waiting, (counts.get(grant.waiting) ?? 0) + grant.availableCount);
+    }
+  }
+  const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+  if (total === 0) return undefined;
+  const parts = [...counts].map(([reason, count]) => `${count} ${WAITING_TEXT[reason]}`);
+  return `+${total} not usable yet: ${parts.join(", ")}`;
+}
+
+const expiresFirst = (a: string | undefined, b: string | undefined) =>
+  b === undefined || (a !== undefined && Date.parse(a) < Date.parse(b));
 
 const joinLabels = (labels: ReadonlyArray<string>) =>
   labels.length < 2 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
@@ -911,11 +936,12 @@ export function resetCreditsForWindow(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   windowId?: string,
 ): WindowResetCredits {
-  if (!credits) return { count: 0, scope: undefined, grants: [] };
+  if (!credits) return { count: 0, scope: undefined, grants: [], waiting: undefined };
   if (!credits.grants) {
     return {
       count: credits.availableCount,
       scope: undefined,
+      waiting: undefined,
       grants:
         credits.availableCount === 0
           ? []
@@ -931,19 +957,26 @@ export function resetCreditsForWindow(
     };
   }
   const resettable = windows.filter((window) => window.kind !== "monthly");
-  const grants = credits.grants
-    .filter((grant) => grant.availableCount > 0)
+  const kinds = new Map<string, ResetCreditGrantSummary>();
+  credits.grants
+    .filter((grant) => grant.availableCount > 0 && !grant.waiting)
     .flatMap((grant): ResetCreditGrantSummary[] => {
       const clears = grant.clearsWindowIds;
       const listed = clears ? resettable.filter((window) => clears.includes(window.id)) : [];
-      const scope =
+      const modelScope =
         listed.length < resettable.length
           ? listed.map((window) => window.label.split(" · ")[1]).find(Boolean)
           : undefined;
       // Claude lists the shared Session in a model-scoped grant's clears, but redeeming leaves it.
-      const cleared = scope
-        ? listed.filter((window) => window.label.split(" · ")[1] === scope)
+      const cleared = modelScope
+        ? listed.filter((window) => window.label.split(" · ")[1] === modelScope)
         : listed;
+      // A grant that clears one account-wide window (Claude's weekly reset) is named after it.
+      const scope =
+        modelScope ??
+        (cleared.length === 1 && cleared.length < resettable.length
+          ? cleared[0]!.label
+          : undefined);
       if (windowId !== undefined && clears && !cleared.some((window) => window.id === windowId)) {
         return [];
       }
@@ -952,7 +985,7 @@ export function resetCreditsForWindow(
         : undefined;
       const givesBack =
         grant.givesBackWeekly && keptWeekly
-          ? ` and gives back ${scope ? `${scope}'s` : "its"} share of ${keptWeekly.label}`
+          ? ` and gives back ${modelScope ? `${modelScope}'s` : "its"} share of ${keptWeekly.label}`
           : "";
       return [
         {
@@ -966,12 +999,27 @@ export function resetCreditsForWindow(
           expiresAt: grant.expiresAt,
         },
       ];
+    })
+    .forEach((grant) => {
+      const key = `${grant.scope ?? ""}|${grant.effect ?? ""}`;
+      const kind = kinds.get(key);
+      kinds.set(
+        key,
+        !kind
+          ? grant
+          : {
+              ...(expiresFirst(grant.expiresAt, kind.expiresAt) ? grant : kind),
+              count: kind.count + grant.count,
+            },
+      );
     });
+  const grants = [...kinds.values()];
   const scopes = new Set(grants.map((grant) => grant.scope));
   return {
     count: grants.reduce((sum, grant) => sum + grant.count, 0),
     scope: scopes.size === 1 ? [...scopes][0] : undefined,
     grants,
+    waiting: waitingSummary(credits),
   };
 }
 

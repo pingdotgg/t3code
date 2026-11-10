@@ -345,8 +345,8 @@ export function ResetCredits({
 }) {
   const { canManageProviders, confirming, setConfirming, confirm, creditId, busy, status, redeem } =
     useResetCredit(environmentId, input);
-  const { grants } = resetCreditsForWindow(credits, windows);
-  if (grants.length === 0 && status === null) return null;
+  const { grants, waiting } = resetCreditsForWindow(credits, windows);
+  if (grants.length === 0 && !waiting && status === null) return null;
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       {grants.map((grant) => (
@@ -362,6 +362,7 @@ export function ResetCredits({
           </Button>
         </div>
       ))}
+      {waiting ? <span>{waiting}</span> : null}
       {status ? <span className="text-foreground">{status}</span> : null}
       <ResetCreditDialog
         open={confirming}
