@@ -685,6 +685,12 @@ describe("fix findings handoff", () => {
     });
     expect(handoff.reviewComments[1]?.text).toHaveLength(1_000);
     expect(handoff.reviewComments[1]?.text.endsWith("...")).toBe(true);
+    const emojiAtCut = buildFixFindingsHandoff({
+      ...base,
+      reviewThreads: [thread(`${"x".repeat(986)}😀 and more of the review.${"y".repeat(100)}`)],
+      checks: [],
+    });
+    expect(emojiAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
   });
 
   it("keeps the newest threads and the failing checks when it has to cut", () => {
