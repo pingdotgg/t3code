@@ -38,5 +38,8 @@ export function removeSpeechFillerWords(
     "giu",
   );
   const filtered = text.replace(pattern, (_match, cue: string | undefined) => cue ?? "");
-  return filtered.replace(/\s{2,}/g, " ").trim();
+  return filtered
+    .replace(/[^\S\r\n]{2,}/g, " ")
+    .replace(/[^\S\r\n]*([\r\n])[^\S\r\n]*/g, "$1")
+    .trim();
 }
