@@ -1370,6 +1370,7 @@ const delegatedTask = (
     hasPendingQuestion: false,
     pendingApproval: null,
     waitTimedOut: false,
+    executedModel: null,
     ...task,
   };
 };
@@ -1399,6 +1400,7 @@ export const t3Result = (
   input: Readonly<Record<string, unknown>>,
 ) => {
   const mock = sample.testCase.setup.mocks?.[name];
+  // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   const value =
     mock === undefined || mock === "default" || pastedSecret(name, input)
       ? t3Default(sample, name, input)
@@ -1656,8 +1658,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
-  // A pasted secret is saved without a card, so a mocked card outcome does not apply.
-  if (mock !== undefined && mock !== "default" && !pastedSecret(name, input))
+  if (mock !== undefined && mock !== "default")
     return toolResult(call.id, t3Result(sample, name, input));
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.
