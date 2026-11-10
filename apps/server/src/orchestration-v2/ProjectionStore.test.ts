@@ -3634,6 +3634,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         snapshotSequence: cancelledSuffixSnapshot.snapshotSequence,
       });
       assert.strictEqual(cancelledSuffixPage.latestLocalTurnOrdinal, 1_202);
+      assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 75);
+      assert.isFalse(
+        cancelledSuffixPage.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":cancelled:"),
+        ),
+      );
       assert.isTrue(
         cancelledSuffixPage.projection.visibleTurnItems.some(
           (row) => row.sourceItemId === runlessQueuedId,
