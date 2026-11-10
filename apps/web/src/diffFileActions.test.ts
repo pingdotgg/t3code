@@ -55,6 +55,23 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("src/index.ts");
   });
 
+  it("keeps a literal backslash in a POSIX filename", () => {
+    expect(
+      resolveDiffPathForWorkspace({
+        filePath: "src/a\\b.txt",
+        workspaceRoot: "/repo",
+        repositoryRoot: "/repo",
+      }),
+    ).toBe("src/a\\b.txt");
+    expect(
+      resolveDiffPathForWorkspace({
+        filePath: "/repo/src/a\\b.txt",
+        workspaceRoot: "/repo",
+        repositoryRoot: "/repo",
+      }),
+    ).toBe("src/a\\b.txt");
+  });
+
   // regression: #6174 opening diff files broke for repositories at a filesystem root
   it.each([
     { workspaceRoot: "/frontend", repositoryRoot: "/" },

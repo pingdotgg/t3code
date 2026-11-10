@@ -17,15 +17,20 @@ interface OpenDiffFilePrimaryActionInput {
   readonly openInEditor: (targetPath: string) => void;
 }
 
-function normalizedRelativePathSegments(filePath: string): ReadonlyArray<string> | null {
+function normalizedRelativePathSegments(
+  filePath: string,
+  workspaceRoot: string | undefined,
+): ReadonlyArray<string> | null {
   if (filePath.startsWith("/") || isWindowsAbsolutePath(filePath) || /^[a-zA-Z]:/.test(filePath)) {
     return null;
   }
 
-  const segments = filePath
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment.length > 0 && segment !== ".");
+  // Backslashes are legal filename characters on POSIX hosts.
+  const path =
+    workspaceRoot === undefined || isWindowsAbsolutePath(workspaceRoot)
+      ? filePath.replaceAll("\\", "/")
+      : filePath;
+  const segments = path.split("/").filter((segment) => segment.length > 0 && segment !== ".");
   if (segments.length === 0 || segments.includes("..")) return null;
   return segments;
 }
@@ -60,11 +65,14 @@ export function resolveDiffPathForWorkspace(input: {
   // Claude and ACP tool-call diffs name files by absolute path.
   if (isAbsolutePath(input.filePath)) {
     const relativePath = workspaceRelativeFilePath(input.filePath, input.workspaceRoot);
-    const segments = relativePath === null ? null : normalizedRelativePathSegments(relativePath);
+    const segments =
+      relativePath === null
+        ? null
+        : normalizedRelativePathSegments(relativePath, input.workspaceRoot);
     return segments ? segments.join("/") : null;
   }
 
-  const fileSegments = normalizedRelativePathSegments(input.filePath);
+  const fileSegments = normalizedRelativePathSegments(input.filePath, input.workspaceRoot);
   if (!fileSegments) return null;
 
   const workspaceSegments = repositoryRelativeWorkspaceSegments(
