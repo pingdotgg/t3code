@@ -1,0 +1,87 @@
+diff --git a/dev/lib/parse.js b/dev/lib/parse.js
+index ffb0f88..c63f0a3 100644
+--- a/dev/lib/parse.js
++++ b/dev/lib/parse.js
+@@ -1,6 +1,7 @@
+ /**
+  * @import {
+  *   Create,
++ *   Extension,
+  *   FullNormalizedExtension,
+  *   InitialConstruct,
+  *   ParseContext,
+@@ -16,6 +17,11 @@ import {string, text} from './initialize/text.js'
+ import * as defaultConstructs from './constructs.js'
+ import {createTokenizer} from './create-tokenizer.js'
+ 
++/** @type {WeakMap<ReadonlyArray<Extension>, FullNormalizedExtension>} */
++const combined = new WeakMap()
++/** @type {Array<Extension>} */
++const noExtensions = []
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,9 +30,16 @@ import {createTokenizer} from './create-tokenizer.js'
+  */
+ export function parse(options) {
+   const settings = options || {}
+-  const constructs = /** @type {FullNormalizedExtension} */ (
+-    combineExtensions([defaultConstructs, ...(settings.extensions || [])])
+-  )
++  const extensions = settings.extensions || noExtensions
++  // Parsers are made per document; their constructs only depend on the extensions, which must
++  // not change once parsed with (unified fills them while attaching plugins, before parsing).
++  let constructs = combined.get(extensions)
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */ (
++      combineExtensions([defaultConstructs, ...extensions])
++    )
++    combined.set(extensions, constructs)
++  }
+ 
+   /** @type {ParseContext} */
+   const parser = {
+diff --git a/lib/parse.js b/lib/parse.js
+index 4682319..11062f2 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -1,6 +1,7 @@
+ /**
+  * @import {
+  *   Create,
++ *   Extension,
+  *   FullNormalizedExtension,
+  *   InitialConstruct,
+  *   ParseContext,
+@@ -16,6 +17,11 @@ import { string, text } from './initialize/text.js';
+ import * as defaultConstructs from './constructs.js';
+ import { createTokenizer } from './create-tokenizer.js';
+ 
++/** @type {WeakMap<ReadonlyArray<Extension>, FullNormalizedExtension>} */
++const combined = new WeakMap();
++/** @type {Array<Extension>} */
++const noExtensions = [];
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,8 +30,16 @@ import { createTokenizer } from './create-tokenizer.js';
+  */
+ export function parse(options) {
+   const settings = options || {};
+-  const constructs = /** @type {FullNormalizedExtension} */
+-  combineExtensions([defaultConstructs, ...(settings.extensions || [])]);
++  const extensions = settings.extensions || noExtensions;
++  // Parsers are made per document; their constructs only depend on the extensions, which must
++  // not change once parsed with (unified fills them while attaching plugins, before parsing).
++  let constructs = combined.get(extensions);
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */ (
++      combineExtensions([defaultConstructs, ...extensions])
++    );
++    combined.set(extensions, constructs);
++  }
+ 
+   /** @type {ParseContext} */
+   const parser = {
