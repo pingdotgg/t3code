@@ -50,7 +50,7 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { parseSideChatCommand, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -2106,6 +2106,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const answer = bindActivePendingUserInputAnswer();
       if (!answer) return;
       const targetKey = composerDraftTargetKey;
+      // `/side` beats the question on send, so its transcript goes through the send's routing.
+      if (
+        props.sideChatAvailable === true &&
+        props.sideChatDisabledReason == null &&
+        parseSideChatCommand(promptRef.current)
+      ) {
+        const transcript = new Promise<string | null>((resolve) =>
+          submitAfterDictation(
+            (text) => {
+              resolve(text);
+              if (composerDraftTargetKeyRef.current === targetKey) onTypingGuardSend();
+            },
+            { draft: answer.draft, cancel: () => resolve(null) },
+          ),
+        );
+        onSend(undefined, dispatchMode, submissionIntent, transcript);
+        return;
+      }
       submitAfterDictation(
         () => {
           answer.submit();

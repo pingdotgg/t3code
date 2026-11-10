@@ -267,7 +267,8 @@ async function bindDictatedSend(
   const { stillHere } = live;
   const promptRef = {
     get current() {
-      return live.readPrompt();
+      // An answer to a shown question lives with the question, not in the thread's draft.
+      return context.answeringPendingUserInput ? text : live.readPrompt();
     },
     set current(value: string) {
       if (stillHere()) live.promptRef.current = value;
