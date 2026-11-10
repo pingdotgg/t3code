@@ -12,7 +12,7 @@ import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
-import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useThreadRefs, useLinkedThreadShell } from "../../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openLinkedThreadRead } from "../../lib/sideChatPane";
@@ -39,7 +39,7 @@ export function MarkdownThreadLink(props: {
   const panelRef = props.threadRef ?? null;
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
-  const written = useThreadShell(writtenRef);
+  const written = useLinkedThreadShell(writtenRef);
   const saved = useEnvironmentIdentities().some(
     (environment) => environment.environmentId === writtenRef.environmentId,
   );
@@ -82,7 +82,7 @@ export function MarkdownThreadLink(props: {
         refs.filter((ref) => ref.environmentId !== writtenRef.environmentId),
       )
     : null;
-  const remote = useThreadShell(remoteRef);
+  const remote = useLinkedThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
   if (linked && linkedLabel !== undefined) {
     const knownTitle = props.label ?? written?.title ?? null;
