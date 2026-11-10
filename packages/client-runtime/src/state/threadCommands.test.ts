@@ -766,6 +766,25 @@ describe("settle and snooze while the environment is offline", () => {
       }),
   );
 
+  it.effect("keeps a change cancellable when its send never left the device", () =>
+    Effect.gen(function* () {
+      const unmarked = yield* Queue.unbounded<void>();
+      const storage: { value: string | null; onModify?: () => void } = { value: null };
+      const h = yield* queued("settle", storage);
+      let calls = 0;
+      // Replay reads the queue, marks the change, and takes the mark off again.
+      storage.onModify = () => {
+        if (++calls === 3) Queue.offerUnsafe(unmarked, undefined);
+      };
+      // The shell reports synchronized from a stale stream while the session is already gone.
+      h.registry.set(h.statusAtom(ENVIRONMENT_ID), "live");
+      yield* Queue.take(unmarked);
+      const result = yield* Effect.promise(() => h.commands.unsettle.run(h.registry, undo));
+      expect(result._tag === "Success" && ThreadUndo.cancelledPendingSync(result.value)).toBe(true);
+      expect(stored(storage)).toEqual([]);
+    }),
+  );
+
   it.effect("sends a change another tab queued after this tab loaded", () =>
     Effect.gen(function* () {
       const storage = { value: null as string | null };

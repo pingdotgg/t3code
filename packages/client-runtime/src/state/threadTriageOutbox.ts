@@ -67,12 +67,13 @@ const without = (entries: PendingThreadTriages, commandId: CommandId) =>
     ? entries.filter((entry) => entry.commandId !== commandId)
     : entries;
 
+/** The sent mark is left out: it is only ever read from storage. */
 const sameEntries = (a: PendingThreadTriages, b: PendingThreadTriages) =>
-  a.length === b.length &&
-  a.every(
-    (entry, index) =>
-      entry.commandId === b[index]!.commandId && entry.attempted === b[index]!.attempted,
-  );
+  a.length === b.length && a.every((entry, index) => entry.commandId === b[index]!.commandId);
+
+/** Raised before a request is sent, when the environment has no session. */
+const isOffline = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.some((reason) => Cause.isFailReason(reason) && isUnavailable(reason.error));
 
 /**
  * Settle and snooze for an environment that is not connected: the change is stored on the
@@ -229,7 +230,16 @@ export function createThreadTriageOutbox<R, E>(input: {
         continue;
       }
       const result = await input.send(registry, entry);
-      if (lifetime.ended || (!AsyncResult.isSuccess(result) && isTransient(result.cause))) return;
+      if (lifetime.ended) return;
+      if (!AsyncResult.isSuccess(result) && isTransient(result.cause)) {
+        // It never left the device, so the mark this pass made comes off and Undo can cancel it.
+        if (isOffline(result.cause) && entry.attempted !== true) {
+          await write(registry, (current) =>
+            current.map((item) => (item.commandId === entry.commandId ? entry : item)),
+          );
+        }
+        return;
+      }
       await forget(registry, entry);
     }
   };
@@ -287,10 +297,7 @@ export function createThreadTriageOutbox<R, E>(input: {
           if (previous !== undefined) await forget(registry, previous);
           return result;
         }
-        const offline = result.cause.reasons.some(
-          (reason) => Cause.isFailReason(reason) && isUnavailable(reason.error),
-        );
-        if (!offline || snapshot == null || thread === undefined) return result;
+        if (!isOffline(result.cause) || snapshot == null || thread === undefined) return result;
         const action = toAction(target.input);
         const queuedAt = DateTime.nowUnsafe();
         if (input.apply(thread, action, queuedAt) === thread) return result;
