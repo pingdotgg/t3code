@@ -10,7 +10,6 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   type OrchestratorMcpCapabilitiesResult,
-  type OrchestratorMcpRuntimeMode,
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -3127,6 +3126,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ],
         } as const;
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
+        const fallback = { instanceId: peerId, model: inherited.model };
         const cases = [
           {
             name: "partial override",
@@ -3165,6 +3165,18 @@ describe("OrchestratorMcpService provider resolution", () => {
               ],
             },
           },
+          {
+            name: "inherited model out of usage takes the configured fallback",
+            target: {},
+            outOfUsage: true,
+            expected: fallback,
+          },
+          {
+            name: "explicit model out of usage is kept",
+            target: { model: inherited.model },
+            outOfUsage: true,
+            expected: inherited,
+          },
         ] as const;
         for (const testCase of cases) {
           const commands: Array<unknown> = [];
@@ -3199,7 +3211,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({
+              fallbackModelSelection: fallback,
+              providerInstances: { [peerId]: { driver } },
+            }),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -3207,6 +3222,16 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver,
                   model: inherited.model,
                 }),
+                ...("outOfUsage" in testCase
+                  ? {
+                      usageLimits: {
+                        checkedAt: "1970-01-01T00:00:00.000Z",
+                        windows: [
+                          { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100 },
+                        ],
+                      },
+                    }
+                  : {}),
                 models: [
                   ...[inherited.model, "other-model"].map((model) => ({
                     slug: model,
@@ -3259,257 +3284,6 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.name,
             );
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
-        }
-      }),
-  );
-
-  it.effect(
-    "uses the configured fallback only for targets that leave provider and model to inheritance",
-    () =>
-      Effect.gen(function* () {
-        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-        const inherited = {
-          instanceId: codexInstanceId,
-          model: "gpt-5.4",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        } as const;
-        const fallback = {
-          instanceId: claudeInstanceId,
-          model: "claude-sonnet-4-6",
-          options: [{ id: "effort", value: "high" }],
-        } as const;
-        const exhausted = {
-          checkedAt: "1970-01-01T00:00:00.000Z",
-          windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100 }],
-        } as const;
-        const selectOption = (id: string, choices: ReadonlyArray<string>) => ({
-          id,
-          label: id,
-          type: "select" as const,
-          options: choices.map((choice) => ({ id: choice, label: choice })),
-        });
-        const withOptions = (
-          provider: ServerProvider,
-          descriptor: ReturnType<typeof selectOption>,
-          supportedRuntimeModes: ServerProvider["supportedRuntimeModes"],
-        ): ServerProvider => ({
-          ...provider,
-          supportedRuntimeModes,
-          models: provider.models.map((model) => ({
-            ...model,
-            capabilities: { optionDescriptors: [descriptor] },
-          })),
-        });
-        const healthyClaude = withOptions(
-          providerSnapshot({
-            instanceId: claudeInstanceId,
-            driver: ProviderDriverKind.make("claudeAgent"),
-            model: fallback.model,
-          }),
-          selectOption("effort", ["high", "max"]),
-          ["approval-required", "auto", "full-access"],
-        );
-        const legacyEffortClaude: ServerProvider = {
-          ...healthyClaude,
-          models: healthyClaude.models.map((model) => ({
-            ...model,
-            capabilities: {
-              optionDescriptors: [
-                selectOption("effort", ["high", "xhigh"]),
-                { id: "ultracode", label: "ultracode", type: "boolean" as const },
-              ],
-            },
-          })),
-        };
-        const codex = withOptions(
-          providerSnapshot({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: inherited.model,
-          }),
-          selectOption("reasoningEffort", ["high", "low"]),
-          ["approval-required", "full-access"],
-        );
-        const cases = [
-          {
-            name: "implicit, with a runtime mode only the fallback offers",
-            target: undefined,
-            runtimeMode: "auto",
-            expected: fallback,
-          },
-          {
-            name: "options only",
-            target: { options: { effort: "max" } },
-            expected: { ...fallback, options: [{ id: "effort", value: "max" }] },
-            retry: true,
-          },
-          {
-            name: "explicit instance",
-            target: { providerInstanceId: codexInstanceId },
-            expected: inherited,
-          },
-          {
-            name: "explicit driver",
-            target: { driverKind: ProviderDriverKind.make("codex") },
-            expected: inherited,
-          },
-          { name: "explicit model", target: { model: "gpt-5.4" }, expected: inherited },
-          {
-            name: "fallback in error",
-            target: undefined,
-            claude: { ...healthyClaude, status: "error", message: "Probe failed." },
-            expected: inherited,
-          },
-          {
-            name: "fallback model not advertised",
-            target: undefined,
-            claude: { ...healthyClaude, models: [{ ...healthyClaude.models[0]!, slug: "other" }] },
-            expected: inherited,
-          },
-          {
-            name: "fallback option not advertised",
-            target: undefined,
-            fallbackOptions: [{ id: "effort", value: "not-advertised" }],
-            expected: inherited,
-          },
-          {
-            name: "fallback saved with the legacy ultracode effort",
-            target: undefined,
-            claude: legacyEffortClaude,
-            fallbackOptions: [{ id: "effort", value: "ultracode" }],
-            fallbackActive: true,
-            expected: {
-              ...fallback,
-              options: [
-                { id: "effort", value: "xhigh" },
-                { id: "ultracode", value: true },
-              ],
-            },
-          },
-          {
-            name: "fallback without adapter",
-            target: undefined,
-            adapters: [codexInstanceId],
-            expected: inherited,
-          },
-          {
-            name: "fallback disabled for project",
-            target: undefined,
-            projectDisablesFallback: true,
-            expected: inherited,
-          },
-        ] as const satisfies ReadonlyArray<{
-          name: string;
-          target: unknown;
-          expected: unknown;
-          runtimeMode?: OrchestratorMcpRuntimeMode;
-          retry?: boolean;
-          fallbackActive?: boolean;
-          claude?: unknown;
-          fallbackOptions?: ReadonlyArray<{ id: string; value: string }>;
-          adapters?: ReadonlyArray<ProviderInstanceId>;
-          projectDisablesFallback?: boolean;
-        }>;
-        for (const testCase of cases) {
-          const commands: Array<{ commandId: unknown; modelSelection: unknown }> = [];
-          const expected = testCase.expected;
-          const savedFallback =
-            "fallbackOptions" in testCase
-              ? { ...fallback, options: testCase.fallbackOptions }
-              : fallback;
-          const task = {
-            id: taskId,
-            threadId: parentThreadId,
-            origin: "app_owned",
-            childThreadId,
-            providerInstanceId: expected.instanceId,
-            model: expected.model,
-            status: "running",
-            result: null,
-          };
-          const dependencies = Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            Layer.mock(ThreadManagementService.ThreadManagementService)({
-              hasReceipt: () => Effect.sync(() => commands.length > 0),
-              assertProviderInstanceEnabled: () => Effect.void,
-              isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-              getThreadRecords: (threadId) =>
-                Effect.succeed(
-                  threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
-                    : childProjection,
-                ),
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  commands.push(command as never);
-                  return {
-                    sequence: 1,
-                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
-                  } as never;
-                }),
-            }),
-            ServerSettings.layerTest({
-              fallbackModelSelection: savedFallback,
-              ...("projectDisablesFallback" in testCase
-                ? {
-                    projectSettingsOverrides: {
-                      [projectId]: {
-                        providerInstances: { [claudeInstanceId]: { enabled: false } },
-                      },
-                    },
-                  }
-                : {}),
-            }),
-            providerRegistryLayer([
-              { ...codex, usageLimits: exhausted },
-              ("claude" in testCase ? testCase.claude : healthyClaude) as ServerProvider,
-            ]),
-            adapterRegistryLayer(
-              "adapters" in testCase ? testCase.adapters : [codexInstanceId, claudeInstanceId],
-            ),
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-          );
-          yield* Effect.gen(function* () {
-            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-            const settings = yield* ServerSettings.ServerSettingsService;
-            const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(
-              capabilities.fallback,
-              {
-                providerInstanceId: savedFallback.instanceId,
-                model: savedFallback.model,
-                options: savedFallback.options,
-                active:
-                  "fallbackActive" in testCase ||
-                  !["claude", "fallbackOptions", "adapters", "projectDisablesFallback"].some(
-                    (key) => key in testCase,
-                  ),
-              },
-              testCase.name,
-            );
-            const request = {
-              task: "Review the change.",
-              ...(testCase.target === undefined
-                ? {}
-                : { target: yield* decodeTarget(testCase.target) }),
-              ...("runtimeMode" in testCase ? { runtimeMode: testCase.runtimeMode } : {}),
-              mode: "async" as const,
-              clientRequestId: testCase.name,
-            };
-            yield* service.delegateTask(scope, request);
-            assert.deepEqual(commands[0]?.modelSelection, expected, testCase.name);
-            if (!("retry" in testCase)) return;
-
-            // The retry replays the accepted task even though its options no longer fit the inherited model.
-            yield* settings.updateSettings({ fallbackModelSelection: null });
-            yield* service.delegateTask(scope, request);
-            assert.equal(commands.length, 2, testCase.name);
-            assert.equal(commands[1]?.commandId, commands[0]?.commandId, testCase.name);
-          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
         }
       }),
   );

@@ -60,7 +60,6 @@ import {
   type ScheduledTaskUpsertInput,
   scheduledTaskThreadMode,
   type ServerProvider,
-  type ServerSettings as ServerSettingsValue,
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
@@ -377,40 +376,6 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
-}
-
-/** The fallback a target without provider, driver, or model takes while the inherited model is out of usage. */
-function activeFallback(input: {
-  readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
-  readonly providers: ReadonlyArray<ServerProvider>;
-  readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
-  readonly settings: ServerSettingsValue;
-  readonly now: number;
-}): ModelSelection | undefined {
-  const { selection, fallback } = resolveNewThreadModelSelection({
-    defaultSelection: input.parent.thread.modelSelection,
-    fallbackSelection: input.settings.fallbackModelSelection,
-    providers: input.providers,
-    now: input.now,
-    settings: input.settings,
-    projectId: input.parent.thread.projectId,
-  });
-  if (fallback === null || selection === null) return undefined;
-  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  if (
-    provider === undefined ||
-    providerConstraints(provider, input.orchestrationCapableInstanceIds.has(provider.instanceId))
-      .length > 0
-  ) {
-    return undefined;
-  }
-  const model = provider.models.find((entry) => entry.slug === selection.model);
-  const descriptors = model?.capabilities?.optionDescriptors;
-  const options = withLegacyUltracodeEffort(descriptors, selection.options);
-  return (provider.models.length === 0 || model !== undefined) &&
-    invalidOptionSelections(options ?? [], descriptors).length === 0
-    ? { ...selection, ...(options === undefined ? {} : { options }) }
-    : undefined;
 }
 
 /** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
@@ -1344,6 +1309,10 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  const loadSettings = serverSettings.getSettings.pipe(
+    Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+  );
+
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
@@ -1386,30 +1355,10 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
-    /** Use the configured fallback when the target leaves provider, driver, and model to inheritance. */
-    readonly applyFallback?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
-    const requestedModel = input.target?.model;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-    const inheritedSelection =
-      (requestedInstanceId === undefined &&
-      requestedDriver === undefined &&
-      requestedModel === undefined &&
-      input.applyFallback === true
-        ? activeFallback({
-            parent: input.parent,
-            providers: input.providers,
-            orchestrationCapableInstanceIds,
-            settings: yield* serverSettings.getSettings.pipe(
-              Effect.mapError(() =>
-                failure("orchestration_error", "Unable to read server settings."),
-              ),
-            ),
-            now: yield* Clock.currentTimeMillis,
-          })
-        : undefined) ?? input.parent.thread.modelSelection;
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1455,7 +1404,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= inheritedSelection.instanceId;
+    instanceId ??= input.parent.thread.modelSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1481,6 +1430,8 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const inheritedSelection = input.parent.thread.modelSelection;
+    const requestedModel = input.target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -2394,12 +2345,8 @@ const make = Effect.gen(function* () {
       const { parent, limits } = yield* loadCaller(scope);
       const providers = yield* loadProviders;
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
+      const settings = yield* loadSettings;
       const inherited = parent?.thread.modelSelection;
-      const configuredFallback = settings.fallbackModelSelection;
-      const now = yield* Clock.currentTimeMillis;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2413,26 +2360,6 @@ const make = Effect.gen(function* () {
               ?.models.find((model) => model.slug === inherited?.model)?.capabilities
               ?.optionDescriptors,
           ) ?? [],
-        ...(configuredFallback === null
-          ? {}
-          : {
-              fallback: {
-                providerInstanceId: configuredFallback.instanceId,
-                model: configuredFallback.model,
-                ...(configuredFallback.options === undefined
-                  ? {}
-                  : { options: configuredFallback.options }),
-                active:
-                  parent !== undefined &&
-                  activeFallback({
-                    parent,
-                    providers,
-                    orchestrationCapableInstanceIds,
-                    settings,
-                    now,
-                  }) !== undefined,
-              },
-            }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2544,30 +2471,44 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      // The receipt replays the committed task and ignores this payload, so a retry
-      // skips checks that changed settings or provider metadata could now fail.
-      const { modelSelection, runtimeMode, interactionMode } = isRetryOfAcceptedDelegation
-        ? parent.thread
-        : yield* Effect.gen(function* () {
-            const target = yield* resolveTargetRechecking({
-              parent,
-              target: input.target,
+      const settings = yield* loadSettings;
+      // A target that names no provider or model inherits one, and an inherited model that is
+      // out of usage gives way to the configured fallback, as it does for a new thread.
+      const inherited =
+        input.target?.providerInstanceId === undefined &&
+        input.target?.driverKind === undefined &&
+        input.target?.model === undefined
+          ? resolveNewThreadModelSelection({
+              defaultSelection: parent.thread.modelSelection,
+              fallbackSelection: settings.fallbackModelSelection,
               providers,
-              applyFallback: true,
-            });
-            return {
-              modelSelection: target.modelSelection,
-              runtimeMode: yield* resolveRuntimeMode(
-                parent.thread.runtimeMode,
-                input.runtimeMode,
-                target,
-              ),
-              interactionMode: yield* resolveInteractionMode(
-                parent.thread.interactionMode,
-                input.interactionMode,
-              ),
-            };
+              now: yield* Clock.currentTimeMillis,
+              settings,
+              projectId: parent.thread.projectId,
+            }).selection
+          : null;
+      // The receipt replays the committed task and ignores this payload, so a retry resolves nothing.
+      const target = isRetryOfAcceptedDelegation
+        ? { modelSelection: parent.thread.modelSelection, supportedRuntimeModes: undefined }
+        : yield* resolveTargetRechecking({
+            parent: {
+              thread: {
+                ...parent.thread,
+                modelSelection: inherited ?? parent.thread.modelSelection,
+              },
+            },
+            target: input.target,
+            providers,
           });
+      const runtimeMode = yield* resolveRuntimeMode(
+        parent.thread.runtimeMode,
+        input.runtimeMode,
+        target,
+      );
+      const interactionMode = yield* resolveInteractionMode(
+        parent.thread.interactionMode,
+        input.interactionMode,
+      );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2612,7 +2553,7 @@ const make = Effect.gen(function* () {
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
           ...(input.title === undefined ? {} : { title: input.title }),
-          modelSelection,
+          modelSelection: target.modelSelection,
           runtimeMode,
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
