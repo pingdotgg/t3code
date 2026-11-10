@@ -697,6 +697,55 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("ignores input that arrives after the window is destroyed", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        const inputEvent = fakeWindow.webContentsListeners.get("input-event");
+        if (!beforeInput || !inputEvent) {
+          return yield* Effect.die("input listeners were not registered");
+        }
+
+        // Electron throws on any member access of a destroyed BrowserWindow.
+        fakeWindow.isDestroyed.mockReturnValue(true);
+        Object.defineProperty(fakeWindow.window, "webContents", {
+          get: () => {
+            throw new TypeError("Object has been destroyed");
+          },
+        });
+
+        // A held Cmd+Q quits from the grace timer, so the trailing Q keyUp lands here.
+        assert.doesNotThrow(() =>
+          beforeInput(
+            { preventDefault: () => {} },
+            {
+              type: "keyUp",
+              isAutoRepeat: false,
+              key: "q",
+              meta: true,
+              control: false,
+              alt: false,
+              shift: false,
+            },
+          ),
+        );
+        assert.doesNotThrow(() => inputEvent({}, { type: "gestureScrollEnd" }));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
