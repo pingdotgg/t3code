@@ -1346,9 +1346,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* On a destructive button: the normal key hint with a label that reads on
    it (light in dark mode, dark on the white hint in light mode). */
 @utility kbd-on-destructive {
-  --kbd-background: var(--kbd-fill);
+  --kbd-background: var(--kbd-destructive-fill, var(--kbd-fill));
   --kbd-foreground: var(--kbd-on-destructive-foreground);
-  --kbd-box-shadow: var(--kbd-shadow);
+  --kbd-box-shadow: var(--kbd-destructive-shadow, var(--kbd-shadow));
 }
 
 /* Chrome-less fills: an icon button or tray chip under the pointer, the
@@ -3403,6 +3403,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --kbd-destructive-fill: initial;
+  --kbd-destructive-shadow: initial;
   --warning-foreground: var(--ss-default-warning-foreground);
   --dismiss-background: initial;
   --dismiss-border: initial;
@@ -4179,6 +4181,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --dismiss-background: var(--floating-background);
   --dismiss-border: var(--floating-border);
   --dismiss-shadow: var(--floating-shadow);
+  --kbd-destructive-fill: linear-gradient(#00000026, #00000026);
+  --kbd-destructive-shadow: none;
   --gloss-on-background:
     var(--lit-fill) padding-box, var(--lit-rim) border-box, var(--lit-fill) border-box;
   --slider-bar-fill: var(--lit-fill);
