@@ -149,23 +149,34 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
-  const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+  const deliveryQueue = copySorted(
+    projection.runs.filter(
+      (run) =>
+        run.status === "queued" &&
+        !projection.messages.some(
+          (message) =>
+            message.id === run.userMessageId && message.delegatedCompletion !== undefined,
+        ),
+    ),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
-  ).map((run) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    return {
-      run,
-      // A queued guest message shows the guest's words; the agent still gets the attributed text.
-      text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
-      attachments: message?.attachments ?? [],
-      messageId: run.userMessageId,
-      ...(message?.context ? { context: message.context } : {}),
-      ...(message ? { message } : {}),
-    };
-  });
+  );
+  const userQueuedRunIds = new Set(getUserQueuedThreadRuns(projection).map((run) => run.id));
+  const queuedRuns = deliveryQueue
+    .filter((run) => userQueuedRunIds.has(run.id))
+    .map((run) => {
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      return {
+        run,
+        // A queued guest message shows the guest's words; the agent still gets the attributed text.
+        text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+        attachments: message?.attachments ?? [],
+        messageId: run.userMessageId,
+        ...(message?.context ? { context: message.context } : {}),
+        ...(message ? { message } : {}),
+      };
+    });
 
   const canSendNow =
     activeRun === null &&
@@ -177,6 +188,17 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (capabilities?.supportsActiveSteering === true ||
         capabilities?.supportsSteeringByInterruptRestart === true));
   const merged = mergeQueuedMessages(queuedRuns);
+  const queueStart = deliveryQueue.findIndex((run) => run.id === queuedRuns[0]?.run.id);
+  const queueIsContiguous = queuedRuns.every(
+    ({ run }, index) => deliveryQueue[queueStart + index]?.id === run.id,
+  );
+  const steerEachBlockedReason = resolveSteerEachBlockedReason({
+    activeRun,
+    queuedRuns,
+    canPromoteToSteer,
+    promoteSkipsCompaction,
+    capabilities,
+  });
 
   return {
     activeRun,
@@ -185,21 +207,18 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canSendNow,
     canPromoteToSteer,
     promoteSkipsCompaction,
-    sendAsOneBlockedReason:
-      merged._tag === "Blocked"
+    sendAsOneBlockedReason: !queueIsContiguous
+      ? "The queue changed. Review it and try again."
+      : merged._tag === "Blocked"
         ? merged.reason
-        : canSendNow || canPromoteToSteer
+        : canSendNow || promoteSkipsCompaction
           ? null
-          : SEND_NOT_NOW_REASON,
-    sendEachBlockedReason: canSendNow
-      ? null
-      : resolveSteerEachBlockedReason({
-          activeRun,
-          queuedRuns,
-          canPromoteToSteer,
-          promoteSkipsCompaction,
-          capabilities,
-        }),
+          : !canPromoteToSteer
+            ? SEND_NOT_NOW_REASON
+            : capabilities?.supportsSteeringByInterruptRestart === true
+              ? null
+              : steerEachBlockedReason,
+    sendEachBlockedReason: canSendNow ? null : steerEachBlockedReason,
   };
 }
 

@@ -1981,6 +1981,7 @@ export const layerWsRpc = (
           threadSnapshotPagination: true,
           threadFind: true,
           threadFindProgressive: true,
+          queuedRunMerge: true,
           secretProviderSettings: true,
           secretReferences: true,
           secretRequestReferences: true,

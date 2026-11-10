@@ -360,6 +360,46 @@ describe("thread workflows", () => {
       asOne: null,
       each: "This agent restarts its turn for every message. Send them as one instead.",
     },
+    {
+      name: "queued messages on a different model from the active turn without restart steering",
+      provider: { restartSupported: false },
+      activeModel: "another-model",
+      asOne: cannotJoin,
+      each: cannotJoin,
+    },
+    {
+      name: "attachments without restart steering",
+      provider: { restartSupported: false, steerAttachments: false },
+      second: { attachments: [image] },
+      asOne: cannotJoin,
+      each: cannotJoin,
+    },
+    {
+      name: "compaction without restart steering",
+      provider: { restartSupported: false, steerAttachments: false },
+      activeMessage: { text: "/compact" },
+      second: { attachments: [image] },
+      asOne: null,
+      each: "Send them as one to skip the compaction.",
+    },
+    {
+      name: "a notification between user messages",
+      notificationPosition: 3,
+      asOne: "The queue changed. Review it and try again.",
+      each: null,
+    },
+    {
+      name: "a notification before user messages",
+      notificationPosition: 1,
+      asOne: null,
+      each: null,
+    },
+    {
+      name: "a notification after user messages",
+      notificationPosition: 5,
+      asOne: null,
+      each: null,
+    },
     { name: "a stopped thread", activeStatus: "completed", asOne: null, each: null },
     {
       name: "a turn not yet steerable",
@@ -413,8 +453,15 @@ describe("thread workflows", () => {
   ] as const)(
     "offers sending the whole queue for $name",
     (row: {
-      readonly provider?: { readonly restartSteer?: boolean; readonly steerAttachments?: boolean };
+      readonly provider?: {
+        readonly restartSteer?: boolean;
+        readonly restartSupported?: boolean;
+        readonly steerAttachments?: boolean;
+      };
       readonly activeStatus?: string;
+      readonly activeModel?: string;
+      readonly activeMessage?: Record<string, unknown>;
+      readonly notificationPosition?: number;
       readonly second?: Record<string, unknown>;
       readonly secondRun?: Record<string, unknown>;
       readonly asOne: string | null;
@@ -446,16 +493,30 @@ describe("thread workflows", () => {
             userMessageId: "message-active",
             providerThreadId: "provider-thread",
             activeAttemptId: "attempt-active",
-            modelSelection: selection,
+            modelSelection: { ...selection, model: row.activeModel ?? selection.model },
             ordinal: 1,
           },
           queued("first", 2),
-          queued("second", 3, row.secondRun),
+          queued("second", 4, row.secondRun),
+          ...(row.notificationPosition === undefined
+            ? []
+            : [queued("notification", 5, { queuePosition: row.notificationPosition })]),
         ],
         messages: [
-          message("message-active"),
+          message("message-active", row.activeMessage),
           message("message-first"),
           message("message-second", row.second),
+          ...(row.notificationPosition === undefined
+            ? []
+            : [
+                message("message-notification", {
+                  notification: {
+                    source: { kind: "monitor" },
+                    outcome: "updated",
+                    summary: "PR update",
+                  },
+                }),
+              ]),
         ],
         providerTurns: [
           { id: "provider-turn-active", runAttemptId: "attempt-active", status: "running" },
@@ -470,7 +531,7 @@ describe("thread workflows", () => {
             capabilities: capabilities({
               queued: true,
               steer: row.provider?.restartSteer !== true,
-              restartSteer: true,
+              restartSteer: row.provider?.restartSupported ?? true,
               ...(row.provider?.steerAttachments === undefined
                 ? {}
                 : { steerAttachments: row.provider.steerAttachments }),

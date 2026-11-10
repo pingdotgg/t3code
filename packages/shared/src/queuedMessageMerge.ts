@@ -1,11 +1,13 @@
 import {
   type ChatAttachment,
   COMPOSER_CONTEXT_MAX_RECORDS,
+  type ComposerContextRecord,
   getProviderAttachmentLimitError,
   type OrchestrationMessageContext,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -105,13 +107,15 @@ export function mergeQueuedMessages(
   }
   const attachmentLimitError = getProviderAttachmentLimitError(attachments);
   if (attachmentLimitError !== undefined) return { _tag: "Blocked", reason: attachmentLimitError };
-  const records = [
-    ...new Map(
-      messages
-        .flatMap((message) => message.context?.records ?? [])
-        .map((record) => [record.contextId, record] as const),
-    ).values(),
-  ];
+  const recordsById = new Map<ComposerContextRecord["contextId"], ComposerContextRecord>();
+  for (const record of messages.flatMap((message) => message.context?.records ?? [])) {
+    const previous = recordsById.get(record.contextId);
+    if (previous !== undefined && !Equal.equals(previous, record)) {
+      return { _tag: "Blocked", reason: "Queued messages have conflicting context." };
+    }
+    recordsById.set(record.contextId, record);
+  }
+  const records = [...recordsById.values()];
   if (records.length > COMPOSER_CONTEXT_MAX_RECORDS) {
     return { _tag: "Blocked", reason: "Queued messages carry too much context to send as one." };
   }

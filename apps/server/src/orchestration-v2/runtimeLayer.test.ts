@@ -7197,7 +7197,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const { orchestrator, merge, active, queued } = yield* queueBehindActiveRun(threadId, [
         { text: "First", ...image("merge-a") },
-        { text: "Second" },
+        { text: "Second", context: image("merge-a").context },
         { text: "Third", ...image("merge-b") },
       ]);
       const [first, second, third] = queued;
@@ -7265,6 +7265,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("refuses to merge across a queued notification without changing the queue", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("runtime-layer-queued-merge-notification-gap");
+      const { orchestrator, merge, queued } = yield* queueBehindActiveRun(threadId, [
+        { text: "First" },
+        {
+          createdBy: "agent",
+          creationSource: "provider",
+          notification: { source: { kind: "monitor" }, outcome: "updated", summary: "PR update" },
+        },
+        { text: "Third" },
+      ]);
+      const [first, , third] = queued;
+      assert.isDefined(first);
+      assert.isDefined(third);
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepInclude(yield* Effect.flip(merge("notification-gap", [first.id, third.id])), {
+        _tag: "OrchestratorCommandRejectedError",
+        cause: "The queue changed. Review it and try again.",
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.runs, before.runs);
+      assert.deepEqual(after.messages, before.messages);
+    }),
+  );
+
   it.effect.each([
     [
       "an agent's message",
@@ -7287,7 +7313,39 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         creationSource: "provider",
         notification: { source: { kind: "monitor" }, outcome: "updated", summary: "PR update" },
       },
-      null,
+      "Messages from agents and automations are sent on their own.",
+    ],
+    [
+      "conflicting context",
+      {
+        context: {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              kind: "mention",
+              contextId: ComposerContextId.make("shared"),
+              label: "File",
+              path: "second.ts",
+            },
+          ],
+        },
+      },
+      "Queued messages have conflicting context.",
+      {
+        context: {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              kind: "mention",
+              contextId: ComposerContextId.make("shared"),
+              label: "File",
+              path: "first.ts",
+            },
+          ],
+        },
+      },
     ],
     ["a command", { text: "/review" }, "Commands are sent on their own."],
     [
@@ -7300,28 +7358,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       { modelSelection: { ...modelSelection, model: "gpt-5.5" } },
       "Queued messages use different models.",
     ],
-  ] as const)("refuses to merge %s and leaves the queue as it was", ([name, fields, cause]) =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make(
-        `runtime-layer-queued-merge-refused-${name.replace(/\W+/g, "-")}`,
-      );
-      const { orchestrator, merge, queued } = yield* queueBehindActiveRun(threadId, [
-        { text: "Mine" },
-        fields,
-      ]);
-      const [first, second] = queued;
-      assert.isDefined(first);
-      assert.isDefined(second);
-      const before = yield* orchestrator.getThreadProjection(threadId);
+  ] as const)(
+    "refuses to merge %s and leaves the queue as it was",
+    ([name, fields, cause, firstFields]) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(
+          `runtime-layer-queued-merge-refused-${name.replace(/\W+/g, "-")}`,
+        );
+        const { orchestrator, merge, queued } = yield* queueBehindActiveRun(threadId, [
+          { text: "Mine", ...firstFields },
+          fields,
+        ]);
+        const [first, second] = queued;
+        assert.isDefined(first);
+        assert.isDefined(second);
+        const before = yield* orchestrator.getThreadProjection(threadId);
 
-      assert.deepInclude(yield* Effect.flip(merge("refused", [first.id, second.id])), {
-        _tag: "OrchestratorCommandRejectedError",
-        cause: cause ?? `Run ${second.id} is not queued.`,
-      });
-      const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(after.runs, before.runs);
-      assert.deepEqual(after.messages, before.messages);
-    }),
+        assert.deepInclude(yield* Effect.flip(merge("refused", [first.id, second.id])), {
+          _tag: "OrchestratorCommandRejectedError",
+          cause: cause ?? `Run ${second.id} is not queued.`,
+        });
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.runs, before.runs);
+        assert.deepEqual(after.messages, before.messages);
+      }),
   );
 });
 

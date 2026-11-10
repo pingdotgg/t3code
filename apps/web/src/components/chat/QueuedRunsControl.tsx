@@ -28,6 +28,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
+import { useEnvironment } from "../../state/environments";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
@@ -98,6 +99,8 @@ export function QueuedRunsControl({
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
+  const supportsQueuedRunMerge =
+    useEnvironment(props.environmentId)?.serverConfig?.queuedRunMerge === true;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
@@ -215,7 +218,10 @@ export function QueuedRunsControl({
           ? "Another queue action is still running."
           : null;
   const sendAllAsOneBlockedReason =
-    queueActionBlockedReason ?? workflow?.sendAsOneBlockedReason ?? null;
+    queueActionBlockedReason ??
+    (!supportsQueuedRunMerge ? "Update this environment to send queued messages as one." : null) ??
+    workflow?.sendAsOneBlockedReason ??
+    null;
   const sendEachBlockedReason = queueActionBlockedReason ?? workflow?.sendEachBlockedReason ?? null;
   const queuedRunIds = queued.map(({ run }) => run.id);
 

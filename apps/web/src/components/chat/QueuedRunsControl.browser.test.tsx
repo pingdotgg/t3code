@@ -1,13 +1,14 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
-import type { ComponentProps } from "react";
+import { createRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  queuedRunMerge: true as boolean | undefined,
   commands: [] as Array<readonly [string, unknown]>,
   results: [] as Array<"Success" | "Failure">,
 }));
@@ -22,6 +23,11 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
   useThreadProjection: (() => state.projection) as never,
   useQuietThreadShell: ((target: unknown) =>
     target === null ? null : { title: "Release lead" }) as never,
+}));
+
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: (() => ({ serverConfig: { queuedRunMerge: state.queuedRunMerge } })) as never,
 }));
 
 vi.mock(import("../../state/query"), async (importOriginal) => ({
@@ -47,11 +53,12 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
-import { QueuedRunsControl } from "./QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.queuedRunMerge = true;
   state.commands = [];
   state.results = [];
 }
@@ -312,6 +319,7 @@ it.each<{
   readonly name: string;
   readonly props: Partial<ComponentProps<typeof QueuedRunsControl>>;
   readonly workflow: Record<string, unknown>;
+  readonly queuedRunMerge?: false | "missing";
 }>([
   {
     name: "while a queued message is edited",
@@ -332,13 +340,38 @@ it.each<{
     props: {},
     workflow: { sendAsOneBlockedReason: "No", sendEachBlockedReason: "No" },
   },
-])("offers neither queue action $name", async ({ props, workflow }) => {
+  {
+    name: "when the environment does not advertise merging",
+    props: {},
+    workflow: {},
+    queuedRunMerge: "missing",
+  },
+  {
+    name: "when the environment disables merging",
+    props: {},
+    workflow: {},
+    queuedRunMerge: false,
+  },
+])("limits queue actions $name", async ({ props, workflow, queuedRunMerge }) => {
   setup();
   queueOfTwo(workflow);
-  await using _screen = await renderQueue(props);
+  if (queuedRunMerge !== undefined)
+    state.queuedRunMerge = queuedRunMerge === "missing" ? undefined : false;
+  const ref = createRef<QueuedRunsControlHandle>();
+  await using _screen = await renderQueue({ ...props, ref });
 
   await expect.element(sendAllAsOne()).toBeDisabled();
-  await expect.element(sendOneByOne()).toBeDisabled();
+  expect(ref.current?.sendAllAsOne(false)).toBe(false);
+  expect(state.commands).toEqual([]);
+  if (queuedRunMerge === undefined) {
+    await expect.element(sendOneByOne()).toBeDisabled();
+  } else {
+    await expect.element(sendOneByOne()).toBeEnabled();
+    await userEvent.hover(sendAllAsOne().element().parentElement!);
+    await expect
+      .element(page.getByText("Update this environment to send queued messages as one."))
+      .toBeVisible();
+  }
 });
 
 it("shows no queue actions for a single queued message", async () => {

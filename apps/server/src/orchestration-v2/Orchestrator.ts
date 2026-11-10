@@ -10438,8 +10438,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (run) =>
         !projection.messages.some(
           (message) =>
-            message.id === run.userMessageId &&
-            (message.delegatedCompletion !== undefined || message.notification !== undefined),
+            message.id === run.userMessageId && message.delegatedCompletion !== undefined,
         ),
     );
     const missingRunId = command.runIds.find((runId) => !queue.some((run) => run.id === runId));

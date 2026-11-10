@@ -85,8 +85,9 @@ start of the composer to edit the most recently queued message. Change
 
 With two or more queued messages, **Send all as one** below the queue combines them,
 in order, into one message and sends it now: into the running turn, or as a new turn
-when the thread is stopped. Messages from guests, agents, and automations, and
-commands such as `/compact`, are sent on their own. **Send one by one** sends each
+when the thread is stopped. **Send all as one** is unavailable if the queue includes
+a guest's, an agent's, or an automation's message, a command such as `/compact`, or
+messages using different models. The tooltip explains why. **Send one by one** sends each
 queued message now, in order; it is not offered during a turn on an agent that
 restarts its turn for every steer. Bind `thread.sendQueuedMessagesAsOne` in
 **Settings → Keybindings** to send all as one from the keyboard.
