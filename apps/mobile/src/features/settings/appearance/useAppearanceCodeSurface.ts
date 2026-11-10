@@ -21,8 +21,8 @@ export function useAppearanceCodeSurface(): {
   );
   const nativeSourceStyle = useMemo(() => createNativeSourceStyle(codeSurface), [codeSurface]);
   const nativeReviewDiffStyle = useMemo(
-    () => createNativeReviewDiffStyle(codeSurface),
-    [codeSurface],
+    () => createNativeReviewDiffStyle(codeSurface, appearance.codeWordBreak),
+    [appearance.codeWordBreak, codeSurface],
   );
 
   return {

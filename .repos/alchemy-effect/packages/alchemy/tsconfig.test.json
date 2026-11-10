@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "include": ["package.json", "test"],
   "exclude": [
+    "test/Cli/fixtures/shutdown-feedback-fixture.ts",
     "test/Local/fixtures/rpc-server-entry.ts",
+    "test/Local/fixtures/rpc-server-entry-b.ts",
+    "test/Local/fixtures/rpc-server-logs.ts",
     "test/Local/fixtures/rpc-spawner-parent.ts",
     "test/Local/fixtures/rpc-spawner-devserver-parent.ts"
   ],
@@ -17,9 +20,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    // Solid is the default JSX runtime in this package; React files opt in per-file.
     "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid",
     "lib": ["DOM", "DOM.Iterable", "ES2023"]
   },
   "references": [
@@ -28,9 +29,6 @@
     },
     {
       "path": "../alchemy-test/tsconfig.json"
-    },
-    {
-      "path": "./tsconfig.bin.json"
     }
   ]
 }

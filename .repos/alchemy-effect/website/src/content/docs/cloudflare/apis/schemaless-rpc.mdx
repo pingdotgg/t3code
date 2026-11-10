@@ -10,9 +10,9 @@ The schemaless RPC pattern — what makes a member callable, how the typed clien
 ## Expose an interface
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class BindingTargetWorker extends Cloudflare.Worker<BindingTargetWorker>()(
   "BindingTargetWorker",
@@ -35,10 +35,10 @@ Any non-`fetch` function member returning an Effect or a Stream becomes callable
 ## Worker → Worker
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import BindingTargetWorker from "./binding-target-worker.ts";
 
 export default class BindingEffectCaller extends Cloudflare.Worker<BindingEffectCaller>()(
@@ -62,14 +62,14 @@ export default class BindingEffectCaller extends Cloudflare.Worker<BindingEffect
 ) {}
 ```
 
-`bindWorker(BindingTargetWorker)` registers a service Binding at deploy time and returns a stub typed as the target's Shape — `target.greet(name)` is fully inferred from the target class, and every call rides native JSRPC. Service bindings in depth: [Workers](/cloudflare/compute/workers#schemaless-rpc).
+`bindWorker(BindingTargetWorker)` registers a service Binding at deploy time and returns a stub typed as the target's Shape — `target.greet(name)` is fully inferred from the target class, and every call rides native JSRPC. Service bindings in depth: [Workers](/cloudflare/compute/workers#call-another-worker).
 
 ## Worker → Durable Object
 
 ### The Durable Object's shape
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -98,14 +98,14 @@ export class WorkerEnvironmentKVObject extends Cloudflare.DurableObject<WorkerEn
 ) {}
 ```
 
-A DO shape can mix value methods (`put`/`get` return Effects) with streaming methods (`tick` returns a Stream), and its init Effect may close over other bindings — here the KV Namespace it reads and writes.
+A DO shape can mix value methods (`put`/`get` return Effects) with streaming methods (`tick` returns a Stream), and its constructor Effect may close over other bindings — here the KV Namespace it reads and writes.
 
 ### Value round-trip
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { WorkerEnvironmentKVObject } from "./object.ts";
 
 export default class KVWorker extends Cloudflare.Worker<KVWorker>()(
@@ -150,10 +150,10 @@ The stub call is both an Effect and a Stream — value methods `yield*`, streami
 
 ```typescript
 // src/workerB.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Counter } from "./object.ts";
 import { WorkerA } from "./workerA.ts";
 
@@ -181,10 +181,10 @@ export default class WorkerB extends Cloudflare.Worker<WorkerB>()(
 ### Declare the Shape
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const Storage = Cloudflare.R2.Bucket("Storage");
 
@@ -223,12 +223,12 @@ export default MyContainer.make(
 );
 ```
 
-Containers are the one pairing where the Shape is written explicitly as a type parameter — there is no init Effect on the class itself to infer from; `MyContainer.make` supplies the implementation (which, like a Worker's, may close over other bindings such as the R2 Bucket here).
+Containers are the one pairing where the Shape is written explicitly as a type parameter — there is no constructor Effect on the class itself to infer from; `MyContainer.make` supplies the implementation (which, like a Worker's, may close over other bindings such as the R2 Bucket here).
 
 ### Host it in a Durable Object
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { MyContainer } from "./container.ts";
 
@@ -238,17 +238,14 @@ export class ContainerHost extends Cloudflare.DurableObject<ContainerHost>()(
     const container = yield* MyContainer;
 
     return Effect.gen(function* () {
+      const start = container.start({ enableInternet: true });
       return {
-        ping: () => container.ping(),
+        ping: () => start.pipe(Effect.andThen(container.ping())),
         // Read the object from inside the container over RPC.
-        readObjectRpc: (key: string) => container.readObject(key),
+        readObjectRpc: (key: string) => start.pipe(Effect.andThen(container.readObject(key))),
       };
     });
-  }).pipe(
-    Effect.provide(
-      Cloudflare.Containers.layer(MyContainer, { enableInternet: true }),
-    ),
-  ),
+  }),
 ) {}
 ```
 
@@ -257,7 +254,7 @@ Containers run inside Durable Objects, so the chain is Worker → DO → Contain
 ## Dynamically-loaded Workers
 
 ```typescript
-// Init phase — register the loader binding:
+// Construction phase — register the loader binding:
 const loader = yield* Cloudflare.WorkerLoader("LOADER");
 
 // inside the fetch handler — load a sandboxed Worker from inline source:
@@ -287,7 +284,7 @@ Or wrap the binding with `toRpcAsync` to auto-decode the wire
 envelopes:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type Backend from "../backend.ts";
 
 const backend = Cloudflare.toRpcAsync<Backend>(env.BACKEND);

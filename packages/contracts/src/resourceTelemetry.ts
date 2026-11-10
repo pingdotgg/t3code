@@ -2,8 +2,18 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
+import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
-export const RESOURCE_MONITOR_PROTOCOL_VERSION = 2 as const;
+export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
+
+export const HostResourcesSnapshot = Schema.Struct({
+  sampledAt: NonNegativeInt,
+  cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  cpuCount: NonNegativeInt,
+  availableMemoryBytes: NonNegativeInt,
+  totalMemoryBytes: NonNegativeInt,
+});
+export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
 export const ResourceTelemetryIoSemantics = Schema.Literals([
   "storage",
@@ -101,6 +111,13 @@ export const ResourceMonitorSampleNowCommand = Schema.Struct({
 });
 export type ResourceMonitorSampleNowCommand = typeof ResourceMonitorSampleNowCommand.Type;
 
+export const ResourceMonitorProcessTableCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("processTable"),
+  requestId: TrimmedNonEmptyString,
+});
+export type ResourceMonitorProcessTableCommand = typeof ResourceMonitorProcessTableCommand.Type;
+
 export const ResourceMonitorSetSampleIntervalCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("setSampleInterval"),
@@ -136,6 +153,7 @@ export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorSetSampleIntervalCommand,
   ResourceMonitorSetStreamingCommand,
   ResourceMonitorSampleNowCommand,
+  ResourceMonitorProcessTableCommand,
   ResourceMonitorReadHistoryCommand,
   ResourceMonitorShutdownCommand,
 ]);
@@ -167,6 +185,21 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
 });
 export type ResourceMonitorSnapshotEvent = typeof ResourceMonitorSnapshotEvent.Type;
 
+export const ResourceMonitorProcessTableEntry = Schema.Struct({
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  name: Schema.String,
+});
+export type ResourceMonitorProcessTableEntry = typeof ResourceMonitorProcessTableEntry.Type;
+
+export const ResourceMonitorProcessTableEvent = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("processTable"),
+  requestId: TrimmedNonEmptyString,
+  processes: Schema.Array(ResourceMonitorProcessTableEntry),
+});
+export type ResourceMonitorProcessTableEvent = typeof ResourceMonitorProcessTableEvent.Type;
+
 export const ResourceMonitorHistoryChunkEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("historyChunk"),
@@ -188,6 +221,7 @@ export type ResourceMonitorErrorEvent = typeof ResourceMonitorErrorEvent.Type;
 export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorHelloEvent,
   ResourceMonitorSnapshotEvent,
+  ResourceMonitorProcessTableEvent,
   ResourceMonitorHistoryChunkEvent,
   ResourceMonitorErrorEvent,
 ]);
@@ -244,9 +278,67 @@ export const DesktopHostTelemetryHello = Schema.Struct({
 });
 export type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
 
+export const DesktopUpdateRemoteOutcome = Schema.Literals([
+  "ready-to-install",
+  "up-to-date",
+  "failed",
+]);
+export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
+
+export const DesktopUpdateStatusReport = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("desktopUpdateStatus"),
+  requestId: Schema.optionalKey(TrimmedNonEmptyString),
+  outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
+  state: DesktopUpdateStateSchema,
+});
+export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
+
+export const ShellEnvironmentPatch = Schema.Struct({
+  PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  DBUS_SESSION_BUS_ADDRESS: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  DISPLAY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  LANG: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  LC_ALL: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  LC_CTYPE: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  SSH_AUTH_SOCK: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  HOMEBREW_PREFIX: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  HOMEBREW_CELLAR: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  HOMEBREW_REPOSITORY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_CONFIG_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_CURRENT_DESKTOP: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_DATA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_RUNTIME_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_SESSION_DESKTOP: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  XDG_SESSION_TYPE: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  WAYLAND_DISPLAY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  SSL_CERT_FILE: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  SSL_CERT_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  NODE_EXTRA_CA_CERTS: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_TELEMETRY_ENABLED: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  T3CODE_GITHUB_APP_CLIENT_ID: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  __MISE_DIFF: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  JAVA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  FNM_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  FNM_MULTISHELL_PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type ShellEnvironmentPatch = typeof ShellEnvironmentPatch.Type;
+
+export const DesktopShellEnvironmentSnapshot = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("shellEnvironment"),
+  discovered: Schema.Boolean,
+  platform: Schema.String,
+  environment: ShellEnvironmentPatch,
+});
+export type DesktopShellEnvironmentSnapshot = typeof DesktopShellEnvironmentSnapshot.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
+  DesktopShellEnvironmentSnapshot,
   DesktopHostTelemetrySnapshot,
+  DesktopUpdateStatusReport,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
@@ -266,9 +358,37 @@ export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
 export type DesktopTelemetrySetHostPowerIntervals =
   typeof DesktopTelemetrySetHostPowerIntervals.Type;
 
+/** Runs check/download/quit-and-install without local confirmation; the remote RPC click supplies consent. */
+export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("requestDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+  /** A track switch: move to this channel first, and install only `targetVersion`. */
+  channel: Schema.optionalKey(DesktopUpdateChannelSchema),
+  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type DesktopTelemetryRequestDesktopUpdate = typeof DesktopTelemetryRequestDesktopUpdate.Type;
+
+export const DesktopTelemetryCommitDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("commitDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopTelemetryCommitDesktopUpdate = typeof DesktopTelemetryCommitDesktopUpdate.Type;
+
+export const DesktopTelemetryCancelDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("cancelDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopTelemetryCancelDesktopUpdate = typeof DesktopTelemetryCancelDesktopUpdate.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
+  DesktopTelemetryRequestDesktopUpdate,
+  DesktopTelemetryCommitDesktopUpdate,
+  DesktopTelemetryCancelDesktopUpdate,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

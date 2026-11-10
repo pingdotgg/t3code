@@ -1,0 +1,3 @@
+# sveltekit-aws-robots-marker
+User-agent: *
+Allow: /

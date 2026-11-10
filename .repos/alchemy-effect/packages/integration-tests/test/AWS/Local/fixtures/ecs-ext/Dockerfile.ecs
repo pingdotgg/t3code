@@ -1,0 +1,7 @@
+# Out-of-context Dockerfile fixture: the build context is ./site (which does
+# NOT contain this file), so hot reload of an edit HERE rides the watcher's
+# dockerfile-outside-context branch. The test rewrites BAKED_MARKER live.
+FROM busybox:stable
+COPY index.html /www/index.html
+ENV BAKED_MARKER=ecs-ext-baked-v1
+CMD ["sh", "-c", "echo -n \"$BAKED_MARKER\" > /www/baked.txt && exec httpd -f -p 17363 -h /www"]

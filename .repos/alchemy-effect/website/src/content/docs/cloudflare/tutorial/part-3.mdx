@@ -9,6 +9,14 @@ In [Part 2](/cloudflare/tutorial/part-2) you deployed a Worker with R2 Bucket
 bindings. Now you'll write integration tests that deploy the stack,
 hit the live Worker over HTTP, and verify it works.
 
+## Install the test harness
+
+`Test.make` ships in `@alchemy.run/test`. Add it as a dev dependency:
+
+```sh
+bun add -d @alchemy.run/test
+```
+
 ## Create the test file
 
 Alchemy ships test utilities for Bun that wrap `bun:test` with Effect
@@ -18,8 +26,8 @@ with `Test.make({...})` — the same `Cloudflare.providers()` /
 
 ```typescript
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -41,8 +49,8 @@ tests run:
 
 ```diff lang="typescript"
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -66,8 +74,8 @@ returned from your Stack in Part 2:
 
 ```diff lang="typescript"
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -109,12 +117,12 @@ actually handles requests:
 
 ```diff lang="typescript"
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-+import * as HttpBody from "effect/unstable/http/HttpBody";
-+import * as HttpClient from "effect/unstable/http/HttpClient";
++import * as HttpBody from "effect/http/HttpBody";
++import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -160,6 +168,32 @@ const stack = beforeAll(deploy(Stack));
 `HttpClient` is provided automatically by the test harness — no
 extra setup needed.
 
+## Allow the Bucket to be destroyed with objects in it
+
+The PUT test writes `hello.txt` into the Bucket, so the Bucket is no
+longer empty when the tests finish. R2 refuses to delete a Bucket
+that still contains objects, and Alchemy keeps that protection by
+default: destroying a non-empty Bucket fails with `BucketNotEmpty` and
+leaves the Bucket and its objects in place.
+
+This Bucket only ever holds test data, so opt in to deleting its
+objects on destroy with `forceDestroy: true`:
+
+```diff lang="typescript"
+// src/bucket.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+
+-export const Bucket = Cloudflare.R2.Bucket("Bucket");
++export const Bucket = Cloudflare.R2.Bucket("Bucket", {
++  forceDestroy: true,
++});
+```
+
+With `forceDestroy: true`, Alchemy empties the Bucket before deleting
+it. Reserve it for Buckets whose contents are disposable (test
+fixtures, caches, previews); leave it off for Buckets that hold data
+you need to keep.
+
 ## Destroy after tests on CI
 
 Right now the stack stays deployed after tests finish. That's great
@@ -170,12 +204,12 @@ Add `afterAll` with `destroy`, using `skipIf` to only tear down when
 `CI` is set:
 
 ```diff lang="typescript"
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -206,6 +240,7 @@ You now have:
 - `beforeAll(deploy(Stack))` to deploy once before tests
 - `yield* stack` to access outputs in each test
 - HTTP assertions using Effect's `HttpClient`
+- `forceDestroy: true` so destroy can delete a Bucket that tests wrote to
 - `afterAll.skipIf(!process.env.CI)(destroy(Stack))` for automatic
   cleanup on CI with fast iteration locally
 

@@ -1,17 +1,33 @@
-import * as NodeOS from "node:os";
-
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
+
+const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
-  return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
+  if (homePath.length > 0) {
+    return path.resolve(expandHomePath(homePath, home));
+  }
+  // Inherited env vars are not shell-expanded, so a literal `~` stays literal.
+  const inherited = environment?.CLAUDE_CONFIG_DIR?.trim() ?? "";
+  if (inherited.length > 0) {
+    return path.resolve(inherited);
+  }
+  return path.resolve(path.join(home, ".claude"));
 });
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
@@ -24,19 +40,72 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
     ...resolvedBaseEnv,
-    // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
-    // Overriding HOME also relocates the macOS login keychain lookup
-    // ($HOME/Library/Keychains), so the spawned CLI can't find its stored
-    // OAuth credentials and reports "Not logged in". CLAUDE_CONFIG_DIR points
-    // Claude Code at its config dir directly while leaving HOME (and the
-    // keychain) intact.
+    // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
 
+// A Claude Code session that launched T3 exports these. A claude spawned with them acts as part of
+// that session: its session id, messaging socket and token, and effort.
+const CLAUDE_HOST_SESSION_VARIABLES = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_DESKTOP_APP_VERSION",
+  "CLAUDE_EFFORT",
+  "CLAUDE_PID",
+  "CLAUDE_AGENT_SDK_VERSION",
+];
+
+/**
+ * Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`.
+ * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
+ */
+export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  instanceEnvironment: ProviderInstanceEnvironment | undefined,
+  hostEnvironment: NodeJS.ProcessEnv,
+) {
+  const baseEnvironment: NodeJS.ProcessEnv = {
+    ...hostEnvironment,
+    CLAUDE_CODE_ENTRYPOINT: "t3-code",
+  };
+  for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
+  // The desktop runs the server as Node through Electron. Commands Claude runs inherit its env, so
+  // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
+  delete baseEnvironment.ELECTRON_RUN_AS_NODE;
+  const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+  const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
+    .CLAUDE_CODE_ENTRYPOINT;
+  return settingsEntrypoint
+    ? { ...environment, CLAUDE_CODE_ENTRYPOINT: settingsEntrypoint }
+    : environment;
+});
+
+/** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
+export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
+  const managedMcpConfigPath =
+    platform === "darwin"
+      ? "/Library/Application Support/ClaudeCode/managed-mcp.json"
+      : platform === "win32"
+        ? "C:\\Program Files\\ClaudeCode\\managed-mcp.json"
+        : "/etc/claude-code/managed-mcp.json";
+  return yield* fileSystem.exists(managedMcpConfigPath).pipe(Effect.orElseSucceed(() => false));
+});
+
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
-  function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    environment?: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<string, never, Path.Path> {
+    const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
     return `claude:home:${resolvedHomePath}`;
   },
 );
@@ -45,8 +114,21 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
   function* (
     config: Pick<ClaudeSettings, "binaryPath" | "homePath">,
     cwd?: string,
+    environment?: NodeJS.ProcessEnv,
   ): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config);
+    const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
     return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
   },
 );
+
+/** Separate spawn env from login commands to preserve literal paths, including relative inherited values. */
+export const claudeSignedOutMessage = (input: {
+  readonly configDir: string | undefined;
+  readonly cwd: string;
+}): string => {
+  const configuration =
+    input.configDir !== undefined
+      ? ` from ${quotePath(input.cwd)}, with CLAUDE_CONFIG_DIR set to ${quotePath(input.configDir)}`
+      : "";
+  return `Claude could not authenticate. For subscription login, run \`claude auth login\` on this environment's machine${configuration}, then start a new thread. For API-key authentication, check this instance's configured credentials.`;
+};

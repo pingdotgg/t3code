@@ -1,3 +1,4 @@
+import * as AWS from "@alchemy.run/aws";
 /**
  * An "orders" app on ECS Fargate that exercises the full container surface:
  *
@@ -15,16 +16,10 @@
  *   schedule via `AWS.ECS.every`.
  */
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import ApiLive, { Api } from "./src/Api.ts";
-import {
-  OrdersCluster,
-  OrdersIngress,
-  OrdersNetwork,
-  OrdersTable,
-} from "./src/infra.ts";
+import { OrdersCluster, OrdersIngress, OrdersNetwork, OrdersTable } from "./src/infra.ts";
 
 export default Alchemy.Stack(
   "AwsEcsExample",
@@ -96,9 +91,13 @@ export default Alchemy.Stack(
     });
 
     return {
-      url: Output.interpolate`http://${alb.dnsName}`,
-      apiUrl: Output.interpolate`http://${alb.dnsName}/api/orders`,
-      seedUrl: Output.interpolate`http://${alb.dnsName}/api/seed`,
+      // Service-derived URLs, not `http://${alb.dnsName}`: in `alchemy dev`
+      // the emulated ALB is host-routed on the emulator gateway port, and
+      // the service attribute is the only place that port is known.
+      url: web.url,
+      apiUrl: Output.interpolate`${api.url}/api/orders`,
+      seedUrl: Output.interpolate`${api.url}/api/seed`,
+      albDnsName: alb.dnsName,
       tableName: table.tableName,
       apiServiceName: api.serviceName,
       webServiceName: web.serviceName,

@@ -1,0 +1,34 @@
+{
+  "version": 0,
+  "profiles": {
+    "default": {
+      "Cloudflare": {
+        "method": "oauth",
+        "scopes": ["account:read", "workers:write"],
+        "accountId": "0123456789abcdef0123456789abcdef"
+      },
+      "AWS": {
+        "method": "sso",
+        "ssoProfile": "dev"
+      },
+      "GitHub": {
+        "method": "gh-cli"
+      },
+      "Neon": {
+        "method": "env"
+      }
+    },
+    "work": {
+      "GitHub": {
+        "method": "stored"
+      },
+      "Axiom": {
+        "method": "stored"
+      },
+      "Cloudflare": {
+        "method": "stored",
+        "credentialType": "apiKey"
+      }
+    }
+  }
+}

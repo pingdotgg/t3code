@@ -1,0 +1,35 @@
+{
+  "name": "@t3tools/mobile-source-text",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "ios",
+    "src",
+    "index.ts",
+    "LICENSE",
+    "UPSTREAM.md",
+    "T3SourceText.podspec",
+    "react-native.config.js"
+  ],
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "react-native": "./index.ts",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "codegenConfig": {
+    "name": "T3SourceTextSpec",
+    "type": "components",
+    "jsSrcsDir": "src",
+    "ios": {
+      "componentProvider": {
+        "T3SourceText": "T3SourceText",
+        "T3SourceTextRun": "T3SourceTextRun"
+      }
+    },
+    "outputDir": {
+      "ios": "ios/generated"
+    }
+  }
+}

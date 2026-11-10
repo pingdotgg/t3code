@@ -1,12 +1,12 @@
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as AtomRpc from "effect/unstable/reactivity/AtomRpc";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as AtomRpc from "effect/reactivity/AtomRpc";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import { TodoRpcs } from "./backend/rpc.ts";
 
 /**
  * The browser-side reactive RPC client. Effect 4 ships atom RPC natively in
- * `effect/unstable/reactivity/AtomRpc` — `AtomRpc.Service` turns an `RpcGroup`
+ * `effect/reactivity/AtomRpc` — `AtomRpc.Service` turns an `RpcGroup`
  * into a `.query()` / `.mutation()` client whose results are atoms.
  *
  * The transport (`protocol`) is a plain HTTP client over `fetch`, pointed at

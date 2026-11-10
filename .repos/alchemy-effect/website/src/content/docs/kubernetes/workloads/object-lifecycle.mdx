@@ -1,0 +1,162 @@
+---
+title: How objects are managed
+description: How Alchemy applies, orders, prunes, and deletes Kubernetes objects, including server-side apply and field ownership, drift, replacement, unreachable clusters, and adoption.
+---
+
+Every Kubernetes resource in Alchemy turns into one or more
+Kubernetes objects. That includes
+[`Deployment`](/kubernetes/workloads/deployments),
+[`Job`](/kubernetes/workloads/jobs),
+[`Manifest`](/kubernetes/objects/manifests), and
+[`HelmChart`](/kubernetes/objects/helm-charts). This page describes
+what happens to those objects across deploys.
+
+- `Deployment` creates a ServiceAccount, a Deployment, and a Service.
+- `Job` creates a ServiceAccount and a Job or CronJob.
+- `Manifest` creates the one object in `manifest`.
+- `HelmChart` creates every object in the render, plus the Namespace
+  when `createNamespace` is set.
+
+## Server-side apply
+
+Alchemy writes objects with Kubernetes
+[server-side apply](https://kubernetes.io/docs/reference/using-api/server-side-apply/)
+under the field manager `alchemy`, with `force` enabled. Each apply
+sends the complete desired object, and the API server merges it:
+
+- **Alchemy owns the fields it sends.** Forcing means a conflicting
+  value set by another manager is overwritten, and Alchemy becomes
+  that field's owner. Another manager might be `kubectl edit` or
+  another tool.
+- **Fields Alchemy stops sending are removed.** The exception is a
+  field that another manager also set.
+- **Fields Alchemy never sends are left alone.** Controllers can
+  keep writing `status`, autoscalers can manage fields Alchemy
+  doesn't set, and annotations added by other tools survive.
+
+This has one consequence for autoscaling. If a
+HorizontalPodAutoscaler manages a Deployment's replicas, Alchemy's
+`replicas` value (default `1`) still overwrites them on each apply.
+Write the workload as a [Manifest](/kubernetes/objects/manifests)
+without `spec.replicas` when an autoscaler should own the count.
+
+## Apply and delete order
+
+Within one resource, Alchemy applies objects in dependency order.
+Namespaces come first, then CustomResourceDefinitions, then
+ServiceAccounts, ConfigMaps and Secrets, Services, workloads, and
+finally any other kind. Deletes run in the reverse order. Objects at
+the same level are applied in parallel.
+
+Across resources, the order comes from Output references. A
+Deployment whose `namespace` is `ns.name` deploys after the `ns`
+Manifest and is destroyed before it. Resources that don't reference
+each other deploy in parallel.
+
+## Pruning
+
+Alchemy records every object each resource applied. An update can
+produce a different set. For example, a chart's new version drops a
+template, a Job's spec changes its name, or a Deployment moves
+namespace. Alchemy then deletes the objects that are no longer in the
+set before applying the new ones.
+
+Deletes use background propagation, so a deleted Job takes its pods
+with it and a deleted Deployment takes its ReplicaSets.
+
+## When objects are applied
+
+Alchemy applies a resource's objects when the resource is created or
+updated. A resource updates when its props change. It also updates
+when the content of its image source changes. An image source is a
+`context` directory, a bundled `main` program, or a local chart
+directory.
+
+A deploy with no changes applies nothing. Edits made out of band,
+such as `kubectl scale` or `kubectl edit`, stay in place until the
+resource is next applied. To converge everything back to your
+program, force an apply of every resource:
+
+```sh
+alchemy deploy --force
+```
+
+[`alchemy drift`](/cli/drift) detects objects deleted out of band,
+such as a Manifest's object or the ServiceAccount of a Deployment or
+Job. It reports the resource as missing, and
+`alchemy drift --repair` recreates it. It doesn't compare object
+fields, and a HelmChart is only checked for a reachable cluster.
+
+## Replacement
+
+A resource is replaced when its identity changes:
+
+- `Deployment` identity is its cluster and namespace.
+- `Job` identity is its cluster and namespace.
+- `Manifest` identity is its cluster, `apiVersion`, `kind`, `name`,
+  and `namespace`.
+- `HelmChart` identity is its cluster, release name, and namespace.
+
+Replacement creates the new generation first, then deletes the old
+one. Sometimes both generations contain an object with the same name
+in the same place. This happens when the same cluster is reached
+through a different connection, or when a chart object's name
+ignores the release name. Deleting the old generation then removes
+the object the new one just applied. Run `alchemy deploy --force`
+after such a change. See
+[Move a resource to another cluster](/kubernetes/clusters/connecting#move-a-resource-to-another-cluster)
+and [Helm charts](/kubernetes/objects/helm-charts#release-name-and-namespace).
+
+## Deploys don't wait for readiness
+
+Applying succeeds as soon as the API server accepts the objects. A
+Deployment's pods may still be pulling images, and a Job may still
+be running or failing. The one exception is a `LoadBalancer` Service,
+whose deploy waits up to about three minutes for an address. Use
+`kubectl rollout status`, a smoke-test
+[Job](/kubernetes/workloads/jobs), or your own health checks to
+gate on readiness.
+
+## Transient errors
+
+Applies retry for about a minute on API server errors (5xx),
+throttling (429), and authentication or authorization failures (401
+and 403). The 401 and 403 errors are common for a few seconds after
+a hosted cluster or its access grants are created. Validation errors
+such as 422 fail immediately with the API server's message.
+
+## Destroy and unreachable clusters
+
+`alchemy destroy` connects to each resource's cluster using the
+connection stored in state and deletes its objects. What happens
+when the cluster can't be reached depends on why:
+
+- **The cluster is gone.** The cluster's platform reports that it
+  was deleted. Its objects went with it, so Alchemy treats them as
+  deleted. Alchemy still removes any cloud resources the platform
+  created for the workload. On EKS, those are the ECR repository and
+  the Pod Identity role.
+- **The cluster is unreachable.** This covers a kubeconfig cluster
+  that's stopped, or a network problem. `Deployment` and `Job` skip
+  their in-cluster objects and still remove adapter-owned cloud
+  resources. `Manifest` and `HelmChart` fail so you can retry once
+  the cluster is back.
+
+Deleting an object that's already gone is not an error, so destroy
+can be re-run safely.
+
+## Adoption and listing
+
+Kubernetes objects carry no Alchemy ownership marker, so Alchemy
+doesn't enumerate or adopt existing objects. Applying a Manifest or
+chart whose objects already exist takes over their fields through
+server-side apply. From then on, Alchemy manages and deletes them
+like objects it created.
+
+## Where next
+
+- **[Cluster adapters](/kubernetes/clusters/cluster-adapters).** The
+  platform layer behind `connect`, images, and identity.
+- **[Resource lifecycle](/infrastructure-as-code/resource-lifecycle).**
+  How Alchemy plans creates, updates, and replacements across all
+  providers.

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import type { CallbackFactory } from "./Callback.ts";
 import type { HttpEffect } from "./Http.ts";
 import type { Output } from "./Output.ts";
 
@@ -21,6 +22,8 @@ export interface BaseRuntimeContext {
    */
   set(id: string, output: Output): Effect.Effect<string>;
   exports?: Effect.Effect<Record<string, any>>;
+  /** Register a durable callback in the current host instance, when supported. */
+  makeCallback?: CallbackFactory;
   serve?<Req = never>(
     handler: HttpEffect<Req>,
     options?: { shape?: Record<string, unknown> },
@@ -28,7 +31,31 @@ export interface BaseRuntimeContext {
   shape?: () => Record<string, unknown>;
   /** additional services to provide to the plan  */
   planServices?: Layer.Layer<any>;
+  /**
+   * Services the host provides its init in every phase, built over the
+   * instance (e.g. a Cloudflare Worker's `WebhookHost`), so user code
+   * doesn't provide them itself.
+   */
+  hostServices?: Layer.Layer<any, never, any>;
+  /**
+   * Telemetry exporter Layer registered during init via
+   * `Telemetry.layer(...)` / `Telemetry.layerOtlp(...)` (see Telemetry.ts).
+   * The runtime bridges build it into every event's request scope,
+   * overriding the env-driven default.
+   */
+  telemetry?: Layer.Layer<never, any, any>;
 }
+
+/**
+ * Keys a Platform's Init captured through {@link BaseRuntimeContext.set}
+ * (`yield* Config.x(...)`, `yield* output`). `Platform.make` attaches the
+ * runtime context to the resource and merges these values into its
+ * `props.env`.
+ */
+export const capturedEnvKeys = (resource: unknown): string[] => {
+  const ctx = (resource as { RuntimeContext?: Partial<BaseRuntimeContext> })?.RuntimeContext;
+  return ctx?.env ? Object.keys(ctx.env) : [];
+};
 
 /**
  * Canonicalize a logical key into a key that is safe to use as the name of an
@@ -41,8 +68,7 @@ export interface BaseRuntimeContext {
  * `Output.toString()` like `"QueueSinkQueue.queueUrl"`). Callers run the key
  * through this before calling `set`/`get` so both sides agree.
  */
-export const sanitizeKey = (key: string): string =>
-  key.replaceAll(/[^a-zA-Z0-9]/g, "_");
+export const sanitizeKey = (key: string): string => key.replaceAll(/[^a-zA-Z0-9]/g, "_");
 
 /**
  * The wire format `RuntimeContext.set`/`get` use to carry a `Redacted` value
@@ -67,8 +93,34 @@ export const isRedactedMarker = (value: unknown): value is RedactedMarker =>
   "value" in value;
 
 /**
+ * Returns true when {@link unpackEnvValue}'s `JSON.parse` would reinterpret
+ * the raw string as something other than itself — a number (`"123"`), a
+ * boolean, `null`, or a JSON document. Such strings must stay
+ * `JSON.stringify`-packed; everything else round-trips verbatim through the
+ * parse-failure fallback.
+ */
+const parsesAsJson = (value: string): boolean => {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Serialize a binding value for an env var: `Redacted` values are packed as
- * a {@link RedactedMarker}, everything else is plain `JSON.stringify`.
+ * a {@link RedactedMarker}, non-string values as JSON.
+ *
+ * A plain string is stored **verbatim** whenever `JSON.parse` would reject
+ * it — which is almost every real-world string (names, URLs, ids). Packing
+ * those too would put `"my-queue"` (quote characters included) on the wire,
+ * where anything that consumes the raw binding without going through
+ * {@link unpackEnvValue} — the Cloudflare dashboard, a hand-written env
+ * read, a queue-name comparison against `MessageBatch.queue` — sees the
+ * quoted form and mismatches (#1243). Only ambiguous strings (`"123"`,
+ * `"null"`, JSON documents) keep the pack so the read side can't
+ * reinterpret them.
  */
 export const packEnvValue = (value: unknown): string =>
   Redacted.isRedacted(value)
@@ -76,7 +128,9 @@ export const packEnvValue = (value: unknown): string =>
         _tag: "Redacted",
         value: Redacted.value(value),
       } satisfies RedactedMarker)
-    : JSON.stringify(value);
+    : typeof value === "string" && !parsesAsJson(value)
+      ? value
+      : JSON.stringify(value);
 
 /**
  * Like {@link packEnvValue}, but a `Redacted` input keeps its `Redacted`
@@ -85,22 +139,22 @@ export const packEnvValue = (value: unknown): string =>
  * Secrets Store) instead of leaking them as plain env vars. The inner
  * payload still carries the marker for the runtime `get` accessor.
  */
-export const packEnvValueKeepRedacted = (
-  value: unknown,
-): string | Redacted.Redacted<string> =>
-  Redacted.isRedacted(value)
-    ? Redacted.make(packEnvValue(value))
-    : packEnvValue(value);
+export const packEnvValueKeepRedacted = (value: unknown): string | Redacted.Redacted<string> =>
+  Redacted.isRedacted(value) ? value.pipe(packEnvValue, Redacted.make) : packEnvValue(value);
+
+// Only JSON's four whitespace characters may precede a valid JSON value.
+const possibleJson = /^[\x20\t\r\n]*["{[0-9tfn-]/;
 
 /**
  * Parse an env-var string produced by {@link packEnvValue} back into its
  * value: rebuild `Redacted` from the marker, return other JSON values
- * as-is, and fall back to the raw string for non-JSON input (e.g. an env
- * var the user set directly). `undefined` passes through.
+ * as-is, and fall back to the raw string for non-JSON input (a verbatim
+ * string from `packEnvValue`, or an env var the user set directly).
+ * `undefined` passes through.
  *
  * Runtime `get` accessors MUST feed this from the raw environment
  * (`process.env[key]` / the platform env object) — never through
- * `Config.string`: the ambient runtime `ConfigProvider` reifies bound
+ * `Config.String`: the ambient runtime `ConfigProvider` reifies bound
  * values (unwrapping the marker before it could be detected here), and
  * during init the ambient provider is the interceptor installed in
  * `Platform.ts`, whose runtime branch calls back into `ctx.get(key)` —
@@ -110,6 +164,9 @@ export const packEnvValueKeepRedacted = (
 export const unpackEnvValue = <T>(raw: string | undefined): T | undefined => {
   if (raw === undefined) {
     return undefined;
+  }
+  if (typeof raw === "string" && !possibleJson.test(raw)) {
+    return raw as unknown as T;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -127,10 +184,9 @@ export const unpackEnvValue = <T>(raw: string | undefined): T | undefined => {
  *
  * E.g. the context of a running Worker, Task, Process, Function
  */
-export class RuntimeContext extends Context.Service<
-  RuntimeContext,
-  BaseRuntimeContext
->()("RuntimeContext") {
+export class RuntimeContext extends Context.Service<RuntimeContext, BaseRuntimeContext>()(
+  "RuntimeContext",
+) {
   static phantom = Layer.empty as Layer.Layer<RuntimeContext>;
 }
 

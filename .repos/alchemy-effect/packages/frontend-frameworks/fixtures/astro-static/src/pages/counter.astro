@@ -1,0 +1,25 @@
+---
+import Layout from "../components/Layout.astro";
+---
+
+<Layout title="Counter">
+  <h1 id="title">Counter</h1>
+  <p id="mode">static</p>
+  <!-- Client-side island: the HTML is prerendered with a "not hydrated"
+       marker; the bundled <script> (a real client asset produced by the
+       build) flips it and wires up the button. Proves client JS is served
+       and executes from the static deploy. -->
+  <p id="hydrated">no</p>
+  <p id="count">0</p>
+  <button id="increment" type="button">Increment</button>
+  <script>
+    const count = document.getElementById("count")!;
+    const hydrated = document.getElementById("hydrated")!;
+    let value = 0;
+    document.getElementById("increment")!.addEventListener("click", () => {
+      value += 1;
+      count.textContent = String(value);
+    });
+    hydrated.textContent = "yes";
+  </script>
+</Layout>

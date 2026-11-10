@@ -1,11 +1,35 @@
 import type { DesktopBridge, DesktopDiscoveredSshHost } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
-class DesktopSshDiscoveryUnavailableError extends Schema.TaggedErrorClass<DesktopSshDiscoveryUnavailableError>()(
+export function filterDiscoveredSshHosts(
+  hosts: ReadonlyArray<DesktopDiscoveredSshHost>,
+  query: string,
+): ReadonlyArray<DesktopDiscoveredSshHost> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0) return hosts;
+
+  const prefixMatches: Array<DesktopDiscoveredSshHost> = [];
+  const substringMatches: Array<DesktopDiscoveredSshHost> = [];
+  for (const host of hosts) {
+    const alias = host.alias.toLowerCase();
+    if (alias.startsWith(normalizedQuery)) {
+      prefixMatches.push(host);
+    } else if (
+      alias.includes(normalizedQuery) ||
+      host.hostname.toLowerCase().includes(normalizedQuery)
+    ) {
+      substringMatches.push(host);
+    }
+  }
+
+  return [...prefixMatches, ...substringMatches];
+}
+
+class DesktopSshDiscoveryUnavailableError extends Schema.TaggedError<DesktopSshDiscoveryUnavailableError>()(
   "DesktopSshDiscoveryUnavailableError",
   {},
 ) {
@@ -14,7 +38,7 @@ class DesktopSshDiscoveryUnavailableError extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-class DesktopSshDiscoveryError extends Schema.TaggedErrorClass<DesktopSshDiscoveryError>()(
+class DesktopSshDiscoveryError extends Schema.TaggedError<DesktopSshDiscoveryError>()(
   "DesktopSshDiscoveryError",
   { cause: Schema.Defect() },
 ) {
@@ -27,9 +51,7 @@ function getDesktopSshDiscoveryBridge(): DesktopSshDiscoveryBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopSshHostsStateAtom(
-  getBridge: () => DesktopSshDiscoveryBridge | undefined,
-) {
+function createDesktopSshHostsStateAtom(getBridge: () => DesktopSshDiscoveryBridge | undefined) {
   const discoverDesktopSshHosts = Effect.fn("discoverDesktopSshHosts")(function* () {
     const bridge = getBridge();
     if (!bridge) {

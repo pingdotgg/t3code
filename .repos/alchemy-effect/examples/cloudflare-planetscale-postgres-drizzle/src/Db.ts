@@ -1,12 +1,12 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Planetscale from "alchemy/Planetscale";
 import * as Effect from "effect/Effect";
 
 /**
  * A Drizzle schema + PlanetScale Postgres database + feature branch. The
- * branch's `migrationsDir` is wired to the schema resource's `out` output, so
+ * branch's `migrations` prop is wired to the schema resource, so
  * the provider order becomes:
  *
  *   1. `Drizzle.Schema` regenerates pending migration SQL files.
@@ -41,7 +41,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
 
   const branch = yield* Planetscale.PostgresBranch("app-branch", {
     database,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   const role = yield* Planetscale.PostgresRole("app-role", {
@@ -53,14 +53,12 @@ export const PlanetscaleDb = Effect.gen(function* () {
   return { database, branch, role, schema };
 });
 
-export const Hyperdrive: Effect.Effect<
-  Cloudflare.Hyperdrive.Connection,
-  never,
-  any
-> = Effect.gen(function* () {
-  const { role } = yield* PlanetscaleDb;
-  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
-    origin: role.origin,
-    caching: { disabled: true },
-  });
-});
+export const Hyperdrive: Effect.Effect<Cloudflare.Hyperdrive.Connection, never, any> = Effect.gen(
+  function* () {
+    const { role } = yield* PlanetscaleDb;
+    return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+      origin: role.origin,
+      caching: { disabled: true },
+    });
+  },
+);

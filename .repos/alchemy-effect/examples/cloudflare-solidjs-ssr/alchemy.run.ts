@@ -1,5 +1,5 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -10,9 +10,6 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const worker = yield* Cloudflare.Website.Vite("SolidJSSrr", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
       assets: {
         runWorkerFirst: true,
       },

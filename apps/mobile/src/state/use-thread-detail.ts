@@ -1,26 +1,109 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import { useAtomValue } from "@effect/atom-react";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import type { EnvironmentThreadStructure } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadProjection,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 
-import { useEnvironmentThread } from "./threads";
+import { environmentThreadDetails, useEnvironmentThread } from "./threads";
 import { useThreadSelection } from "./use-thread-selection";
+
+const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
+  Atom.withLabel("mobile-thread-projection:empty"),
+);
+const EMPTY_THREAD_STRUCTURE_ATOM = Atom.make<EnvironmentThreadStructure | null>(null).pipe(
+  Atom.withLabel("mobile-thread-structure:empty"),
+);
+const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make<
+  OrchestrationV2ThreadProjection["visibleTurnItems"]
+>(Object.freeze([])).pipe(Atom.withLabel("mobile-thread-visible-turn-items:empty"));
 
 export interface ThreadDetailTarget {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }
 
-export function useThreadDetail(target: ThreadDetailTarget) {
-  return useEnvironmentThread(target.environmentId, target.threadId);
+export function useSelectedThreadDetailState() {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useEnvironmentThread(
+    selectedThreadDetailRef?.environmentId ?? null,
+    selectedThreadDetailRef?.threadId ?? null,
+  );
 }
 
-export function useSelectedThreadDetailState() {
-  const { selectedThread } = useThreadSelection();
-  return useThreadDetail({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+function useThreadProjection(target: ThreadDetailTarget): EnvironmentThread | null {
+  return useAtomValue(
+    target.environmentId === null || target.threadId === null
+      ? EMPTY_THREAD_PROJECTION_ATOM
+      : environmentThreadDetails.threadAtom({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+        }),
+  );
+}
+
+/** Keeps its value through streamed text; runs, sessions, and item status still update. */
+export function useQuietThreadStructure(
+  ref: ScopedThreadRef | null,
+): EnvironmentThreadStructure | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_STRUCTURE_ATOM : environmentThreadDetails.quietThreadAtom(ref),
+  );
+}
+
+export function useSelectedThreadProjection(): EnvironmentThread | null {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useThreadProjection({
+    environmentId: selectedThreadDetailRef?.environmentId ?? null,
+    threadId: selectedThreadDetailRef?.threadId ?? null,
   });
 }
 
-export function useSelectedThreadDetail() {
-  return Option.getOrNull(useSelectedThreadDetailState().data);
+function useThreadVisibleTurnItems(
+  target: ThreadDetailTarget,
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  return useAtomValue(
+    target.environmentId === null || target.threadId === null
+      ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
+      : environmentThreadDetails.visibleTurnItemsAtom({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+        }),
+  );
+}
+
+export function useSelectedThreadVisibleTurnItems(): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useThreadVisibleTurnItems({
+    environmentId: selectedThreadDetailRef?.environmentId ?? null,
+    threadId: selectedThreadDetailRef?.threadId ?? null,
+  });
+}
+
+const EMPTY_WORKTREE_PATH_ATOM = Atom.make<string | null>(null);
+const EMPTY_PENDING_REQUESTS_ATOM = Atom.make<PendingThreadRequests | null>(null);
+
+export function useThreadWorktreePath(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_WORKTREE_PATH_ATOM : environmentThreadDetails.worktreePathAtom(ref),
+  );
+}
+
+export function useSelectedThreadWorktreePath() {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useThreadWorktreePath(selectedThreadDetailRef);
+}
+
+export function useSelectedThreadPendingRequests() {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_PENDING_REQUESTS_ATOM
+      : environmentThreadDetails.pendingRequestsAtom(selectedThreadDetailRef),
+  );
 }

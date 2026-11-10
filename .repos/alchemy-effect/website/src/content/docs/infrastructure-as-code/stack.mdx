@@ -16,7 +16,7 @@ file:
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -42,13 +42,56 @@ file with a default-exported Stack works**. Pass the path as the
 first positional argument:
 
 ```sh
-alchemy deploy infra/my-stack.ts
-alchemy destroy stacks/github.ts
+alchemy deploy --config infra/my-stack.ts
+alchemy destroy --config stacks/github.ts
 ```
 
 See the [CLI reference](/cli/deploy) for the full invocation
 syntax.
 :::
+
+## Multiple providers
+
+A stack is not limited to one cloud. Providers are Effect Layers, so
+to deploy resources from several providers in a single stack, merge
+their layers with `Layer.mergeAll`:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      AWS.providers(),
+      Neon.providers(),
+    ),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const db = yield* Neon.Project("Db");
+    const queue = yield* AWS.SQS.Queue("Jobs");
+    const bucket = yield* Cloudflare.R2.Bucket("Uploads");
+    return { projectId: db.projectId };
+  }),
+);
+```
+
+The type system tracks which providers the stack's resources need —
+declaring an AWS resource without `AWS.providers()` in the merged
+layer is a compile-time error.
+
+`state` is independent of `providers`: pick one state layer no
+matter how many clouds the stack deploys to.
+
+See [Providers](/infrastructure-as-code/provider#multiple-providers)
+for more on provider layers.
 
 ## Stack outputs
 
@@ -122,7 +165,7 @@ service. But a Resource's props can themselves be an Effect —
 stack, useful for parameterizing names by stage:
 
 ```typescript
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import { Stack } from "alchemy/Stack";
 
 export const Traces = Axiom.Dataset(

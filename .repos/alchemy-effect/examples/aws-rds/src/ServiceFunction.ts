@@ -1,9 +1,9 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Database, DatabaseAurora } from "./Database.ts";
 import { NetworkLive } from "./Network.ts";
 
@@ -21,10 +21,7 @@ export default class ServiceFunction extends AWS.Lambda.Function<ServiceFunction
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
 
-        if (
-          request.method === "GET" &&
-          new URL(request.originalUrl).pathname === "/"
-        ) {
+        if (request.method === "GET" && new URL(request.originalUrl).pathname === "/") {
           const response = yield* db
             .query<{
               database: string;

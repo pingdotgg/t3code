@@ -1,8 +1,9 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -12,7 +13,7 @@ import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persistence/schema.ts";
 
-export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialCreatePersistenceError>()(
+export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedError<EnvironmentCredentialCreatePersistenceError>()(
   "EnvironmentCredentialCreatePersistenceError",
   {
     stage: Schema.Literals([
@@ -31,7 +32,7 @@ export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedEr
   }
 }
 
-export class EnvironmentCredentialAuthenticatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialAuthenticatePersistenceError>()(
+export class EnvironmentCredentialAuthenticatePersistenceError extends Schema.TaggedError<EnvironmentCredentialAuthenticatePersistenceError>()(
   "EnvironmentCredentialAuthenticatePersistenceError",
   {
     stage: Schema.Literals(["hash-token", "lookup-credential"]),
@@ -43,7 +44,7 @@ export class EnvironmentCredentialAuthenticatePersistenceError extends Schema.Ta
   }
 }
 
-export class EnvironmentCredentialRevokePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialRevokePersistenceError>()(
+export class EnvironmentCredentialRevokePersistenceError extends Schema.TaggedError<EnvironmentCredentialRevokePersistenceError>()(
   "EnvironmentCredentialRevokePersistenceError",
   {
     environmentId: Schema.String,
@@ -83,13 +84,14 @@ export class EnvironmentCredentials extends Context.Service<
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const hashToken = (token: string) =>
-    crypto
-      .digest("SHA-256", new TextEncoder().encode(token))
-      .pipe(Effect.map(Encoding.encodeBase64Url));
+    digest
+      .digest(Digest.sha256, new TextEncoder().encode(token))
+      .pipe(Effect.map(Base64Url.encode));
   const randomTokenPart = (segments: number) =>
-    Effect.map(Effect.all(Array.from({ length: segments }, () => crypto.randomUUIDv4)), (values) =>
+    Effect.map(Effect.all(Array.from({ length: segments }, () => random.uuidV4())), (values) =>
       values.join("").replaceAll("-", ""),
     );
   const makeCredential = Effect.fnUntraced(function* () {

@@ -11,14 +11,12 @@ export type { ShowcaseScene };
 
 export type ShowcaseAppearance = "light" | "dark";
 
-/** Every palette the mobile appearance settings can select. */
 export const SHOWCASE_THEMES = MOBILE_THEME_IDS;
-export const DEFAULT_SHOWCASE_THEME = MOBILE_DEFAULT_THEME_ID;
+const DEFAULT_SHOWCASE_THEME = MOBILE_DEFAULT_THEME_ID;
 export type ShowcaseTheme = MobileThemeId;
 
 export interface ShowcaseStoreAssetSpec {
   readonly store: "apple" | "google-play";
-  /** Device directory relative to ShowcaseConfig.outputDirectory. */
   readonly directory: string;
   readonly width: number;
   readonly height: number;
@@ -30,16 +28,12 @@ export interface ShowcaseStoreAssetSpec {
 export interface ShowcaseIosDevice {
   readonly id: string;
   readonly platform: "ios";
-  /** Exact name from `xcrun simctl list devices available`. */
   readonly simulator: string;
-  /** Device type used to create a disposable simulator when the named one is absent. */
   readonly simulatorDeviceType?: string;
-  /** Appearance used when the CLI does not pass --appearance. */
   readonly appearance: ShowcaseAppearance;
-  /** Palette used when the CLI does not pass --theme. */
   readonly theme: ShowcaseTheme;
-  /** Orientation applied by the capture harness. Defaults to portrait. */
   readonly orientation?: "portrait" | "landscape";
+  readonly fold?: "closed" | "open";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly storeAsset: ShowcaseStoreAssetSpec;
 }
@@ -47,16 +41,11 @@ export interface ShowcaseIosDevice {
 export interface ShowcaseAndroidDevice {
   readonly id: string;
   readonly platform: "android";
-  /** Exact name from `emulator -list-avds`. */
   readonly avd: string;
-  /** Appearance used when the CLI does not pass --appearance. */
   readonly appearance: ShowcaseAppearance;
-  /** Palette used when the CLI does not pass --theme. */
   readonly theme: ShowcaseTheme;
-  /** Native ABI used by the AVD, from its config.ini `abi.type`. */
   readonly abi?: "arm64-v8a" | "x86_64" | "x86" | "armeabi-v7a";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
-  /** Optional capture viewport. Omit to use the AVD's native size and density. */
   readonly viewport?: {
     readonly width: number;
     readonly height: number;
@@ -76,7 +65,7 @@ export interface ShowcaseConfig {
 
 const ANDROID_ABIS = ["arm64-v8a", "x86_64", "x86", "armeabi-v7a"] as const;
 
-export function resolveShowcaseAndroidAbi(
+function resolveShowcaseAndroidAbi(
   value: string | undefined,
 ): NonNullable<ShowcaseAndroidDevice["abi"]> {
   if (!value) return "arm64-v8a";
@@ -88,27 +77,20 @@ export function resolveShowcaseAndroidAbi(
   );
 }
 
-/**
- * The defaults cover every App Store Connect and Google Play upload slot used
- * by the mobile app. Edit this matrix (or pass --device / --scene) without
- * changing the runner. Every target declares and validates its exact upload
- * dimensions so SDK or emulator changes cannot silently produce invalid files.
- */
 const config: ShowcaseConfig = {
   outputDirectory: "artifacts/app-store/screenshots",
-  // Dedicated port so the harness cannot attach to a normal mobile dev server
-  // (or a second worktree) and capture the wrong bundle.
+  // A dedicated port prevents captures from attaching to another dev server's bundle.
   metroPort: 8199,
   settleDelayMs: 2_500,
   devices: [
     {
       id: "iphone-6.9",
       platform: "ios",
-      simulator: "iPhone 17 Pro Max",
+      simulator: "T3 Showcase iPhone 17 Pro Max",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
-      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
       storeAsset: {
         store: "apple",
         directory: "apple/iphone-6.9",
@@ -125,7 +107,7 @@ const config: ShowcaseConfig = {
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
-      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
       storeAsset: {
         store: "apple",
         directory: "apple/iphone-6.5",
@@ -135,6 +117,26 @@ const config: ShowcaseConfig = {
         maximumUploadCount: 10,
       },
     },
+    ...(["closed", "open"] as const).map((fold): ShowcaseIosDevice => ({
+      id: `iphone-duo-${fold}`,
+      platform: "ios",
+      simulator: `T3 Showcase iPhone Duo ${fold}`,
+      simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
+      appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
+      orientation: fold === "closed" ? "portrait" : "landscape",
+      fold,
+      // Both poses share one ten-image App Store slot.
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      storeAsset: {
+        store: "apple",
+        directory: `apple/iphone-duo-${fold}`,
+        width: fold === "closed" ? 1398 : 2853,
+        height: fold === "closed" ? 2034 : 2007,
+        minimumUploadCount: 1,
+        maximumUploadCount: 5,
+      },
+    })),
     {
       id: "ipad-13",
       platform: "ios",
@@ -143,6 +145,7 @@ const config: ShowcaseConfig = {
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
       orientation: "landscape",
+      // Lock screens ignore app rotation; headless landscape captures would be sideways.
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
@@ -157,8 +160,7 @@ const config: ShowcaseConfig = {
       id: "pixel",
       platform: "android",
       avd: "Pixel_10_Pro",
-      // Apple Silicon uses ARM64 locally; CI overrides this with x86_64 so its
-      // Blacksmith Linux runner can use KVM acceleration.
+      // Apple Silicon defaults to ARM64; Blacksmith Linux CI overrides to x86_64 for KVM.
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
@@ -167,7 +169,7 @@ const config: ShowcaseConfig = {
         height: 1920,
         density: 420,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/phone",
@@ -190,7 +192,7 @@ const config: ShowcaseConfig = {
         height: 1920,
         density: 288,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/tablet-7",
@@ -213,7 +215,7 @@ const config: ShowcaseConfig = {
         height: 2560,
         density: 288,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments"],
+      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/tablet-10",

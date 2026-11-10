@@ -6,23 +6,26 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Effectable from "effect/Effectable";
+import type { HttpClient } from "effect/http/HttpClient";
+import type { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { Scope } from "effect/Scope";
 import type * as Stream from "effect/Stream";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
-import type { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type { Dependencies } from "./Dependencies.ts";
+import { toFqn } from "./FQN.ts";
 import type { HttpEffect } from "./Http.ts";
 import type { InputProps } from "./Input.ts";
 import type { Named, Tag } from "./Named.ts";
+import { CurrentNamespace } from "./Namespace.ts";
 import * as Output from "./Output.ts";
 import { ALCHEMY_PHASE } from "./Phase.ts";
 import type { Provider, ProviderCollectionLike } from "./Provider.ts";
 import { Resource, type ResourceLike } from "./Resource.ts";
 import type { Rpc } from "./Rpc.ts";
+import { ServerHost, type ProcessContext } from "./Runtime/Process.ts";
 import {
   CurrentRuntimeContext,
   RuntimeContext,
@@ -30,8 +33,8 @@ import {
   type BaseRuntimeContext,
 } from "./RuntimeContext.ts";
 import { Self } from "./Self.ts";
-import { ServerHost, type ProcessContext } from "./Server/Process.ts";
 import type { Stack, StackServices } from "./Stack.ts";
+import { StackContext } from "./StackContext.ts";
 import type { Stage } from "./Stage.ts";
 import { effectClass } from "./Util/effect.ts";
 
@@ -75,11 +78,7 @@ const provideClassLayer =
             Effect.provideContext(self, context),
           ),
         )
-      : Effect.provide(self, layer)) as Effect.Effect<
-      A,
-      E | E2,
-      RIn | Scope | Exclude<R, ROut>
-    >;
+      : Effect.provide(self, layer)) as Effect.Effect<A, E | E2, RIn | Scope | Exclude<R, ROut>>;
 
 export type Main<InitServices = never> = void | {
   fetch?:
@@ -93,29 +92,13 @@ export type Main<InitServices = never> = void | {
 
 export interface MainRpc<Req = never> {
   [key: string]:
-    | Effect.Effect<
-        any,
-        any,
-        PlatformServices | RuntimeContext | HttpServerRequest | Scope | Req
-      >
-    | Stream.Stream<
-        any,
-        any,
-        PlatformServices | RuntimeContext | HttpServerRequest | Scope | Req
-      >
+    | Effect.Effect<any, any, PlatformServices | RuntimeContext | HttpServerRequest | Scope | Req>
+    | Stream.Stream<any, any, PlatformServices | RuntimeContext | HttpServerRequest | Scope | Req>
     | ((
         ...args: any[]
       ) =>
-        | Effect.Effect<
-            any,
-            any,
-            PlatformServices | RuntimeContext | Scope | Req
-          >
-        | Stream.Stream<
-            any,
-            any,
-            PlatformServices | RuntimeContext | Scope | Req
-          >);
+        | Effect.Effect<any, any, PlatformServices | RuntimeContext | Scope | Req>
+        | Stream.Stream<any, any, PlatformServices | RuntimeContext | Scope | Req>);
 }
 
 // Strip `void`/`undefined`/`never` from `Shape` before intersecting it with
@@ -129,9 +112,7 @@ export interface MainRpc<Req = never> {
 // the real assignability error on the `impl` argument. Excluding `void` here
 // keeps the construct-sig return a single object type, so only the actionable
 // error remains.
-export type MakeShape<Shape, BaseShape> = [
-  Exclude<Shape, void | undefined>,
-] extends [never]
+export type MakeShape<Shape, BaseShape> = [Exclude<Shape, void | undefined>] extends [never]
   ? Exclude<BaseShape, void | undefined>
   : Exclude<Shape, void | undefined> & Exclude<BaseShape, void | undefined>;
 
@@ -148,7 +129,15 @@ export type PlatformServices =
   | ProviderCollectionLike
   | Stack
   | StackServices
-  | Stage;
+  | Stage
+  // Every platform provides its instance as the generic `Self` (see `make`),
+  // which host-agnostic bindings (e.g. Cloudflare `*Http`) name tokens after.
+  | Self;
+
+/** A platform declaration's logical identity, readable without yielding it. */
+export interface PlatformIdentity<Id extends string = string> {
+  readonly LogicalId: Id;
+}
 
 export interface Platform<
   Resource extends ResourceLike<string, PlatformProps>,
@@ -156,6 +145,7 @@ export interface Platform<
   MainShape,
   RuntimeContext extends BaseRuntimeContext,
   BaseShape = {},
+  InlineProps extends Resource["Props"] = Resource["Props"],
 > extends Effect.Effect<Resource & RuntimeContext, never, Resource> {
   Type: Resource["Type"];
   Provider: Provider<Resource>;
@@ -163,20 +153,13 @@ export interface Platform<
   <Self, Shape, Deps = never>(): {
     <const Id extends string>(
       id: Id,
-    ): Effect.Effect<
-      Resource & Rpc<Self> & Dependencies<Deps>,
-      never,
-      Resource["Providers"]
-    > &
-      Named<Id> & {
+    ): Effect.Effect<Resource & Rpc<Self> & Dependencies<Deps>, never, Resource["Providers"]> &
+      Named<Id> &
+      PlatformIdentity<Id> & {
         make<PropsReq = never, InitReq = never>(
           props:
-            | InputProps<Resource["Props"]>
-            | Effect.Effect<
-                InputProps<Resource["Props"]>,
-                ConfigError.ConfigError,
-                PropsReq
-              >,
+            | InputProps<InlineProps>
+            | Effect.Effect<InputProps<InlineProps>, ConfigError.ConfigError, PropsReq>,
           impl: Effect.Effect<Shape, ConfigError.ConfigError, InitReq>,
         ): Layer.Layer<
           Self,
@@ -184,9 +167,7 @@ export interface Platform<
           | Resource["Providers"]
           | Exclude<PropsReq | InitReq, Services | PlatformServices | Resource>
         >;
-        new (
-          _: never,
-        ): MakeShape<Shape, BaseShape> & Named<Id> & Tag<Resource["Type"]>;
+        new (_: never): MakeShape<Shape, BaseShape> & Named<Id> & Tag<Resource["Type"]>;
         of(shape: Shape & MainShape): MakeShape<Shape, BaseShape>;
       };
   };
@@ -199,12 +180,8 @@ export interface Platform<
     >(
       id: Id,
       props:
-        | InputProps<Resource["Props"]>
-        | Effect.Effect<
-            InputProps<Resource["Props"]>,
-            ConfigError.ConfigError,
-            PropsReq
-          >,
+        | InputProps<InlineProps>
+        | Effect.Effect<InputProps<InlineProps>, ConfigError.ConfigError, PropsReq>,
       impl: Effect.Effect<Shape, ConfigError.ConfigError, InitReq>,
     ): Effect.Effect<
       Resource & Rpc<Self>,
@@ -213,27 +190,20 @@ export interface Platform<
       | Exclude<PropsReq, Services | PlatformServices | Resource>
       | Exclude<InitReq, Services | PlatformServices | Resource>
     > &
-      Named<Id> & {
-        new (
-          _: never,
-        ): MakeShape<Shape, BaseShape> & Named<Id> & Tag<Resource["Type"]>;
+      Named<Id> &
+      PlatformIdentity<Id> & {
+        new (_: never): MakeShape<Shape, BaseShape> & Named<Id> & Tag<Resource["Type"]>;
       };
 
     <const Id extends string>(
       id: Id,
     ): Effect.Effect<Resource & Rpc<Self>, never, Resource["Providers"]> &
-      Named<Id> & {
-        make<
-          PropsReq = never,
-          InitReq extends Services | PlatformServices | Resource = never,
-        >(
+      Named<Id> &
+      PlatformIdentity<Id> & {
+        make<PropsReq = never, InitReq extends Services | PlatformServices | Resource = never>(
           props:
-            | InputProps<Resource["Props"]>
-            | Effect.Effect<
-                InputProps<Resource["Props"]>,
-                ConfigError.ConfigError,
-                PropsReq
-              >,
+            | InputProps<InlineProps>
+            | Effect.Effect<InputProps<InlineProps>, ConfigError.ConfigError, PropsReq>,
           impl: Effect.Effect<MainShape, ConfigError.ConfigError, InitReq>,
         ): Layer.Layer<
           Self,
@@ -244,18 +214,21 @@ export interface Platform<
         new (_: never): BaseShape & Named<Id> & Tag<Resource["Type"]>;
       };
   };
-  <PropsReq = never, InitReq extends Services | PlatformServices = never>(
-    id: string,
+  <
+    PropsReq = never,
+    InitReq extends Services | PlatformServices = never,
+    const Id extends string = string,
+  >(
+    id: Id,
     props:
       | InputProps<Resource["Props"]>
       | Effect.Effect<InputProps<Resource["Props"]>, never, PropsReq>,
   ): Effect.Effect<
     Resource,
     never,
-    | Resource["Providers"]
-    | PropsReq
-    | Exclude<InitReq, Services | PlatformServices>
-  >;
+    Resource["Providers"] | PropsReq | Exclude<InitReq, Services | PlatformServices>
+  > &
+    PlatformIdentity<Id>;
   <
     const Id extends string,
     Shape extends MainShape,
@@ -263,18 +236,15 @@ export interface Platform<
     InitReq extends Services | PlatformServices = never,
   >(
     id: Id,
-    props:
-      | InputProps<Resource["Props"]>
-      | Effect.Effect<InputProps<Resource["Props"]>, never, PropsReq>,
+    props: InputProps<InlineProps> | Effect.Effect<InputProps<InlineProps>, never, PropsReq>,
     impl: Effect.Effect<Shape, ConfigError.ConfigError, InitReq>,
   ): Effect.Effect<
     Resource & Rpc<Shape> & Named<Id>,
     never,
-    | Resource["Providers"]
-    | PropsReq
-    | Exclude<InitReq, Services | PlatformServices>
+    Resource["Providers"] | PropsReq | Exclude<InitReq, Services | PlatformServices>
   > &
-    Named<Id>;
+    Named<Id> &
+    PlatformIdentity<Id>;
 }
 
 export const Platform = <
@@ -290,6 +260,13 @@ export const Platform = <
   type: R["Type"],
   hooks: {
     createRuntimeContext: (id: string) => BaseRuntimeContext;
+    /**
+     * Legacy type names this platform's resource was previously registered
+     * under (see `ResourceOptions.aliases`) — threaded to the underlying
+     * `Resource` so state persisted under a pre-rename type keeps
+     * resolving.
+     */
+    aliases?: string[];
     // `onCreate` runs inside the resource-construction context, which already
     // carries the Stack's providers — so the hook may yield child resources
     // (e.g. an async Worker registering a `WorkflowResource` for a bound
@@ -312,40 +289,58 @@ export const Platform = <
   type Props = any;
   type Impl = Effect.Effect<any>;
 
-  const resource = Resource(type);
+  // Platform registrations must have resolved props by plan time: every
+  // legitimate construction (a `.make(props, impl)` Layer build, a tag
+  // declared with props, a plain call) produces them, so props still
+  // `undefined` at plan can only be a bare-tag forward reference whose
+  // `.make` Layer was never provided — `Plan.make` fails fast naming the
+  // class and its Layer (#1054).
+  const resource = Resource(type, {
+    aliases: hooks.aliases,
+    requiresImplementation: true,
+  });
   const PlatformContext = RuntimeContext;
 
   // Apply the optional `transformProps` hook to a (possibly Effect-valued)
   // props argument. Returns the props untouched when no hook is installed so
-  // the plain-object fast paths below keep working.
+  // the plain-object fast paths below keep working, and leaves `undefined`
+  // props (a bare-tag forward reference) for `Plan.make` to report.
   const applyTransformProps = (id: string, props: any): any =>
-    hooks.transformProps === undefined
+    hooks.transformProps === undefined || props === undefined
       ? props
       : Effect.flatMap(
-          Effect.isEffect(props)
-            ? (props as Effect.Effect<any>)
-            : Effect.succeed(props ?? {}),
+          // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- props Effects are declarations resolved by the engine
+          Effect.isEffect(props) ? (props as Effect.Effect<any>) : Effect.succeed(props ?? {}),
           (resolved) => hooks.transformProps!(id, resolved),
         );
 
-  const constructor = (
-    id?: string,
-    props?: any,
-    impl?: Impl,
-    isTag = false,
-  ): any => {
+  const constructor = (id?: string, props?: any, impl?: Impl, isTag = false): any => {
     if (!id) {
       // impl was not provided inline, this is a tagged instance
       // e.g.
       // export class Sandbox extends Cloudflare.Container<Sandbox>()(..) {}
       //
       // export const SandboxLive = Sandbox.make(..)
-      return (id: string, props?: any, impl?: Impl) =>
-        constructor(id, props, impl, true);
+      return (id: string, props?: any, impl?: Impl) => constructor(id, props, impl, true);
     } else if (!impl) {
       const cls = makeClass(id);
-      const evaluate = () =>
-        (!isTag
+      // A resource declared without an inline impl is "external": there is
+      // no Effect-native entry to inject (an ordinary bundled worker, or an
+      // assets-only worker with no script at all).
+      const externalProps = () => {
+        const transformed = applyTransformProps(id, props);
+        return Effect.isEffect(transformed)
+          ? Effect.map(transformed, (p: any) => ({
+              ...p,
+              isExternal: true,
+            }))
+          : {
+              ...transformed,
+              isExternal: true,
+            };
+      };
+      const register = () =>
+        !isTag
           ? // this is a non-tagged resource yielded without providing an implementation
             // e.g.
             // yield* Cloudflare.Worker("id", { main: "./src/worker.ts" })
@@ -356,43 +351,67 @@ export const Platform = <
             //     return new Response("Hello, world!");
             //   }
             // }
-            resource(
-              id,
-              (() => {
-                const transformed = applyTransformProps(id, props);
-                return Effect.isEffect(transformed)
-                  ? Effect.map(transformed, (p: any) => ({
-                      ...p,
-                      isExternal: true,
-                    }))
-                  : {
-                      ...transformed,
-                      isExternal: true,
-                    };
-              })(),
-            )
+            resource(id, externalProps())
           : Effect.flatMap(
               // this is a tagged resource
               Effect.serviceOption(cls.Self),
               Option.match({
-                // we are likely running at runtime, so we create
-                onNone: () => resource(id, applyTransformProps(id, props)),
+                // we are likely running at runtime, so we create.
+                // A tagged class WITH props and no impl is the class form of
+                // the external resource above (e.g.
+                // `class Site extends Worker<Site>()("Site", { assets }) {}`)
+                // — same isExternal marking; without props, this is a bare
+                // tag whose props/impl arrive later via `.make`.
+                onNone: () =>
+                  // Without props this is a bare-tag FORWARD REFERENCE: its
+                  // `.make(props, impl)` Layer may build before or after
+                  // this yield (e.g. a worker tag bound in another worker's
+                  // `env` — the #874 circular-binding pattern — resolves
+                  // during that worker's async-binding pass, outside the
+                  // Layer's own context). Register with `undefined` props;
+                  // the Layer's build repairs them, and `Plan.make` fails
+                  // fast on any platform registration whose props are still
+                  // `undefined` after the whole program evaluated (see
+                  // `requiresImplementation` above).
+                  resource(
+                    id,
+                    props === undefined ? applyTransformProps(id, props) : externalProps(),
+                  ),
                 onSome: Effect.succeed,
               }),
-            )
-        ).pipe(
-          Effect.tap((resource) =>
-            hooks.onCreate
-              ? Effect.flatMap(
-                  // `props` may itself be an Effect (e.g. when wrapped by
-                  // `Cloudflare.Website.Vite` via `Effect.map`); resolve it before
-                  // handing it to the hook so `onCreate` always sees the
-                  // plain props object — the second call site (in
-                  // `cls.make`) already does this.
-                  Effect.isEffect(props) ? props : Effect.succeed(props ?? {}),
-                  (resolved) => hooks.onCreate!(resource as R, resolved),
-                )
-              : Effect.void,
+            );
+      // Whether this `yield*` registers the resource. The stack holds one
+      // resource per FQN and every later `yield*` returns it. Outside a
+      // stack (at runtime) nothing registers, so the hook runs as before.
+      const isFirstRegistration = Effect.flatMap(
+        Effect.serviceOption(StackContext),
+        Option.match({
+          onNone: () => Effect.succeed(true),
+          onSome: (stack) =>
+            Effect.map(CurrentNamespace, (namespace) => !(toFqn(namespace, id) in stack.resources)),
+        }),
+      );
+      const evaluate = () =>
+        Effect.flatMap(isFirstRegistration, (firstRegistration) =>
+          register().pipe(
+            Effect.tap((resource) =>
+              // Run the hook only for the `yield*` that registered the
+              // resource. The hook yields the resource's `env`, so re-running
+              // it on every `yield*` lets two Workers whose `env` entries
+              // yield each other recurse forever (#2672). The resource is
+              // registered before the hook runs, so a cycle back to it stops.
+              hooks.onCreate && firstRegistration
+                ? Effect.flatMap(
+                    // `props` may itself be an Effect (e.g. when wrapped by
+                    // `Cloudflare.Website.Vite` via `Effect.map`); resolve it
+                    // before handing it to the hook so `onCreate` always sees
+                    // the plain props object — the second call site (in
+                    // `cls.make`) already does this.
+                    Effect.isEffect(props) ? props : Effect.succeed(props ?? {}),
+                    (resolved) => hooks.onCreate!(resource as R, resolved),
+                  )
+                : Effect.void,
+            ),
           ),
         );
       return Object.assign(
@@ -437,9 +456,7 @@ export const Platform = <
        */
       static readonly LogicalId = id;
       static readonly Self = Self(`${type}<${id}>`);
-      static readonly Platform = Context.Service<Platform, Platform>(
-        `Platform<${type}<${id}>>`,
-      );
+      static readonly Platform = Context.Service<Platform, Platform>(`Platform<${type}<${id}>>`);
       static of = (shape: any) => shape;
       static make = (props: Props, impl: Impl) => {
         // build the Layer once for the root Self
@@ -450,7 +467,8 @@ export const Platform = <
               (() => {
                 const transformed = applyTransformProps(id, props);
                 return Effect.isEffect(transformed)
-                  ? (transformed as Effect.Effect<any>)
+                  ? // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- props Effects are declarations resolved by the engine
+                    (transformed as Effect.Effect<any>)
                   : Effect.succeed(transformed ?? {});
               })(),
               Effect.sync(() => hooks.createRuntimeContext(id)),
@@ -473,9 +491,7 @@ export const Platform = <
                 yield* resource(id, props as any).pipe(
                   Effect.flatMap(
                     (resource) =>
-                      hooks
-                        .onCreate?.(resource, props)
-                        .pipe(Effect.map(() => resource)) ??
+                      hooks.onCreate?.(resource, props).pipe(Effect.map(() => resource)) ??
                       Effect.succeed(resource),
                   ),
                 ),
@@ -494,9 +510,7 @@ export const Platform = <
                   // May be an `HttpEffect` or an Effect resolving to one (the
                   // `Main.fetch` shape); `serve` accepts both.
                   const fetch = shape.fetch as any;
-                  const hasRpcMethods = Object.keys(shape).some(
-                    (key) => key !== "fetch",
-                  );
+                  const hasRpcMethods = Object.keys(shape).some((key) => key !== "fetch");
                   if (!fetch && !hasRpcMethods) return Effect.void;
                   // Hand the full impl to `serve` so the runtime can expose any
                   // non-handler methods on the impl shape (RPC methods)
@@ -504,9 +518,7 @@ export const Platform = <
                   return (
                     runtimeContext.serve?.(
                       fetch ??
-                        Effect.succeed(
-                          HttpServerResponse.text("Not Found", { status: 404 }),
-                        ),
+                        Effect.succeed(HttpServerResponse.text("Not Found", { status: 404 })),
                       { shape },
                     ) ?? Effect.die("No serve handler")
                   );
@@ -516,36 +528,35 @@ export const Platform = <
                     ConfigProvider.ConfigProvider,
                     Effect.gen(function* () {
                       // a Config Provider that we use to intercept config lookups and bind them to the RuntimeContext
-                      const configProvider =
-                        yield* ConfigProvider.ConfigProvider;
+                      const configProvider = yield* ConfigProvider.ConfigProvider;
                       const phase = yield* ALCHEMY_PHASE;
 
                       return ConfigProvider.make(
-                        Effect.fn(function* (path) {
+                        Effect.fnUntraced(function* (path) {
                           const ctx = yield* CurrentRuntimeContext;
                           // `set`/`get` store keys verbatim, so canonicalize the
                           // logical config path here (the caller's job) before
                           // handing it to the RuntimeContext.
-                          const key = sanitizeKey(
-                            path.map((p) => p.toString()).join("_"),
-                          );
+                          const key = sanitizeKey(path.map((p) => p.toString()).join("_"));
                           const node = yield* configProvider.load(path);
                           if (phase === "plan" && node) {
                             // bind it to the RuntimeContext if running in plan phase
-                            const output = Output.literal(
-                              Redacted.make(node.value),
-                            );
+                            const output = Output.literal(Redacted.make(node.value));
                             yield* ctx?.set(key, output) ?? Effect.void;
                             return node;
                           } else if (phase === "runtime" && ctx) {
                             // retrieve from the RuntimeContext if running in runtime phase
-                            const value =
-                              yield* ctx.get<Redacted.Redacted<string>>(key);
+                            const value = yield* ctx.get<unknown>(key);
                             if (value) {
+                              // `get` JSON-decodes unbound env values (`"true"` →
+                              // `true`), but a `Value` node holds the raw string the
+                              // `Config` schema parses.
                               return ConfigProvider.makeValue(
                                 Redacted.isRedacted(value)
-                                  ? Redacted.value(value)
-                                  : value,
+                                  ? String(Redacted.value(value))
+                                  : typeof value === "string"
+                                    ? value
+                                    : JSON.stringify(value),
                               );
                             }
                           }
@@ -556,48 +567,51 @@ export const Platform = <
                     }),
                   ).pipe(
                     Layer.provideMerge(
-                      Layer.mergeAll(
-                        // Pin init's ambient `Scope` to this layer's build
-                        // scope. `Effect.provide` (`scopedWith`) would
-                        // otherwise shadow it with a transient scope that
-                        // closes the moment init returns; the build scope
-                        // lives for the instance under the runtime bridges,
-                        // so init-level finalizers run at instance shutdown
-                        // (Lambda's SIGTERM window) or never (workerd) —
-                        // request-coupled cleanup belongs in handlers, where
-                        // the bridge provides a per-event scope. It also
-                        // wins over any `Scope` captured in `outerServices`
-                        // below.
-                        Layer.succeed(Scope, buildScope),
-                        Layer.succeed(Platform.Platform, runtimeContext),
-                        Layer.succeed(PlatformContext, runtimeContext),
-                        Layer.succeed(RuntimeContext, runtimeContext),
-                        // Host contexts (EC2 instances, ECS tasks, processes)
-                        // carry a `run` for registering long-running loops.
-                        // Expose it as `ServerHost` so an inline program can
-                        // `yield* ServerHost` during plan/deploy without the
-                        // caller providing the layer itself.
-                        "run" in runtimeContext &&
-                          typeof (runtimeContext as { run?: unknown }).run ===
-                            "function"
-                          ? Layer.succeed(ServerHost, {
-                              run: (runtimeContext as ProcessContext).run,
-                            })
-                          : Layer.empty,
-                        Layer.succeed(resource.Self, instance),
-                        Layer.succeed(Platform.Self, instance),
-                        Layer.succeed(Self, instance),
-                        runtimeContext.planServices
-                          ? Layer.unwrap(
-                              ALCHEMY_PHASE.pipe(
-                                Effect.map((phase) =>
-                                  phase === "plan"
-                                    ? runtimeContext.planServices!
-                                    : Layer.empty,
-                                ),
-                              ),
-                            )
-                          : Layer.empty,
+                      // Services the host provides its init (e.g. a Worker's `WebhookHost`),
+                      // built over the instance so they can `yield*` it.
+                      (runtimeContext.hostServices ?? Layer.empty).pipe(
+                        Layer.provideMerge(
+                          Layer.mergeAll(
+                            // Pin init's ambient `Scope` to this layer's build
+                            // scope. `Effect.provide` (`scopedWith`) would
+                            // otherwise shadow it with a transient scope that
+                            // closes the moment init returns; the build scope
+                            // lives for the instance under the runtime bridges,
+                            // so init-level finalizers run at instance shutdown
+                            // (Lambda's SIGTERM window) or never (workerd) —
+                            // request-coupled cleanup belongs in handlers, where
+                            // the bridge provides a per-event scope. It also
+                            // wins over any `Scope` captured in `outerServices`
+                            // below.
+                            Layer.succeed(Scope, buildScope),
+                            Layer.succeed(Platform.Platform, runtimeContext),
+                            Layer.succeed(PlatformContext, runtimeContext),
+                            Layer.succeed(RuntimeContext, runtimeContext),
+                            // Host contexts (EC2 instances, ECS tasks, processes)
+                            // carry a `run` for registering long-running loops.
+                            // Expose it as `ServerHost` so an inline program can
+                            // `yield* ServerHost` during plan/deploy without the
+                            // caller providing the layer itself.
+                            "run" in runtimeContext &&
+                              typeof (runtimeContext as { run?: unknown }).run === "function"
+                              ? Layer.succeed(ServerHost, {
+                                  run: (runtimeContext as ProcessContext).run,
+                                })
+                              : Layer.empty,
+                            Layer.succeed(resource.Self, instance),
+                            Layer.succeed(Platform.Self, instance),
+                            Layer.succeed(Self, instance),
+                            runtimeContext.planServices
+                              ? Layer.unwrap(
+                                  ALCHEMY_PHASE.pipe(
+                                    Effect.map((phase) =>
+                                      phase === "plan" ? runtimeContext.planServices! : Layer.empty,
+                                    ),
+                                  ),
+                                )
+                              : Layer.empty,
+                          ),
+                        ),
                       ),
                     ),
                     Layer.provideMerge(Layer.succeedContext(outerServices)),
@@ -611,9 +625,7 @@ export const Platform = <
                   ...props?.env,
                   ...runtimeContext.env,
                 },
-                exports: runtimeContext.exports
-                  ? yield* runtimeContext.exports
-                  : undefined,
+                exports: runtimeContext.exports ? yield* runtimeContext.exports : undefined,
               };
 
               return Object.assign(instance, {

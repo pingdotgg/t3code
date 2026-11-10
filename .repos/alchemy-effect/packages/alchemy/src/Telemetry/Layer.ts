@@ -1,24 +1,18 @@
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
-import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
-
+import * as OtlpMetrics from "effect/observability/OtlpMetrics";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 import packageJson from "../../package.json" with { type: "json" };
-
 import { collectAttributes, isTelemetryDisabled } from "./Attributes.ts";
 
 const TRACES_URL = "https://otel.alchemy.run/v1/traces";
 const METRICS_URL = "https://otel.alchemy.run/v1/metrics";
-const LOGS_URL = "https://otel.alchemy.run/v1/logs";
 
 const SERVICE_NAME = "alchemy-cli";
 
-const buildOtlpLayer = (
-  attrs: Record<string, unknown>,
-): Layer.Layer<never, never, never> => {
+const buildOtlpLayer = (attrs: Record<string, unknown>): Layer.Layer<never, never, never> => {
   const resource = {
     serviceName: SERVICE_NAME,
     serviceVersion: packageJson.version,
@@ -37,18 +31,7 @@ const buildOtlpLayer = (
     resource,
     exportInterval: "1 second",
   });
-  // Replace (don't merge with) the default stdout logger here; downstream
-  // commands re-add their own `fileLogger`/`consolePretty` via
-  // `Logger.layer([...], { mergeWithExisting: true })`, which stacks on top
-  // of this OtlpLogger without resurrecting Effect's default stdout logger.
-  const logger = OtlpLogger.layer({
-    url: LOGS_URL,
-    resource,
-    exportInterval: "1 second",
-    mergeWithExisting: false,
-  });
-
-  return Layer.mergeAll(tracer, metrics, logger).pipe(
+  return Layer.mergeAll(tracer, metrics).pipe(
     Layer.provide(OtlpSerialization.layerJson),
     Layer.provide(FetchHttpClient.layer),
   );
@@ -59,6 +42,9 @@ const buildOtlpLayer = (
  * to {@link TRACES_URL} and metrics to {@link METRICS_URL}, attaching
  * {@link collectAttributes} as resource-level attributes so every signal
  * carries user/project/runtime context.
+ *
+ * Logs are never exported: they stay in the run log on disk, which users
+ * can attach to a support request.
  *
  * If the user has opted out (via `DO_NOT_TRACK`, `NO_TRACK`,
  * `ALCHEMY_TELEMETRY_DISABLED`, or `~/.alchemy/telemetry-disabled`), this

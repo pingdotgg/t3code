@@ -49,17 +49,11 @@ export default function AsyncTabs({ panels }: { panels: Panel[] }) {
   const html = panels.map((p) => highlightTS(p.code));
 
   return (
-    <div ref={wrapRef} className="async-tabs">
+    <div ref={wrapRef} className="async-tabs" data-nosnippet="">
       <div className="async-tabs__chrome">
         <div className="async-tabs__header">
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-danger)" }}
-          />
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-warn)" }}
-          />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
           <span
             className="alc-code-block__dot"
             style={{ background: "var(--alc-accent-bright)" }}
@@ -82,11 +76,7 @@ export default function AsyncTabs({ panels }: { panels: Panel[] }) {
         </div>
         <div className="async-tabs__body">
           {panels.map((p, i) => (
-            <div
-              key={p.filename}
-              className="async-tabs__panel"
-              hidden={active !== i}
-            >
+            <div key={p.filename} className="async-tabs__panel" hidden={active !== i}>
               <pre
                 className="alc-code-block__pre async-tabs__pre"
                 dangerouslySetInnerHTML={{ __html: html[i] }}

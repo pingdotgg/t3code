@@ -10,13 +10,11 @@ export type Tags =
 export const normalizeTags = (tags: Tags) =>
   Array.isArray(tags)
     ? Object.fromEntries(
-        tags.map((tag) =>
-          Array.isArray(tag) ? [tag[0], tag[1]] : [tag.Key, tag.Value],
-        ),
+        tags.map((tag) => (Array.isArray(tag) ? [tag[0], tag[1]] : [tag.Key, tag.Value])),
       )
     : tags;
 
-export const tagRecord = (tags: Tags | undefined): Record<string, string> =>
+export const tagRecord = (tags: Tags | null | undefined): Record<string, string> =>
   Object.fromEntries(
     Object.entries(normalizeTags(tags ?? {})).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
@@ -56,9 +54,7 @@ export const createInternalTags = Effect.fn(function* (id: string) {
 export const stripInternalTags = (
   tags: Record<string, string> | null | undefined,
 ): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(tags ?? {}).filter(([key]) => !key.startsWith("alchemy::")),
-  );
+  Object.fromEntries(Object.entries(tags ?? {}).filter(([key]) => !key.startsWith("alchemy::")));
 
 /**
  * Creates AWS-compatible tag filters for finding resources by alchemy tags.
@@ -77,10 +73,7 @@ export const createAlchemyTagFilters = Effect.fn(function* (id: string) {
 /**
  * Checks if a resource has the expected alchemy tags for this app/stage/id.
  */
-export const hasAlchemyTags = Effect.fn(function* (
-  id: string,
-  tags: Tags | undefined,
-) {
+export const hasAlchemyTags = Effect.fn(function* (id: string, tags: Tags | undefined) {
   const stack = yield* Stack;
   const stage = yield* Stage;
   const expectedTags = {
@@ -91,10 +84,7 @@ export const hasAlchemyTags = Effect.fn(function* (
   return hasTags(expectedTags, tags);
 });
 
-export const diffTags = (
-  oldTags: Record<string, string>,
-  newTags: Record<string, string>,
-) => {
+export const diffTags = (oldTags: Record<string, string>, newTags: Record<string, string>) => {
   const removed: string[] = [];
   const updated: { Key: string; Value: string }[] = [];
   const added: { Key: string; Value: string }[] = [];

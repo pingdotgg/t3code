@@ -49,7 +49,7 @@ const role = yield* Planetscale.PostgresRole("app-role", {
 });
 ```
 
-Every database and branch also accepts a `migrationsDir` of `.sql`
+Every database and branch also accepts a `migrations` folder of `.sql`
 files applied in order on each deploy — see
 [Migrations](/planetscale/data/migrations) for ordering, hashing, and the
 Drizzle pairing.

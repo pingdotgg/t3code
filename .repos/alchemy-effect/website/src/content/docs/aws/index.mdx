@@ -53,6 +53,17 @@ Not sure which? See
   with a `PutRecord` binding and the same `Stream` consumer
   surface.
 
+## Email
+
+- **[Sending & managing email](/aws/email/sending)** — verify an SES
+  identity, send from a Lambda with the `SendEmail` binding, and
+  manage identity policies, contact lists, dedicated IP pools,
+  tenants, account settings, and deliverability insights.
+- **[Receiving inbound email](/aws/email/receiving)** — SES receipt
+  rule sets and rules that store mail in S3, fan out to SNS, invoke
+  a Lambda, or bounce it. Region-limited to `us-east-1`,
+  `us-west-2`, and `eu-west-1`.
+
 ## Security & secrets
 
 - **[Secrets & env](/aws/security/secrets-env)** — .env values via
@@ -92,6 +103,8 @@ Not sure which? See
 | A Postgres database                   | [RDS & Aurora](/aws/data/rds)                                                      |
 | Kubernetes workloads or Helm charts   | [EKS](/aws/compute/eks)                                                            |
 | Object processing                     | [S3 events](/aws/messaging/s3-events)                                            |
+| Sending transactional email           | [SES sending](/aws/email/sending) — identity + `SendEmail` binding               |
+| Inbound email pipelines               | [SES email receiving](/aws/email/receiving) → S3 / SNS / Lambda                  |
 | Change data capture                   | [DynamoDB Streams](/aws/messaging/dynamodb-streams)                              |
 | API keys or credentials for a function | [Secrets & env](/aws/security/secrets-env)                                            |
 

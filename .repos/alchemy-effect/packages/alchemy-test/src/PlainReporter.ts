@@ -10,14 +10,9 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
 import type { LogEntry } from "./Model.ts";
-import {
-  Reporter,
-  type RunSummary,
-  type TestEvent,
-  type TestResult,
-} from "./Reporter.ts";
+import { formatPlanPreview } from "./Plan.ts";
+import { Reporter, type RunSummary, type TestEvent, type TestResult } from "./Reporter.ts";
 import { writeDirect } from "./StrayOutput.ts";
 
 const isTty = process.stdout.isTTY === true;
@@ -57,6 +52,7 @@ const indent = (text: string, prefix = "  "): string =>
 /** Mutable per-run reporter state. */
 interface ReporterState {
   readonly hookLogs: Map<string, ReadonlyArray<LogEntry>>;
+  readonly failedFiles: Set<string>;
   /**
    * Currently-executing work items: tests AND file-level hooks. Hooks must
    * be tracked too — a `beforeAll` deploy can legitimately run for many
@@ -64,7 +60,8 @@ interface ReporterState {
    * only covered tests, such a run would print nothing at all and read as
    * deadlocked.
    */
-  readonly running: Map<string, { label: string; startedAt: number }>;
+  /** `queued`: started, but still waiting for its `exclusive` run lock. */
+  readonly running: Map<string, { label: string; startedAt: number; queued?: boolean }>;
   /** Total tests in the run, known once RunStart arrives. */
   total: number;
   /** Tests that have reported a result so far, and how they went. */
@@ -119,9 +116,7 @@ const renderCollect = (state: ReporterState, force: boolean): void => {
   const columns = process.stdout.columns || 120;
   const room = columns - head.length - 2;
   const tail =
-    state.collectCurrent !== "" && room > 12
-      ? ` ${state.collectCurrent.slice(-room)}`
-      : "";
+    state.collectCurrent !== "" && room > 12 ? ` ${state.collectCurrent.slice(-room)}` : "";
   if (isTty) {
     state.collectLinePending = true;
     writeDirect(`\r\u001B[2K${dim(head + tail)}`);
@@ -148,10 +143,7 @@ const finishCollect = (state: ReporterState): void => {
  * on the total's width so the columns after it stay aligned, and each tally is
  * only colored once it is non-zero (a red `✗0` reads as a failure at a glance).
  */
-const progress = (
-  state: ReporterState,
-  status: TestResult["status"],
-): string => {
+const progress = (state: ReporterState, status: TestResult["status"]): string => {
   state.completed += 1;
   if (status === "pass") state.passed += 1;
   else if (status === "fail") state.failed += 1;
@@ -179,23 +171,25 @@ const STALL_LIST_MAX = 25;
 const printStalled = (state: ReporterState): void => {
   if (state.running.size === 0) return;
   if (Date.now() - state.lastEnd < STALL_AFTER_MS) return;
-  const key = [...state.running.keys()].sort().join("\n");
+  const key = [...state.running.entries()]
+    .map(([id, item]) => `${id}${item.queued ? " (queued)" : ""}`)
+    .sort()
+    .join("\n");
   if (key === state.lastStallKey) return;
   state.lastStallKey = key;
   const now = Date.now();
   const timestamp = new Date(now).toTimeString().slice(0, 8);
-  const items = [...state.running.values()].sort(
-    (a, b) => a.startedAt - b.startedAt,
-  );
+  const items = [...state.running.values()].sort((a, b) => a.startedAt - b.startedAt);
+  const queued = items.filter((item) => item.queued).length;
   const lines = [
     dim(
-      `⧗ [${timestamp}] no tests finished in the last 10s — ${items.length} still running:`,
+      `⧗ [${timestamp}] no tests finished in the last 10s — ${items.length - queued} still running` +
+        (queued > 0 ? `, ${queued} queued for an exclusive lock:` : ":"),
     ),
   ];
   for (const item of items.slice(0, STALL_LIST_MAX)) {
-    lines.push(
-      dim(`    ${item.label} (${formatDuration(now - item.startedAt)})`),
-    );
+    const elapsed = formatDuration(now - item.startedAt);
+    lines.push(dim(`    ${item.label} (${item.queued ? `queued ${elapsed}` : elapsed})`));
   }
   if (items.length > STALL_LIST_MAX) {
     lines.push(dim(`    … ${items.length - STALL_LIST_MAX} more`));
@@ -203,11 +197,14 @@ const printStalled = (state: ReporterState): void => {
   writeDirect(`${lines.join("\n")}\n`);
 };
 
-const onEvent = (
-  event: TestEvent,
-  state: ReporterState,
-): Effect.Effect<void> => {
+const onEvent = (event: TestEvent, state: ReporterState): Effect.Effect<void> => {
   switch (event._tag) {
+    case "PlanPreview":
+      return Effect.sync(() => finishCollect(state)).pipe(
+        Effect.andThen(write(formatPlanPreview(event.phases))),
+      );
+    case "PlanPhaseStart":
+      return write(`\nPlan phase ${event.phase}/${event.phases}: ${event.tests} tests`);
     case "CollectStart":
       state.collectTotal = event.files.length;
       state.collectStartedAt = Date.now();
@@ -223,11 +220,7 @@ const onEvent = (
       state.total = event.tests.length;
       return Effect.sync(() => finishCollect(state)).pipe(
         Effect.andThen(
-          write(
-            dim(
-              `running ${event.tests.length} tests from ${event.files} files\n`,
-            ),
-          ),
+          write(dim(`running ${event.tests.length} tests from ${event.files} files\n`)),
         ),
       );
     case "TestStart":
@@ -235,7 +228,15 @@ const onEvent = (
         state.running.set(event.test.id, {
           label: `${event.test.file} > ${event.test.titlePath.join(" > ")}`,
           startedAt: Date.now(),
+          queued: true,
         });
+      });
+    case "TestLocked":
+      return Effect.sync(() => {
+        const item = state.running.get(event.test.id);
+        if (item !== undefined) {
+          state.running.set(event.test.id, { label: item.label, startedAt: Date.now() });
+        }
       });
     case "HookStart":
       return Effect.sync(() => {
@@ -254,15 +255,13 @@ const onEvent = (
       state.lastEnd = Date.now();
       const title = `${dim(event.test.file)} ${dim(">")} ${event.test.titlePath.join(` ${dim(">")} `)}`;
       const duration = dim(`(${formatDuration(event.result.durationMs)})`);
-      const retries =
-        event.result.retries > 0
-          ? yellow(` [retried x${event.result.retries}]`)
-          : "";
+      const retries = event.result.retries > 0 ? yellow(` [retried x${event.result.retries}]`) : "";
       const count = progress(state, event.result.status);
       switch (event.result.status) {
         case "pass":
           return write(`${count} ${green("✓")} ${title} ${duration}${retries}`);
         case "fail": {
+          state.failedFiles.add(event.test.file);
           // Show the failure's details immediately so it can be inspected
           // while the run continues (passed tests stay silent). The end-of-run
           // Failures section repeats them consolidated, with file hook logs.
@@ -290,7 +289,10 @@ const onEvent = (
       }
     }
     case "FileEnd": {
-      if (event.logs.length > 0) {
+      if (
+        event.logs.length > 0 &&
+        (event.error !== undefined || state.failedFiles.has(event.file))
+      ) {
         state.hookLogs.set(event.file, event.logs);
       }
       if (event.error !== undefined) {
@@ -349,9 +351,7 @@ export const printSummary = (
     // details above are long enough that the names scroll out of reach, and
     // each line here is exactly what `-t` matches for a re-run.
     const failedNames = [
-      ...summary.failures.map(
-        ({ meta }) => `${meta.file} > ${meta.titlePath.join(" > ")}`,
-      ),
+      ...summary.failures.map(({ meta }) => `${meta.file} > ${meta.titlePath.join(" > ")}`),
       ...summary.fileFailures.map(({ file }) => `${file} (whole file)`),
     ];
     if (failedNames.length > 0) {
@@ -362,59 +362,65 @@ export const printSummary = (
     }
     const parts = [
       summary.failed > 0 ? red(`${summary.failed} failed`) : green("0 failed"),
-      green(`${summary.passed} passed`),
+      ...(summary.dryRun ? [] : [green(`${summary.passed} passed`)]),
       ...(summary.skipped > 0 ? [yellow(`${summary.skipped} skipped`)] : []),
       ...(summary.todo > 0 ? [yellow(`${summary.todo} todo`)] : []),
+      ...(summary.plan
+        ? [
+            `${summary.plan.found} found`,
+            `${summary.plan.selected} selected by plan`,
+            yellow(`${summary.plan.excluded} excluded by plan`),
+          ]
+        : []),
     ];
     yield* write(
       `\n${bold("Tests:")} ${parts.join(dim(" | "))} ${dim(`(${summary.files} files, ${formatDuration(summary.durationMs)})`)}`,
     );
   });
 
-export const PlainReporterLive: Layer.Layer<Reporter> = Layer.sync(Reporter)(
-  () => {
-    const state: ReporterState = {
-      hookLogs: new Map(),
-      running: new Map(),
-      total: 0,
-      completed: 0,
-      passed: 0,
-      failed: 0,
-      lastEnd: Date.now(),
-      lastStallKey: "",
-      stallTimer: undefined,
-      collectTotal: 0,
-      collectDone: 0,
-      collectStartedAt: Date.now(),
-      collectCurrent: "",
-      lastCollectRender: 0,
-      collectLinePending: false,
-      collecting: false,
-    };
-    // Ticks through both phases: repaints the collection line while files are
-    // importing, reports stalled tests once the run is executing.
-    const tick = (): void => {
-      if (state.collecting) renderCollect(state, false);
-      else printStalled(state);
-    };
-    return {
-      emit: (event) =>
-        Effect.suspend(() => {
-          if (
-            (event._tag === "CollectStart" || event._tag === "RunStart") &&
-            state.stallTimer === undefined
-          ) {
-            state.stallTimer = setInterval(tick, 1000);
-            // Don't hold the process open once the run's fibers finish.
-            (state.stallTimer as unknown as { unref?: () => void }).unref?.();
-          }
-          if (event._tag === "RunEnd" && state.stallTimer !== undefined) {
-            clearInterval(state.stallTimer);
-            state.stallTimer = undefined;
-          }
-          return onEvent(event, state);
-        }),
-      waitForExit: () => Effect.void,
-    };
-  },
-);
+export const PlainReporterLive: Layer.Layer<Reporter> = Layer.sync(Reporter)(() => {
+  const state: ReporterState = {
+    hookLogs: new Map(),
+    failedFiles: new Set(),
+    running: new Map(),
+    total: 0,
+    completed: 0,
+    passed: 0,
+    failed: 0,
+    lastEnd: Date.now(),
+    lastStallKey: "",
+    stallTimer: undefined,
+    collectTotal: 0,
+    collectDone: 0,
+    collectStartedAt: Date.now(),
+    collectCurrent: "",
+    lastCollectRender: 0,
+    collectLinePending: false,
+    collecting: false,
+  };
+  // Ticks through both phases: repaints the collection line while files are
+  // importing, reports stalled tests once the run is executing.
+  const tick = (): void => {
+    if (state.collecting) renderCollect(state, false);
+    else printStalled(state);
+  };
+  return {
+    emit: (event) =>
+      Effect.suspend(() => {
+        if (
+          (event._tag === "CollectStart" || event._tag === "RunStart") &&
+          state.stallTimer === undefined
+        ) {
+          state.stallTimer = setInterval(tick, 1000);
+          // Don't hold the process open once the run's fibers finish.
+          (state.stallTimer as unknown as { unref?: () => void }).unref?.();
+        }
+        if (event._tag === "RunEnd" && state.stallTimer !== undefined) {
+          clearInterval(state.stallTimer);
+          state.stallTimer = undefined;
+        }
+        return onEvent(event, state);
+      }),
+    waitForExit: () => Effect.void,
+  };
+});

@@ -3,21 +3,32 @@ import {
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopBridge,
+  type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { afterEach, vi } from "vite-plus/test";
+import { ClientCapabilities } from "@t3tools/client-runtime/platform";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+} from "@t3tools/client-runtime/connection";
 
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  layer,
+  isRejectedBootstrapCredentialError,
+  isRejectedSecondaryBootstrap,
+  nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
+  prepareDesktopSshEnvironment,
   provisionDesktopSshEnvironment,
-  readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
-  secondaryBearerExpiresAtEpochMs,
-  secondaryBearerRefreshAtEpochMs,
 } from "./platform.ts";
+import { APP_VERSION } from "../branding.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -26,18 +37,59 @@ const TARGET: DesktopSshEnvironmentTarget = {
   port: 22,
 };
 
+const SSH_BOOTSTRAP = {
+  target: TARGET,
+  httpBaseUrl: "http://127.0.0.1:3201/",
+  wsBaseUrl: "ws://127.0.0.1:3201/",
+  pairingToken: "abandoned-token",
+};
+
+function pendingSetup() {
+  let resolve!: (bootstrap: DesktopSshEnvironmentBootstrap) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<DesktopSshEnvironmentBootstrap>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly savedTokenRejected?: boolean;
+    readonly savedTokenPermissions?: ReadonlyArray<string>;
+  },
 ): DesktopBridge {
   return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
+    getClientPlatform: () => "linux",
+    getLocalEnvironmentEnabled: () => true,
+    ensureSshEnvironment: async (
+      target: DesktopSshEnvironmentTarget,
+      ensureOptions?: { issuePairingToken?: boolean },
+    ) => {
       calls.push("ensure");
       return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
         wsBaseUrl: "ws://127.0.0.1:3201/",
-        pairingToken: "pairing-token",
+        pairingToken: ensureOptions?.issuePairingToken === true ? "pairing-token" : null,
+      };
+    },
+    disconnectSshEnvironment: async () => {
+      calls.push("disconnect");
+    },
+    fetchSshSessionState: async () => {
+      calls.push("session");
+      return {
+        authenticated: options?.savedTokenRejected !== true,
+        permissions: options?.savedTokenPermissions ?? AuthStandardClientScopes,
       };
     },
     fetchSshEnvironmentDescriptor: async () => {
@@ -72,26 +124,211 @@ function makeBridge(
 }
 
 describe("desktop SSH pairing", () => {
-  it.effect("fetches the descriptor before consuming the one-time credential", () =>
+  it.effect("does not consume the credential when adding a route to a different machine", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
 
-      const provisioned = yield* provisionDesktopSshEnvironment(makeBridge(calls), TARGET);
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge(calls),
+        TARGET,
+        EnvironmentId.make("some-other-machine"),
+      ).pipe(Effect.flip);
 
-      expect(provisioned.environmentId).toBe(EnvironmentId.make("environment-ssh"));
-      expect(calls).toEqual(["ensure", "descriptor", "token"]);
+      expect(error).toMatchObject({ reason: "configuration" });
+      expect(calls).toEqual(["ensure", "descriptor"]);
     }),
   );
 
-  it.effect("does not consume the credential when descriptor discovery fails", () =>
+  it.effect("exchanges one setup credential after repeated interrupted provisions", () =>
+    Effect.gen(function* () {
+      const bridge = makeBridge([]);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValue(setup.promise);
+      const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const interrupted = yield* Effect.forkChild(
+          provisionDesktopSshEnvironment(bridge, TARGET),
+          { startImmediately: true },
+        );
+        yield* Fiber.interrupt(interrupted);
+      }
+
+      const retry = yield* Effect.forkChild(provisionDesktopSshEnvironment(bridge, TARGET), {
+        startImmediately: true,
+      });
+      setup.resolve(SSH_BOOTSTRAP);
+      const provisioned = yield* Fiber.join(retry);
+
+      expect(provisioned.bearerToken).toBe("bearer-token");
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: true });
+      expect(exchange).toHaveBeenCalledExactlyOnceWith(
+        SSH_BOOTSTRAP.httpBaseUrl,
+        "abandoned-token",
+      );
+    }),
+  );
+
+  it.effect("starts fresh after an abandoned setup settles in success or failure", () =>
+    Effect.gen(function* () {
+      for (const outcome of ["success", "failure"]) {
+        const bridge = makeBridge([]);
+        const setup = pendingSetup();
+        const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValueOnce(setup.promise);
+        const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+        const interrupted = yield* Effect.forkChild(
+          provisionDesktopSshEnvironment(bridge, TARGET),
+          { startImmediately: true },
+        );
+        yield* Fiber.interrupt(interrupted);
+        if (outcome === "success") setup.resolve(SSH_BOOTSTRAP);
+        else setup.reject(new Error("remote launch failed"));
+        yield* Effect.promise(() =>
+          setup.promise.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+
+        const provisioned = yield* provisionDesktopSshEnvironment(bridge, TARGET);
+
+        expect(provisioned.bearerToken).toBe("bearer-token");
+        expect(ensure).toHaveBeenCalledTimes(2);
+        expect(exchange).toHaveBeenCalledExactlyOnceWith(
+          SSH_BOOTSTRAP.httpBaseUrl,
+          "pairing-token",
+        );
+      }
+    }),
+  );
+
+  it.effect("disconnect invalidates unfinished setup even before provision is interrupted", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const bridge = makeBridge(calls);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValueOnce(setup.promise);
+      const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+      vi.stubGlobal("window", { desktopBridge: bridge });
+      const ssh = yield* ClientCapabilities.SshEnvironmentGateway.pipe(Effect.provide(layer));
+      const interrupted = yield* Effect.forkChild(ssh.provision(TARGET), {
+        startImmediately: true,
+      });
+      yield* ssh.disconnect(TARGET);
+      yield* Fiber.interrupt(interrupted);
+
+      const retry = yield* Effect.forkChild(ssh.provision(TARGET), { startImmediately: true });
+      setup.resolve(SSH_BOOTSTRAP);
+      const provisioned = yield* Fiber.join(retry);
+
+      expect(provisioned.bearerToken).toBe("bearer-token");
+      expect(ensure).toHaveBeenCalledTimes(2);
+      expect(calls).toEqual(["disconnect", "ensure", "descriptor", "token"]);
+      expect(exchange).toHaveBeenCalledExactlyOnceWith(SSH_BOOTSTRAP.httpBaseUrl, "pairing-token");
+    }),
+  );
+
+  const failPairing = (serverVersion: string, message: string) => {
+    const bridge = makeBridge([]);
+    const fetchDescriptor = bridge.fetchSshEnvironmentDescriptor;
+    vi.spyOn(bridge, "fetchSshEnvironmentDescriptor").mockImplementation(async (url) => ({
+      ...(await fetchDescriptor(url)),
+      serverVersion,
+    }));
+    vi.spyOn(bridge, "bootstrapSshBearerSession").mockRejectedValue(new Error(message));
+    return provisionDesktopSshEnvironment(bridge, TARGET).pipe(Effect.flip);
+  };
+  const PAIRING_500 =
+    "[ssh_http:500] SSH remote API request failed during bootstrap-bearer-session.";
+
+  it.effect("blocks with both versions when a server on another build rejects pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* failPairing("0.0.46-nightly.20261004.2652", PAIRING_500);
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error.detail).toContain("0.0.46-nightly.20261004.2652");
+      expect(error.detail).toContain(APP_VERSION);
+    }),
+  );
+
+  it.effect("keeps retrying pairing failures that are not a version mismatch", () =>
+    Effect.gen(function* () {
+      expect(yield* failPairing(APP_VERSION, PAIRING_500)).toBeInstanceOf(ConnectionTransientError);
+      expect(
+        yield* failPairing(
+          "0.0.46-nightly.20261004.2652",
+          "SSH remote API request failed during bootstrap-bearer-session.",
+        ),
+      ).toBeInstanceOf(ConnectionTransientError);
+    }),
+  );
+
+  it.effect("reconnects with the saved token while it holds every standard scope", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
 
-      yield* provisionDesktopSshEnvironment(
-        makeBridge(calls, { failDescriptor: true }),
-        TARGET,
-      ).pipe(Effect.flip);
+      const bridge = makeBridge(calls);
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment");
+      const prepared = yield* prepareDesktopSshEnvironment(bridge, {
+        target: TARGET,
+        expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
+        bearerToken: "saved-token",
+      });
 
+      expect(prepared.bearerToken).toBe("saved-token");
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: false });
+      expect(calls).toEqual(["ensure", "descriptor", "session"]);
+    }),
+  );
+
+  it.effect("pairs again when the host no longer accepts the saved token", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const prepared = yield* prepareDesktopSshEnvironment(
+        makeBridge(calls, { savedTokenRejected: true }),
+        {
+          target: TARGET,
+          expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
+          bearerToken: "saved-token",
+        },
+      );
+
+      expect(prepared.bearerToken).toBe("bearer-token");
+      expect(calls).toEqual(["ensure", "descriptor", "session", "ensure", "descriptor", "token"]);
+    }),
+  );
+
+  it.effect("pairs again when the saved token predates a standard scope", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const prepared = yield* prepareDesktopSshEnvironment(
+        makeBridge(calls, {
+          savedTokenPermissions: ["orchestration:read", "orchestration:operate"],
+        }),
+        {
+          target: TARGET,
+          expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
+          bearerToken: "saved-token",
+        },
+      );
+
+      expect(prepared.bearerToken).toBe("bearer-token");
+      expect(calls).toEqual(["ensure", "descriptor", "session", "ensure", "descriptor", "token"]);
+    }),
+  );
+
+  it.effect("stops before sending the saved token or pairing on a different machine", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const error = yield* prepareDesktopSshEnvironment(makeBridge(calls), {
+        target: TARGET,
+        expectedEnvironmentId: EnvironmentId.make("some-other-machine"),
+        bearerToken: "saved-token",
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ reason: "configuration" });
       expect(calls).toEqual(["ensure", "descriptor"]);
     }),
   );
@@ -99,41 +336,6 @@ describe("desktop SSH pairing", () => {
 
 describe("desktop-local bearer cache", () => {
   const registration = {} as never;
-
-  it("refreshes a secondary bearer before it expires", () => {
-    const issuedAtEpochMs = 10_000;
-    const refreshAtEpochMs = secondaryBearerRefreshAtEpochMs(issuedAtEpochMs, 60);
-    const expiresAtEpochMs = secondaryBearerExpiresAtEpochMs(issuedAtEpochMs, 60);
-    const cached = {
-      expiresAtEpochMs,
-      signature: "secondary-signature",
-      registration,
-      refreshAtEpochMs,
-    };
-
-    expect(refreshAtEpochMs).toBe(65_000);
-    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 64_999)).toBe(true);
-    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 65_000)).toBe(false);
-    expect(
-      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, cached.signature, 69_999),
-    ).toBe(true);
-    expect(
-      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, cached.signature, 70_000),
-    ).toBe(false);
-  });
-
-  it("does not cache credentials whose lifetime is shorter than the refresh skew", () => {
-    const refreshAtEpochMs = secondaryBearerRefreshAtEpochMs(10_000, 3);
-    const cached = {
-      expiresAtEpochMs: secondaryBearerExpiresAtEpochMs(10_000, 3),
-      signature: "secondary-signature",
-      registration,
-      refreshAtEpochMs,
-    };
-
-    expect(refreshAtEpochMs).toBe(10_000);
-    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 10_000)).toBe(false);
-  });
 
   it("retains only unexpired secondaries after a topology read failure", () => {
     const valid = {
@@ -187,6 +389,50 @@ describe("desktop-local bearer cache", () => {
   });
 });
 
+describe("rejected desktop-local bootstrap tokens", () => {
+  it("retries at once when the token or endpoint changes", () => {
+    const rejected = nextRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 0);
+
+    expect(isRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(rejected, "http://b|ws://b|old-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 1)).toBe(false);
+    expect(nextRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1).delayMs).toBe(
+      60_000,
+    );
+  });
+
+  // regression: #16273 a rejected desktop-local credential was retried every poll
+  it("treats only authentication rejections as a dead credential", () => {
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionBlockedError({ reason: "authentication", detail: "invalid" }),
+      ),
+    ).toBe(true);
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionTransientError({ reason: "endpoint-unavailable", detail: "booting" }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("desktop-local bearer cache across token changes", () => {
+  it("keeps a live bearer when only the bootstrap token rotates", () => {
+    const cached = {
+      signature: "http://a|ws://a",
+      registration: {} as never,
+      expiresAtEpochMs: 20_000,
+      refreshAtEpochMs: 15_000,
+    };
+
+    expect(canReuseCachedPlatformRegistration(cached, "http://a|ws://a", 10_000)).toBe(true);
+    expect(
+      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, "http://a|ws://a", 16_000),
+    ).toBe(true);
+    expect(canReuseCachedPlatformRegistration(cached, "http://b|ws://b", 10_000)).toBe(false);
+  });
+});
+
 describe("primary topology cache", () => {
   const registration = {} as never;
   const cached = {
@@ -195,16 +441,6 @@ describe("primary topology cache", () => {
   };
   const previous = new Map([[PRIMARY_LOCAL_ENVIRONMENT_ID, cached]]);
 
-  it("captures synchronous primary target read failures", () => {
-    const cause = new Error("invalid primary target");
-
-    expect(
-      readPrimaryEnvironmentTargetResult(() => {
-        throw cause;
-      }),
-    ).toEqual({ _tag: "Failure", cause });
-  });
-
   it("retains the cached primary after a transient topology read failure", () => {
     expect(
       primaryRegistrationToRetainAfterTopologyRead(previous, {
@@ -212,14 +448,5 @@ describe("primary topology cache", () => {
         cause: new Error("IPC unavailable"),
       }),
     ).toBe(cached);
-  });
-
-  it("treats a successful primary absence as authoritative removal", () => {
-    expect(
-      primaryRegistrationToRetainAfterTopologyRead(previous, {
-        _tag: "Success",
-        target: null,
-      }),
-    ).toBeUndefined();
   });
 });

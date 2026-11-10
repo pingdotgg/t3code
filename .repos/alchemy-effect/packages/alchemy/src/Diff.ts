@@ -5,13 +5,22 @@ import type { Input } from "./Input.ts";
 import * as Output from "./Output.ts";
 import type { BindingNode } from "./Plan.ts";
 import type { ResourceBinding } from "./Resource.ts";
-import { isPrimitive } from "./Util/data.ts";
+import { bytesToBase64 } from "./Util/base64.ts";
+import { isPlainData, isPrimitive, mapPlainData } from "./Util/data.ts";
 
 export type Diff = NoopDiff | UpdateDiff | ReplaceDiff;
 
 export interface NoopDiff {
   action: "noop";
-  stables?: undefined;
+  /**
+   * Properties that stay stable if `--force` upgrades this noop to an
+   * update. A plain noop exposes every persisted attribute downstream, so
+   * this only matters under `--force`, where the engine otherwise falls back
+   * to `provider.stables` and drops conditional stables (e.g. a
+   * rename-mutable `name` that is stable because the `name` prop is
+   * unchanged).
+   */
+  stables?: string[];
 }
 
 export interface UpdateDiff {
@@ -41,15 +50,17 @@ export interface ReplaceDiff {
 export const hasUnresolvedInputs = <T>(value: Input<NoInfer<T>>): value is T =>
   _hasUnresolved(value);
 
-export const isResolved = <T>(value: Input<T>): value is T =>
-  !_hasUnresolved(value);
+export const isResolved = <T>(value: Input<T>): value is T => !_hasUnresolved(value);
 
-const _hasUnresolved = (value: unknown): boolean => {
+const _hasUnresolved = (value: unknown, seen: WeakSet<object> = new WeakSet()): boolean => {
   if (value == null || isPrimitive(value)) return false;
   if (Output.isExpr(value) || Effect.isEffect(value)) return true;
-  if (Array.isArray(value)) return value.some(_hasUnresolved);
-  if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).some(_hasUnresolved);
+  // Only plain data is traversed; any other class instance (Layer, Context,
+  // Date, SDK objects) is a resolved leaf — see isPlainData (#1082).
+  if (isPlainData(value)) {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return Object.values(value).some((v) => _hasUnresolved(v, seen));
   }
   return false;
 };
@@ -71,19 +82,34 @@ const _hasUnresolved = (value: unknown): boolean => {
  */
 export const stripUnresolved = <T>(value: T): T => _stripUnresolved(value) as T;
 
-const _stripUnresolved = (value: unknown): unknown => {
+const _stripUnresolved = (
+  value: unknown,
+  // Ancestor-path cycle guard: a value on its own ancestor chain is cut to
+  // `undefined` (a cycle can never persist). Sync DFS, so add/delete around
+  // the recursion is race-free and keeps shared diamond references intact
+  // (#1082).
+  ancestors: WeakSet<object> = new WeakSet(),
+): unknown => {
   if (value == null || isPrimitive(value)) return value;
   if (Output.isExpr(value) || Effect.isEffect(value)) return undefined;
-  // Opaque resolved values — rebuilding them structurally would strip
-  // their prototype (see resolveInput in Plan.ts for the same rule).
-  if (Redacted.isRedacted(value) || Duration.isDuration(value)) return value;
-  if (Array.isArray(value)) return value.map(_stripUnresolved);
-  if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, _stripUnresolved(item)]),
-    );
+  // Serializable leaves — the only class instances persisted state may
+  // carry (StateEncoding knows Redacted/Duration/Date/bytes). Rebuilding
+  // them structurally would strip their prototype.
+  if (
+    Redacted.isRedacted(value) ||
+    Duration.isDuration(value) ||
+    value instanceof Date ||
+    value instanceof Uint8Array
+  ) {
+    return value;
   }
-  return value;
+  if (isPlainData(value)) {
+    return mapPlainData(value, ancestors, (child) => _stripUnresolved(child, ancestors));
+  }
+  // Any other class instance (Layer, Context, SDK objects) is runtime-only
+  // wiring that can't round-trip through JSON — a beta.103 Context is even
+  // cyclic (#1082). Persisted state holds plain data only.
+  return undefined;
 };
 
 /**
@@ -100,21 +126,32 @@ const _stripUnresolved = (value: unknown): unknown => {
  */
 export const stripEffects = <T>(value: T): T => _stripEffects(value) as T;
 
-const _stripEffects = (value: unknown): unknown => {
+const _stripEffects = (
+  value: unknown,
+  // Ancestor-path cycle guard — see _stripUnresolved (#1082).
+  ancestors: WeakSet<object> = new WeakSet(),
+): unknown => {
   if (value == null || isPrimitive(value)) return value;
   // Output proxies are left intact (so `isResolved` still sees them); they
   // must be tested BEFORE `Effect.isEffect` because Output exprs are
   // yieldable and would otherwise be misclassified as plain Effects.
   if (Output.isExpr(value)) return value;
   if (Effect.isEffect(value)) return undefined;
-  if (Redacted.isRedacted(value) || Duration.isDuration(value)) return value;
-  if (Array.isArray(value)) return value.map(_stripEffects);
-  if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, _stripEffects(item)]),
-    );
+  if (
+    Redacted.isRedacted(value) ||
+    Duration.isDuration(value) ||
+    value instanceof Date ||
+    value instanceof Uint8Array
+  ) {
+    return value;
   }
-  return value;
+  if (isPlainData(value)) {
+    return mapPlainData(value, ancestors, (child) => _stripEffects(child, ancestors));
+  }
+  // Non-plain instances (Layer, Context, SDK objects) are dropped with
+  // Effects — same runtime-only rationale, and their internals may be
+  // cyclic (effect ≥4.0.0-beta.103's Context — #1082).
+  return undefined;
 };
 
 export const somePropsAreDifferent = <Props extends Record<string, any>>(
@@ -183,15 +220,16 @@ export type DeepEqualOptions = {
  * By default, `null` and `undefined` are treated as distinct. Pass
  * `{ stripNullish: true }` to opt into treating them as equivalent.
  */
-export const deepEqual = (
-  a: unknown,
-  b: unknown,
-  options?: DeepEqualOptions,
-): boolean =>
+export const deepEqual = (a: unknown, b: unknown, options?: DeepEqualOptions): boolean =>
   JSON.stringify(canonicalize(a, options?.stripNullish ?? false)) ===
   JSON.stringify(canonicalize(b, options?.stripNullish ?? false));
 
-const canonicalize = (value: unknown, stripNullish: boolean): unknown => {
+const canonicalize = (
+  value: unknown,
+  stripNullish: boolean,
+  // Ancestor-path cycle guard — see _stripUnresolved (#1082).
+  ancestors: WeakSet<object> = new WeakSet(),
+): unknown => {
   if (stripNullish && value == null) return undefined;
   if (Redacted.isRedacted(value)) {
     return {
@@ -199,16 +237,30 @@ const canonicalize = (value: unknown, stripNullish: boolean): unknown => {
       value: Redacted.value(value),
     };
   }
-  if (Array.isArray(value)) {
-    return value.map((v) => canonicalize(v, stripNullish));
+  // JSON-safe leaves compare by their serialized form (Duration/Date have
+  // toJSON).
+  if (Duration.isDuration(value) || value instanceof Date) return value;
+  // Bytes compare by content.
+  if (value instanceof Uint8Array) return { __bytes__: bytesToBase64(value) };
+  if (isPlainData(value)) {
+    const rebuilt = mapPlainData(value, ancestors, (child) =>
+      canonicalize(child, stripNullish, ancestors),
+    );
+    if (rebuilt === undefined || Array.isArray(rebuilt)) return rebuilt;
+    // Deterministic key order for the JSON.stringify comparison. Filtering
+    // after the walk is JSON-equivalent to filtering before it —
+    // undefined-valued keys are dropped by JSON.stringify either way.
+    return Object.fromEntries(
+      Object.entries(rebuilt as Record<string, unknown>)
+        .filter(([, nested]) => !stripNullish || nested != null)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
   }
   if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, nested]) => !stripNullish || nested != null)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, nested]) => [key, canonicalize(nested, stripNullish)]),
-    );
+    // Non-plain instances (Effect, Layer, Context, SDK objects) never
+    // canonicalize — walking them is unsafe (cyclic on effect
+    // ≥4.0.0-beta.103 — #1082) and comparing them is meaningless.
+    return undefined;
   }
   return value;
 };

@@ -1,0 +1,46 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+deleted file mode 100644
+index a89691bec87b69ae600f4feb67b88b900ab799de..0000000000000000000000000000000000000000
+diff --git a/lib/connection.js b/lib/connection.js
+index 780dc041c58e83ebfcd84434e500ec471020813a..6b5c02dac6e48b344c4a16defdf1709e8145109b 100644
+--- a/lib/connection.js
++++ b/lib/connection.js
+@@ -44,22 +44,13 @@ function createStream (opts) {
+           if (params.socket) {
+             return net.createConnection(params.socket);
+           }
++          // T3 Code never passes Unix descriptors, so usocket is not installed.
++          // Node connects to both path and abstract sockets natively.
+           if (params.abstract) {
+-            const usocket = require('usocket');
+-            const sock = new usocket.USocket({ path: '\u0000' + params.abstract });
+-            sock.supportsUnixFd = negotiateUnixFd;
+-            return sock;
++            return net.createConnection('\u0000' + params.abstract);
+           }
+           if (params.path) {
+-            try {
+-              const usocket = require('usocket');
+-              const sock = new usocket.USocket({ path: params.path });
+-              sock.supportsUnixFd = negotiateUnixFd;
+-              return sock;
+-            } catch (err) {
+-              // TODO: maybe emit warning?
+-              return net.createConnection(params.path);
+-            }
++            return net.createConnection(params.path);
+           }
+           throw new Error(
+             "not enough parameters for 'unix' connection - you need to specify 'socket' or 'abstract' or 'path' parameter"
+diff --git a/package.json b/package.json
+index a396df1298b9c3d2f2faad33563c3cdded50281e..9a41e7d142aaf1d6ce20c2faa89a6f342e0e7556 100644
+--- a/package.json
++++ b/package.json
+@@ -44,7 +44,6 @@
+     "xml2js": "^0.4.17"
+   },
+   "optionalDependencies": {
+-    "usocket": "^0.3.0"
+   },
+   "devDependencies": {
+     "@babel/core": "^7.1.5",

@@ -1,0 +1,255 @@
+---
+title: Foldkit
+description: Deploy Foldkit SPA, SSR, SSG, and hybrid applications to Railway with native local development.
+sidebar:
+  order: 8
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Railway.Website.Foldkit` deploys a [Foldkit](https://foldkit.dev) app to
+Railway. It supports browser-only SPAs, server-side rendering (SSR), static site
+generation (SSG), and hybrid rendering. Foldkit's Vite plugin generates the
+handler and assets; Alchemy packages them for deployment.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/foldkit`
+and `/foldkit/node` exports from your project at deploy time. It is only
+used at build time, so a dev dependency is enough:
+
+<PackageManagers dev={devDeps} />
+
+## Configure Vite
+
+Your Vite config stays what Foldkit's setup gives you. Vite plugins
+like Tailwind go in `plugins` as usual:
+
+```typescript
+// vite.config.ts
+import { foldkit } from "@foldkit/vite-plugin";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [foldkit(), tailwindcss()],
+  optimizeDeps: {
+    entries: ["src/entry.ts"],
+  },
+});
+```
+
+Alchemy runs Vite programmatically on the project root. The Foldkit
+plugin and the rest of your setup are preserved as-is.
+
+## Server rendering and prerendering
+
+Configure rendering in the application's `foldkit(...)` plugin. This example
+uses Foldkit 0.167.0, `@foldkit/vite-plugin` 0.27.0 and compatible Effect
+dependencies:
+
+```typescript
+// vite.config.ts
+import { foldkit } from "@foldkit/vite-plugin";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    foldkit({
+      ssr: {
+        serverEntry: "/src/entry.server.ts",
+        clientEntry: "/src/entry.ts",
+        build: true,
+      },
+    }),
+  ],
+});
+```
+
+The server entry exports `renderPage` and `renderDocument`. Import stylesheets
+from the client entry and use `Runtime.hydrate` to start the browser application.
+Remove the source `index.html` for this build: Foldkit generates the complete
+HTML document, including the client script, stylesheets and module preload links.
+
+```typescript
+// src/entry.server.ts
+import { Server } from "foldkit/experimental";
+
+export const renderDocument = Server.renderDocument;
+```
+
+Keep your application's `renderPage` export alongside the document renderer.
+Foldkit currently exposes its server rendering API through `foldkit/experimental`;
+see its [server rendering guide](https://foldkit.dev/core/server-rendering) for
+the application and hydration contract.
+
+For static site generation (SSG), change `build` to `{ prerender: true }` and
+export the URLs to generate from the server entry:
+
+```typescript
+// src/entry.server.ts
+export const prerenderPaths = ["/", "/about"];
+```
+
+SSG renders those URLs during the build. SSR renders a page when its request
+arrives. A hybrid application prerenders some URLs and renders others on request.
+The same `renderPage` and `renderDocument` exports serve both delivery policies.
+
+The same Website declaration deploys the client assets and generated handler.
+GET and HEAD requests serve matching assets and prerendered pages first;
+remaining requests go to the handler. Other methods bypass static assets.
+The application owns its response status and headers through `renderPage`.
+For an SSG-only application, return 404 for URLs outside its generated route set;
+allowing those URLs to render on request makes the deployment hybrid.
+
+Browser-only builds use SPA fallback. Server builds send unmatched requests to
+the handler. Explicit `assets.notFoundHandling` settings override these defaults.
+
+Vite's resolved `base` also mounts the client assets. With `base: "/app/"`,
+`/app/assets/main.js` serves `assets/main.js` from the client output. SPA fallback
+is limited to that prefix; server handlers receive the original URL.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Railway from "@alchemy.run/railway";
+
+export const Website = Railway.Website.Foldkit("Website");
+```
+
+For an app in a subdirectory of a monorepo, point `rootDir` at it:
+
+```typescript
+export const Website = Railway.Website.Foldkit("Website", {
+  rootDir: "applications/web",
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyFoldkitSite",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+`site.url` is the generated `https://{name}.up.railway.app`. The
+site also exposes `service` and `project` — they are `undefined`
+under `alchemy dev`.
+
+## Add environment variables
+
+Set process environment variables through the top-level `env` map. Server
+code reads private values from `process.env`; Vite inlines `VITE_*` values
+into the browser build. Values must be strings or `Redacted` strings.
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Railway.Website.Foldkit("Website", {
++  env: {
++    API_BASE: "https://api.example.com",
++    VITE_API_URL: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before Vite dev and build, and
+onto the Service. Server code reads `process.env.API_BASE`. Client code reads
+`import.meta.env.VITE_API_URL`. Keep secrets out of `VITE_*` keys and serialized
+Foldkit Flags.
+
+## Read the environment in client code
+
+Type a custom public key with Vite's standard environment declaration:
+
+```typescript
+// src/vite-env.d.ts
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_URL: string;
+}
+```
+
+```typescript
+const apiUrl = import.meta.env.VITE_API_URL;
+```
+
+## Deep links
+
+A browser-only Foldkit app that uses URL routing (`Runtime.makeApplication` with
+`routing`, `onUrlRequest`, and `onUrlChange`) resolves routes on the
+client, so a deep link like `/counter/42` arrives as a request for a
+file that doesn't exist.
+
+For browser-only builds, `Foldkit` defaults `assets.notFoundHandling` to
+`"single-page-application"`, which returns `index.html` (200) for
+unmatched paths so the Foldkit runtime can resolve the route. Use
+`"404-page"` to serve a real 404 instead:
+
+```typescript
+export const Website = Railway.Website.Foldkit("Website", {
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+## Local dev
+
+`alchemy dev` runs Vite's own dev server (Foldkit's live reload
+and devtools) instead of deploying; `site.url` is the local address and
+no Project or Service is created. Wrap the
+site in `Alchemy.remote()` to deploy the live Service even during
+dev.
+
+Pin the dev server's address when several apps run in one Stack:
+
+```typescript
+export const Website = Railway.Website.Foldkit("Website", {
+  dev: { host: "127.0.0.1", port: 5180, strictPort: true },
+});
+```
+
+## Custom domain
+
+Pass a hostname to attach a
+[`Railway.CustomDomain`](/railway/networking) (`targetPort` 3000).
+`url` becomes `https://{domain}`.
+
+```typescript
+const site = yield* Railway.Website.Foldkit("Web", {
+  domain: "app.example.com",
+});
+```
+
+## Where next
+
+- [`Foldkit` reference](/providers/railway/website/foldkit) — every
+  prop and attribute
+- [Vite](/railway/frontend/vite) — the same static-file Service for
+  any Vite app
+- [Websites](/railway/frontend/websites) — the rest of the Railway
+  frontend family
+- [Projects](/railway/compute/projects),
+  [Services](/railway/compute/services),
+  [Custom domains](/railway/networking)

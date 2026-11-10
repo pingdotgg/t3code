@@ -1,13 +1,7 @@
-import {
-  ExternalLinkIcon,
-  PaletteIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  ShieldCheckIcon,
-} from "lucide-react";
-import type { FormEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import {
   importOpenVsxThemeExtension,
   searchOpenVsxThemes,
@@ -20,6 +14,7 @@ import {
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
+import { sourceControlIcon } from "../../sourceControlPresentation";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -29,6 +24,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -45,6 +41,22 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
   { value: "timestamp", label: "Newest" },
   { value: "relevance", label: "Most relevant" },
 ];
+const SEARCH_DEBOUNCE_MS = 350;
+
+function sourceHost(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function sourceLinkIcon(url: string): ReactNode {
+  const host = sourceHost(url);
+  const definition = host === null ? undefined : sourceControlClients.findByPublicDomain(host);
+  const Icon = definition ? sourceControlIcon(definition) : ExternalLinkIcon;
+  return <Icon className="size-3.5" />;
+}
 
 function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
   const [failed, setFailed] = useState(false);
@@ -67,11 +79,159 @@ function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension })
   );
 }
 
+export interface ThemeSearchView {
+  readonly setResults: (results: ReadonlyArray<OpenVsxThemeExtension> | null) => void;
+  readonly setError: (error: string | null) => void;
+  readonly setIsSearching: (isSearching: boolean) => void;
+}
+
+type SearchThemes = typeof searchOpenVsxThemes;
+
+/**
+ * Owns one dialog session's Open VSX traffic: the input debounce, the request in
+ * flight, and which key the shown results belong to. Aborting `signal` (the
+ * dialog closing) cancels all of it, including an install.
+ */
+export function createThemeSearch(
+  view: ThemeSearchView,
+  signal: AbortSignal,
+  search: SearchThemes = searchOpenVsxThemes,
+) {
+  let query = "";
+  let sortBy: OpenVsxThemeSort = "downloadCount";
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  let request: AbortController | null = null;
+  let install: AbortController | null = null;
+  // Record successful searches only; rerun after install only for changed query/sort to preserve install
+  // errors.
+  let shownKey: string | null = null;
+  let handledKey: string | null = null;
+  let interrupted = false;
+
+  const keyOf = () => `${query}\u0000${sortBy}`;
+  const abortRequest = () => {
+    request?.abort();
+    request = null;
+  };
+  const cancelDebounce = () => {
+    if (debounce !== null) clearTimeout(debounce);
+    debounce = null;
+  };
+
+  const fetchResults = () => {
+    abortRequest();
+    const controller = new AbortController();
+    request = controller;
+    const key = keyOf();
+    void search(query, { signal: controller.signal, sortBy })
+      .then(
+        (results) => {
+          if (controller.signal.aborted) return;
+          view.setResults(results);
+          shownKey = key;
+        },
+        (cause: unknown) => {
+          if (controller.signal.aborted) return;
+          view.setResults(null);
+          shownKey = null;
+          view.setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
+        },
+      )
+      .then(() => {
+        if (request !== controller) return;
+        request = null;
+        view.setIsSearching(false);
+      });
+  };
+
+  const clear = () => {
+    cancelDebounce();
+    abortRequest();
+    shownKey = null;
+    handledKey = null;
+    view.setResults(null);
+    view.setError(null);
+    view.setIsSearching(false);
+  };
+
+  const settle = () => {
+    if (install !== null || signal.aborted || query === "") return;
+    const key = keyOf();
+    const keyChanged = handledKey !== key;
+    if (!keyChanged && !interrupted) return;
+    handledKey = key;
+    interrupted = false;
+    const shouldFetch = shownKey !== key;
+    if (shouldFetch || keyChanged) view.setError(null);
+    view.setIsSearching(shouldFetch);
+    if (shouldFetch) fetchResults();
+    else abortRequest();
+  };
+
+  signal.addEventListener(
+    "abort",
+    () => {
+      cancelDebounce();
+      abortRequest();
+      install?.abort();
+    },
+    { once: true },
+  );
+
+  return {
+    /** An unsettled query would hit Open VSX for text that is no longer visible, so typing waits. */
+    setQuery(nextQuery: string) {
+      const trimmed = nextQuery.trim();
+      if (trimmed === query) return;
+      query = trimmed;
+      cancelDebounce();
+      if (trimmed === "") {
+        if (install === null) clear();
+        return;
+      }
+      debounce = setTimeout(() => {
+        debounce = null;
+        settle();
+      }, SEARCH_DEBOUNCE_MS);
+    },
+    setSortBy(nextSort: OpenVsxThemeSort) {
+      sortBy = nextSort;
+      if (debounce === null) settle();
+    },
+    /** Enter or re-picking the current suggestion searches again even for the shown key. */
+    searchNow() {
+      if (install !== null || signal.aborted || query === "") return;
+      // A pending debounce for the same key would otherwise restart this search.
+      cancelDebounce();
+      handledKey = keyOf();
+      interrupted = false;
+      view.setError(null);
+      view.setIsSearching(true);
+      fetchResults();
+    },
+    beginInstall(): AbortSignal {
+      abortRequest();
+      install?.abort();
+      install = new AbortController();
+      interrupted = true;
+      view.setIsSearching(false);
+      return install.signal;
+    },
+    endInstall(installSignal: AbortSignal): boolean {
+      if (install?.signal !== installSignal) return false;
+      install = null;
+      if (query === "") clear();
+      else if (debounce === null) settle();
+      return true;
+    },
+  };
+}
+
 export function ThemeSearchSection({
-  open,
+  signal,
   onInstalled,
 }: {
-  open: boolean;
+  signal: AbortSignal;
   onInstalled: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -81,116 +241,54 @@ export function ThemeSearchSection({
   const [isSearching, setIsSearching] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
-  const requestRef = useRef<AbortController | null>(null);
+  const [themeSearch] = useState(() =>
+    createThemeSearch({ setResults, setError, setIsSearching }, signal),
+  );
 
-  useEffect(() => {
-    requestRef.current?.abort();
-    requestRef.current = null;
-    if (open) {
-      setQuery("");
-      setSortBy("downloadCount");
-      setResults(null);
-      setError(null);
-      setIsSearching(false);
-      setInstallingId(null);
-      setPendingUpdate(null);
+  const changeQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    themeSearch.setQuery(nextQuery);
+  };
+
+  const handleSortChange = (value: OpenVsxThemeSort | null) => {
+    const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
+    if (!nextSort) return;
+    setSortBy(nextSort);
+    themeSearch.setSortBy(nextSort);
+  };
+
+  const handleInstall = async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
+    setError(null);
+    let installedCollection: ReadonlyArray<ThemeDefinition>;
+    try {
+      installedCollection = getStoredCustomThemeCollection(extension.collectionId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
+      return;
     }
-    return () => {
-      requestRef.current?.abort();
-      requestRef.current = null;
-    };
-  }, [open]);
+    const updated = installedCollection.length > 0;
+    if (updated && !allowUpdate) {
+      setPendingUpdate(extension);
+      return;
+    }
 
-  const runSearch = useCallback(
-    async (searchText: string, nextSort = sortBy) => {
-      const trimmed = searchText.trim();
-      if (!trimmed) return;
-      requestRef.current?.abort();
-      const controller = new AbortController();
-      requestRef.current = controller;
-      setQuery(trimmed);
-      setIsSearching(true);
-      setError(null);
-      setResults(null);
-      try {
-        const nextResults = await searchOpenVsxThemes(trimmed, {
-          signal: controller.signal,
-          sortBy: nextSort,
+    const installSignal = themeSearch.beginInstall();
+    setInstallingId(extension.id);
+    try {
+      const themes = await importOpenVsxThemeExtension(extension, installSignal);
+      if (!installSignal.aborted) {
+        const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
+          expectedCollection: installedCollection,
         });
-        if (!controller.signal.aborted) setResults(nextResults);
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
-        }
+        onInstalled(imported, { updated });
       }
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setIsSearching(false);
+    } catch (cause) {
+      if (!installSignal.aborted) {
+        setError(cause instanceof Error ? cause.message : "That theme could not be added.");
       }
-    },
-    [sortBy],
-  );
-
-  const handleSearch = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      void runSearch(query);
-    },
-    [query, runSearch],
-  );
-
-  const handleSortChange = useCallback(
-    (value: OpenVsxThemeSort | null) => {
-      const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
-      if (!nextSort) return;
-      setSortBy(nextSort);
-      if ((results !== null || isSearching) && query.trim()) {
-        void runSearch(query, nextSort);
-      }
-    },
-    [isSearching, query, results, runSearch],
-  );
-
-  const handleInstall = useCallback(
-    async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
-      setError(null);
-      let installedCollection: ReadonlyArray<ThemeDefinition>;
-      try {
-        installedCollection = getStoredCustomThemeCollection(extension.collectionId);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
-        return;
-      }
-      const updated = installedCollection.length > 0;
-      if (updated && !allowUpdate) {
-        setPendingUpdate(extension);
-        return;
-      }
-
-      requestRef.current?.abort();
-      const controller = new AbortController();
-      requestRef.current = controller;
-      setInstallingId(extension.id);
-      try {
-        const themes = await importOpenVsxThemeExtension(extension, controller.signal);
-        if (!controller.signal.aborted) {
-          const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
-            expectedCollection: installedCollection,
-          });
-          onInstalled(imported, { updated });
-        }
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "That theme could not be added.");
-        }
-      }
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setInstallingId(null);
-      }
-    },
-    [onInstalled],
-  );
+    }
+    if (themeSearch.endInstall(installSignal)) setInstallingId(null);
+  };
 
   return (
     <section className="space-y-3" aria-labelledby="theme-search-heading">
@@ -202,42 +300,43 @@ export function ThemeSearchSection({
           Find open-source themes from Open VSX.
         </p>
       </div>
-      <form className="flex gap-2" onSubmit={handleSearch}>
-        <InputGroup>
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-          <InputGroupInput
-            aria-label="Search Open VSX themes"
-            autoFocus
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="try dracula, nord, catppuccin..."
-            size="lg"
-            type="search"
-            value={query}
-          />
-        </InputGroup>
-        <Button
-          disabled={!query.trim() || isSearching || installingId !== null}
+      <InputGroup>
+        <InputGroupAddon>
+          {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-label="Search Open VSX themes"
+          autoFocus
+          onChange={(event) => changeQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Enter" && !isSearching && installingId === null)
+              themeSearch.searchNow();
+          }}
+          placeholder="Search themes..."
           size="lg"
-          type="submit"
-          variant="outline"
-        >
-          {isSearching ? <Spinner /> : <SearchIcon />}
-          Search
-        </Button>
-      </form>
+          type="search"
+          value={query}
+        />
+      </InputGroup>
 
-      {!isSearching ? (
+      {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <p className="text-muted-foreground text-xs">Popular</p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
+                disabled={installingId !== null}
                 size="xs"
                 variant="ghost"
-                onClick={() => void runSearch(suggestion)}
+                onClick={() => {
+                  if (query.trim() === suggestion) {
+                    themeSearch.searchNow();
+                  } else {
+                    changeQuery(suggestion);
+                  }
+                }}
               >
                 {suggestion}
               </Button>
@@ -271,24 +370,21 @@ export function ThemeSearchSection({
 
       <div className="sr-only" role="status">
         {isSearching
-          ? "Finding themes..."
+          ? "Searching themes..."
           : results
             ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
             : ""}
       </div>
 
       {error ? (
-        <div
-          aria-live="polite"
-          className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive text-sm"
-        >
-          {error}
-        </div>
+        <Alert variant="error" role="status" aria-live="polite">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
-      {isSearching ? (
+      {isSearching && results === null ? (
         <div className="flex min-h-20 items-center justify-center gap-2 text-muted-foreground text-sm">
-          <Spinner /> Finding themes...
+          <Spinner /> Searching themes...
         </div>
       ) : null}
 
@@ -305,8 +401,8 @@ export function ThemeSearchSection({
               const isInstalled = getCustomThemes().some(
                 (theme) => theme.collection?.id === extension.collectionId,
               );
-              const action = isInstalled ? "Update" : "Add";
-              const progressAction = isInstalled ? "Updating" : "Adding";
+              const action = isInstalled ? "Update" : "Install";
+              const progressAction = isInstalled ? "Updating" : "Installing";
               return (
                 <article
                   className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
@@ -327,19 +423,15 @@ export function ThemeSearchSection({
                   </p>
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="inline-flex items-center gap-1 text-muted-foreground text-[11px]">
-                        <ShieldCheckIcon className="size-3" /> {extension.license}
-                      </span>
                       {extension.sourceUrl ? (
-                        <a
+                        <Button
                           aria-label={`View source for ${extension.name}`}
-                          className="inline-flex items-center gap-1 text-muted-foreground text-[11px] hover:text-foreground"
-                          href={extension.sourceUrl}
-                          rel="noreferrer"
-                          target="_blank"
+                          render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
+                          size="icon-micro"
+                          variant="ghost-muted"
                         >
-                          Source <ExternalLinkIcon className="size-3" />
-                        </a>
+                          {sourceLinkIcon(extension.sourceUrl)}
+                        </Button>
                       ) : null}
                     </div>
                     <Button
@@ -349,7 +441,13 @@ export function ThemeSearchSection({
                       variant="outline"
                       onClick={() => void handleInstall(extension, false)}
                     >
-                      {isInstalling ? <Spinner /> : isInstalled ? <RefreshCwIcon /> : <PlusIcon />}
+                      {isInstalling ? (
+                        <Spinner />
+                      ) : isInstalled ? (
+                        <RefreshIcon />
+                      ) : (
+                        <PackagePlusIcon />
+                      )}
                       {isInstalling ? `${progressAction}...` : action}
                     </Button>
                   </div>

@@ -1,0 +1,7 @@
+{
+  "name": "lockfile-pinning-yarn-fixture",
+  "private": true,
+  "dependencies": {
+    "make-dir": "^3.0.0"
+  }
+}

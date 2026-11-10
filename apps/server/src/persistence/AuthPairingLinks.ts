@@ -1,10 +1,11 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import { AuthEnvironmentScopes } from "@t3tools/contracts";
 
@@ -14,6 +15,12 @@ import {
   type PersistenceErrorCorrelation,
   PersistenceSqlError,
 } from "./Errors.ts";
+
+/**
+ * Subjects of codes that approve one agent sign-in at a set level, as `mcp-approval:<level>`.
+ * Only that sign-in may spend one, so every other use of a pairing code refuses them.
+ */
+export const MCP_APPROVAL_SUBJECT_PREFIX = "mcp-approval:";
 
 export const AuthPairingLinkRecord = Schema.Struct({
   id: Schema.String,
@@ -46,6 +53,10 @@ export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 export const ConsumeAuthPairingLinkInput = Schema.Struct({
   credential: Schema.String,
   proofKeyThumbprint: Schema.NullOr(Schema.String),
+  requestedScopes: Schema.optionalKey(AuthEnvironmentScopes),
+  requiredScopes: Schema.optionalKey(AuthEnvironmentScopes),
+  /** Also spends a code with exactly this `mcp-approval:` subject. Others are always refused. */
+  mcpApprovalSubject: Schema.optionalKey(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });
@@ -119,6 +130,7 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -158,7 +170,15 @@ export const make = Effect.gen(function* () {
   const consumeAvailablePairingLinkRow = SqlSchema.findOneOption({
     Request: ConsumeAuthPairingLinkInput,
     Result: AuthPairingLinkRawDbRow,
-    execute: ({ credential, proofKeyThumbprint, consumedAt, now }) =>
+    execute: ({
+      credential,
+      proofKeyThumbprint,
+      requestedScopes,
+      requiredScopes,
+      mcpApprovalSubject,
+      consumedAt,
+      now,
+    }) =>
       sql`
         UPDATE auth_pairing_links
         SET consumed_at = ${consumedAt}
@@ -167,8 +187,26 @@ export const make = Effect.gen(function* () {
           AND consumed_at IS NULL
           AND expires_at > ${now}
           AND (
+            subject NOT LIKE ${`${MCP_APPROVAL_SUBJECT_PREFIX}%`}
+            OR subject = ${mcpApprovalSubject ?? null}
+          )
+          AND (
             proof_key_thumbprint IS NULL
             OR proof_key_thumbprint = ${proofKeyThumbprint}
+          )
+          AND (${requestedScopes === undefined ? 1 : 0} OR EXISTS (
+            SELECT 1
+            FROM json_each(${JSON.stringify(requestedScopes ?? [])}) AS requested
+            WHERE requested.value IN (
+              SELECT value FROM json_each(auth_pairing_links.scopes)
+            )
+          ))
+          AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(${JSON.stringify(requiredScopes ?? [])}) AS required
+            WHERE required.value NOT IN (
+              SELECT value FROM json_each(auth_pairing_links.scopes)
+            )
           )
         RETURNING
           id AS "id",
@@ -267,7 +305,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthPairingLinkDbRow(row).pipe(
               Effect.mapError((cause) =>
@@ -277,7 +315,7 @@ export const make = Effect.gen(function* () {
                   { pairingLinkId: row.id },
                 ),
               ),
-              Effect.map(Option.some),
+              Effect.asSome,
             ),
         }),
       ),
@@ -285,6 +323,7 @@ export const make = Effect.gen(function* () {
 
   const listActive: AuthPairingLinkRepository["Service"]["listActive"] = (input) =>
     listActivePairingLinkRows(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthPairingLinkRepository.listActive:query",
@@ -320,6 +359,7 @@ export const make = Effect.gen(function* () {
 
   const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
     getPairingLinkRowByCredential(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthPairingLinkRepository.getByCredential:query",
@@ -328,7 +368,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthPairingLinkDbRow(row).pipe(
               Effect.mapError((cause) =>
@@ -338,7 +378,7 @@ export const make = Effect.gen(function* () {
                   { pairingLinkId: row.id },
                 ),
               ),
-              Effect.map(Option.some),
+              Effect.asSome,
             ),
         }),
       ),

@@ -3,90 +3,91 @@ import type {
   AuthClientMetadataDeviceType,
   AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Digest is effectful; the cookie name stays a plain function.
 import * as NodeCrypto from "node:crypto";
-import * as Encoding from "effect/Encoding";
+import * as NodeNet from "node:net";
+import { normalizeHostname } from "@t3tools/shared/hostClassification";
+import * as Mac from "effect/crypto/Mac";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
 
-/**
- * Cookies are scoped by host but *not* by port, so any two servers that can be
- * live on one hostname at once need separate names — otherwise the second
- * clobbers the first's session and both sides see "Invalid session token
- * signature" until someone clears cookies by hand.
- *
- * Two populations qualify, for the same reason but from different causes:
- *
- * - **Dev servers** (`devUrl` set), which run several at a time across worktrees.
- * - **Desktop**, which scans upward from 3773 for a free port and binds
- *   127.0.0.1, so a second instance lands on a different port and the same host.
- *
- * Hosted deployments keep the stable production name: their public port can
- * change between releases, and scoping it would log every user out.
- */
+/** Cookies span ports; use separate names for servers sharing a hostname. */
 export function resolveSessionCookieName(input: {
   readonly mode: "web" | "desktop";
   readonly port: number;
   readonly host: string | undefined;
   readonly instanceKey: string;
+  readonly environmentId: string;
   readonly development: boolean;
 }): string {
   if (input.mode === "desktop") {
     return `${SESSION_COOKIE_NAME}_${input.port}`;
   }
 
-  if (!input.development && isRemoteReachableHost(input.host)) {
-    return SESSION_COOKIE_NAME;
-  }
-
-  // Cookies are scoped by host, not port. Loopback development servers need an
-  // instance-specific name or parallel agents overwrite each other's session,
-  // and a server that later reuses the port receives a token signed elsewhere.
   const instanceHash = NodeCrypto.createHash("sha256")
-    .update(input.instanceKey)
+    .update(
+      !input.development && isRemoteReachableHost(input.host)
+        ? input.environmentId
+        : input.instanceKey,
+    )
     .digest("hex")
     .slice(0, 12);
+
+  if (!input.development && isRemoteReachableHost(input.host)) {
+    return `${SESSION_COOKIE_NAME}_${instanceHash}`;
+  }
+
   return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
 }
 
-export function isRemoteReachableHost(host: string | undefined): boolean {
-  if (host === "0.0.0.0" || host === "::" || host === "[::]") {
-    return true;
-  }
-  if (!host || host.length === 0) {
-    return false;
-  }
-  return !(
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    host.startsWith("127.")
-  );
+export function resolveLegacySessionCookieName(input: {
+  readonly mode: "web" | "desktop";
+  readonly host: string | undefined;
+  readonly development: boolean;
+}): string | undefined {
+  return input.mode === "web" && !input.development && isRemoteReachableHost(input.host)
+    ? SESSION_COOKIE_NAME
+    : undefined;
 }
+
+/**
+ * The loopback address a server given `host` listens on, or undefined when it may listen beyond
+ * this machine. Unset means 127.0.0.1. Only a loopback literal or `localhost` counts: Node listens
+ * on every interface for an empty host, and any other name resolves through DNS.
+ */
+export function loopbackBindAddress(host: string | undefined): string | undefined {
+  if (host === undefined) return "127.0.0.1";
+  const address = normalizeHostname(host);
+  if (address === "localhost") return "127.0.0.1";
+  return (NodeNet.isIPv4(address) && address.startsWith("127.")) || address === "::1"
+    ? address
+    : undefined;
+}
+
+export const isRemoteReachableHost = (host: string | undefined): boolean =>
+  loopbackBindAddress(host) === undefined;
 
 export function base64UrlEncode(input: string | Uint8Array): string {
   return typeof input === "string"
-    ? Encoding.encodeBase64Url(new TextEncoder().encode(input))
-    : Encoding.encodeBase64Url(input);
+    ? Base64Url.encode(new TextEncoder().encode(input))
+    : Base64Url.encode(input);
 }
 
 export function base64UrlDecodeUtf8(input: string): string {
-  return Result.getOrThrow(Encoding.decodeBase64UrlString(input));
-}
-
-export function signPayload(payload: string, secret: Uint8Array): string {
-  return NodeCrypto.createHmac("sha256", Buffer.from(secret)).update(payload).digest("base64url");
+  return Result.getOrThrow(Base64Url.decodeString(input));
 }
 
 export function timingSafeEqualBase64Url(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "base64url");
-  const rightBuffer = Buffer.from(right, "base64url");
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
+  const leftBytes = Base64Url.decode(left);
+  const rightBytes = Base64Url.decode(right);
+  return (
+    Result.isSuccess(leftBytes) &&
+    Result.isSuccess(rightBytes) &&
+    Mac.timingSafeEqual(leftBytes.success, rightBytes.success)
+  );
 }
 
 function normalizeNonEmptyString(value: string | null | undefined): string | undefined {
@@ -128,9 +129,9 @@ function inferBrowser(userAgent: string | undefined): string | undefined {
     return undefined;
   }
   const normalized = userAgent.toLowerCase();
-  if (/edg\//.test(normalized)) return "Edge";
-  if (/opr\//.test(normalized)) return "Opera";
-  if (/firefox\//.test(normalized)) return "Firefox";
+  if (/edg(?:e|a|ios)?\//.test(normalized)) return "Edge";
+  if (/opr\/|opios\//.test(normalized)) return "Opera";
+  if (/firefox\/|fxios\//.test(normalized)) return "Firefox";
   if (/electron\//.test(normalized)) return "Electron";
   if (/chrome\//.test(normalized) || /crios\//.test(normalized)) return "Chrome";
   if (/safari\//.test(normalized) && !/chrome\//.test(normalized)) return "Safari";

@@ -1,38 +1,48 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ThreadJumpKeybindingCommand } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 export type HardwareKeyboardCommand =
+  | ThreadJumpKeybindingCommand
+  | "commandPalette"
+  | "paletteNext"
+  | "palettePrevious"
+  | "paletteDismiss"
   | "newTask"
   | "focusSearch"
   | "back"
   | "files"
   | "terminal"
   | "review"
-  | "toggleSidebar";
+  | "copyThreadReference"
+  | "toggleSidebar"
+  | "cycleHost";
 
-type CommandHandler = () => boolean | void;
+type CommandHandler = (command: HardwareKeyboardCommand) => boolean | void;
 
 const handlers = new Map<HardwareKeyboardCommand, Set<CommandHandler>>();
 const registrationListeners = new Set<() => void>();
 let registrationVersion = 0;
 
-/**
- * Registers a context-specific hardware-keyboard action. The most recently mounted handler gets
- * the first chance to consume the command, allowing focused screens to override app defaults.
- */
 export function useHardwareKeyboardCommand(
-  command: HardwareKeyboardCommand,
+  command: HardwareKeyboardCommand | ReadonlyArray<HardwareKeyboardCommand>,
   handler: CommandHandler,
 ): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the handler in the module-level hardware keyboard command registry
   useEffect(() => {
-    const commandHandlers = handlers.get(command) ?? new Set<CommandHandler>();
-    commandHandlers.add(handler);
-    handlers.set(command, commandHandlers);
+    const commands = typeof command === "string" ? [command] : command;
+    for (const command of commands) {
+      const commandHandlers = handlers.get(command) ?? new Set<CommandHandler>();
+      commandHandlers.add(handler);
+      handlers.set(command, commandHandlers);
+    }
     registrationVersion += 1;
     registrationListeners.forEach((listener) => listener());
     return () => {
-      commandHandlers.delete(handler);
-      if (commandHandlers.size === 0) handlers.delete(command);
+      for (const command of commands) {
+        const commandHandlers = handlers.get(command);
+        commandHandlers?.delete(handler);
+        if (commandHandlers?.size === 0) handlers.delete(command);
+      }
       registrationVersion += 1;
       registrationListeners.forEach((listener) => listener());
     };
@@ -55,8 +65,11 @@ export function subscribeToHardwareKeyboardCommandRegistrations(listener: () => 
 export function dispatchHardwareKeyboardCommand(command: HardwareKeyboardCommand): boolean {
   const commandHandlers = handlers.get(command);
   if (!commandHandlers) return false;
-  for (const handler of [...commandHandlers].toReversed()) {
-    if (handler() !== false) return true;
+  const handlersInRegistrationOrder = Array.from(commandHandlers);
+  for (let index = handlersInRegistrationOrder.length - 1; index >= 0; index -= 1) {
+    const handler = handlersInRegistrationOrder[index];
+    if (!handler) continue;
+    if (handler(command) !== false) return true;
   }
   return false;
 }
@@ -75,4 +88,13 @@ export function parseActiveThreadPath(pathname: string): {
   } catch {
     return null;
   }
+}
+
+export function nextEnvironmentId<T extends { readonly environmentId: string }>(
+  environments: ReadonlyArray<T>,
+  currentId: string | null,
+): T["environmentId"] | null {
+  if (environments.length < 2) return null;
+  const index = environments.findIndex((environment) => environment.environmentId === currentId);
+  return environments[(index + 1) % environments.length]?.environmentId ?? null;
 }

@@ -1,21 +1,18 @@
 import * as NodeCrypto from "node:crypto";
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { KeyPair, KeyPairProvider } from "@/KeyPair";
 import * as Provider from "@/Provider";
 import { inMemoryState } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({
   providers: KeyPairProvider(),
   state: inMemoryState(),
 });
 
-const assertPemKeyPair = (attrs: {
-  privateKey: Redacted.Redacted<string>;
-  publicKey: string;
-}) => {
+const assertPemKeyPair = (attrs: { privateKey: Redacted.Redacted<string>; publicKey: string }) => {
   const priv = Redacted.value(attrs.privateKey);
   expect(priv).toMatch(/^-----BEGIN PRIVATE KEY-----/);
   expect(priv).toMatch(/-----END PRIVATE KEY-----/);
@@ -26,7 +23,7 @@ const assertPemKeyPair = (attrs: {
   NodeCrypto.createPublicKey(attrs.publicKey);
 };
 
-describe("Alchemy.KeyPair", () => {
+describe("Alchemy.KeyPair", { tags: ["unit", "local"] }, () => {
   test.provider("mints an ed25519 keypair by default", (stack) =>
     Effect.gen(function* () {
       const attrs = yield* stack.deploy(
@@ -78,9 +75,7 @@ describe("Alchemy.KeyPair", () => {
       const first = yield* stack.deploy(program);
       const second = yield* stack.deploy(program);
 
-      expect(Redacted.value(second.privateKey)).toBe(
-        Redacted.value(first.privateKey),
-      );
+      expect(Redacted.value(second.privateKey)).toBe(Redacted.value(first.privateKey));
       expect(second.publicKey).toBe(first.publicKey);
     }),
   );

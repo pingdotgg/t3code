@@ -5,6 +5,14 @@ public class T3ReviewDiffModule: Module {
     Name("T3ReviewDiffSurface")
 
     View(T3ReviewDiffView.self) {
+      Prop("contentInsetTop") { (view: T3ReviewDiffView, value: Double) in
+        view.setContentInsetTop(CGFloat(value))
+      }
+
+      Prop("contentInsetBottom") { (view: T3ReviewDiffView, value: Double) in
+        view.setContentInsetBottom(CGFloat(value))
+      }
+
       Prop("tokensResetKey") { (view: T3ReviewDiffView, tokensResetKey: String) in
         view.setTokensResetKey(tokensResetKey)
       }
@@ -53,6 +61,22 @@ public class T3ReviewDiffModule: Module {
         view.setInitialRowIndex(initialRowIndex)
       }
 
+      Prop("initialFileId") { (view: T3ReviewDiffView, fileId: String) in
+        view.setInitialFileId(fileId)
+      }
+
+      Prop("scrollEnabled") { (view: T3ReviewDiffView, enabled: Bool) in
+        view.setScrollEnabled(enabled)
+      }
+
+      Prop("bounces") { (view: T3ReviewDiffView, bounces: Bool) in
+        view.setBounces(bounces)
+      }
+
+      Prop("refreshEnabled") { (view: T3ReviewDiffView, enabled: Bool) in
+        view.setRefreshEnabled(enabled)
+      }
+
       Prop("refreshing") { (view: T3ReviewDiffView, refreshing: Bool) in
         view.setRefreshing(refreshing)
       }
@@ -78,7 +102,8 @@ public class T3ReviewDiffModule: Module {
       // Large, frequently changing JSON values cannot be regular Fabric props. Expo's
       // prop adapter compares strings on the main thread before invoking a setter, which
       // makes a syntax-token patch capable of blocking a frame by itself.
-      AsyncFunction("setRowsJson") { (view: T3ReviewDiffView, rowsJson: String) in
+      AsyncFunction("setRowsJson") { (view: T3ReviewDiffView, rowsJson: String, contentResetKey: String) in
+        view.setContentResetKey(contentResetKey)
         view.setRowsJson(rowsJson)
       }
 
@@ -86,8 +111,10 @@ public class T3ReviewDiffModule: Module {
         view.setTokensJson(tokensJson)
       }
 
-      AsyncFunction("setTokensPatchJson") { (view: T3ReviewDiffView, tokensPatchJson: String) in
-        view.setTokensPatchJson(tokensPatchJson)
+      AsyncFunction("setTokensPatchJson") { (view: T3ReviewDiffView, tokensPatchJson: String, promise: Promise) in
+        view.setTokensPatchJson(tokensPatchJson) { accepted in
+          promise.resolve(accepted)
+        }
       }
     }
   }

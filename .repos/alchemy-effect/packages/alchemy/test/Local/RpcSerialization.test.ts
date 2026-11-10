@@ -1,15 +1,29 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import {
+  registerRpcErrorClasses,
   unwrapRpcHandlers,
   wrapRpcHandlers,
   type RpcWrapped,
 } from "@/Local/RpcSerialization.ts";
 import * as Output from "@/Output.ts";
-import { describe, expect, it } from "alchemy-test";
-import * as Cause from "effect/Cause";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
+
+class RpcRegisteredError extends Data.TaggedError("RpcRegisteredError")<{
+  readonly message: string;
+  readonly arn: string;
+  readonly secret: Redacted.Redacted<string>;
+}> {}
+
+class RpcUnregisteredError extends Data.TaggedError("RpcUnregisteredError")<{
+  readonly message: string;
+  readonly code: number;
+}> {}
 
 /**
  * Builds a client whose wrap→unwrap path mirrors the production wire:
@@ -19,10 +33,7 @@ import * as Stream from "effect/Stream";
  * unwrap layers to model that hop. Streams skip the JSON hop because they
  * are bridged via a real `ReadableStream`.
  */
-const roundTrip = <T extends Record<string, any>>(
-  handlers: T,
-  streamKeys?: Array<keyof T>,
-): T => {
+const roundTrip = <T extends Record<string, any>>(handlers: T, streamKeys?: Array<keyof T>): T => {
   const wrapped = wrapRpcHandlers(handlers, streamKeys);
   const piped = Object.fromEntries(
     Object.entries(wrapped).map(([key, value]) => {
@@ -45,13 +56,12 @@ const roundTrip = <T extends Record<string, any>>(
   return unwrapRpcHandlers<T>(piped, streamKeys) as T;
 };
 
-describe("Local.RpcSerialization", () => {
+describe("Local.RpcSerialization", { tags: ["unit", "local"] }, () => {
   describe("argument serialization", () => {
     it.effect("round-trips a top-level Redacted argument", () =>
       Effect.gen(function* () {
         const handlers = {
-          echo: (s: Redacted.Redacted<string>) =>
-            Effect.succeed(Redacted.value(s)),
+          echo: (s: Redacted.Redacted<string>) => Effect.succeed(Redacted.value(s)),
         };
         const client = roundTrip(handlers);
         expect(yield* client.echo(Redacted.make("hush"))).toBe("hush");
@@ -65,17 +75,36 @@ describe("Local.RpcSerialization", () => {
             Effect.succeed(Redacted.value(env.password)),
         };
         const client = roundTrip(handlers);
-        expect(
-          yield* client.password({ password: Redacted.make("hush") }),
-        ).toBe("hush");
+        expect(yield* client.password({ password: Redacted.make("hush") })).toBe("hush");
+      }),
+    );
+
+    it.effect("round-trips a Duration nested inside an object", () =>
+      Effect.gen(function* () {
+        const handlers = {
+          timeout: (env: { timeout: Duration.Duration }) =>
+            Effect.succeed(Duration.toSeconds(env.timeout)),
+        };
+        const client = roundTrip(handlers);
+        expect(yield* client.timeout({ timeout: Duration.seconds(15) })).toBe(15);
+      }),
+    );
+
+    it.effect("round-trips Duration.negativeInfinity", () =>
+      Effect.gen(function* () {
+        const handlers = {
+          echo: (d: Duration.Duration) => Effect.succeed(d),
+        };
+        const client = roundTrip(handlers);
+        const result = yield* client.echo(Duration.negativeInfinity);
+        expect(Duration.equals(result, Duration.negativeInfinity)).toBe(true);
       }),
     );
 
     it.effect("preserves objects with their own toJSON (Date)", () =>
       Effect.gen(function* () {
         const handlers = {
-          withDate: (env: { when: Date | string }) =>
-            Effect.succeed(String(env.when)),
+          withDate: (env: { when: Date | string }) => Effect.succeed(String(env.when)),
         };
         const client = roundTrip(handlers);
         const d = new Date("2026-05-16T12:00:00.000Z");
@@ -101,11 +130,7 @@ describe("Local.RpcSerialization", () => {
             Effect.succeed(xs.reduce((a, x) => a + Redacted.value(x), 0)),
         };
         const client = roundTrip(handlers);
-        const result = yield* client.sum([
-          Redacted.make(1),
-          Redacted.make(2),
-          Redacted.make(3),
-        ]);
+        const result = yield* client.sum([Redacted.make(1), Redacted.make(2), Redacted.make(3)]);
         expect(result).toBe(6);
       }),
     );
@@ -164,6 +189,49 @@ describe("Local.RpcSerialization", () => {
       }),
     );
 
+    it.effect("revives a registered tagged error class with its fields", () =>
+      Effect.gen(function* () {
+        registerRpcErrorClasses(RpcRegisteredError);
+        const handlers = {
+          boom: (): Effect.Effect<never, RpcRegisteredError> =>
+            Effect.fail(
+              new RpcRegisteredError({
+                message: "did not stabilize",
+                arn: "arn:aws:ecs:us-east-1:000000000000:task-definition/app:3",
+                secret: Redacted.make("hush"),
+              }),
+            ),
+        };
+        const exit = yield* Effect.exit(roundTrip(handlers).boom());
+        const found = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : undefined;
+        expect(found?._tag).toBe("Some");
+        if (found?._tag === "Some") {
+          const error = found.value;
+          expect(error).toBeInstanceOf(RpcRegisteredError);
+          expect(error).toBeInstanceOf(Error);
+          expect(error._tag).toBe("RpcRegisteredError");
+          expect(error.message).toBe("did not stabilize");
+          expect(error.arn).toBe("arn:aws:ecs:us-east-1:000000000000:task-definition/app:3");
+          expect(Redacted.value(error.secret)).toBe("hush");
+        }
+      }),
+    );
+
+    it.effect("keeps an unregistered tagged error's tag and fields for catchTag", () =>
+      Effect.gen(function* () {
+        const handlers = {
+          boom: (): Effect.Effect<never, RpcUnregisteredError> =>
+            Effect.fail(new RpcUnregisteredError({ message: "nope", code: 7 })),
+        };
+        const caught = yield* roundTrip(handlers)
+          .boom()
+          .pipe(Effect.catchTag("RpcUnregisteredError", (error) => Effect.succeed(error)));
+        expect(caught._tag).toBe("RpcUnregisteredError");
+        expect(caught.code).toBe(7);
+        expect(caught.message).toBe("nope");
+      }),
+    );
+
     it.effect("propagates Die (defect)", () =>
       Effect.gen(function* () {
         const handlers = {
@@ -191,6 +259,36 @@ describe("Local.RpcSerialization", () => {
     );
   });
 
+  describe("return value serialization", () => {
+    it.effect("round-trips a Redacted return value", () =>
+      Effect.gen(function* () {
+        const handlers = {
+          secret: () => Effect.succeed(Redacted.make("hush")),
+        };
+        const client = roundTrip(handlers);
+        const result = yield* client.secret();
+        expect(Redacted.isRedacted(result)).toBe(true);
+        expect(Redacted.value(result)).toBe("hush");
+      }),
+    );
+
+    it.effect("round-trips Redacted values nested in a returned object", () =>
+      Effect.gen(function* () {
+        const handlers = {
+          env: () =>
+            Effect.succeed({
+              env: { TOKEN: Redacted.make("t0k3n") },
+              plain: "value",
+            }),
+        };
+        const client = roundTrip(handlers);
+        const result = yield* client.env();
+        expect(Redacted.value(result.env.TOKEN)).toBe("t0k3n");
+        expect(result.plain).toBe("value");
+      }),
+    );
+  });
+
   describe("streams", () => {
     it.effect("round-trips a stream when streamKeys is honored", () =>
       Effect.gen(function* () {
@@ -214,14 +312,11 @@ describe("Local.RpcSerialization", () => {
       Effect.gen(function* () {
         const handlers = {
           group: {
-            echo: (s: Redacted.Redacted<string>) =>
-              Effect.succeed(Redacted.value(s)),
+            echo: (s: Redacted.Redacted<string>) => Effect.succeed(Redacted.value(s)),
           },
         };
         const client = roundTrip(handlers);
-        expect(yield* client.group.echo(Redacted.make("nested"))).toBe(
-          "nested",
-        );
+        expect(yield* client.group.echo(Redacted.make("nested"))).toBe("nested");
       }),
     );
   });

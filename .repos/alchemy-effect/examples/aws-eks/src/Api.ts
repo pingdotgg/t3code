@@ -1,12 +1,13 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { EntriesTable, GuestbookCluster, GuestbookNamespace } from "./infra.ts";
 
 /**
- * The guestbook API: an `AWS.EKS.Deployment` in the TAGGED form — the class
+ * The guestbook API: a `Kubernetes.Deployment` in the TAGGED form — the class
  * declares the deployment identity, and the default export is
  * `Api.make(props, impl)`: a Layer pairing the props with an init Effect
  * whose impl returns `{ fetch }`, bundled into a generated image
@@ -35,7 +36,7 @@ import { EntriesTable, GuestbookCluster, GuestbookNamespace } from "./infra.ts";
  * template merged into the synthesized one (objects merge recursively;
  * arrays and primitives replace).
  */
-export class Api extends AWS.EKS.Deployment<Api>()("Api") {}
+export class Api extends Kubernetes.Deployment<Api>()("Api") {}
 
 export default Api.make(
   // Props are themselves an Effect so they can reference shared resources.
@@ -101,10 +102,7 @@ export default Api.make(
             Key: { pk: { S: `entry#${match[1]}` } },
           });
           if (!result.Item) {
-            return yield* HttpServerResponse.json(
-              { error: "not found" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
           }
           return yield* HttpServerResponse.json({
             id: match[1],
@@ -117,9 +115,7 @@ export default Api.make(
         if (request.method === "POST" && url.pathname === "/entries") {
           const author = url.searchParams.get("author") ?? "anonymous";
           const message = url.searchParams.get("message") ?? "";
-          const id = yield* Effect.sync(() =>
-            crypto.randomUUID().slice(0, 8),
-          );
+          const id = yield* Effect.sync(() => crypto.randomUUID().slice(0, 8));
           yield* putItem({
             Item: {
               pk: { S: `entry#${id}` },
@@ -139,11 +135,7 @@ export default Api.make(
     };
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        AWS.DynamoDB.PutItemHttp,
-        AWS.DynamoDB.GetItemHttp,
-        AWS.DynamoDB.ScanHttp,
-      ),
+      Layer.mergeAll(AWS.DynamoDB.PutItemHttp, AWS.DynamoDB.GetItemHttp, AWS.DynamoDB.ScanHttp),
     ),
   ),
 );

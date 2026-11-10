@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
-import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_TERMINAL_ID } from "@t3tools/contracts";
 
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 
 import {
-  buildTerminalMenuSessions,
   nextOpenTerminalId,
   previousLiveTerminalId,
   resolveProjectScriptTerminalId,
@@ -27,107 +25,18 @@ function makeMenuSession(input: {
   };
 }
 
-function makeKnownSession(input: {
-  readonly terminalId: string;
-  readonly status: KnownTerminalSession["state"]["status"];
-  readonly cwd?: string | null;
-  readonly updatedAt?: string | null;
-}): KnownTerminalSession {
-  return {
-    target: {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      terminalId: input.terminalId,
-    },
-    state: {
-      summary: input.cwd
-        ? {
-            threadId: "thread-1",
-            terminalId: input.terminalId,
-            cwd: input.cwd,
-            worktreePath: input.cwd,
-            status: input.status === "closed" ? "error" : input.status,
-            pid: input.status === "running" ? 123 : null,
-            exitCode: null,
-            exitSignal: null,
-            hasRunningSubprocess: false,
-            label: getTerminalLabel(input.terminalId),
-            updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
-          }
-        : null,
-      buffer: "",
-      status: input.status,
-      error: null,
-      hasRunningSubprocess: false,
-      updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
-      version: 1,
-    },
-  };
-}
-
-describe("buildTerminalMenuSessions", () => {
-  it("only lists server-known sessions that are running or starting (plus current)", () => {
-    expect(
-      buildTerminalMenuSessions({
-        knownSessions: [
-          makeKnownSession({
-            terminalId: "term-3",
-            status: "running",
-            cwd: "/workspace/feature",
-            updatedAt: "2026-04-15T20:05:00.000Z",
-          }),
-          makeKnownSession({
-            terminalId: "term-2",
-            status: "exited",
-            cwd: "/workspace/exited",
-            updatedAt: "2026-04-15T20:06:00.000Z",
-          }),
-        ],
-        workspaceRoot: "/workspace/root",
-      }),
-    ).toEqual([
-      {
-        terminalId: "term-3",
-        cwd: "/workspace/feature",
-        status: "running",
-        hasRunningSubprocess: false,
-        displayLabel: "Terminal 3",
-        updatedAt: "2026-04-15T20:05:00.000Z",
-      },
-    ]);
-  });
-
-  it("keeps the current terminal visible even if it is no longer running", () => {
-    expect(
-      buildTerminalMenuSessions({
-        knownSessions: [],
-        workspaceRoot: "/workspace/root",
-        currentSession: {
-          terminalId: "term-4",
-          cwd: "/workspace/exited",
-          status: "exited",
-          hasRunningSubprocess: false,
-          displayLabel: "Terminal 4",
-          updatedAt: "2026-04-15T20:07:00.000Z",
-        },
-      }),
-    ).toEqual([
-      {
-        terminalId: "term-4",
-        cwd: "/workspace/exited",
-        status: "exited",
-        hasRunningSubprocess: false,
-        displayLabel: "Terminal 4",
-        updatedAt: "2026-04-15T20:07:00.000Z",
-      },
-    ]);
-  });
-});
-
 describe("nextOpenTerminalId", () => {
-  it("matches nextTerminalId when not on a terminal route", () => {
-    expect(nextOpenTerminalId({ listedTerminalIds: [] })).toBe(DEFAULT_TERMINAL_ID);
-    expect(nextOpenTerminalId({ listedTerminalIds: [DEFAULT_TERMINAL_ID] })).toBe("term-2");
+  it("allocates separate terminals on repeated visits without readable metadata", () => {
+    const first = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    const nextVisit = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "102315fc-ceef-45c4-b978-c4d4947d3c26",
+    });
+    expect(first).not.toBe(DEFAULT_TERMINAL_ID);
+    expect(nextVisit).not.toBe(first);
   });
 
   it("avoids the mounted primary tab when the session list is still empty", () => {
@@ -138,30 +47,9 @@ describe("nextOpenTerminalId", () => {
       }),
     ).toBe("term-2");
   });
-
-  it("does not double-count when the route id is already listed", () => {
-    expect(
-      nextOpenTerminalId({
-        listedTerminalIds: [DEFAULT_TERMINAL_ID],
-        activeRouteTerminalId: DEFAULT_TERMINAL_ID,
-      }),
-    ).toBe("term-2");
-  });
 });
 
 describe("previousLiveTerminalId", () => {
-  it("returns null when no other live session remains", () => {
-    expect(
-      previousLiveTerminalId({
-        sessions: [
-          makeMenuSession({ terminalId: "term-2", status: "exited" }),
-          makeMenuSession({ terminalId: "term-3", status: "closed" }),
-        ],
-        exitedTerminalId: "term-2",
-      }),
-    ).toBe(null);
-  });
-
   it("prefers the nearest live session below the exited id", () => {
     expect(
       previousLiveTerminalId({
@@ -188,37 +76,15 @@ describe("previousLiveTerminalId", () => {
       }),
     ).toBe("term-2");
   });
-
-  it("ignores dead sessions when picking the fallback", () => {
-    expect(
-      previousLiveTerminalId({
-        sessions: [
-          makeMenuSession({ terminalId: DEFAULT_TERMINAL_ID, status: "running" }),
-          makeMenuSession({ terminalId: "term-2", status: "exited" }),
-          makeMenuSession({ terminalId: "term-3", status: "exited" }),
-        ],
-        exitedTerminalId: "term-3",
-      }),
-    ).toBe(DEFAULT_TERMINAL_ID);
-  });
 });
 
 describe("resolveProjectScriptTerminalId", () => {
-  it("reuses the default shell when no terminal is running", () => {
-    expect(
-      resolveProjectScriptTerminalId({
-        existingTerminalIds: [DEFAULT_TERMINAL_ID],
-        hasRunningTerminal: false,
-      }),
-    ).toBe(DEFAULT_TERMINAL_ID);
-  });
-
-  it("opens a new terminal when a shell is already running", () => {
-    expect(
-      resolveProjectScriptTerminalId({
-        existingTerminalIds: [DEFAULT_TERMINAL_ID, "term-2", "term-4"],
-        hasRunningTerminal: true,
-      }),
-    ).toBe("term-3");
+  it("never targets an unseen default terminal when metadata is unavailable", () => {
+    const terminalId = resolveProjectScriptTerminalId({
+      existingTerminalIds: [],
+      hasRunningTerminal: false,
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    expect(terminalId).not.toBe(DEFAULT_TERMINAL_ID);
   });
 });

@@ -17,7 +17,7 @@ The project is a normal resource, created once by the stage that
 owns it:
 
 ```typescript
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 
 const project = yield* Neon.Project("app-db", {
   region: "aws-us-east-1",
@@ -90,7 +90,7 @@ converged as part of the deploy:
 ```typescript
 const branch = yield* Neon.Branch("app-branch", {
   project,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 

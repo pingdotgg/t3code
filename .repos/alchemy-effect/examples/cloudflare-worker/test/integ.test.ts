@@ -1,19 +1,18 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 import { WORKFLOW_SECRET_VALUE } from "../src/NotifyWorkflow.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
   state: Cloudflare.state(),
-  stage: "test",
   // dev: true,
 });
 
@@ -36,6 +35,51 @@ test(
 
     expect(url).toBeString();
   }),
+);
+
+/**
+ * Better Auth on D1 (auto-migrated at deploy): sign-up + sign-in through
+ * the `/auth/*` routes served by `auth.fetch`, asserting a session cookie
+ * comes back. The assets auth panel (`index.html`) drives the same routes
+ * from the browser.
+ */
+test(
+  "better auth: sign-up and sign-in on D1",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const email = "auth-integ@example.com";
+    const password = "password1234";
+
+    const post = (path: string, body: unknown) =>
+      Effect.tryPromise(async (signal) => {
+        const response = await fetch(`${url}${path}`, {
+          method: "POST",
+          signal,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return {
+          status: response.status,
+          body: await response.text(),
+          cookies: response.headers.getSetCookie(),
+        };
+      });
+
+    // A leftover user from a prior NO_DESTROY run is fine — sign-in is the
+    // real assertion. Retries ride out workers.dev propagation.
+    yield* post("/auth/sign-up/email", { email, password, name: "Integ" }).pipe(
+      Effect.filterOrFail(
+        (r) => r.status === 200 || r.body.includes("USER_ALREADY_EXISTS"),
+        (r) => new Error(`sign-up failed: ${r.status} ${r.body.slice(0, 200)}`),
+      ),
+      Effect.retry({ schedule: Schedule.exponential("1 second"), times: 8 }),
+    );
+
+    const signIn = yield* post("/auth/sign-in/email", { email, password });
+    expect(signIn.status).toBe(200);
+    expect(signIn.cookies.length).toBeGreaterThan(0);
+  }),
+  { timeout: 120_000 },
 );
 
 /**
@@ -110,40 +154,42 @@ test(
       expect(instanceId).toBeString();
 
       const client = yield* HttpClient.HttpClient;
-      const lastStatus = yield* client
-        .get(`${url}/workflow/status/${instanceId}`)
-        .pipe(
-          // Only decode JSON on a 200; a transient 5xx (HTML error page) while
-          // the worker settles is treated as non-terminal so the poll keeps
-          // swinging instead of dying on a JSON decode error.
-          Effect.flatMap((res) =>
-            res.status === 200
-              ? (res.json as Effect.Effect<unknown, unknown>).pipe(
-                  Effect.map((body) => body as WorkflowStatus),
-                )
-              : Effect.succeed({ status: "pending" } as WorkflowStatus),
-          ),
-          Effect.repeat({
-            schedule: Schedule.spaced("2 seconds"),
-            until: (s) => s.status === "complete" || s.status === "errored",
-            times: 30,
-          }),
-        );
+      const lastStatus = yield* client.get(`${url}/workflow/status/${instanceId}`).pipe(
+        // Only decode JSON on a 200; a transient 5xx (HTML error page) while
+        // the worker settles is treated as non-terminal so the poll keeps
+        // swinging instead of dying on a JSON decode error.
+        Effect.flatMap((res) =>
+          res.status === 200
+            ? (res.json as Effect.Effect<unknown, unknown>).pipe(
+                Effect.map((body) => body as WorkflowStatus),
+              )
+            : Effect.succeed({ status: "pending" } as WorkflowStatus),
+        ),
+        Effect.repeat({
+          schedule: Schedule.spaced("2 seconds"),
+          until: (s) => s.status === "complete" || s.status === "errored",
+          times: 30,
+        }),
+      );
 
       // Surface a non-complete terminal state as a failure so the outer retry
       // can restart with a fresh instance.
       if (lastStatus.status !== "complete") {
         return yield* Effect.fail(
-          new Error(
-            `workflow ${lastStatus.status}: ${JSON.stringify(lastStatus.error)}`,
-          ),
+          new Error(`workflow ${lastStatus.status}: ${JSON.stringify(lastStatus.error)}`),
         );
       }
       return lastStatus;
     });
 
+    // Cloudflare can briefly route workflow invocations to a worker version
+    // that predates the final upload (e.g. the pre-create stub), which
+    // errors instances with "The entrypoint name Notifier was not found in
+    // this worker" until the deployed version propagates. Each errored
+    // attempt terminates within a few seconds, so give propagation a
+    // bounded ~45s of fresh instances rather than 3 swings in 16s.
     const lastStatus = yield* runOnce.pipe(
-      Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 2 }),
+      Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 6 }),
     );
 
     expect(lastStatus.status).toBe("complete");
@@ -204,9 +250,7 @@ test(
         sent.push(yield* send);
       }
       for (const message of sent) {
-        const resultResponse = yield* HttpClient.get(
-          `${url}/queue/result/${message.id}`,
-        );
+        const resultResponse = yield* HttpClient.get(`${url}/queue/result/${message.id}`);
         if (resultResponse.status === 200) {
           return (yield* resultResponse.json) as Message;
         }
@@ -230,9 +274,7 @@ test(
     // can delete the bucket — otherwise Cloudflare rejects the
     // bucket delete with "bucket is not empty".
     yield* Effect.forEach(sent, (message) =>
-      HttpClient.execute(
-        HttpClientRequest.make("DELETE")(`${url}/queue/result/${message.id}`),
-      ),
+      HttpClient.execute(HttpClientRequest.make("DELETE")(`${url}/queue/result/${message.id}`)),
     );
   }),
   { timeout: 180_000 },

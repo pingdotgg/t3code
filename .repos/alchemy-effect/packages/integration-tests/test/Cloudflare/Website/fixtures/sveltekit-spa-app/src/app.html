@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Shell marker: proves a response is the SPA app shell (served for
+         deep links and unknown routes) rather than server-rendered page
+         content. -->
+    <meta name="fixture" content="sveltekit-spa-shell" />
+    %sveltekit.head%
+  </head>
+  <body>
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

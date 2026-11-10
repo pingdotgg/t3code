@@ -1,12 +1,14 @@
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
+import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
 
 export function createGitEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
   return {
     pullRequestResolution: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -18,6 +20,8 @@ export function createGitEnvironmentAtoms<R, E>(
       tag: WS_METHODS.gitPreparePullRequestThread,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
+      onSettled: ({ environmentId, input }, registry) =>
+        invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd }),
     }),
   };
 }

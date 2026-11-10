@@ -1,0 +1,347 @@
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
+import {
+  PullRequestOperationError,
+  type PullRequestFilesViewedResult,
+  type PullRequestRef,
+  type PullRequestSetFilesViewedInput,
+} from "@t3tools/contracts";
+
+import type * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
+import type {
+  ProviderFileRevisions,
+  PullRequestProviderError,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { PullRequestError, SupportedProject } from "./PullRequestService.ts";
+
+const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
+const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
+const FILE_REVISIONS_CACHE_CAPACITY = 64;
+
+/**
+ * Bounds a single scope, not how many scopes are held: a reader ticking one file after
+ * another renews the same scope and grows it without limit otherwise.
+ */
+const MAX_FILE_REVISION_PATHS = 1_000;
+
+interface FileRevisionsDependencies {
+  readonly runFork: (effect: Effect.Effect<void>) => unknown;
+  readonly refEpoch: (ref: PullRequestRef) => number;
+  readonly fileRevisionsEpoch: () => number;
+  readonly toPullRequestError: (
+    operation: string,
+  ) => (error: PullRequestProviderError) => PullRequestError;
+}
+
+const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
+  const { runFork, refEpoch, fileRevisionsEpoch, toPullRequestError } = dependencies;
+  interface HeldFileRevisions {
+    readonly at: number;
+    readonly asked: ReadonlySet<string>;
+    readonly revisions: ReadonlyMap<string, string>;
+  }
+  const heldFileRevisions = new Map<string, HeldFileRevisions>();
+  const refreshingFileRevisions = new Set<string>();
+
+  // Epochs use remote spelling; canonicalize client refs before keying.
+  const fileRevisionsKey = (project: SupportedProject, ref: PullRequestRef) =>
+    [
+      refEpoch({ ...ref, host: project.host, repository: project.repository }),
+      fileRevisionsEpoch(),
+      ref.projectId,
+      project.repository.trim().toLowerCase(),
+      ref.number,
+    ].join(" ");
+
+  const recordFileRevisions = (
+    key: string,
+    paths: ReadonlyArray<string>,
+    answer: ProviderFileRevisions,
+  ) =>
+    Effect.map(Clock.currentTimeMillis, (at) => {
+      const held = heldFileRevisions.get(key);
+      const carried =
+        held !== undefined && at - held.at <= Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)
+          ? held
+          : null;
+      const revisions = new Map(carried?.revisions ?? []);
+      const asked = new Set(carried?.asked ?? []);
+      const learned = answer.complete === true ? [...answer.revisions.keys(), ...paths] : paths;
+      for (const path of learned) {
+        asked.delete(path);
+        asked.add(path);
+        const revision = answer.revisions.get(path);
+        if (revision !== undefined) {
+          revisions.delete(path);
+          revisions.set(path, revision);
+        }
+      }
+      for (const path of asked) {
+        if (asked.size <= MAX_FILE_REVISION_PATHS) break;
+        asked.delete(path);
+        revisions.delete(path);
+      }
+      heldFileRevisions.delete(key);
+      if (heldFileRevisions.size >= FILE_REVISIONS_CACHE_CAPACITY) {
+        const oldest = heldFileRevisions.keys().next().value;
+        if (oldest !== undefined) heldFileRevisions.delete(oldest);
+      }
+      // Partial answers retain the oldest timestamp so carried revisions cannot outlive their freshness.
+      const stamped = [...revisions.keys()].every((path) => answer.revisions.has(path))
+        ? at
+        : (carried?.at ?? at);
+      heldFileRevisions.set(key, { at: stamped, asked, revisions });
+      return revisions;
+    });
+
+  const heldFileRevisionsFor = (key: string, paths: ReadonlyArray<string>, now: number) => {
+    const held = heldFileRevisions.get(key);
+    if (held === undefined) return null;
+    heldFileRevisions.delete(key);
+    heldFileRevisions.set(key, held);
+    if (now - held.at > Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)) return null;
+    return paths.every((path) => held.asked.has(path)) ? held : null;
+  };
+
+  // Held reads refresh off the critical path; presses need fresh revisions to avoid saving obsolete heads.
+  const fileRevisionsOf = (
+    project: SupportedProject,
+    ref: PullRequestRef,
+    paths: ReadonlyArray<string>,
+    operation: string,
+    freshness: "held" | "fresh" = "held",
+  ): Effect.Effect<ReadonlyMap<string, string> | null, PullRequestError> => {
+    const read = project.api.getFileRevisions;
+    if (read === undefined) return Effect.succeed(null);
+    // Suspend request construction too; providers may start work while building requests.
+    const fetch = Effect.suspend(() => {
+      const key = fileRevisionsKey(project, ref);
+      return read({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number: ref.number,
+        paths,
+      }).pipe(
+        Effect.mapError(toPullRequestError(operation)),
+        Effect.flatMap((answer) => recordFileRevisions(key, paths, answer)),
+      );
+    });
+    return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+      const key = fileRevisionsKey(project, ref);
+      const held = heldFileRevisionsFor(key, paths, now);
+      if (held === null) return fetch;
+      if (now - held.at <= Duration.toMillis(FILE_REVISIONS_CACHE_TTL))
+        return Effect.succeed(held.revisions);
+      if (freshness === "fresh") return fetch;
+      if (refreshingFileRevisions.has(key)) return Effect.succeed(held.revisions);
+      // Refresh independently; it outlives the answered caller.
+      return Effect.sync(() => {
+        refreshingFileRevisions.add(key);
+        runFork(
+          Effect.ignore(fetch).pipe(
+            Effect.ensuring(Effect.sync(() => refreshingFileRevisions.delete(key))),
+          ),
+        );
+      }).pipe(Effect.as(held.revisions));
+    });
+  };
+
+  return { fileRevisionsOf } as const;
+};
+
+export interface Dependencies extends FileRevisionsDependencies {
+  readonly filesViewedStore: PullRequestFilesViewed.PullRequestFilesViewedRepository["Service"];
+  readonly requireProject: (
+    ref: PullRequestRef,
+  ) => Effect.Effect<SupportedProject, PullRequestError>;
+  readonly requiredViewerOf: (
+    project: SupportedProject,
+    operation: string,
+  ) => Effect.Effect<string | null, PullRequestError>;
+}
+
+// Use one factory instance per service; multiple layers would duplicate revision state and gates behind one epoch.
+export const make = (dependencies: Dependencies) => {
+  const { filesViewedStore, requireProject, requiredViewerOf, toPullRequestError } = dependencies;
+  const { fileRevisionsOf } = makeFileRevisions(dependencies);
+  const filesViewedScope = (project: SupportedProject, number: number, viewer: string | null) => ({
+    provider: project.api.kind,
+    host: project.host,
+    repository: project.remote,
+    number,
+    viewer: viewer ?? "",
+  });
+
+  const toFilesViewedStoreError = (operation: string) => (cause: unknown) =>
+    new PullRequestOperationError({
+      operation,
+      detail: "This environment could not reach its record of which files you have seen.",
+      cause,
+    });
+
+  const environmentFilesViewed = Effect.fn("pullRequestViewedFiles.environmentFilesViewed")(
+    function* (
+      project: SupportedProject,
+      ref: PullRequestRef,
+    ): Effect.fn.Return<PullRequestFilesViewedResult, PullRequestError> {
+      const viewer = yield* requiredViewerOf(project, "filesViewed");
+      const held = yield* filesViewedStore
+        .list(filesViewedScope(project, ref.number, viewer))
+        .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
+      const marks = held.files;
+      if (marks.length === 0) return { files: [], truncated: held.truncated };
+      const revisions = yield* fileRevisionsOf(
+        project,
+        ref,
+        marks.map((mark) => mark.path),
+        "filesViewed",
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("reporting viewed files without what the head has of them", {
+            operation: "filesViewed",
+            reason: error._tag,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      return {
+        files: marks.map((mark) => {
+          if (mark.revision === null) return { path: mark.path, state: "viewed" as const };
+          const revision = revisions?.get(mark.path);
+          return {
+            path: mark.path,
+            state:
+              revision === undefined || revision === mark.revision
+                ? ("viewed" as const)
+                : ("dismissed" as const),
+          };
+        }),
+        truncated: held.truncated,
+      };
+    },
+  );
+
+  // Serialize presses so slower tick lookups cannot overwrite later unticks.
+  const filesViewedGates = new Map<
+    string,
+    { readonly gate: Semaphore.Semaphore; pending: number }
+  >();
+
+  const inFilesViewedOrder = (
+    project: SupportedProject,
+    number: number,
+    write: Effect.Effect<void, PullRequestError>,
+  ) =>
+    // Atomically find, register and queue on gates; yielding during creation lets concurrent presses use separate gates.
+    Effect.suspend(() => {
+      const key = `${project.project.id} ${project.remote} ${number}`;
+      const held = filesViewedGates.get(key);
+      const entry = held ?? { gate: Semaphore.makeUnsafe(1), pending: 0 };
+      if (held === undefined) filesViewedGates.set(key, entry);
+      entry.pending += 1;
+      return entry.gate
+        .withPermits(1)(write)
+        .pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              entry.pending -= 1;
+              if (entry.pending === 0) filesViewedGates.delete(key);
+            }),
+          ),
+        );
+    });
+
+  const environmentSetFilesViewed = Effect.fn("pullRequestViewedFiles.environmentSetFilesViewed")(
+    function* (
+      project: SupportedProject,
+      input: PullRequestSetFilesViewedInput,
+    ): Effect.fn.Return<void, PullRequestError> {
+      const viewer = yield* requiredViewerOf(project, "setFilesViewed");
+      const cleared = input.files.filter((file) => file.viewed).map((file) => file.path);
+      const revisions =
+        cleared.length === 0
+          ? null
+          : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh").pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("recording viewed files without what the head has of them", {
+                  operation: "setFilesViewed",
+                  reason: error._tag,
+                }).pipe(Effect.as(null)),
+              ),
+            );
+      const viewedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* filesViewedStore
+        .set({
+          ...filesViewedScope(project, input.number, viewer),
+          // Missing paths have null baselines; empty revision means confirmed deletion.
+          files: input.files.map((file) => ({
+            path: file.path,
+            revision: revisions?.get(file.path) ?? null,
+            viewed: file.viewed,
+          })),
+          viewedAt,
+        })
+        .pipe(Effect.mapError(toFilesViewedStoreError("setFilesViewed")));
+    },
+  );
+
+  const filesViewed = (input: PullRequestRef) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> => {
+        const read = project.api.getFilesViewed;
+        if (project.api.capabilities.viewedFiles === "host" && read) {
+          return read({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+          }).pipe(Effect.mapError(toPullRequestError("filesViewed")));
+        }
+        if (project.api.capabilities.viewedFiles === "environment") {
+          return environmentFilesViewed(project, input);
+        }
+        return Effect.fail(
+          new PullRequestOperationError({
+            operation: "filesViewed",
+            detail: "This host does not track which files a reader has seen.",
+          }),
+        );
+      }),
+    );
+
+  const setFilesViewed = (
+    input: PullRequestSetFilesViewedInput,
+  ): Effect.Effect<void, PullRequestError> =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
+        const write = project.api.setFilesViewed;
+        if (project.api.capabilities.viewedFiles === "host" && write) {
+          return write({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+            files: input.files,
+          }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")));
+        }
+        if (project.api.capabilities.viewedFiles === "environment") {
+          return inFilesViewedOrder(
+            project,
+            input.number,
+            environmentSetFilesViewed(project, input),
+          );
+        }
+        return Effect.fail(
+          new PullRequestOperationError({
+            operation: "setFilesViewed",
+            detail: "This host does not track which files a reader has seen.",
+          }),
+        );
+      }),
+    );
+
+  return { filesViewed, setFilesViewed };
+};

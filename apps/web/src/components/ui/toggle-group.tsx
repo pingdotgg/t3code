@@ -1,12 +1,9 @@
-"use client";
-
 import type { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
 import { ToggleGroup as ToggleGroupPrimitive } from "@base-ui/react/toggle-group";
 import type { VariantProps } from "class-variance-authority";
 import * as React from "react";
 
 import { cn } from "~/lib/utils";
-import { Separator } from "~/components/ui/separator";
 import { Toggle as ToggleComponent, type toggleVariants } from "~/components/ui/toggle";
 
 const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariants>>({
@@ -16,13 +13,15 @@ const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariant
 
 function ToggleGroup({
   className,
-  variant = "default",
-  size = variant === "segmented" ? "segmented" : "default",
+  variant = "segmented",
+  size: sizeProp,
   orientation = "horizontal",
   children,
   ...props
 }: ToggleGroupPrimitive.Props & VariantProps<typeof toggleVariants>) {
-  const value = React.useMemo(() => ({ size, variant }), [size, variant]);
+  const size =
+    sizeProp === undefined ? (variant === "segmented" ? "segmented" : "default") : sizeProp;
+  const value = { size, variant };
   return (
     <ToggleGroupPrimitive
       className={cn(
@@ -76,23 +75,4 @@ function Toggle({
   );
 }
 
-function ToggleGroupSeparator({
-  className,
-  orientation = "vertical",
-  ...props
-}: {
-  className?: string;
-} & React.ComponentProps<typeof Separator>) {
-  return (
-    <Separator
-      className={cn(
-        "pointer-events-none relative bg-input before:absolute before:inset-0 dark:before:bg-input/32",
-        className,
-      )}
-      orientation={orientation}
-      {...props}
-    />
-  );
-}
-
-export { ToggleGroup, Toggle, Toggle as ToggleGroupItem, ToggleGroupSeparator };
+export { ToggleGroup, Toggle, Toggle as ToggleGroupItem };

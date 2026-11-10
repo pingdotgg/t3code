@@ -84,6 +84,38 @@ Output.asOutput(existingOutput);         // returns it unchanged
 
 Use this when writing helpers that should accept "anything output-y."
 
+## `fromEffect`
+
+Lifts a plan-time Effect into an `Output`. The effect runs when the
+stack resolves the Output during plan/deploy — with the stack's
+services (cloud credentials, region, ...) provided — and never inside
+a deployed runtime:
+
+```typescript
+Output.fromEffect(lookupLatestAmi());   // Output<string>
+```
+
+This is the low-level seam for lookup helpers that read cloud state to
+produce a prop value. Because constructing the Output is inert, such
+helpers are safe to call from composition code that is re-executed
+inside a deployed Function, Worker, or Instance bundle — no
+`__ALCHEMY_RUNTIME__` guard needed. The higher-level form is
+[`Capability.execute`](/infrastructure-as-effects/binding#plan-time-invokes)
+— invoking a binding as a plan-time data source — which the AMI
+finders (`AWS.EC2.getAmi`, `AWS.EC2.amazonLinux2023()`,
+`AWS.EC2.ubuntu2404()`, ...) are built on:
+
+```typescript
+const instance = yield* AWS.EC2.Instance("web", {
+  imageId: AWS.EC2.amazonLinux2023(),
+  instanceType: "t3.micro",
+  subnetId: subnet.subnetId,
+});
+```
+
+The effect must not fail (`E = never`) — die with a descriptive error
+for unresolvable lookups.
+
 ## `map`
 
 `Output.map` transforms an `Output<A>` into an `Output<B>` without
@@ -206,18 +238,8 @@ to read a resource's attributes from another stack — see below.
 resource's attributes in another stack or stage:
 
 ```typescript
-const sharedBucket = Output.ref<typeof Bucket>("Bucket", {
-  stack: "shared-infra",
-  stage: "prod",
-});
-
-sharedBucket.bucketName; // Output<string>
+Output.ref<typeof Bucket>("Bucket", { stack: "shared-infra", stage: "prod" });
 ```
-
-Resolved at plan time against the persisted state store, fails
-with `InvalidReferenceError` when the target is missing. In
-day-to-day code prefer `Resource.ref` — same primitive, more
-ergonomic surface.
 
 See [References](/infrastructure-as-code/references) for the full reference
 surface (`Output.ref`, `Resource.ref`, `Output.stackRef`,
@@ -314,14 +336,13 @@ declared.
 | Read a resource from another stack          | `Output.ref<typeof X>("id", { stack, stage })` |
 | Inspect dependencies                        | `Output.upstream(output)`                    |
 
-For the surrounding model — what an `Output` actually flows into,
-and how the graph deploys — see [Resources](/infrastructure-as-code/resource) and
-[Resource lifecycle](/infrastructure-as-code/resource-lifecycle). To hide
-resources and their Outputs behind a service interface, continue to
-[Layers](/infrastructure-as-effects/layers).
-
 ## Where next
 
-- [References](/infrastructure-as-code/references) — read Outputs across stacks and stages.
-- [Resource lifecycle](/infrastructure-as-code/resource-lifecycle) — how the graph deploys.
-- [Layers](/infrastructure-as-effects/layers) — hide resources and their Outputs behind a service interface.
+- [References](/infrastructure-as-code/references) — read Outputs across
+  stacks and stages. Next page.
+- [Resource lifecycle](/infrastructure-as-code/resource-lifecycle) — how
+  the graph deploys.
+- [Resources](/infrastructure-as-code/resource) — what an Output actually
+  flows into.
+- [Layers](/infrastructure-as-effects/layers) — hide resources and their
+  Outputs behind a service interface.

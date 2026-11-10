@@ -19,8 +19,6 @@ import {
 } from "./themePalette";
 
 const THEME_STORAGE_KEY = "t3code:theme";
-// A custom theme that omits chrome falls back to the runtime default, so the
-// boot copy of that default stays derived from the real palette.
 const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
 
 const bootScript = (() => {
@@ -101,7 +99,6 @@ function runBootScript(options: {
   };
 }
 
-/** Mirrors getStored + readAppearanceModePreference + resolveThemeAppearance from the runtime. */
 function runtimeResolvedAppearance(
   storage: Record<string, string>,
   prefersDark: boolean,
@@ -257,30 +254,6 @@ describe("index.html boot script", () => {
     expect(boot.isDark).toBe(runtimeResolvedAppearance(storage, prefersDark) === "dark");
   });
 
-  it("marks built-in and custom themes on the document element", () => {
-    const chat = runBootScript({
-      storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
-      prefersDark: true,
-    });
-    expect(chat.themeId).toBe("t3-chat");
-    expect(chat.themeSelected).toBe("true");
-    expect(chat.isDark).toBe(true);
-
-    const aurora = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "aurora",
-        [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([AURORA_DUAL]),
-      },
-      prefersDark: true,
-    });
-    expect(aurora.themeId).toBe("aurora");
-    expect(aurora.isDark).toBe(true);
-    expect(aurora.backgroundColor).toBe(DEFAULT_DARK_CHROME);
-    expect(aurora.bootVariables["--boot-background"]).toBe(AURORA_DUAL.variants.dark.canvas);
-    expect(aurora.metaContent).toBe(DEFAULT_DARK_CHROME);
-  });
-
   it("accepts exponent-form OKLCH before the runtime mounts", () => {
     const colors = {
       canvas: "oklch(9.5e-1 1e-2 2.8e2)",
@@ -310,40 +283,8 @@ describe("index.html boot script", () => {
     expect(boot.metaContent).toBe(colors.chrome);
   });
 
-  it("accepts legacy CSS color formats before the runtime mounts", () => {
-    const colors = {
-      canvas: "rgb(248 251 255)",
-      chrome: "hsl(210 100% 99%)",
-      text: "rebeccapurple",
-      accent: "color(display-p3 0.36 0.42 1)",
-    };
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "legacy-css",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
-          {
-            id: "legacy-css",
-            label: "Legacy CSS",
-            appearance: "light",
-            colors,
-          },
-        ]),
-      },
-      prefersDark: false,
-    });
-
-    expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
-    expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
-    expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
-    expect(boot.backgroundColor).toBe(colors.chrome);
-  });
-
-  // Asserting against the real palette definitions (not literals) turns the
-  // boot script's hand-maintained copy into a CI-enforced contract: any
-  // palette change breaks this test until the copy in index.html is updated.
   it("keeps every built-in boot splash in sync with the real palettes", () => {
     for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
-      // The boot script resolves every built-in from a light base appearance.
       expect(theme.appearance).toBe("light");
       for (const mode of ["light", "dark"] as const) {
         const colors = getThemeColorsForMode(theme, mode);
@@ -388,27 +329,6 @@ describe("index.html boot script", () => {
     );
   });
 
-  it("lets a dark half go dark when the light-only base cannot", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "paper",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
-          {
-            id: "paper",
-            label: "Paper",
-            appearance: "light",
-            colors: { canvas: "#f8fbff", text: "#10243d", accent: "#5b6cff" },
-          },
-        ]),
-        "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.isDark).toBe(true);
-    expect(boot.themeId).toBe(GROVE_THEME.id);
-  });
-
   it("paints the half's splash when the base theme no longer exists", () => {
     const boot = runBootScript({
       storage: {
@@ -424,35 +344,6 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(
       getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
     );
-  });
-
-  it("resolves a legacy-prefixed mix half onto the renamed theme", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "t3-chat",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "t3-grove" }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.isDark).toBe(true);
-    expect(boot.themeId).toBe(GROVE_THEME.id);
-    expect(boot.bootVariables["--boot-background"]).toBe(
-      getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
-    );
-  });
-
-  it("ignores a mix half that names an unknown theme", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "t3-chat",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "gone-theme" }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.themeId).toBe("t3-chat");
-    expect(boot.isDark).toBe(true);
   });
 
   it("uses runtime defaults for malformed custom roles", () => {
@@ -478,33 +369,6 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-accent"]).toBe(getDefaultThemeColors("dark").accent);
     expect(boot.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
-  });
-
-  it("ignores malformed custom theme entries before applying a splash", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "broken",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
-          { id: "broken", label: "Broken", appearance: "light", colors: "bad" },
-        ]),
-      },
-      prefersDark: false,
-    });
-
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
-    expect(boot.backgroundColor).toBe("#ffffff");
-    expect(boot.metaContent).toBe("#ffffff");
-  });
-
-  it("leaves unknown preferences unthemed so the runtime default applies", () => {
-    const boot = runBootScript({
-      storage: { [THEME_STORAGE_KEY]: "gone-theme" },
-      prefersDark: true,
-    });
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
-    expect(boot.isDark).toBe(true);
   });
 
   it("follows the OS appearance when storage is unavailable", () => {

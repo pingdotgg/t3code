@@ -42,11 +42,17 @@ New here? [Set up your account](/cloudflare/setup), then start the
   bindings.
 - [Hyperdrive](/cloudflare/data/hyperdrive) — edge connection pooling for
   external Postgres and MySQL.
+- [Pipelines](/cloudflare/data/pipelines) — ingest events into R2 as files or
+  Iceberg tables.
+- [Iceberg tables](/cloudflare/data/iceberg-tables) — an Apache Iceberg
+  warehouse on R2 that Spark, DuckDB, and PyIceberg can query.
 
 ## Messaging
 
 - [Queues](/cloudflare/messaging/queues) — at-least-once message delivery
   between Workers.
+- [K2 streams](/cloudflare/messaging/k2) — a durable, replayable log with
+  independent subscriptions.
 
 ## Networking
 
@@ -62,17 +68,22 @@ New here? [Set up your account](/cloudflare/setup), then start the
 
 - [Secrets & env](/cloudflare/security/secrets-env) — bind `.env` values and
   secrets into your Workers.
+- [Protect a Worker with Access](/cloudflare/security/access) — put a login
+  wall in front of a Worker and read the authenticated identity from
+  `ctx.access`.
 
 ## What are you building?
 
 | App shape | Stack |
 | --- | --- |
 | HTTP API | [Worker](/cloudflare/compute/workers) + [D1](/cloudflare/data/d1) — see [Effect HTTP API](/cloudflare/apis/effect-http-api) |
-| Call one Worker from another (internal RPC) | [Worker](/cloudflare/compute/workers) — see [Schemaless RPC](/cloudflare/compute/workers#schemaless-rpc) and the [concept](/apis/schemaless) |
+| Call one Worker from another (internal RPC) | [Worker](/cloudflare/compute/workers) — see [Schemaless RPC](/cloudflare/compute/workers#call-another-worker) and the [concept](/apis/schemaless) |
 | Typed API for external clients | [Effect RPC](/cloudflare/apis/effect-rpc) for Effect clients, [Effect HTTP API](/cloudflare/apis/effect-http-api) for plain HTTP |
 | Real-time / WebSockets | [Durable Objects](/cloudflare/compute/durable-objects) — see [Accept WebSockets](/cloudflare/compute/hibernatable-websockets) |
 | Full-stack app | [Worker](/cloudflare/compute/workers) + a React SPA — see [Add a React SPA](/cloudflare/frontend/vite-spa) or [Frontend frameworks](/cloudflare/frontend/frontends) |
 | Background jobs | [Queues](/cloudflare/messaging/queues) |
+| Event log with replay | [K2 streams](/cloudflare/messaging/k2) |
+| Analytics events as tables | [Pipelines](/cloudflare/data/pipelines) → [Iceberg tables](/cloudflare/data/iceberg-tables) |
 | Postgres-backed API | [Hyperdrive](/cloudflare/data/hyperdrive) + [Drizzle](/cloudflare/data/drizzle) |
 | Durable multi-step jobs | [Workflows](/cloudflare/compute/workflows) |
 | AI apps | [AI Gateway](/cloudflare/ai/ai-gateway), [Effect AI](/cloudflare/ai/effect-ai), [AI Search](/cloudflare/ai/ai-search) |

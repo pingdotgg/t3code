@@ -1,0 +1,91 @@
+diff --git a/libs/authors.ts b/libs/authors.ts
+--- a/libs/authors.ts
++++ b/libs/authors.ts
+@@ -35,9 +35,10 @@ export async function getAuthorsStaticPaths() {
+   for (const config of configs.values()) {
+     for (const locale of getLocales()) {
+       const entryAuthors = await getAllAuthors(config, locale)
++      const cacheKey = (await getBlogEntries(config, locale)).map((entry) => entry.digest).join(':')
+ 
+       for (const [, { author, entries }] of entryAuthors.entries()) {
+-        paths.push(getAuthorsStaticPath(config, entries, author, locale))
++        paths.push(getAuthorsStaticPath(config, entries, author, locale, cacheKey))
+       }
+     }
+   }
+@@ -86,12 +87,14 @@ function getAuthorsStaticPath(
+   entries: StarlightBlogEntry[],
+   author: StarlightBlogEntryAuthor,
+   locale: Locale,
++  cacheKey: string,
+ ) {
+   return {
+     params: {
+       prefix: getPathWithLocale(config.prefix, locale),
+       author: author.slug,
+     },
++    cacheKey,
+     props: {
+       prefix: config.prefix,
+       author,
+diff --git a/libs/content.ts b/libs/content.ts
+--- a/libs/content.ts
++++ b/libs/content.ts
+@@ -18,9 +18,10 @@ export async function getBlogStaticPaths() {
+     for (const locale of getLocales()) {
+       const entries = await getBlogEntries(config, locale)
+       const pages = getPaginatedBlogEntries(config, entries)
++      const cacheKey = entries.map((entry) => entry.digest).join(':')
+ 
+       for (const [index, entries] of pages.entries()) {
+-        paths.push(getBlogStaticPath(config, pages, entries, index, locale))
++        paths.push(getBlogStaticPath(config, pages, entries, index, locale, cacheKey))
+       }
+     }
+   }
+@@ -152,6 +153,7 @@ function getBlogStaticPath(
+   entries: StarlightBlogEntry[],
+   index: number,
+   locale: Locale,
++  cacheKey: string,
+ ) {
+   const prevPage = index === 0 ? undefined : pages.at(index - 1)
+   const prevLink = prevPage ? { href: getRelativeBlogUrl(config, index === 1 ? '/' : `/${index}`, locale) } : undefined
+@@ -164,6 +166,7 @@ function getBlogStaticPath(
+       page: index === 0 ? undefined : `${index + 1}`,
+       prefix: getPathWithLocale(config.prefix, locale),
+     },
++    cacheKey,
+     props: {
+       prefix: config.prefix,
+       entries,
+diff --git a/libs/tags.ts b/libs/tags.ts
+--- a/libs/tags.ts
++++ b/libs/tags.ts
+@@ -30,9 +30,10 @@ export async function getTagsStaticPaths() {
+   for (const config of configs.values()) {
+     for (const locale of getLocales()) {
+       const entryTags = await getAllTags(config, locale)
++      const cacheKey = (await getBlogEntries(config, locale)).map((entry) => entry.digest).join(':')
+ 
+       for (const [slug, { entries, label }] of entryTags.entries()) {
+-        paths.push(getTagsStaticPath(config, entries, slug, label, locale))
++        paths.push(getTagsStaticPath(config, entries, slug, label, locale, cacheKey))
+       }
+     }
+   }
+@@ -55,12 +56,14 @@ function getTagsStaticPath(
+   slug: string,
+   label: string,
+   locale: Locale,
++  cacheKey: string,
+ ) {
+   return {
+     params: {
+       prefix: getPathWithLocale(config.prefix, locale),
+       tag: slug,
+     },
++    cacheKey,
+     props: {
+       prefix: config.prefix,
+       entries,

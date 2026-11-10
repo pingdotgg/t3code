@@ -1,0 +1,152 @@
+---
+title: Connect the browser
+description: Use managed signup and sessions to upload and download private files from Vite.
+---
+
+`web/src/main.ts` uses the official Neon auth client and ordinary browser APIs. The UI includes signed-out, empty, uploading, event-pending, rejected, expired-session, and service-error states. It renders filenames as text, not HTML.
+
+## Deploy the Vite frontend
+
+```diff lang="typescript"
++const web = yield* Neon.Website.Vite("Web", {
++  branch,
++  rootDir: "./web",
++  env: { VITE_API_URL: api.url, VITE_NEON_AUTH_URL: auth.baseUrl },
++  assets: { notFoundHandling: "single-page-application" },
++});
+```
+
+The Website constructor packages Vite's assets into a Neon Function. This is Function hosting, not S3 website hosting; both `VITE_` values are intentionally public browser configuration.
+
+## Configure browser API access
+
+```diff lang="typescript"
++APP_ORIGIN: appOrigin,
+```
+
+This Function environment property uses `UPLOAD_APP_ORIGIN` from deployment configuration, defaulting to `*` for this bearer-token tutorial. API requests never use cookies and always require a verified JWT; CORS is not authorization. Set a known frontend origin before production. Do not bind the generated website URL back to the API: these Functions have no precreate handler, so that cycle fails with `UnsatisfiedResourceCycle`.
+
+## Normalize the website origin
+
+```diff lang="typescript"
++const siteUrl = typeof web.url === "string" ? Output.literal(web.url) : web.url;
++const origin = Output.map(siteUrl, (url: string | undefined) => new URL(url ?? "").origin);
+```
+
+After checking that `web.url` exists, extract its origin with `alchemy/Output`. A Function URL ends with a slash, but managed Auth compares exact origins without that slash; passing the raw URL causes signup to fail with `Invalid origin`.
+
+## Trust the frontend in managed Auth
+
+```diff lang="typescript"
++yield* Neon.AuthTrustedDomain("WebOrigin", { auth, domain: origin });
+```
+
+The child resource owns this one trusted origin without making Auth settings compete with a separate collection owner.
+
+## Initialize the browser auth client
+
+```diff lang="typescript"
++const auth = createAuthClient(import.meta.env.VITE_NEON_AUTH_URL);
+```
+
+Import `createAuthClient` from `@neondatabase/neon-js/auth`; the client manages the session cookies. The managed URL is public, not an admin secret. Browsers that block third-party cookies can still block this cross-domain setup; use a supported shared-domain or proxy design for those browsers rather than exposing secrets or weakening JWT verification.
+
+## Create an account
+
+```diff lang="typescript"
++const result = await auth.signUp.email({ name, email, password });
+```
+
+The Create account form submits to managed Better Auth and displays `result.error` when signup fails; the application never stores a password itself.
+
+## Sign in
+
+```diff lang="typescript"
++const result = await auth.signIn.email({ email, password });
+```
+
+The Sign in button uses the same managed service and leaves error responses visible instead of optimistically displaying a signed-in state.
+
+## Restore a session
+
+```diff lang="typescript"
++const result = await auth.getSession();
+```
+
+On page load and after authentication, the UI reads the actual session before showing the owner's files; a missing session clears stale rows.
+
+## Obtain a short-lived JWT
+
+```diff lang="typescript"
++const tokenResponse = await fetch(`${authUrl.replace(/\/$/, "")}/token`, {
++  credentials: "include",
++  signal: AbortSignal.timeout(15_000),
++});
+```
+
+Before each API call, retrieve a JWT from managed Auth using the authenticated session cookie. The pinned `@neondatabase/auth@0.5.0-beta` client incorrectly serves its cached session object for `auth.token()`, while this actual REST endpoint returns the token. Parse and validate the response, and treat a missing token as expired-session state. This does not replace JWT verification or persist tokens in localStorage.
+
+## Call the protected API
+
+```diff lang="typescript"
++const response = await fetch(`${apiUrl}/api/uploads`, {
++  headers: { authorization: `Bearer ${data.token}` },
++});
+```
+
+The server verifies the token independently; changing browser state cannot authorize an upload or reveal another user's journal.
+
+## Request an upload URL
+
+```diff lang="typescript"
++const signed = await api("/api/uploads", {
++  method: "POST",
++  body: JSON.stringify({ filename: file.name, contentType: file.type || "application/octet-stream", size: file.size }),
++});
+```
+
+The authenticated `api` helper adds the JWT, checks HTTP errors, and returns the newly allocated upload ID and signed URL.
+
+## Upload directly to the bucket
+
+```diff lang="typescript"
++const response = await fetch(signed.url, {
++  method: "PUT",
++  body: file,
++  headers: { "content-type": signed.contentType },
++});
+```
+
+File bytes go directly to private storage; this request carries the signed capability, not the session token, database URL, or deployment credentials.
+
+## Refresh the processing state
+
+```diff lang="typescript"
++const rows = await api("/api/uploads");
+```
+
+The UI refreshes at most nine times after upload, with eight three-second delays, and stops on `ready` or `rejected`. If delivery is still pending, it says so and offers manual refresh rather than inventing a successful event.
+
+## Request a download
+
+```diff lang="typescript"
++const { url } = await api(`/api/uploads/${id}/download`);
+```
+
+The Download button navigates directly to the signed GET URL in a new tab after authorization. It does not need cookie-bearing cross-origin storage access.
+
+## Sign out
+
+```diff lang="typescript"
++const result = await auth.signOut();
+```
+
+After successful signout, clear the visible journal and invalidate in-flight UI refreshes. A failed signout stays an error; previously issued JWTs may remain valid until expiry even when the session is gone.
+
+## Exercise the complete flow
+
+Create an account, confirm the empty journal, upload a small file, wait for the event-backed ready state, open its download, refresh the page, and sign out. Try a wrong password, a missing or invalid bearer token, an empty file, and an oversized file. Repeat at mobile width. A successful HTTP health check alone does not validate this browser flow.
+
+No AI is enabled by this example. If you later add model processing, make it an explicit opt-in using Neon's gateway and a configured model; never silently buy credits, switch to another provider, or make basic uploads depend on an AI entitlement.
+
+Continue with [previews and cleanup](/neon/tutorial/previews/).

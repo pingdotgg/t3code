@@ -18,7 +18,7 @@ A database is one resource declaration:
 
 ```typescript
 // src/database.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Database = Cloudflare.D1.Database("Database");
 ```
@@ -28,7 +28,7 @@ Yield it inside your Stack like any other resource:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Database } from "./src/database.ts";
 
@@ -48,25 +48,24 @@ export default Alchemy.Stack(
 
 ## Migrations
 
-Point `migrationsDir` at a folder of `.sql` files. Files are sorted
+Point `migrations` at a folder of `.sql` files. Files are sorted
 by numeric prefix (`0001_`, `0002_`, …) and applied in order as part
 of every deploy; already-applied migrations are skipped:
 
 ```typescript
 const db = yield* Cloudflare.D1.Database("my-db", {
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
-The tracking table is wrangler-compatible, and you can point at a
-custom one (e.g. for Drizzle-generated migrations):
-
-```typescript
-const db = yield* Cloudflare.D1.Database("my-db", {
-  migrationsDir: "./migrations",
-  migrationsTable: "drizzle_migrations",
-});
-```
+Bookkeeping lives in Alchemy's `__alchemy_migrations` table. A
+database previously migrated with `wrangler d1 migrations apply` or
+`drizzle-kit migrate` is
+[adopted automatically](/sql/effect-sql/migrations#adopting-an-existing-database):
+the old tool's applied history is copied in once and its table is
+frozen — never written, never dropped. D1 has no transactions over
+HTTP, so each migration and its bookkeeping row are sent as one
+batched query, matching wrangler's own behavior.
 
 The migration files themselves don't have to be hand-written —
 [Drizzle.Schema](/sql/drizzle/migrations) can generate them from a
@@ -83,16 +82,16 @@ with `all`, `first`, or `run`:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./database.ts";
 
 export default Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    // init: register the binding, get a typed client
+    // Construction: register the binding, get a typed client
     const db = yield* Cloudflare.D1.QueryDatabase(Database);
 
     return {
@@ -118,14 +117,14 @@ escape hatch.
 ## SQL with `@effect/sql-d1`
 
 Prefer tagged-template SQL over hand-written prepared statements?
-`SQL.D1` (from `alchemy/SQL/D1` — each low-level effect-sql client
+`SQL.D1` (from `@alchemy.run/cloudflare/D1/SQL` — each low-level effect-sql client
 lives on its own subpath) wraps the same binding in an
 `@effect/sql-d1` `D1Client` —
 interpolated values are parameterized, every query is an Effect, and
 failures surface as typed `SqlError`s:
 
 ```typescript
-import * as SQL from "alchemy/SQL/D1";
+import * as SQL from "@alchemy.run/cloudflare/D1/SQL";
 
 Effect.gen(function* () {
   const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
@@ -133,6 +132,7 @@ Effect.gen(function* () {
 
   return {
     fetch: Effect.gen(function* () {
+      const id = 1;
       const users = yield* sql`SELECT * FROM users WHERE id = ${id}`;
       return yield* HttpServerResponse.json({ users });
     }),
@@ -149,7 +149,7 @@ services written against `SqlClient.SqlClient` run on D1 unchanged.
 Provide both tags with the layer form:
 
 ```typescript
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const makeApp = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -23,13 +23,13 @@ storage.
 
 DynamoDB tables need a partition key (and optionally a sort key)
 declared up-front. Yield the `Table` resource in the function's
-outer init, mirroring how you added the bucket:
+constructor, mirroring how you added the bucket:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
-+import * as DynamoDB from "alchemy/AWS/DynamoDB";
-import * as S3 from "alchemy/AWS/S3";
+import * as AWS from "@alchemy.run/aws";
++import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
+import * as S3 from "@alchemy.run/aws/S3";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 // ...

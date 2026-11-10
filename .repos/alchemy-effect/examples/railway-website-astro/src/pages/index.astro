@@ -1,0 +1,33 @@
+---
+// Tailwind is wired through astro.config.ts (@tailwindcss/vite) — Alchemy
+// loads the project's own config natively, so the utilities below compile.
+import "../styles/global.css";
+import Card from "../components/Card.astro";
+
+// Server-rendered on every request inside the Railway Service.
+// Environment values declared in alchemy.run.ts are available on
+// `process.env`.
+const greeting = process.env.GREETING ?? "Hello!";
+const now = new Date().toISOString();
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astro on Railway</title>
+  </head>
+  <body class="bg-slate-50 p-8 text-slate-900">
+    <h1 class="text-3xl font-bold">{greeting}</h1>
+    <Card
+      title="Styled with Tailwind CSS"
+      body="This card is an Astro component styled with Tailwind utilities."
+    />
+    <p class="mt-4 text-slate-600">
+      This page is server-rendered in a Railway Service at {now}.
+    </p>
+    <p class="mt-2">
+      <a href="/about/" class="text-blue-600 underline">A prerendered page</a>
+    </p>
+  </body>
+</html>

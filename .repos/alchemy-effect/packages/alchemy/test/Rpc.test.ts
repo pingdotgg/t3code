@@ -1,13 +1,13 @@
-import { safeHttpEffect } from "@/Http";
-import * as Rpc from "@/Rpc";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpEffect from "effect/http/HttpEffect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { safeHttpEffect } from "@/Http";
+import * as Rpc from "@/Rpc";
 
 // ---------------------------------------------------------------------------
 // In-memory loopback: the server `serveRpc` handler is turned into a Web
@@ -22,17 +22,13 @@ class BoomError extends Data.TaggedError("BoomError")<{
 }> {}
 
 // The fallback handler stands in for the user's non-RPC routes.
-const fallback = Effect.succeed(
-  HttpServerResponse.text("fallback", { status: 200 }),
-);
+const fallback = Effect.succeed(HttpServerResponse.text("fallback", { status: 200 }));
 
 const withRpc = <A, E>(
   shape: Record<string, unknown>,
   use: (stub: any) => Effect.Effect<A, E, any>,
 ): Effect.Effect<A, E> => {
-  const webHandler = HttpEffect.toWebHandler(
-    safeHttpEffect(Rpc.serveRpc(shape, fallback)),
-  );
+  const webHandler = HttpEffect.toWebHandler(safeHttpEffect(Rpc.serveRpc(shape, fallback)));
   const fetchImpl = ((url: any, init?: any) =>
     webHandler(new Request(url, init))) as typeof globalThis.fetch;
 
@@ -56,15 +52,13 @@ const shape = {
   identity: (value: unknown) => Effect.succeed(value),
   boomTagged: () => Effect.fail(new BoomError({ code: 42 })),
   boomPlain: () => Effect.fail(new Error("plain boom")),
-  countJsonl: (n: number) =>
-    Stream.range(1, n).pipe(Stream.map((i) => ({ i }))),
+  countJsonl: (n: number) => Stream.range(1, n).pipe(Stream.map((i) => ({ i }))),
   emptyStream: () => Stream.empty,
   // An INFINITE source: only a truly streaming (lazily-pulled) transport can
   // return a finite prefix of this. A buffer-then-stringify implementation
   // would try to realize the whole stream and never produce a result.
   infinite: () => Stream.iterate(0, (n) => n + 1),
-  bytes: () =>
-    Stream.fromIterable([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])]),
+  bytes: () => Stream.fromIterable([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])]),
   failingStream: () =>
     Stream.range(1, 2).pipe(
       Stream.map((i) => ({ i })),
@@ -72,7 +66,7 @@ const shape = {
     ),
 };
 
-describe("Rpc fetch protocol", () => {
+describe("Rpc fetch protocol", { tags: ["unit", "local"] }, () => {
   describe("value methods (Effect)", () => {
     it.effect("returns a primitive value", () =>
       withRpc(shape, (stub) =>
@@ -201,53 +195,44 @@ describe("Rpc fetch protocol", () => {
           // responding, an infinite source would never produce a result and
           // this would hit the timeout below. Taking a finite prefix only
           // succeeds because the body is pulled lazily, element by element.
-          const out = yield* collect<number>(
-            stub.infinite().pipe(Stream.take(5)),
-          );
+          const out = yield* collect<number>(stub.infinite().pipe(Stream.take(5)));
           expect(out).toEqual([0, 1, 2, 3, 4]);
         }),
       ).pipe(Effect.timeout("15 seconds")),
     );
 
-    it.effect(
-      "server stops producing once the client stops consuming (backpressure)",
-      () =>
-        Effect.gen(function* () {
-          // The shape runs in-process, so this closure-captured array sees
-          // exactly how far the server stream was pulled.
-          const produced: number[] = [];
-          const localShape = {
-            counter: () =>
-              Stream.iterate(0, (n) => n + 1).pipe(
-                Stream.tap((n) => Effect.sync(() => produced.push(n))),
-              ),
-          };
+    it.effect("server stops producing once the client stops consuming (backpressure)", () =>
+      Effect.gen(function* () {
+        // The shape runs in-process, so this closure-captured array sees
+        // exactly how far the server stream was pulled.
+        const produced: number[] = [];
+        const localShape = {
+          counter: () =>
+            Stream.iterate(0, (n) => n + 1).pipe(
+              Stream.tap((n) => Effect.sync(() => produced.push(n))),
+            ),
+        };
 
-          const out = yield* withRpc(localShape, (stub) =>
-            collect<number>(stub.counter().pipe(Stream.take(3))),
-          ).pipe(Effect.timeout("15 seconds"));
+        const out = yield* withRpc(localShape, (stub) =>
+          collect<number>(stub.counter().pipe(Stream.take(3))),
+        ).pipe(Effect.timeout("15 seconds"));
 
-          expect(out).toEqual([0, 1, 2]);
-          // The client only consumed 3 elements. A streaming transport pulls
-          // lazily under backpressure, so the server produces the consumed
-          // prefix plus at most a bounded buffer — never the infinite tail a
-          // buffer-then-stringify implementation would.
-          expect(produced.length).toBeGreaterThanOrEqual(3);
-          expect(produced.length).toBeLessThan(10_000);
-        }),
+        expect(out).toEqual([0, 1, 2]);
+        // The client only consumed 3 elements. A streaming transport pulls
+        // lazily under backpressure, so the server produces the consumed
+        // prefix plus at most a bounded buffer — never the infinite tail a
+        // buffer-then-stringify implementation would.
+        expect(produced.length).toBeGreaterThanOrEqual(3);
+        expect(produced.length).toBeLessThan(10_000);
+      }),
     );
 
     it.effect("lifts a mid-stream failure into RpcRemoteStreamError", () =>
       withRpc(shape, (stub) =>
         Effect.gen(function* () {
-          const result = yield* stub
-            .failingStream()
-            .pipe(Stream.runCollect, Effect.flip);
-          expect((result as { _tag: string })._tag).toBe(
-            "RpcRemoteStreamError",
-          );
-          const error = (result as { error: { _tag: string; code: number } })
-            .error;
+          const result = yield* stub.failingStream().pipe(Stream.runCollect, Effect.flip);
+          expect((result as { _tag: string })._tag).toBe("RpcRemoteStreamError");
+          const error = (result as { error: { _tag: string; code: number } }).error;
           expect(error._tag).toBe("BoomError");
           expect(error.code).toBe(7);
         }),
@@ -275,12 +260,8 @@ describe("Rpc fetch protocol", () => {
   describe("fallback routing", () => {
     it.effect("non-RPC requests fall through to the fallback handler", () =>
       Effect.gen(function* () {
-        const webHandler = HttpEffect.toWebHandler(
-          safeHttpEffect(Rpc.serveRpc(shape, fallback)),
-        );
-        const res = yield* Effect.promise(() =>
-          webHandler(new Request("http://rpc/not-rpc")),
-        );
+        const webHandler = HttpEffect.toWebHandler(safeHttpEffect(Rpc.serveRpc(shape, fallback)));
+        const res = yield* Effect.promise(() => webHandler(new Request("http://rpc/not-rpc")));
         expect(res.status).toBe(200);
         expect(yield* Effect.promise(() => res.text())).toBe("fallback");
       }),
@@ -299,13 +280,10 @@ describe("Rpc fetch protocol", () => {
   describe("nested RPC (asEffectOrStream forwarding)", () => {
     const nested = {
       // value method forwarding a nested call that resolves to a value
-      forwardValue: (k: string) =>
-        Rpc.asEffectOrStream(Effect.succeed(`deep:${k}`)),
+      forwardValue: (k: string) => Rpc.asEffectOrStream(Effect.succeed(`deep:${k}`)),
       // value method forwarding a nested call that resolves to a Stream
       forwardStream: (n: number) =>
-        Rpc.asEffectOrStream(
-          Effect.succeed(Stream.range(1, n).pipe(Stream.map((i) => ({ i })))),
-        ),
+        Rpc.asEffectOrStream(Effect.succeed(Stream.range(1, n).pipe(Stream.map((i) => ({ i }))))),
     };
 
     it.effect("a forwarded value round-trips as a value (not a Stream)", () =>
@@ -373,10 +351,7 @@ describe("Rpc fetch protocol", () => {
 
     it.effect(
       "no-arg value-method RPC overhead stays sub-millisecond",
-      () =>
-        withRpc(shape, (stub) =>
-          benchmark("ping", stub, (s) => s.ping(), "pong"),
-        ),
+      () => withRpc(shape, (stub) => benchmark("ping", stub, (s) => s.ping(), "pong")),
       { timeout: 60_000 },
     );
 

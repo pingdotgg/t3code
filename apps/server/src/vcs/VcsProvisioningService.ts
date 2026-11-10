@@ -35,6 +35,7 @@ function resolveRequestedKind(
   return Effect.succeed(kind);
 }
 
+/** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 

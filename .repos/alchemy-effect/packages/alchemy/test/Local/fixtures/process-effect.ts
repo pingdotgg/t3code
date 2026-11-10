@@ -1,10 +1,10 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
 
 /**
  * Wait for the child to exit (with timeout). Uses `handle.isRunning`
@@ -23,9 +23,7 @@ export const waitForExit = (
       until: (running) => !running,
     }),
     Effect.timeout(timeout),
-    Effect.catchTag("TimeoutError", () =>
-      Effect.fail(new Error("child did not exit in time")),
-    ),
+    Effect.catchTag("TimeoutError", () => Effect.fail(new Error("child did not exit in time"))),
   );
 
 export const assertPidExited = (pid: number): Effect.Effect<void, Error> =>
@@ -36,9 +34,7 @@ export const assertPidExited = (pid: number): Effect.Effect<void, Error> =>
       until: (alive) => !alive,
     }),
     Effect.timeout("5 seconds"),
-    Effect.catchTag("TimeoutError", () =>
-      Effect.fail(new Error("child did not exit in time")),
-    ),
+    Effect.catchTag("TimeoutError", () => Effect.fail(new Error("child did not exit in time"))),
   );
 
 /**
@@ -68,9 +64,7 @@ export const pidListeningOn = (wsUrl: string) => {
     return ChildProcess.make("netstat", ["-ano", "-p", "TCP"], {
       stdout: "pipe",
     }).pipe(
-      Effect.flatMap((handle) =>
-        handle.stdout.pipe(Stream.decodeText, Stream.mkString),
-      ),
+      Effect.flatMap((handle) => handle.stdout.pipe(Stream.decodeText, Stream.mkString)),
       Effect.map((stdout) => {
         // Columns: Proto | Local Address | Foreign Address | State | PID
         const line = stdout
@@ -83,18 +77,25 @@ export const pidListeningOn = (wsUrl: string) => {
   return ChildProcess.make("lsof", [`-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
     stdout: "pipe",
   }).pipe(
-    Effect.flatMap((handle) =>
-      handle.stdout.pipe(Stream.decodeText, Stream.mkString),
-    ),
+    Effect.flatMap((handle) => handle.stdout.pipe(Stream.decodeText, Stream.mkString)),
     Effect.map((stdout) => Number.parseInt(stdout.trim().split("\n")[0]!, 10)),
   );
 };
 
+/**
+ * POSIX process-group id of a pid via `ps` (no Node API exposes another
+ * process's pgid). Returns NaN when the pid is gone.
+ */
+export const pgidOf = (pid: number) =>
+  ChildProcess.make("ps", ["-o", "pgid=", "-p", String(pid)], {
+    stdout: "pipe",
+  }).pipe(
+    Effect.flatMap((handle) => handle.stdout.pipe(Stream.decodeText, Stream.mkString)),
+    Effect.map((stdout) => Number.parseInt(stdout.trim(), 10)),
+  );
+
 /** Send a signal to a pid we don't own a handle to. */
-export const killPid = (
-  pid: number,
-  signal: NodeJS.Signals,
-): Effect.Effect<void> =>
+export const killPid = (pid: number, signal: NodeJS.Signals): Effect.Effect<void> =>
   Effect.sync(() => {
     try {
       process.kill(pid, signal);
@@ -105,9 +106,7 @@ export const killPid = (
  * Open a WebSocket inside a scope so it's reliably closed at scope
  * end. Resolves once `open` fires or fails on error / close.
  */
-export const openWebSocket = (
-  url: string | URL,
-): Effect.Effect<WebSocket, Error, Scope.Scope> =>
+export const openWebSocket = (url: string | URL): Effect.Effect<WebSocket, Error, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.callback<WebSocket, Error>((resume) => {
       const ws = new WebSocket(url);

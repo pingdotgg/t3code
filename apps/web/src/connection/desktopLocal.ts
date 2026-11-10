@@ -5,19 +5,7 @@ import {
   type DesktopEnvironmentBootstrap,
 } from "@t3tools/contracts";
 
-/**
- * Desktop-local secondary backends (e.g. a parallel WSL backend) are registered
- * by the connection platform source as bearer connections whose id carries this
- * prefix. It is the renderer's single signal that an environment is a
- * host-managed local backend rather than a user-saved remote, SSH, or relay
- * environment.
- *
- * Keep this the one source of truth: the producer (`connection/platform.ts`)
- * mints ids via {@link desktopLocalConnectionId} and every consumer classifies
- * via {@link isDesktopLocalConnectionTarget}, so the convention can never drift
- * between the two.
- */
-export const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
+const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
   return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${backendId}`;
@@ -53,12 +41,7 @@ export interface DesktopSecondaryBootstrapsReader {
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
 }
 
-/**
- * Build a topology reader whose snapshot advances only after successful bridge
- * reads. A successful empty read is authoritative; a thrown read preserves the
- * previous snapshot so UI consumers cannot temporarily disagree with the
- * platform's retained registrations.
- */
+/** Empty reads clear the snapshot; failed reads retain platform registrations. */
 export function createDesktopSecondaryBootstrapsReader(
   resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
 ): DesktopSecondaryBootstrapsReader {
@@ -67,13 +50,30 @@ export function createDesktopSecondaryBootstrapsReader(
   const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
     if (bridge === undefined) {
-      snapshot = [];
+      if (snapshot.length > 0) snapshot = [];
       return { _tag: "Success", bootstraps: snapshot };
     }
     try {
-      snapshot = bridge
+      const next = bridge
         .getLocalEnvironmentBootstraps()
         .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
+      if (
+        next.length !== snapshot.length ||
+        next.some((entry, index) => {
+          const previous = snapshot[index];
+          return (
+            previous === undefined ||
+            entry.id !== previous.id ||
+            entry.label !== previous.label ||
+            entry.runningDistro !== previous.runningDistro ||
+            entry.httpBaseUrl !== previous.httpBaseUrl ||
+            entry.wsBaseUrl !== previous.wsBaseUrl ||
+            entry.bootstrapToken !== previous.bootstrapToken
+          );
+        })
+      ) {
+        snapshot = next;
+      }
       return { _tag: "Success", bootstraps: snapshot };
     } catch (cause) {
       return { _tag: "Failure", cause };
@@ -93,12 +93,10 @@ const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(
   () => window.desktopBridge,
 );
 
-/** Read the topology while preserving failures for platform cache policy. */
 export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstrapsRead {
   return desktopSecondaryBootstrapsReader.readResult();
 }
 
-/** Read the latest successful topology snapshot for renderer consumers. */
 export function readDesktopSecondaryBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
   return desktopSecondaryBootstrapsReader.readSnapshot();
 }

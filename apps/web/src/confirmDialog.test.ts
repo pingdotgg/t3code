@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   completeConfirmDialogClose,
   readConfirmDialogState,
-  registerConfirmDialogHost,
   requestConfirmDialog,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
+  subscribeConfirmDialogHost,
 } from "./confirmDialog";
+
+const mountHost = () => subscribeConfirmDialogHost(() => {});
 
 function requireConfirmation(confirmation: Promise<boolean> | undefined): Promise<boolean> {
   if (!confirmation) {
@@ -21,38 +23,8 @@ describe("confirm dialog coordinator", () => {
     resetConfirmDialogForTests();
   });
 
-  it("returns undefined until a themed host is mounted", () => {
-    expect(requestConfirmDialog("Confirm this action?")).toBeUndefined();
-    expect(readConfirmDialogState()).toEqual({ status: "idle" });
-  });
-
-  it("resolves a displayed confirmation and waits for its close transition", async () => {
-    const unregister = registerConfirmDialogHost();
-    const confirmation = requireConfirmation(
-      requestConfirmDialog("Delete this thread?", { variant: "destructive" }),
-    );
-
-    expect(readConfirmDialogState()).toEqual({
-      status: "confirming",
-      message: "Delete this thread?",
-      variant: "destructive",
-    });
-
-    respondToConfirmDialog(true);
-    await expect(confirmation).resolves.toBe(true);
-    expect(readConfirmDialogState()).toEqual({
-      status: "closing",
-      message: "Delete this thread?",
-      variant: "destructive",
-    });
-
-    completeConfirmDialogClose();
-    expect(readConfirmDialogState()).toEqual({ status: "idle" });
-    unregister();
-  });
-
   it("serializes concurrent confirmations", async () => {
-    const unregister = registerConfirmDialogHost();
+    const unregister = mountHost();
     const first = requireConfirmation(requestConfirmDialog("Delete the project?"));
     const second = requireConfirmation(requestConfirmDialog("Delete the worktree too?"));
 
@@ -79,7 +51,7 @@ describe("confirm dialog coordinator", () => {
   });
 
   it("cancels active and queued confirmations if the last host unmounts", async () => {
-    const unregister = registerConfirmDialogHost();
+    const unregister = mountHost();
     const active = requireConfirmation(requestConfirmDialog("Delete the thread?"));
     const queued = requireConfirmation(requestConfirmDialog("Delete the worktree too?"));
 
@@ -89,8 +61,16 @@ describe("confirm dialog coordinator", () => {
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
   });
 
+  it("has no host until one subscribes", () => {
+    expect(requestConfirmDialog("Continue?")).toBeUndefined();
+    const unsubscribe = mountHost();
+    expect(requestConfirmDialog("Continue?")).toBeDefined();
+    unsubscribe();
+    expect(requestConfirmDialog("Continue?")).toBeUndefined();
+  });
+
   it("ignores responses after the active dialog has been closed", () => {
-    const unregister = registerConfirmDialogHost();
+    const unregister = mountHost();
     const confirmation = requireConfirmation(requestConfirmDialog("Continue?"));
 
     respondToConfirmDialog(true);

@@ -1,0 +1,1 @@
+CREATE TABLE greetings (id INTEGER PRIMARY KEY, text TEXT NOT NULL);

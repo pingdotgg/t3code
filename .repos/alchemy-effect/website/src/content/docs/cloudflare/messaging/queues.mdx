@@ -38,7 +38,7 @@ Both resources are plain `yield*` calls — no special config.
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export const Queue = Cloudflare.Queues.Queue("Queue");
@@ -51,13 +51,13 @@ test can read it back.
 
 ## Bind the Queue producer
 
-In the Worker init phase, yield the queue resource and ask
+In the Worker's Construction phase, yield the queue resource and ask
 `Cloudflare.Queues.WriteQueue` for a typed sender. The sender exposes `send` /
 `sendBatch` that round-trip through Cloudflare's runtime.
 
 ```typescript
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Bucket } from "./Bucket.ts";
 import { Queue } from "./Queue.ts";
@@ -151,6 +151,83 @@ retryDelay: "1 second"             // singular and plural units both work
 `maxWaitTime` is rounded up to whole milliseconds and `retryDelay`
 to whole seconds when forwarded to Cloudflare.
 
+## Consume the dead-letter queue
+
+A message that fails `maxRetries` times moves to the `deadLetterQueue`.
+Cloudflare does not drain or alert on that queue. Without a consumer, the
+message waits there until the queue's retention period expires, and
+nothing reports the failure.
+
+Create the dead-letter queue as its own resource and pass it to the
+source queue's consumer. Then consume it too:
+
+```typescript
+export const DeadLetters = Cloudflare.Queues.Queue("DeadLetters");
+
+Effect.gen(function* () {
+  const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+  const queueResource = yield* Queue;
+  const deadLetters = yield* DeadLetters;
+
+  yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
+    queueResource,
+    { maxRetries: 3, deadLetterQueue: deadLetters },
+    (stream) =>
+      Stream.runForEach(stream, (msg) =>
+        bucket.put(`/queue/${msg.body.id}`, JSON.stringify(msg.body)).pipe(Effect.asVoid),
+      ),
+  );
+
+  yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
+    deadLetters,
+    (stream) =>
+      Stream.runForEach(stream, (msg) =>
+        Effect.logError(`dead-lettered ${msg.body.id} after ${msg.attempts} attempts`),
+      ),
+  );
+});
+```
+
+One Worker can consume both queues. Replace the log with whatever should
+happen to a failed message: persist it for replay, page someone, or send
+it back to the source queue after a fix.
+
+### Dead-letter to a queue in another stack
+
+If another stack owns the dead-letter queue, pass a reference to it:
+
+```typescript
+yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
+  queueResource,
+  {
+    maxRetries: 3,
+    deadLetterQueue: yield* Cloudflare.Queues.Queue.ref("DeadLetters", {
+      stack: "shared",
+      stage: "production",
+    }),
+  },
+  (stream) => Stream.runForEach(stream, (msg) => Effect.log(msg.body.id)),
+);
+```
+
+Deploy the `shared` stack first, because a reference reads its persisted
+state. That stack's Worker should consume the dead-letter queue.
+
+### Dead-letter to a queue by name
+
+For a queue Alchemy doesn't manage, pass its name:
+
+```typescript
+yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
+  queueResource,
+  { maxRetries: 3, deadLetterQueue: "orders-dead-letters" },
+  (stream) => Stream.runForEach(stream, (msg) => Effect.log(msg.body.id)),
+);
+```
+
+A name adds no deploy dependency on that queue, and nothing in this stack
+consumes it. Make sure something else does.
+
 ## Provide the runtime layer
 
 `consumeQueueMessages(...)` is a `Context.Service` call —
@@ -221,6 +298,41 @@ if (request.url.startsWith("/queue/result/") && request.method === "GET") {
 }
 ```
 
+## Drain a Stream into the queue
+
+`Cloudflare.Queues.QueueSink(queue)` exposes the queue as an Effect
+[Sink](/infrastructure-as-effects/sinks). Run any `Stream` of message
+bodies into it; each stream chunk becomes one `sendBatch` call, split
+at Cloudflare's 100-message / 256 KB batch limits.
+
+```typescript
+const sink = yield* Cloudflare.Queues.QueueSink(Clicks);
+yield* Stream.fromIterable(events).pipe(Stream.run(sink));
+```
+
+Combined with `consumeQueueMessages`, a Worker can consume one queue,
+transform each batch, and drain it into another:
+
+```typescript
+Effect.gen(function* () {
+  const enriched = yield* Cloudflare.Queues.QueueSink(EnrichedClicks);
+
+  yield* Cloudflare.Queues.consumeQueueMessages<Click>(Clicks, (messages) =>
+    messages.pipe(
+      Stream.map((message) => message.body),
+      Stream.map((click) => ({ ...click, receivedAt: Date.now() })),
+      Stream.run(enriched),
+    ),
+  );
+}).pipe(
+  Effect.provide(Cloudflare.Queues.EventSourceLive),
+  Effect.provide(Cloudflare.Queues.QueueSinkBinding),
+);
+```
+
+`QueueSinkBinding` builds on the native `WriteQueueBinding`, so it is
+the only layer the sink needs. It also works under `alchemy dev`.
+
 ## What's the difference vs. a native `queue()` handler?
 
 Cloudflare's runtime delivers queue events to a `queue(batch, env)`
@@ -245,6 +357,169 @@ the dispatch to the registered listener — but you get
 `Effect.gen` composition, typed errors, automatic batch
 ack/retry, and the same surface as `AWS.SQS.consumeQueueMessages(queue, handler)`.
 
+## Receive Workflow lifecycle events
+
+A subscription delivers platform events into a Queue. For a Workflow
+bound to an async Worker, pass the binding directly as the source:
+
+```typescript
+const worker = yield* Cloudflare.Worker("IngestionWorker", {
+  main: "./src/worker.ts",
+  env: {
+    INGESTION: Cloudflare.Workflow("Ingestion", {
+      className: "IngestionWorkflow",
+    }),
+  },
+});
+const queue = yield* Cloudflare.Queues.Queue("WorkflowEventsQueue");
+
+yield* Cloudflare.Queues.Subscription("WorkflowEvents", {
+  source: worker.env.INGESTION,
+  events: ["instance.completed", "instance.errored"],
+  queueId: queue.queueId,
+});
+```
+
+The subscription uses the binding's deferred physical name, including on
+the first deployment. Renaming the Workflow replaces the subscription.
+The Queue still needs a consumer to handle these messages, as above.
+
+A `WorkflowResource` or a reference to a deployed Workflow is also a source:
+
+```typescript
+yield* Cloudflare.Queues.Subscription("WorkflowEvents", {
+  source: yield* Cloudflare.Workflow.ref("Ingestion", {
+    stack: "workflow-host",
+    stage: "production",
+  }),
+  events: ["instance.completed", "instance.errored"],
+  queueId: queue.queueId,
+});
+```
+
+Use the Workflow's logical ID, including any namespace. Omit the options for
+the current stack and stage. References read persisted state, so deploy the
+host first; deleting the consumer stack does not delete the referenced Workflow.
+
+Explicit sources remain supported, including
+`{ type: "workflows.workflow", workflowName: "existing-ingestion" }` for a
+Workflow referenced by name and `{ type: "r2" }` for R2 events. Cloudflare
+allows at most one subscription per source per account.
+
+## Use resources as event sources
+
+A subscription also accepts these resource values, or their yielded `.ref(...)` references:
+
+| Resource | Cloudflare source | Event scope |
+| --- | --- | --- |
+| `Cloudflare.Images.Variant` | `images` | All Images events in the account |
+| `Cloudflare.KV.Namespace` | `kv` | All namespace events in the account |
+| `Cloudflare.R2.Bucket` | `r2` | All bucket events in the account |
+| `Cloudflare.R2.SuperSlurperJob` | `superSlurper` | All migration job events in the account |
+| `Cloudflare.Vectorize.Index` | `vectorize` | All index events in the account |
+| `Cloudflare.AI.Model` | `workersAi.model` | Batch events for the selected model |
+| `Cloudflare.Worker` | `workersBuilds.worker` | Builds for the selected Worker |
+| `Cloudflare.Workflows.WorkflowResource` | `workflows.workflow` | Instances of the selected Workflow |
+
+The resource's account must match the subscription's Cloudflare account. Account metadata remains in Alchemy state and is not sent as an extra Cloudflare source field. A collision with an existing subscription fails rather than changing another stack's destination Queue.
+
+Event delivery can lag subscription creation or replacement even after the destination Queue accepts messages. Deployment confirms configuration, not delivery readiness. Verify delivery before emitting events that must be observed.
+
+During Vectorize subscription replacement or a destination Queue update, Cloudflare can still route new events to the previous Queue. Replacement events can carry the deleted subscription's ID; updates retain the same subscription ID. A single early event does not prove that routing has fully propagated. Keep the previous destination available during the transition and verify the receiving Queue, `metadata.eventSubscriptionId`, and the event's resource identity.
+
+### Account-wide resource events
+
+```typescript
+const cache = yield* Cloudflare.KV.Namespace("Cache");
+
+yield* Cloudflare.Queues.Subscription("NamespaceEvents", {
+  source: cache,
+  events: ["namespace.created", "namespace.deleted"],
+  queueId: queue.queueId,
+});
+```
+
+This receives namespace events for the **entire account**, not just `Cache`. R2, Vectorize, Images, and Super Slurper have the same account-wide behavior. Passing a resource creates a deployment dependency, so its initial creation can precede the subscription and its final deletion can follow subscription removal. Use the explicit `{ type: "kv" }` form if the subscription must be deployed before a namespace is created.
+
+### References from another stack
+
+```typescript
+yield* Cloudflare.Queues.Subscription("BucketEvents", {
+  source: yield* Cloudflare.R2.Bucket.ref("Uploads", {
+    stack: "storage",
+    stage: "production",
+  }),
+  events: ["bucket.created", "bucket.deleted"],
+  queueId: queue.queueId,
+});
+```
+
+All the resource types above support `.ref`. The source must already exist in Alchemy state. Removing this subscription preserves the referenced resource and its source stack.
+
+### Images upload events
+
+```typescript
+yield* Cloudflare.Queues.Subscription("ImageEvents", {
+  source: yield* Cloudflare.Images.Variant.ref("Thumbnail"),
+  events: ["image.uploaded"],
+  queueId: queue.queueId,
+});
+```
+
+The variant selects its Images account. The subscription receives uploads across that account, not only images served with `Thumbnail`.
+
+### Vectorize events
+
+```typescript
+yield* Cloudflare.Queues.Subscription("IndexEvents", {
+  source: yield* Cloudflare.Vectorize.Index.ref("Search"),
+  events: ["index.created", "index.deleted"],
+  queueId: queue.queueId,
+});
+```
+
+These events describe index lifecycle changes, not individual vector writes.
+
+### Super Slurper events
+
+```typescript
+yield* Cloudflare.Queues.Subscription("MigrationEvents", {
+  source: yield* Cloudflare.R2.SuperSlurperJob.ref("Migration"),
+  events: ["job.started", "job.completed", "job.aborted"],
+  queueId: queue.queueId,
+});
+```
+
+`R2.SuperSlurperJob` manages a one-off migration. Destroying an active job cancels it; it does not delete migrated objects or terminal job history. This subscription selects all jobs in the account, not object-level events from one job.
+
+### Workers AI batch events
+
+```typescript
+const model = yield* Cloudflare.AI.Model("Embeddings", {
+  modelName: "@cf/baai/bge-m3",
+});
+
+yield* Cloudflare.Queues.Subscription("BatchEvents", {
+  source: model,
+  events: ["batch.queued", "batch.succeeded", "batch.failed"],
+  queueId: queue.queueId,
+});
+```
+
+`AI.Model` validates a Cloudflare-managed catalog model and persists a non-owning handle. It neither deploys nor invokes the model. `yield* Cloudflare.AI.Model.ref("Embeddings")` can be used in place of `model` after deployment. Batch events require asynchronous batch inference; ordinary synchronous inference does not emit them.
+
+### Workers Builds events
+
+```typescript
+yield* Cloudflare.Queues.Subscription("BuildEvents", {
+  source: yield* Cloudflare.Worker.ref("Website"),
+  events: ["build.started", "build.succeeded", "build.failed"],
+  queueId: queue.queueId,
+});
+```
+
+A direct Worker resource is also accepted. The source uses the Worker's physical name and follows replacements. The Worker needs a Workers Builds integration to emit these events; an ordinary Alchemy upload is not a Workers Builds run.
+
 ## Where next
 
 Related:
@@ -260,3 +535,6 @@ Reference:
 
 - [Queue API reference](/providers/cloudflare/queues/queue)
 - [Consumer API reference](/providers/cloudflare/queues/consumer)
+- [Subscription API reference](/providers/cloudflare/queues/subscription)
+- [Workers AI model handle API reference](/providers/cloudflare/ai/model)
+- [Super Slurper migration API reference](/providers/cloudflare/r2/superslurperjob)

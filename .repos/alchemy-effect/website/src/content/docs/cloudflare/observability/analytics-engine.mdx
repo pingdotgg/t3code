@@ -15,7 +15,7 @@ Worker writes to it through a typed binding.
 
 ```typescript
 // src/dataset.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Events = Cloudflare.AnalyticsEngine.Dataset("Events", {
   dataset: "app_events",
@@ -30,15 +30,15 @@ name you'll reference in SQL queries; omit it and the logical ID
 
 ## Write data points from a Worker
 
-Bind the dataset with `WriteDataset` in the Worker's init phase and
+Bind the dataset with `WriteDataset` in the Worker's Construction phase and
 provide `WriteDatasetBinding` as a layer:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Events } from "./dataset.ts";
 
 export default Cloudflare.Worker(
@@ -87,7 +87,7 @@ binding object directly.
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import Worker from "./src/worker.ts";
 

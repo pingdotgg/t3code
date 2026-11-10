@@ -1,0 +1,125 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "3809c51e-3821-4a08-818d-e5d28dd3e9b4",
+  "prevIds": ["4b6d0d21-8d78-4499-9dde-b42bcf633d05"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "relay_managed_endpoint_allocations",
+        "recovery_enabled_at"
+      ],
+      "writes": [
+        "s|col|public.relay_managed_endpoint_allocations.recovery_enabled_at",
+        "n|col|public.relay_managed_endpoint_allocations.recovery_enabled_at",
+        "e|col|public.relay_managed_endpoint_allocations.recovery_enabled_at"
+      ],
+      "reads": ["n|tbl|public.relay_managed_endpoint_allocations", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "relay_managed_endpoint_allocations",
+        "recovery_environment_public_key"
+      ],
+      "writes": [
+        "s|col|public.relay_managed_endpoint_allocations.recovery_environment_public_key",
+        "n|col|public.relay_managed_endpoint_allocations.recovery_environment_public_key",
+        "e|col|public.relay_managed_endpoint_allocations.recovery_environment_public_key"
+      ],
+      "reads": ["n|tbl|public.relay_managed_endpoint_allocations", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_managed_endpoint_allocations", "origin"],
+      "writes": [
+        "s|col|public.relay_managed_endpoint_allocations.origin",
+        "n|col|public.relay_managed_endpoint_allocations.origin",
+        "e|col|public.relay_managed_endpoint_allocations.origin"
+      ],
+      "reads": ["n|tbl|public.relay_managed_endpoint_allocations", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_managed_endpoint_allocations", "generation"],
+      "writes": [
+        "s|col|public.relay_managed_endpoint_allocations.generation",
+        "n|col|public.relay_managed_endpoint_allocations.generation",
+        "e|col|public.relay_managed_endpoint_allocations.generation"
+      ],
+      "reads": ["n|tbl|public.relay_managed_endpoint_allocations", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_managed_endpoint_allocations",
+        "name": "recovery_enabled_at",
+        "type": "varchar(64)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_managed_endpoint_allocations",
+        "name": "recovery_environment_public_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_managed_endpoint_allocations",
+        "name": "origin",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_managed_endpoint_allocations",
+        "name": "generation",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

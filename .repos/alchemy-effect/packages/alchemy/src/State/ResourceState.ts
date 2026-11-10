@@ -1,4 +1,5 @@
 import type { NamespaceNode } from "../Namespace.ts";
+import type { ProviderMode } from "../ProviderMode.ts";
 import type { RemovalPolicy } from "../RemovalPolicy.ts";
 import type { ResourceBinding } from "../Resource.ts";
 
@@ -15,9 +16,7 @@ export type Props = Record<string, any>;
 export type Attr = Record<string, any>;
 
 export type ResourceStatus = ResourceState["status"];
-export type ReplacementResourceState =
-  | ReplacingResourceState
-  | ReplacedResourceState;
+export type ReplacementResourceState = ReplacingResourceState | ReplacedResourceState;
 export type ReplacementOldResourceState =
   | CreatingResourceState
   | CreatedResourceState
@@ -53,9 +52,32 @@ interface BaseResourceState {
   /** Desired state (input props) of this Resource */
   props?: Props;
   /** The output attributes of this Resource (if it has been created) */
-  attr?: Attr;
+  attr?: Attr | undefined;
   /** The removal policy of the resource */
   removalPolicy?: RemovalPolicy["Service"];
+  /** Attr-less lookup could recover the predecessor migrated away from this FQN. */
+  adoptionBlocked?: "migrated-fqn";
+  /** Unresolved props were stripped from this attr-less checkpoint; they cannot identify it. */
+  propsIncomplete?: true;
+  /**
+   * The {@link ProviderMode} this resource was last reconciled with.
+   *
+   * Stamped by Apply on every commit for resources whose provider
+   * distinguishes modes (`ProviderLayer.dual`). Plan treats a mismatch
+   * between the persisted mode and the resolved desired mode as a
+   * **replacement**, and deletion always uses the provider variant of the
+   * mode that created the row.
+   *
+   * `undefined` means either a mode-agnostic provider (single
+   * implementation serves both dev and deploy) or a legacy row written
+   * before modes were persisted — both acted on the real cloud, so an
+   * unstamped row is assumed **live**, unless its attrs carry a local
+   * identity marker (`dev:`-prefixed ids) proving it was reconciled
+   * locally, in which case it is assumed **local** (see `stampedMode`).
+   * Same-mode runs see no churn; a run in the other mode replaces it like
+   * any stamped row.
+   */
+  providerMode?: ProviderMode;
 }
 
 export interface CreatingResourceState extends BaseResourceState {
@@ -74,6 +96,8 @@ export interface CreatedResourceState extends BaseResourceState {
 
 export interface UpdatingReourceState extends BaseResourceState {
   status: "updating";
+  /** Persisted until the first post-adoption reconcile succeeds. */
+  adopting?: true;
   /** The new resource properties that are being (or have been) applied. */
   props: Props;
   old: {

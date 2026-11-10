@@ -1,0 +1,33 @@
+{
+  "name": "prisma-website-static",
+  "version": "0.0.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-static"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev:site": "vite --host 127.0.0.1",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "@vercel/nft": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -7,7 +7,7 @@ sidebar:
 
 Every Worker gets a `workers.dev` URL by default, but production apps
 live on their own domain. This guide covers the pieces involved: the
-Zone that holds your domain, the `domain` prop that attaches a hostname
+Zone that holds your domain, the `domain` prop that attaches hostnames
 to a Worker, Routes for pattern-based dispatch, plain DNS records, and
 the account's `workers.dev` subdomain.
 
@@ -16,7 +16,7 @@ All the snippets below run inside a Stack's `Effect.gen` body:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -74,29 +74,77 @@ still retains on destroy unless you add `destroy()`.
 
 ## Attach a custom domain to a Worker
 
-The simplest way to serve a Worker on your domain is the `domain` prop.
-Cloudflare provisions the DNS record and certificate for you; the zone
-is inferred from the hostname, so it must already exist in the account:
+Pass `domain` — Cloudflare provisions the DNS record and certificate;
+the zone is inferred from the hostname and must already exist in the
+account:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
   domain: "api.example.com",
 });
+// worker.url === "https://api.example.com"
 ```
 
-`domain` also accepts an array. Custom domains come first in
-`worker.domains` (in the order you provided them), followed by the
-`workers.dev` URL when the subdomain is enabled — and `worker.url` is
-`domains[0]`, so the custom domain wins:
+`aliases` also serve the Worker; `redirects` answer with a 301 (path
+and query preserved) to the canonical name, before the Worker runs —
+ideal for domain migrations:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
-  domain: ["api.example.com", "api-v2.example.com"],
+  domain: {
+    name: "api.example.com",
+    aliases: ["api-v2.example.com"],
+    redirects: ["api.old-example.com"], // 301 → https://api.example.com
+  },
+  workersDev: false,
 });
-// worker.url === "https://api.example.com"
+// worker.url    === "https://api.example.com"
+// worker.urls   === ["https://api.example.com", "https://api-v2.example.com"]
+// worker.domain === { name: "api.example.com",
+//                     aliases: ["api-v2.example.com"],
+//                     redirects: ["api.old-example.com"] }
 ```
+
+The canonical domain leads `worker.urls` (ahead of `workers.dev`), and
+redirect hostnames never appear there — they serve no content. Their
+redirect rules live in the zone's `http_request_dynamic_redirect`
+phase, which runs before Workers.
+
+Set `previews: true` so [Worker Previews](/cloudflare/compute/previews)
+of this Worker are served at `<preview-name>.api.example.com`. That is
+a parent setting — enable it on the production Worker, not on the
+Preview Worker. Use a dedicated hostname (`previews.example.com`) if
+production already has subdomains, so the wildcard does not collide.
+
+## Serve a hostname whose DNS is elsewhere
+
+A native custom domain needs the hostname in a Cloudflare zone of the
+account. When the hostname's DNS lives in Route 53 or Hetzner DNS, pass
+that host as `domain.dns`. The Worker then serves the hostname through
+[Cloudflare for SaaS](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/worker-as-origin/)
+on a Cloudflare zone you own:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: {
+    name: "app.example.com",
+    zoneId: saasZone.zoneId, // a Cloudflare zone with Cloudflare for SaaS enabled
+    cnameTarget: fallback.origin, // the zone's FallbackOrigin hostname
+    dns: AWS.Route53.Adapter(),
+  },
+});
+```
+
+Alchemy creates a custom hostname on the SaaS zone, publishes its
+ownership and certificate `TXT` records and a `CNAME` to `cnameTarget` in
+Route 53, and routes `app.example.com/*` on the SaaS zone to the Worker.
+Declare the zone's `Cloudflare.CustomHostname.FallbackOrigin` once; several
+Workers can share it. `redirects` and `previews` need a native custom
+domain. See [DNS Adapters](/infrastructure-as-code/dns-adapters) for the
+full setup.
 
 ## Route a hostname pattern to a Worker
 
@@ -148,6 +196,27 @@ yield* Cloudflare.Workers.WorkerRoute("ApiRoute", {
 
 Both `pattern` and `script` are mutable — changing either updates the
 same physical route in place. Changing `zoneId` triggers a replacement.
+
+## Split one hostname across Workers
+
+Routes win over custom domains, so one Worker can own a hostname while
+others claim paths under it:
+
+```typescript
+yield* Cloudflare.Worker("Home", {
+  main: "./src/home.ts",
+  domain: "api.example.com",
+});
+
+yield* Cloudflare.Worker("Orders", {
+  main: "./src/orders.ts",
+  routes: [{ pattern: "api.example.com/orders*" }],
+});
+```
+
+`alchemy dev` applies the same routing locally. See
+[Federated APIs](/cloudflare/networking/federated-apis) for the full
+pattern.
 
 ## DNS records for non-Worker targets
 
@@ -202,15 +271,29 @@ yield* Cloudflare.Workers.WorkerRoute("AssetsBypass", {
 
 ## Control the workers.dev subdomain
 
-Per Worker, the `url` prop toggles the `workers.dev` URL (it defaults
-to `true`). Once a custom domain serves production traffic, you may
-want to switch the dev URL off:
+Per Worker, the `workersDev` prop toggles the `workers.dev` URLs (it
+defaults to `true`). Once a custom domain serves production traffic,
+you may want to switch them off — the custom domain then becomes
+`worker.url`:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
   domain: "api.example.com",
-  url: false,
+  workersDev: false,
+});
+// worker.url === "https://api.example.com"
+```
+
+The object form controls the stable URL and per-version preview URLs
+independently. With the stable URL off and previews on, each deploy's
+preview URL (`https://<version-prefix>-<name>.<subdomain>.workers.dev`)
+becomes `worker.url`:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  workersDev: { enabled: false, previewsEnabled: true },
 });
 ```
 

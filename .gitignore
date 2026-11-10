@@ -5,6 +5,7 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+apps/*/dist-exe
 infra/*/dist
 .astro
 packages/*/dist
@@ -25,14 +26,25 @@ __screenshots__/
 squashfs-root/
 .vercel
 .gstack/
+.plans/
+/audits/
 dist-electron/
 .electron-runtime/
 .showcase/
 apps/mobile/.showcase/
+apps/mobile/.generated/
+apps/mobile/.android-cache/
+/.generated/
 artifacts/app-store/screenshots/
+artifacts/mobile-e2e/
+artifacts/mobile-behavior/
+.github/pr-assets/
 native/**/target/
 node_modules/
 .alchemy/
 *.log
 .env*
 !.env.example
+
+# pnpm content-addressable store; never belongs in the repo.
+.pnpm-store/

@@ -1,0 +1,15 @@
+---
+import Layout from "../components/Layout.astro";
+
+// Frozen at BUILD time under `output: "static"` — the live server must
+// return byte-identical HTML on every request (an SSR page would restamp
+// this per request).
+const builtAt = new Date().toISOString();
+---
+
+<Layout title="Astro Static Fixture">
+  <h1 id="title">Astro Static Fixture</h1>
+  <p id="mode">static</p>
+  <p id="built-at">{builtAt}</p>
+  <p>A fully prerendered site: the deploy must be assets-only — no worker.</p>
+</Layout>

@@ -1,0 +1,73 @@
+---
+title: Overview
+description: Requirements pick lines. One table from what you need to the line that changes, the stack shape for one cloud or two, and complete files to copy.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+Start from the graph the tutorial built and change the lines your
+requirements touch:
+
+```typescript
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(Git.HasherInline),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+| You need | Change | Where |
+| --- | --- | --- |
+| Everything on one Cloudflare account | nothing | [All on Cloudflare](/git/recipes/cloudflare) |
+| Large pushes verified fast, still on one cloud | `HasherWorkerLoader()` | [Scaling](/git/recipes/scaling) |
+| Bytes stored in AWS | `BlobStoreS3(bucket)` | [Bytes in S3, hashing on Lambda](/git/recipes/cloudflare-aws) |
+| The widest push parallelism | `HasherLambda(HasherFunction)` | [Bytes in S3, hashing on Lambda](/git/recipes/cloudflare-aws) |
+| Bytes somewhere that is neither R2 nor S3 | your own `BlobStore` | [Bring your own store](/git/recipes/your-own-store) |
+| Registry reads near users everywhere, SQL over the index | `RegistryD1(RepoIndex)` | [Registry](/git/blocks/registry) |
+| Your own users and credentials | your `HttpRouter` middleware | [Tutorial Part 4](/git/tutorial/part-4) |
+| Branch rules | application handlers + `Git.Engine` | [Tutorial Part 6](/git/tutorial/part-6) |
+| Your web app and git on one domain | a front-door Worker | [Application example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service) |
+
+Every row is independent. Bytes in S3 with the loader hasher and a D1
+registry is three changed lines, and the type checker confirms the
+graph is whole. [Scaling](/git/recipes/scaling) is the why behind the
+first four rows.
+
+## One cloud or two
+
+A graph that only touches Cloudflare deploys with Cloudflare's
+providers:
+
+```typescript
+export default Alchemy.Stack(
+  "GitService",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const git = yield* GitHost;
+    return { url: git.url.as<string>() };
+  }),
+);
+```
+
+A graph that declares a Lambda or reads S3 carries both provider sets.
+The stack is otherwise identical, and Alchemy creates what each cloud
+needs:
+
+```diff lang="typescript"
+export default Alchemy.Stack(
+  "GitService",
+-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
++  {
++    providers: Layer.mergeAll(Cloudflare.providers(), AWS.providers()),
++    state: Cloudflare.state(),
++  },
+  Effect.gen(function* () {
+    const git = yield* GitHost;
+    return { url: git.url.as<string>() };
+  }),
+);
+```

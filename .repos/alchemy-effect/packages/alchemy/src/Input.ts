@@ -28,12 +28,23 @@ export type Input<T> =
                   ? { [K in keyof T]: Input<T[K]> }
                   : never));
 
-export type InputProps<
-  T extends Record<string, any>,
-  Static extends keyof T = never,
-> = {
+export type InputProps<T extends Record<string, any>, Static extends keyof T = never> = {
   [K in keyof T]: K extends Static ? T[K] : Input<T[K]>;
 };
+
+/**
+ * Distributes {@link Input} over each member of a (possibly union) Props
+ * type. A resource whose Props form a discriminated union (e.g. Access
+ * IdentityProvider's `type` ↔ `config` pairing) must keep the correlation
+ * between the discriminant and its payload — a non-distributive mapped
+ * type over the union collapses `keyof` to the common keys and severs
+ * that link, silently accepting a `config` from the wrong variant.
+ */
+export type PropsInput<P> = P extends object
+  ? { [K in keyof P]: Input<P[K]> }
+  : P extends undefined
+    ? {}
+    : never;
 
 export declare namespace Input {
   export type Resolve<T> = T extends {
@@ -45,12 +56,7 @@ export declare namespace Input {
       }
     : T extends Output<infer U>
       ? U
-      : T extends
-            | Primitive
-            | Constructor
-            | Function
-            | S.Schema<any>
-            | PolicyLike
+      : T extends Primitive | Constructor | Function | S.Schema<any> | PolicyLike
         ? T
         : T extends any[]
           ? ResolveArray<T>
@@ -68,9 +74,7 @@ export declare namespace Input {
     T extends any[],
     // TODO(sam): I added the accumulator because it resolved infinite type instantiation
     Accum extends any[] = [],
-  > = T extends [infer H, ...infer Tail]
-    ? ResolveTuple<Tail, [...Accum, Input.Resolve<H>]>
-    : Accum;
+  > = T extends [infer H, ...infer Tail] ? ResolveTuple<Tail, [...Accum, Input.Resolve<H>]> : Accum;
 
   export type ResolveProps<Props extends Record<string, any>> = {
     [k in keyof Props]: Input.Resolve<Props[k]>;
@@ -85,9 +89,6 @@ export declare namespace Input {
   export type ResolveOut<T> = T extends Output<infer U> ? U : never;
 }
 
-export type Inputs<T extends any[], Out extends any[] = []> = T extends [
-  infer H,
-  ...infer T,
-]
+export type Inputs<T extends any[], Out extends any[] = []> = T extends [infer H, ...infer T]
   ? Inputs<T, [...Out, Input<H>]>
   : Out;

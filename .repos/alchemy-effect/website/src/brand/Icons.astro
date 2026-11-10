@@ -1,0 +1,29 @@
+---
+/**
+ * The complete `<link rel="icon">` set, shared by every layout so the tags
+ * can't drift apart. All of these files are emitted by
+ * `scripts/generate-brand-assets.ts`.
+ *
+ * Only vector icons are listed: one SVG per theme, selected with `media`.
+ * Advertising sized PNGs alongside them makes Chrome prefer the raster whose
+ * `sizes` best matches the tab (the blurry 16/32), so the PNGs stay in
+ * `public/` for direct links but are not offered here. `apple-touch-icon` is
+ * opaque and light-only — iOS web clips have no dark variant and ignore
+ * `media`.
+ *
+ * Starlight emits its own `favicon` link; `src/favicon.ts` strips it from
+ * docs pages so this set is the only one.
+ */
+
+const THEMES = [
+  ["/favicon-light.svg", "(prefers-color-scheme: light)"],
+  ["/favicon-dark.svg", "(prefers-color-scheme: dark)"],
+] as const;
+---
+
+{
+  THEMES.map(([href, media]) => (
+    <link rel="icon" type="image/svg+xml" sizes="any" href={href} media={media} />
+  ))
+}
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />

@@ -1,0 +1,153 @@
+---
+title: Upgrading from 1.6 to 1.7.5 or newer
+description: Upgrade Better Auth directly from 1.6, preserve existing users, and update your schema and application APIs.
+sidebar:
+  order: 3
+---
+
+Upgrade directly to 1.7.5 or a later compatible 1.x release. The core account
+schema is unchanged from 1.6; no issuer column or identity backfill is needed.
+
+:::caution[Already upgraded to 1.7.0–1.7.2?]
+Follow the [upstream issuer cleanup instructions](https://better-auth.com/docs/guides/1-7-upgrade-guide#account-identity-keeps-the-provider-key) first.
+:::
+
+## Back up existing data
+
+Back up the database and rehearse on a copy with existing users, accounts, and sessions. **Keep the same auth secret.**
+
+Resolve duplicate provider/account ID pairs using your configured table names. Never merge users by email alone.
+
+These integrations need manual preparation. Follow the corresponding
+[upstream instructions](https://better-auth.com/docs/guides/1-7-upgrade-guide):
+
+| Integration | Before deploying |
+| --- | --- |
+| Microsoft / Entra | Pause sign-in and linking; map old subject IDs to verified object IDs or a trusted directory export. |
+| Custom OAuth / SSO | Map existing subjects to verified immutable provider IDs. |
+| Legacy OIDC / MCP | Convert client registrations and legacy token tables. Schema migrations do not copy these records. |
+| SCIM | Stop old provisioning and follow the reprovisioning procedure. D1 cannot support the new transaction requirements. |
+| Device Authorization | Resolve duplicate device/user codes; use bounded strings on MySQL and SQL Server. |
+
+:::caution[Deployment does not pause existing traffic]
+Alchemy delays the new host deployment, but old instances keep running; use a maintenance window for incompatible changes. An application rollback does not reverse database changes.
+:::
+
+## Upgrade packages together
+
+Update the Alchemy Better Auth package to a release supporting 1.7.5, then
+align Better Auth and its synchronized plugins/adapters:
+
+```sh
+npx auth@1.7.5 upgrade
+```
+
+Use Node.js 22.12 or newer and the CLI version matching your target release. Review workspace catalogs and overrides.
+
+The command updates dependencies, not application code or identity data.
+
+## Apply the schema
+
+For [SQL layers with automatic migrations](/better-auth/guides/migrations#choose-the-migration-transport),
+the wrapper stays unchanged:
+
+```typescript
+import { BetterAuth } from "@alchemy.run/better-auth";
+
+export const makeAuth = BetterAuth({
+  emailAndPassword: { enabled: true },
+});
+```
+
+After any manual preparation, deploy:
+
+```sh
+alchemy deploy
+```
+
+The schema is applied before the new host. Ordinary email/password accounts
+need no identity conversion when upgrading directly from 1.6.
+
+## Generate a Drizzle schema
+
+Drizzle users own schema migrations. Generate and review the auth schema:
+
+```sh
+npx auth@1.7.5 generate --config ./auth.cli.ts
+```
+
+The CLI configuration exports an upstream Better Auth instance with the same
+plugins and schema options, using the Relations v2 adapter:
+
+```typescript
+import { drizzleAdapter } from "@better-auth/drizzle-adapter/relations-v2";
+```
+
+Omit the adapter CLI flag, which selects the legacy generator:
+
+```diff
+- npx auth@1.7.5 generate --config ./auth.cli.ts --adapter drizzle
++ npx auth@1.7.5 generate --config ./auth.cli.ts
+```
+
+Apply the schema through Drizzle's migration tooling and include the generated auth relations when constructing the database. See the complete [Drizzle configuration](/better-auth/databases/drizzle).
+
+With automatic migrations disabled, apply your schema before deploying too.
+
+## Update application APIs
+
+Generic OAuth now uses the social APIs:
+
+```typescript
+import { createAuthClient } from "better-auth/client";
+import { genericOAuthClient } from "better-auth/client/plugins";
+
+const authClient = createAuthClient({ plugins: [genericOAuthClient()] });
+authClient.signIn.social({ provider: "my-provider" });
+authClient.linkSocial({ provider: "my-provider" });
+```
+
+Update registered callback URLs:
+
+```diff
+- /api/auth/oauth2/callback/:id
++ /api/auth/callback/:id
+```
+
+Token/profile operations select a **local account row**, rather than a provider:
+
+```typescript
+{ accountId: "local-account-row-id" }
+// Or select the account from its cookie:
+{ useAccountCookie: true }
+```
+
+Move joins into the database options:
+
+```diff
+- experimental: { joins: true }
++ advanced: { database: { joins: true } }
+```
+
+Custom secondary storage needs atomic operations:
+
+```typescript
+increment(key, ttl)
+getAndDelete(key)
+```
+
+The TTL is required, in seconds; subsequent increments must preserve the original expiration. Custom rate-limit storage now uses an atomic consume operation instead of separate reads and writes.
+
+Check the upstream guide for SSO, MCP, mobile, and proxy changes.
+
+## Verify existing users
+
+Test an existing session, existing-user sign-in, new-user sign-up, and sign-out. Exercise every configured provider and account link/list/refresh/unlink flow.
+
+Confirm user IDs are preserved and no duplicate users appear.
+
+Deploy again to confirm the migration is a no-op:
+
+```sh
+alchemy deploy
+```

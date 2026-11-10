@@ -5,10 +5,7 @@ export default function HeroCta() {
   return (
     <>
       <div className="hero-cta hero-cta--cards">
-        <a
-          className="hero-cta__card hero-cta__card--human"
-          href="/getting-started"
-        >
+        <a className="hero-cta__card hero-cta__card--human" href="/getting-started">
           <span className="hero-cta__eyebrow">For humans</span>
           <span className="hero-cta__title">
             Get started <span aria-hidden>→</span>
@@ -21,14 +18,11 @@ export default function HeroCta() {
           <a className="alc-btn alc-btn--primary" href="/getting-started">
             Get started <span aria-hidden>→</span>
           </a>
-          <a
-            className="alc-btn alc-btn--secondary"
-            href="/cloudflare/tutorial/part-1"
-          >
+          <a className="alc-btn alc-btn--secondary" href="/cloudflare/tutorial/part-1">
             Tutorial
           </a>
         </div>
-        <div className="hero-cta__line">
+        <div className="hero-cta__line" data-nosnippet="">
           <span>
             <span aria-hidden>🤖</span> Using a coding agent?
           </span>
@@ -65,9 +59,7 @@ function CopyCard() {
       type="button"
       className="hero-cta__card hero-cta__card--agent"
       onClick={onCopy}
-      aria-label={
-        copied ? "Copied prompt" : "Copy prompt for your coding agent"
-      }
+      aria-label={copied ? "Copied prompt" : "Copy prompt for your coding agent"}
     >
       <span className="hero-cta__eyebrow">
         For coding agents
@@ -75,7 +67,9 @@ function CopyCard() {
           {copied ? <CheckIcon /> : <CopyIcon />}
         </span>
       </span>
-      <code className="hero-cta__prompt-code">{PROMPT}</code>
+      <code className="hero-cta__prompt-code" data-nosnippet="">
+        {PROMPT}
+      </code>
     </button>
   );
 }

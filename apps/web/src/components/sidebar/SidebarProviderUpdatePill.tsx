@@ -1,8 +1,9 @@
+import { Spinner } from "~/components/ui/spinner";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
-import { CircleCheckIcon, DownloadIcon, LoaderIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { CircleCheckIcon, DownloadIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { useEffect, useEffectEvent, useState, type CSSProperties } from "react";
 
 import { primaryServerProvidersAtom } from "../../state/server";
 import {
@@ -10,21 +11,23 @@ import {
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Button } from "../ui/button";
+
+// Matches the pill's `duration-180` class.
+const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
-    "bg-update-surface text-update-foreground group-has-[button.provider-update-main:hover]/provider-update:bg-update/22",
+    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
   success:
-    "bg-success/12 text-success group-has-[button.provider-update-main:hover]/provider-update:bg-success/18",
+    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
   warning:
-    "bg-warning/12 text-warning group-has-[button.provider-update-main:hover]/provider-update:bg-warning/18",
+    "bg-warning/12 text-warning group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
   error:
-    "bg-destructive/12 text-destructive group-has-[button.provider-update-main:hover]/provider-update:bg-destructive/18",
+    "bg-destructive/12 text-destructive group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
-  success: "bg-success/18",
+  success: "bg-foreground/8",
   warning: "bg-warning/14",
   error: "bg-destructive/14",
 } as const;
@@ -56,15 +59,13 @@ export function SidebarProviderUpdatePill() {
     dismissedKeys,
   });
 
-  useEffect(() => {
-    if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
-      setVisibleAfterIso(effectiveVisibleAfterIso);
-    }
-  }, [effectiveVisibleAfterIso, visibleAfterIso]);
+  if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
+    setVisibleAfterIso(effectiveVisibleAfterIso);
+  }
 
-  const openProviderSettings = useCallback(() => {
+  const openProviderSettings = () => {
     void navigate({ to: "/settings/providers" });
-  }, [navigate]);
+  };
   const displayedView = renderedView ?? view;
   const dismissAfterVisibleMs = displayedView?.dismissAfterVisibleMs;
   const viewKey = displayedView?.key ?? null;
@@ -73,38 +74,52 @@ export function SidebarProviderUpdatePill() {
     displayedView?.tone !== "loading" &&
     exitingKey !== viewKey;
 
-  const startExit = useCallback(
-    (key: string, nextView: ProviderUpdateSidebarPillView | null, dismissKey?: string) => {
-      if (exitingKey === key) {
-        return;
-      }
-      setPendingView(nextView);
-      setExitingKey(key);
-      setDismissAfterExitKey(dismissKey ?? null);
-    },
-    [exitingKey],
-  );
-
-  useEffect(() => {
-    if (exitingKey !== null) {
+  const startExit = (
+    key: string,
+    nextView: ProviderUpdateSidebarPillView | null,
+    dismissKey?: string,
+  ) => {
+    if (exitingKey === key) {
       return;
     }
+    setPendingView(nextView);
+    setExitingKey(key);
+    setDismissAfterExitKey(dismissKey ?? null);
+  };
+
+  if (exitingKey === null) {
     if (!renderedView) {
       if (view) {
         setRenderedView(view);
       }
-      return;
-    }
-    if (!view) {
+    } else if (!view) {
       startExit(renderedView.key, null);
-      return;
-    }
-    if (view.key !== renderedView.key) {
+    } else if (view.key !== renderedView.key) {
       startExit(renderedView.key, view);
-      return;
     }
-  }, [exitingKey, renderedView, startExit, view]);
+  }
 
+  const exitAfterVisible = useEffectEvent((key: string) => startExit(key, null, key));
+
+  const finishExit = useEffectEvent(() => {
+    if (dismissAfterExitKey !== null) {
+      setDismissedKeys((previous) => new Set(previous).add(dismissAfterExitKey));
+    }
+    setRenderedView(pendingView);
+    setPendingView(null);
+    setExitingKey(null);
+    setDismissAfterExitKey(null);
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fallback timer that finishes the exit if the CSS transition never ends
+  useEffect(() => {
+    if (exitingKey === null) return;
+    // A cancelled or skipped CSS transition must not keep a hidden spinner mounted.
+    const timeoutId = window.setTimeout(finishExit, PROVIDER_UPDATE_PILL_EXIT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [exitingKey]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that dismisses the pill after it has been visible for dismissAfterVisibleMs
   useEffect(() => {
     if (!dismissAfterVisibleMs || !viewKey) {
       return;
@@ -113,11 +128,11 @@ export function SidebarProviderUpdatePill() {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      startExit(viewKey, null, viewKey);
+      exitAfterVisible(viewKey);
     }, dismissAfterVisibleMs);
 
     return () => window.clearTimeout(timeoutId);
-  }, [dismissAfterVisibleMs, exitingKey, startExit, viewKey]);
+  }, [dismissAfterVisibleMs, exitingKey, viewKey]);
 
   if (!displayedView) {
     return null;
@@ -125,34 +140,19 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-lg text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
           ? "pointer-events-none translate-y-1.5 opacity-0"
           : "translate-y-0 opacity-100"
       }`}
-      onTransitionEnd={(event) => {
-        if (event.target !== event.currentTarget) {
-          return;
-        }
-        if (!displayedView || exitingKey !== displayedView.key) {
-          return;
-        }
-        if (dismissAfterExitKey === displayedView.key) {
-          setDismissedKeys((previous) => new Set(previous).add(displayedView.key));
-        }
-        setRenderedView(pendingView);
-        setPendingView(null);
-        setExitingKey(null);
-        setDismissAfterExitKey(null);
-      }}
     >
       {showDismissProgress ? (
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left animate-[provider-update-pill-countdown_var(--provider-update-pill-dismiss-ms)_linear_forwards] border-r border-current/15 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)] ${
+          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-white/8 ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -169,19 +169,20 @@ export function SidebarProviderUpdatePill() {
             <button
               type="button"
               aria-label={displayedView.description}
-              className="provider-update-main relative z-[1] flex h-full flex-1 items-center gap-2 px-2 text-left"
+              data-provider-update-main
+              className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
-                <LoaderIcon className="size-3.5 animate-spin" />
+                <Spinner size="sm" className="shrink-0" />
               ) : displayedView.tone === "success" ? (
-                <CircleCheckIcon className="size-3.5" />
+                <CircleCheckIcon className="size-3.5 shrink-0" />
               ) : displayedView.tone === "error" ? (
-                <TriangleAlertIcon className="size-3.5" />
+                <TriangleAlertIcon className="size-3.5 shrink-0" />
               ) : (
-                <DownloadIcon className="size-3.5" />
+                <DownloadIcon className="size-3.5 shrink-0" />
               )}
-              <span>{displayedView.title}</span>
+              <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
             </button>
           }
         />
@@ -191,15 +192,14 @@ export function SidebarProviderUpdatePill() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
-                size="icon-micro"
-                variant="ghost"
+              <button
+                type="button"
                 aria-label="Dismiss provider update notice"
-                className="relative z-[1] mr-1 [--control-icon-color:currentColor] rounded-md text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
+                className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
-                <XIcon className="size-3.5" />
-              </Button>
+                <XIcon className="size-3.5 shrink-0" />
+              </button>
             }
           />
           <TooltipPopup side="top">Dismiss until provider status changes</TooltipPopup>

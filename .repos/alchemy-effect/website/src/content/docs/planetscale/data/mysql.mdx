@@ -16,7 +16,7 @@ here? [Set up credentials](/planetscale/setup) first.
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -111,27 +111,31 @@ The password's `origin` attribute is the exact shape
 the branch is one resource:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
   origin: password.origin,
 });
 ```
 
-See the full example —
+At runtime, query through
+[`Drizzle.MySQL`](/sql/drizzle/mysql) or the raw
+[`SQL.MySQL`](/sql/effect-sql/mysql) client — both take Hyperdrive's
+`connectionString` and default to the text protocol the proxy
+requires. See the full example —
 [cloudflare-planetscale-mysql-drizzle](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-mysql-drizzle)
 — for a Worker querying the branch through Hyperdrive with Drizzle.
 
 ## Apply migrations
 
-Point `migrationsDir` at a directory of `.sql` files — on either the
+Point `migrations` at a directory of `.sql` files — on either the
 database (applied to the default branch) or a branch:
 
 ```typescript
 const branch = yield* Planetscale.MySQLBranch("app-branch", {
   database,
   isProduction: false,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
@@ -172,6 +176,8 @@ guide walks through the whole pattern.
   files in depth.
 - [Hyperdrive](/cloudflare/data/hyperdrive) — pooled edge connections
   from Workers.
+- [Drizzle: MySQL](/sql/drizzle/mysql) /
+  [Effect SQL: MySQL](/sql/effect-sql/mysql) — the runtime clients.
 - [Postgres](/planetscale/data/postgres) — the PostgreSQL side of
   PlanetScale.
 

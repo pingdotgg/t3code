@@ -1,35 +1,24 @@
-import { useMemo } from "react";
-
-import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
-import {
-  flattenQueuedThreadMessages,
-  type QueuedThreadCreation,
-  type QueuedThreadMessage,
-} from "./thread-outbox-model";
+import { useAtomValue } from "@effect/atom-react";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { buildPendingNewTasks, type PendingNewTask } from "./pending-new-tasks-model";
+import { flattenQueuedThreadMessages } from "./thread-outbox-model";
+import { environmentThreadShells } from "./threads";
+import { newTaskComposerDraftsAtom } from "./use-composer-drafts";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 
-/** A queued new-task creation, shaped for thread-list presentation. */
-export interface PendingNewTask {
-  readonly message: QueuedThreadMessage;
-  readonly creation: QueuedThreadCreation;
-  readonly title: string;
-}
+export type {
+  PendingDraftTask,
+  PendingNewTask,
+  PendingQueuedTask,
+} from "./pending-new-tasks-model";
 
 export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
-  return useMemo(() => {
-    const tasks: PendingNewTask[] = [];
-    for (const message of flattenQueuedThreadMessages(queuedMessagesByThreadKey)) {
-      if (!message.creation) {
-        continue;
-      }
-      tasks.push({
-        message,
-        creation: message.creation,
-        title: deriveThreadTitleFromPrompt(message.text),
-      });
-    }
-    tasks.sort((left, right) => right.message.createdAt.localeCompare(left.message.createdAt));
-    return tasks;
-  }, [queuedMessagesByThreadKey]);
+  const drafts = useAtomValue(newTaskComposerDraftsAtom);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  // A delivered creation can stay queued after its thread is live and hidden.
+  const queuedMessages = flattenQueuedThreadMessages(queuedMessagesByThreadKey).filter(
+    (message) => !hiddenKeys.has(threadKey(message)),
+  );
+  return buildPendingNewTasks({ queuedMessages, drafts });
 }

@@ -24,7 +24,7 @@ code artifact in one of three modes, selected by which prop you set:
 :::caution
 Lambda MicroVMs are a **preview feature**: your account must be onboarded to
 the preview, and effectful/external builds need a bootstrapped Assets bucket
-(`alchemy aws bootstrap`). Builds are asynchronous and can take several
+(`alchemy provider aws bootstrap`). Builds are asynchronous and can take several
 minutes — the provider polls until the image reaches `CREATED` and streams
 build logs to CloudWatch.
 :::
@@ -41,10 +41,10 @@ contract every Function and Server returns:
 
 ```typescript
 // sandbox.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const BuildRole = AWS.IAM.Role("MicrovmBuildRole");
 
@@ -88,19 +88,19 @@ VM, wait for `RUNNING`, mint an auth token, then call the typed RPC stub with
 
 ```typescript
 // api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Sandbox } from "./sandbox.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
   // generous timeout: the handler waits for the MicroVM to reach RUNNING
-  { main: import.meta.filename, url: true, timeout: Duration.seconds(120) },
+  { main: import.meta.filename, functionUrl: true, timeout: Duration.seconds(120) },
   Effect.gen(function* () {
     const runMicrovm = yield* AWS.Lambda.RunMicrovm(Sandbox);
     const getMicrovm = yield* AWS.Lambda.GetMicrovm(Sandbox);
@@ -190,7 +190,7 @@ is provided on the Stack so it gets built and deployed alongside:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import Api from "./api.ts";
 import SandboxLive from "./sandbox.ts";
@@ -216,7 +216,7 @@ the bare build Role and the image live directly in the Stack's `Effect.gen`:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

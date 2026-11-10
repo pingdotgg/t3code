@@ -1,0 +1,4 @@
+<resources>
+  <!-- Android 12L is the first release whose collection widgets need no compat service. -->
+  <bool name="t3_subscription_widget_enabled">true</bool>
+</resources>

@@ -34,6 +34,8 @@ export interface RelayDiscoveredEnvironment {
 
 export interface RelayEnvironmentDiscoveryState {
   readonly environments: ReadonlyMap<string, RelayDiscoveredEnvironment>;
+  // Only a loaded account list distinguishes a missing registration from an unknown one.
+  readonly listed: boolean;
   readonly refreshing: boolean;
   readonly offline: boolean;
   readonly error: Option.Option<ConnectionAttemptError>;
@@ -49,10 +51,21 @@ export class RelayEnvironmentDiscovery extends Context.Service<
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
   environments: new Map(),
+  listed: false,
   refreshing: false,
   offline: false,
   error: Option.none(),
 };
+
+export type RelayEnvironmentRegistration = "registered" | "unregistered" | "unknown";
+
+export function relayEnvironmentRegistration(
+  state: RelayEnvironmentDiscoveryState,
+  environmentId: string,
+): RelayEnvironmentRegistration {
+  if (state.environments.has(environmentId)) return "registered";
+  return state.listed ? "unregistered" : "unknown";
+}
 
 function validateStatus(
   environment: RelayClientEnvironmentRecord,
@@ -92,16 +105,15 @@ function validateStatus(
   return Effect.succeed(status);
 }
 
-function relayAccountId(clerkToken: string): Option.Option<string> {
-  try {
-    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
-      Option.filter((subject) => subject.length > 0),
-    );
-  } catch {
-    return Option.none();
-  }
-}
+const relayAccountId = Effect.fn("clientRuntime.discovery.relayAccountId")(function* (
+  clerkToken: string,
+) {
+  const claims = yield* decodeRelayJwt(clerkToken).pipe(Effect.option);
+  const sub = Option.isSome(claims) ? claims.value.sub : undefined;
+  return typeof sub === "string" && sub.length > 0 ? Option.some(sub) : Option.none<string>();
+});
 
+/** @public */
 export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const session = yield* ClientCapabilities.CloudSession;
@@ -217,16 +229,14 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* Ref.set(refreshGeneration, generation);
       yield* SubscriptionRef.set(state, {
         environments: new Map(),
+        listed: false,
         refreshing: true,
         offline: false,
         error: Option.none(),
       });
 
-      // Signed out is the idle state, not a failure: the proactive refresh on
-      // credentials-changed also runs on sign-out and must settle back to a
-      // clean empty list. Only the session-level "no credentials" error is
-      // benign — relay-side auth failures (expired/invalid tokens) happen
-      // after this point and must surface as errors.
+      // Sign-out triggers credentials-changed refreshes and must settle to an empty list.
+      // Only session-level missing credentials are benign; relay-side auth failures must surface.
       const tokenResult = yield* Effect.result(session.clerkToken);
       if (tokenResult._tag === "Failure") {
         const failure = tokenResult.failure;
@@ -240,13 +250,13 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           }));
           return;
         }
-        return yield* Effect.fail(failure);
+        return yield* failure;
       }
       const clerkToken = tokenResult.success;
       if ((yield* Ref.get(accountGeneration)) !== generation) {
         return;
       }
-      const accountId = relayAccountId(clerkToken);
+      const accountId = yield* relayAccountId(clerkToken);
       const previousAccountId = yield* Ref.get(activeAccountId);
       if (
         Option.isSome(previousAccountId) &&
@@ -275,6 +285,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         environments: next,
+        listed: true,
       }));
 
       yield* Effect.forEach(
@@ -332,10 +343,6 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* Ref.set(activeAccountId, Option.none());
             yield* Ref.set(offlineReportFingerprints, new Map());
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
-            // Refresh proactively — this wakeup fires when a session activates
-            // (sign-in or cold start), and the list should be populated before
-            // any screen asks for it. A signed-out refresh settles back to the
-            // clean empty state.
             yield* refresh.pipe(Effect.forkScoped);
           })
         : Effect.void,

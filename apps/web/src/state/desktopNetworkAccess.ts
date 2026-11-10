@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -21,7 +21,7 @@ export interface DesktopNetworkAccessSnapshot {
   readonly serverExposureState: DesktopServerExposureState;
 }
 
-class DesktopNetworkAccessUnavailableError extends Schema.TaggedErrorClass<DesktopNetworkAccessUnavailableError>()(
+class DesktopNetworkAccessUnavailableError extends Schema.TaggedError<DesktopNetworkAccessUnavailableError>()(
   "DesktopNetworkAccessUnavailableError",
   {},
 ) {
@@ -30,7 +30,7 @@ class DesktopNetworkAccessUnavailableError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-class DesktopServerExposureStateLoadError extends Schema.TaggedErrorClass<DesktopServerExposureStateLoadError>()(
+class DesktopServerExposureStateLoadError extends Schema.TaggedError<DesktopServerExposureStateLoadError>()(
   "DesktopServerExposureStateLoadError",
   { cause: Schema.Defect() },
 ) {
@@ -39,7 +39,7 @@ class DesktopServerExposureStateLoadError extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-class DesktopAdvertisedEndpointsLoadError extends Schema.TaggedErrorClass<DesktopAdvertisedEndpointsLoadError>()(
+class DesktopAdvertisedEndpointsLoadError extends Schema.TaggedError<DesktopAdvertisedEndpointsLoadError>()(
   "DesktopAdvertisedEndpointsLoadError",
   { cause: Schema.Defect() },
 ) {
@@ -52,7 +52,7 @@ function getDesktopNetworkAccessBridge(): DesktopNetworkAccessBridge | undefined
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopNetworkAccessStateAtom(
+function createDesktopNetworkAccessStateAtom(
   getBridge: () => DesktopNetworkAccessBridge | undefined,
 ) {
   const loadDesktopNetworkAccess = Effect.fn("loadDesktopNetworkAccess")(function* () {
@@ -80,11 +80,12 @@ export function createDesktopNetworkAccessStateAtom(
   });
 
   return Atom.make(loadDesktopNetworkAccess()).pipe(
+    // Retain the snapshot, but let the SWR wrapper revalidate when Settings remounts.
+    Atom.keepAlive,
     Atom.swr({
       staleTime: DESKTOP_NETWORK_ACCESS_STALE_TIME_MS,
       revalidateOnMount: true,
     }),
-    Atom.keepAlive,
     Atom.withLabel("desktop:network-access"),
   );
 }

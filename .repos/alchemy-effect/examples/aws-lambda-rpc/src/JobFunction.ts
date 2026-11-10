@@ -1,4 +1,4 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { JobNotificationsSNS } from "./JobNotifications.ts";
@@ -9,7 +9,7 @@ export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   JobRpcHttpEffect.pipe(
     Effect.map((fetch) => ({ fetch })),

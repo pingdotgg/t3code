@@ -1,0 +1,52 @@
+{
+  "name": "prisma-tanstack-start",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/prisma-tanstack-start"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "db:migrate": "bun run emit && prisma db migrate --no-interactive --yes && prisma db verify --no-interactive --strict",
+    "db:setup": "bun run db:migrate && bun run seed",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "dev:start": "vite dev --host 0.0.0.0",
+    "emit": "prisma contract emit",
+    "prepare": "prisma contract emit",
+    "seed": "tsx scripts/seed.ts",
+    "start": "node .output/server/index.mjs",
+    "tail": "alchemy logs --tail",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
+    "@prisma/orm-postgres": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "@tanstack/react-start": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "nitro": "catalog:",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "dotenv": "catalog:",
+    "prisma": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

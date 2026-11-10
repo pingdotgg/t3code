@@ -24,7 +24,7 @@ implementation.
 ```typescript
 // src/object.ts
 import type { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export class Counter extends Cloudflare.DurableObject<
@@ -78,9 +78,9 @@ export class Counter extends Cloudflare.DurableObject<
 ```
 
 :::note
-The `state` *reference* is resolved in the outer (init) Effect, but
+The `state` *reference* is resolved in the outer (Construction) Effect, but
 `state.storage` is
-[colored with `RuntimeContext`](/infrastructure-as-effects/layers#runtime-as-a-colored-function)
+[colored with `RuntimeContext`](/infrastructure-as-effects/layers#the-types-hold-the-boundary)
 — so the storage reads/writes stay in the inner (runtime) Effect.
 :::
 
@@ -97,7 +97,7 @@ The key move is the **third type argument** on `Cloudflare.Worker`:
 
 ```typescript
 // src/workerA.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Counter } from "./object.ts";
 
 export class WorkerA extends Cloudflare.Worker<WorkerA, {}, Counter>()(
@@ -125,10 +125,10 @@ WorkerA's bundle actually contains the DO class:
 
 ```diff lang="typescript"
 // src/workerA.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 -import { Counter } from "./object.ts";
 +import CounterLive, { Counter } from "./object.ts";
 
@@ -152,7 +152,7 @@ export class WorkerA extends Cloudflare.Worker<WorkerA, {}, Counter>()(
 +);
 ```
 
-`yield* Counter` inside WorkerA's init binds the DO _locally_ —
+`yield* Counter` inside WorkerA's constructor binds the DO _locally_ —
 WorkerA's `env.Counter` is wired up at deploy time and the class
 ships in the bundle.
 
@@ -164,10 +164,10 @@ to the existing namespace running under WorkerA's script:
 
 ```typescript
 // src/workerB.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Counter } from "./object.ts";
 import { WorkerA } from "./workerA.ts";
 
@@ -210,7 +210,7 @@ binding only:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import WorkerALive, { WorkerA } from "./src/workerA.ts";
 import WorkerB from "./src/workerB.ts";
@@ -240,11 +240,11 @@ Workers route to the same DO instance by name:
 
 ```typescript
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Vitest";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Vitest";
 import { expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -259,10 +259,10 @@ test(
     const { urlA, urlB } = yield* stack;
     const client = yield* HttpClient.HttpClient;
 
-    yield* client.post(`${urlA}/`);
-    yield* client.post(`${urlA}/`);
+    yield* client.post(`${urlA}/foo`);
+    yield* client.post(`${urlA}/foo`);
 
-    const res = yield* client.get(`${urlB}/`);
+    const res = yield* client.get(`${urlB}/foo`);
     expect((yield* res.json) as { value: number }).toEqual({ value: 2 });
   }),
 );
@@ -314,9 +314,9 @@ own private set of DO instances using the same class.
 
 Hosting isn't forever — suppose `Counter` should now live under
 `WorkerB` instead of `WorkerA`. A Durable Object class can move
-between Workers **with its data intact**: Cloudflare's
-`transferred_classes` migration re-homes the namespace (same
-instances, same storage) onto the new host's script. Moves are
+between Workers **with its data intact**: Cloudflare transfers the
+namespace (same instances, same storage) onto the new host's
+script. Moves are
 always *declared* — a class that disappears from one Worker and
 appears on another is otherwise ambiguous between "transfer the
 data" and "delete it, start fresh" — so the class states where it
@@ -368,10 +368,10 @@ order correct (the new host uploads first).
 
 ```typescript
 // src/workerB.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import CounterLive, { Counter } from "./object.ts";
 
 export class WorkerB extends Cloudflare.Worker<WorkerB, {}, Counter>()(
@@ -452,11 +452,10 @@ bun alchemy deploy
 ```
 
 `WorkerA` references `WorkerB` through `Counter.from(WorkerB)`, so
-the engine deploys `WorkerB` first. Its upload carries the
-`transferred_classes` migration — the namespace and every stored
-object move to `WorkerB`'s script — and `WorkerA`'s deploy then
-converges on its own (no delete migration is emitted for a class
-that moved away). Every counter keeps its count. Afterwards the
+the engine deploys `WorkerB` first. Its deploy moves the
+namespace and every stored object to `WorkerB`'s script, and
+`WorkerA`'s deploy then converges on its own (nothing is deleted
+for a class that moved away). Every counter keeps its count. Afterwards the
 `transferredFrom` declaration is inert — on fresh stages and on
 every later deploy it does nothing — so leave it in place.
 

@@ -1,4 +1,8 @@
 ---
+import DomainIcon from "./domain/DomainIcon.astro";
+import DomainNode from "./domain/DomainNode.astro";
+import { KIND_ORDER, KINDS, type Kind } from "./domain/kinds.ts";
+
 /**
  * `<DAG />` — server-rendered SVG of a small directed acyclic graph.
  *
@@ -36,9 +40,23 @@ export interface NodeIn {
   type?: string;
   /** Optional layer override (0-indexed left-to-right). Otherwise computed. */
   layer?: number;
+  /**
+   * Fixed grid placement. When every node has `col` and `row`, auto-layout is
+   * skipped and edges are routed by direction: straight along a row or a
+   * column, or an elbow (down, then across) between rows.
+   */
+  col?: number;
+  row?: number;
   /** Visual tone for the node. Defaults to "default". */
   tone?: "default" | "accent" | "warn" | "danger";
+  /**
+   * What the node is in a domain model. Draws it with that kind's shape, icon
+   * and colour (see `./domain/kinds.ts`), and adds a legend of the kinds shown.
+   */
+  kind?: Kind;
 }
+
+export type { Kind } from "./domain/kinds.ts";
 
 export interface EdgeIn {
   from: string;
@@ -60,9 +78,12 @@ interface Props {
 
 const { nodes, edges, direction = "LR", caption } = Astro.props as Props;
 
+const kindsShown = KIND_ORDER.filter((k) => nodes.some((n) => n.kind === k));
+
 // ---------- Layout ----------
 
-const NODE_W = 140;
+// Domain nodes carry an icon beside their label, so they get a little more room.
+const NODE_W = nodes.some((n) => n.kind) ? 164 : 140;
 const NODE_H = 56;
 const NODE_H_TYPED = 64; // slightly taller when subtitle present
 const COL_GAP = 80;
@@ -131,7 +152,18 @@ const tallest = Math.max(...colMaxHeight);
 
 const positions = new Map<string, { x: number; y: number; h: number }>();
 
-if (direction === "LR") {
+const GRID_ROW_GAP = 56;
+const grid = nodes.every((n) => n.col !== undefined && n.row !== undefined);
+
+if (grid) {
+  for (const n of nodes) {
+    positions.set(n.id, {
+      x: PAD + n.col! * (NODE_W + COL_GAP),
+      y: PAD + n.row! * (NODE_H_TYPED + GRID_ROW_GAP),
+      h: NODE_H_TYPED,
+    });
+  }
+} else if (direction === "LR") {
   layers.forEach((col, ci) => {
     const colH = colMaxHeight[ci]!;
     let y = PAD + (tallest - colH) / 2;
@@ -170,7 +202,12 @@ const hasBackEdge = edges.some(
 );
 const BACK_EDGE_GUTTER = 56;
 
-const W =
+const gridCols = grid ? Math.max(...nodes.map((n) => n.col!)) + 1 : 0;
+const gridRows = grid ? Math.max(...nodes.map((n) => n.row!)) + 1 : 0;
+
+const W = grid
+  ? PAD * 2 + gridCols * NODE_W + (gridCols - 1) * COL_GAP
+  :
   direction === "LR"
     ? PAD * 2 +
       layers.length * NODE_W +
@@ -178,7 +215,9 @@ const W =
       (hasBackEdge ? BACK_EDGE_GUTTER : 0)
     : PAD * 2 +
       Math.max(...layers.map((r) => r.length * (NODE_W + COL_GAP) - COL_GAP));
-const H =
+const H = grid
+  ? PAD * 2 + gridRows * NODE_H_TYPED + (gridRows - 1) * GRID_ROW_GAP
+  :
   direction === "LR"
     ? PAD * 2 + tallest + (hasBackEdge ? BACK_EDGE_GUTTER : 0)
     : PAD * 2 +
@@ -198,8 +237,38 @@ interface Edge {
 
 const TIP = 6;
 
+const gridEdge = (e: EdgeIn): Edge => {
+  const a = positions.get(e.from)!;
+  const b = positions.get(e.to)!;
+  const done = (d: string, midX: number, midY: number): Edge => ({
+    d,
+    midX,
+    midY,
+    label: e.label,
+    dashed: e.dashed,
+  });
+  const ay = a.y + a.h / 2;
+  const by = b.y + b.h / 2;
+  if (a.y === b.y) {
+    // Along a row, either way.
+    const [x1, x2] = b.x > a.x ? [a.x + NODE_W, b.x - TIP] : [a.x, b.x + NODE_W + TIP];
+    return done(`M ${x1} ${ay} L ${x2} ${by}`, (x1 + x2) / 2, ay);
+  }
+  const ax = a.x + NODE_W / 2;
+  if (a.x === b.x) {
+    // Along a column, either way.
+    const [y1, y2] = b.y > a.y ? [a.y + a.h, b.y - TIP] : [a.y, b.y + b.h + TIP];
+    return done(`M ${ax} ${y1} L ${ax} ${y2}`, ax, (y1 + y2) / 2);
+  }
+  // An elbow: leave from the top or bottom, then run across into the target's side.
+  const y1 = b.y > a.y ? a.y + a.h : a.y;
+  const x2 = b.x > a.x ? b.x - TIP : b.x + NODE_W + TIP;
+  return done(`M ${ax} ${y1} L ${ax} ${by} L ${x2} ${by}`, (ax + x2) / 2, by);
+};
+
 const buildEdges = (): Edge[] =>
   edges.map((e) => {
+    if (grid) return gridEdge(e);
     const a = positions.get(e.from)!;
     const b = positions.get(e.to)!;
     const aLayer = layerOf.get(e.from)!;
@@ -278,7 +347,7 @@ const buildEdges = (): Edge[] =>
 const edgeShapes = buildEdges();
 ---
 
-<figure class="alc-dag not-content">
+<figure class="alc-dag not-content" data-nosnippet>
   <svg
     class="alc-dag__svg"
     viewBox={`0 0 ${W} ${H}`}
@@ -327,11 +396,21 @@ const edgeShapes = buildEdges();
     {nodes.map((n) => {
       const p = positions.get(n.id)!;
       const tone = n.tone ?? "default";
+      if (n.kind) {
+        return (
+          <g transform={`translate(${p.x}, ${p.y})`}>
+            <DomainNode
+              kind={n.kind}
+              width={NODE_W}
+              height={p.h}
+              label={n.label ?? n.id}
+              type={n.type}
+            />
+          </g>
+        );
+      }
       return (
-        <g
-          class={`alc-dag__node alc-dag__node--${tone}`}
-          transform={`translate(${p.x}, ${p.y})`}
-        >
+        <g class={`alc-dag__node alc-dag__node--${tone}`} transform={`translate(${p.x}, ${p.y})`}>
           <rect
             width={NODE_W}
             height={p.h}
@@ -364,6 +443,18 @@ const edgeShapes = buildEdges();
     })}
   </svg>
 
+  {
+    kindsShown.length > 0 && (
+      <div class="alc-dag__legend">
+        {kindsShown.map((k) => (
+          <span class="alc-dag__key">
+            <DomainIcon kind={k} />
+            {KINDS[k].name}
+          </span>
+        ))}
+      </div>
+    )
+  }
   {caption && <figcaption class="alc-dag__caption">{caption}</figcaption>}
 </figure>
 
@@ -405,6 +496,26 @@ const edgeShapes = buildEdges();
     stroke: var(--alc-danger);
     fill: color-mix(in srgb, var(--alc-danger) 10%, var(--alc-bg-elev-2));
   }
+
+
+
+  .alc-dag__legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.35rem 1rem;
+    margin-top: 0.5rem;
+    font-family: var(--alc-font-mono);
+    font-size: 11.5px;
+    color: var(--alc-fg-3);
+  }
+
+  .alc-dag__key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
 
   .alc-dag__node-label {
     font-family: var(--alc-font-mono);

@@ -1,0 +1,16 @@
+diff --git a/dist/utils/routing/index.js b/dist/utils/routing/index.js
+--- a/dist/utils/routing/index.js
++++ b/dist/utils/routing/index.js
+@@ -72,7 +72,11 @@
+ 	return routesBySlugParam.get(slugParam?.replace(/\/$/, "") || void 0);
+ }
+ function getPaths() {
+-	return routes.map((route) => ({ params: { slug: slugToParam(route.id) } }));
++	const blogCacheKey = routes.filter((route) => route.id.startsWith("blog/")).map((route) => route.entry.digest).join(":");
++	return routes.map((route) => ({
++		params: { slug: slugToParam(route.id) },
++		cacheKey: route.id.startsWith("blog/") ? `${route.entry.digest}:${blogCacheKey}` : route.entry.digest
++	}));
+ }
+ const paths = getPaths();
+ /**

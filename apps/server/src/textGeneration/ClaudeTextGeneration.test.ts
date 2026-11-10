@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
-import { isHostWindows } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,93 +11,45 @@ import * as Schema from "effect/Schema";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { processProbeSource } from "../testUtils/processProbe.ts";
+import {
+  SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+  SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+  SYNTHETIC_CLAUDE_MODEL_CATALOG,
+  SYNTHETIC_CLAUDE_STANDARD_MODEL,
+} from "../provider/ClaudeModelCatalog.testFixtures.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
-const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerClaudeTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-function makeFakeClaudeBinary(dir: string) {
+// The stub behaviour lives in Node so the same implementation runs on Windows,
+// where a shebang file is not executable and would fall through to the real
+// Claude CLI on PATH; `writeFakeCli` picks the launcher shape per host.
+function makeFakeClaudeBinary(dir: string, lifecyclePort?: number) {
   return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const isWindows = yield* isHostWindows;
+    const fs = yield* FileSystem.FileSystem;
+    const platform = yield* HostProcess.Platform;
     const binDir = path.join(dir, "bin");
-    const stubPath = path.join(binDir, "claude-stub.mjs");
-    yield* fs.makeDirectory(binDir, { recursive: true });
-
-    // The stub behaviour lives in Node rather than a `#!/bin/sh` script so the
-    // same implementation is usable on Windows, where a shebang file is not
-    // executable and would fall through to the real Claude CLI on PATH.
-    yield* fs.writeFileString(
-      stubPath,
-      [
-        'const args = process.argv.slice(2).join(" ");',
-        "",
-        "function fail(message, code) {",
-        '  process.stderr.write(message + "\\n");',
-        "  process.exit(code);",
-        "}",
-        "",
-        'let stdinContent = "";',
-        "if (!process.stdin.isTTY) {",
-        "  const chunks = [];",
-        "  for await (const chunk of process.stdin) {",
-        "    chunks.push(chunk);",
-        "  }",
-        '  stdinContent = Buffer.concat(chunks).toString("utf8");',
-        "}",
-        "",
-        "const argsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;",
-        "if (argsMustContain && !args.includes(argsMustContain)) {",
-        '  fail("args missing expected content", 2);',
-        "}",
-        "",
-        "const argsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;",
-        "if (argsMustNotContain && args.includes(argsMustNotContain)) {",
-        '  fail("args contained forbidden content", 3);',
-        "}",
-        "",
-        "const stdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;",
-        "if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {",
-        '  fail("stdin missing expected content", 4);',
-        "}",
-        "",
-        "const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;",
-        "if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {",
-        '  fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);',
-        "}",
-        "",
-        "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
-        "if (stderrText) {",
-        '  process.stderr.write(stderrText + "\\n");',
-        "}",
-        "",
-        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");',
-        "process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);",
-        "",
-      ].join("\n"),
+    const fixturePath = yield* path.fromFileUrl(
+      new URL("./testing/ClaudeTextGeneration.fixture.mjs", import.meta.url),
     );
-
-    if (isWindows) {
-      // Windows resolves executables through PATHEXT, so the entry point has to
-      // carry a real extension. `resolveSpawnCommand` spawns `.cmd` via a shell.
-      yield* fs.writeFileString(
-        path.join(binDir, "claude.cmd"),
-        ["@echo off", 'node "%~dp0claude-stub.mjs" %*', "exit /b %ERRORLEVEL%", ""].join("\r\n"),
-      );
-    } else {
-      const claudePath = path.join(binDir, "claude");
-      yield* fs.writeFileString(
-        claudePath,
-        ["#!/bin/sh", 'exec node "$(dirname "$0")/claude-stub.mjs" "$@"', ""].join("\n"),
-      );
-      yield* fs.chmod(claudePath, 0o755);
-    }
-
+    const source = yield* fs.readFileString(fixturePath);
+    writeFakeCli({
+      directory: binDir,
+      name: "claude",
+      platform,
+      source:
+        lifecyclePort === undefined
+          ? source
+          : `process.on("SIGTERM", () => {}); ${processProbeSource(lifecyclePort)}`,
+    });
     return binDir;
   });
 }
@@ -105,12 +57,15 @@ function makeFakeClaudeBinary(dir: string) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    rejectsNoSessionPersistence?: boolean;
+    lifecyclePort?: number;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -118,205 +73,132 @@ function withFakeClaudeEnv<A, E, R>(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
-    const binDir = yield* makeFakeClaudeBinary(tempDir);
-    const pathDelimiter = (yield* isHostWindows) ? ";" : ":";
-    const previousPath = process.env.PATH;
-    const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
-    const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-    const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
-    const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-    const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-    const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-    const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
-        process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
-
-        if (input.exitCode !== undefined) {
-          process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-        }
-
-        if (input.stderr !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDERR = input.stderr;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_STDERR;
-        }
-
-        if (input.argsMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = input.argsMustContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-        }
-
-        if (input.argsMustNotContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-        }
-
-        if (input.stdinMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = input.stdinMustContain;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-        }
-
-        if (input.configDirMustBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
-        } else {
-          delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-        }
-      }),
-      () =>
-        Effect.sync(() => {
-          process.env.PATH = previousPath;
-
-          if (previousOutput === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_OUTPUT;
-          } else {
-            process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
-          }
-
-          if (previousExitCode === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_EXIT_CODE = previousExitCode;
-          }
-
-          if (previousStderr === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDERR;
-          } else {
-            process.env.T3_FAKE_CLAUDE_STDERR = previousStderr;
-          }
-
-          if (previousArgsMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = previousArgsMustContain;
-          }
-
-          if (previousArgsMustNotContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
-          }
-
-          if (previousStdinMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-          } else {
-            process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previousStdinMustContain;
-          }
-
-          if (previousConfigDirMustBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-          } else {
-            process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
-          }
-        }),
-    );
+    const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
+    const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
+    const hostEnv = yield* HostProcess.Environment;
+    const fakeClaudeEnv: Record<string, string | undefined> = {
+      T3_FAKE_CLAUDE_OUTPUT: input.output,
+      T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence
+        ? "1"
+        : undefined,
+      T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
+      T3_FAKE_CLAUDE_STDERR: input.stderr,
+      T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
+      T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
+      T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
+      T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
+      T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
+    };
+    const environment: NodeJS.ProcessEnv = {
+      ...Object.fromEntries(
+        Object.entries(hostEnv).filter(([name]) => !name.startsWith("T3_FAKE_CLAUDE_")),
+      ),
+      ...Object.fromEntries(
+        Object.entries(fakeClaudeEnv).filter(([, value]) => value !== undefined),
+      ),
+      PATH: `${binDir}${pathDelimiter}${hostEnv.PATH ?? ""}`,
+    };
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
-    const textGeneration = yield* makeClaudeTextGeneration(config);
+    const textGeneration = yield* makeClaudeTextGeneration(
+      config,
+      environment,
+      Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
 
-it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
-  it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
-    withFakeClaudeEnv(
-      {
-        output: JSON.stringify({
-          structured_output: {
-            subject: "Add important change",
-            body: "",
-          },
-        }),
-        argsMustContain: '--settings {"alwaysThinkingEnabled":false}',
-        argsMustNotContain: "--effort",
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/claude-effect",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku-4-5", [
-                { id: "thinking", value: false },
-                { id: "effort", value: "high" },
-              ]),
+it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect(
+    "keeps canonical built-in capabilities when a custom model collides with its alias",
+    () =>
+      withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            structured_output: {
+              title: "Improve orchestration flow",
+              body: "Body",
             },
-          });
+          }),
+          argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generatePrContent({
+              cwd: process.cwd(),
+              baseBranch: "main",
+              headBranch: "feature/claude-effect",
+              commitSummary: "Improve orchestration",
+              diffSummary: "1 file changed",
+              diffPatch: "diff --git a/README.md b/README.md",
+              modelSelection: {
+                ...createModelSelection(
+                  ProviderInstanceId.make("claudeAgent"),
+                  SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+                  [
+                    { id: "effort", value: "max" },
+                    { id: "fastMode", value: true },
+                  ],
+                ),
+              },
+            });
 
-          expect(generated.subject).toBe("Add important change");
-        }),
-    ),
+            expect(generated.title).toBe("Improve orchestration flow");
+          }),
+      ),
   );
 
-  it.effect("forwards Claude fast mode and supported effort", () =>
-    withFakeClaudeEnv(
-      {
-        output: JSON.stringify({
-          structured_output: {
-            title: "Improve orchestration flow",
-            body: "Body",
-          },
-        }),
-        argsMustContain: '--effort max --settings {"fastMode":true}',
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generatePrContent({
-            cwd: process.cwd(),
-            baseBranch: "main",
-            headBranch: "feature/claude-effect",
-            commitSummary: "Improve orchestration",
-            diffSummary: "1 file changed",
-            diffPatch: "diff --git a/README.md b/README.md",
-            modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
-                { id: "effort", value: "max" },
-                { id: "fastMode", value: true },
-              ]),
+  it.effect(
+    "generates thread titles outside the project with tools, skills, and hooks disabled",
+    () =>
+      withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            structured_output: {
+              title:
+                '  "Reconnect failures after restart because the session state does not recover"  ',
             },
-          });
+          }),
+          cwdMustNotBe: process.cwd(),
+          stdinMustContain: "/call-script",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "/call-script",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
 
-          expect(generated.title).toBe("Improve orchestration flow");
-        }),
-    ),
+            expect(generated.title).toBe(
+              sanitizeThreadTitle(
+                '"Reconnect failures after restart because the session state does not recover"',
+              ),
+            );
+          }),
+      ),
   );
 
-  it.effect("generates thread titles through the Claude provider", () =>
+  it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {
-        output: JSON.stringify({
-          structured_output: {
-            title:
-              '  "Reconnect failures after restart because the session state does not recover"  ',
-          },
-        }),
-        stdinMustContain: "Please investigate reconnect failures after restarting the session.",
+        output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
+        stdinMustContain: "Additional instructions:\nUse two to four words.",
       },
       (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateThreadTitle({
-            cwd: process.cwd(),
-            message: "Please investigate reconnect failures after restarting the session.",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("claudeAgent"),
-              model: "claude-sonnet-4-6",
-            },
-          });
-
-          expect(generated.title).toBe(
-            sanitizeThreadTitle(
-              '"Reconnect failures after restart because the session state does not recover"',
-            ),
-          );
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Investigate reconnect failures",
+          instructions: "Use two to four words.",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+          },
         }),
     ),
   );
@@ -327,7 +209,6 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
       const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
       return yield* withFakeClaudeEnv(
         {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           output: JSON.stringify({
             structured_output: {
               title: "Use Claude home",
@@ -343,7 +224,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               message: "thread title",
               modelSelection: {
                 instanceId: ProviderInstanceId.make("claudeAgent"),
-                model: "claude-sonnet-4-6",
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
               },
             });
 
@@ -353,27 +234,208 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     }),
   );
 
-  it.effect("falls back when Claude thread title normalization becomes whitespace-only", () =>
+  it.effect("retries without --no-session-persistence when the Claude CLI rejects it", () =>
     withFakeClaudeEnv(
       {
-        output: JSON.stringify({
-          structured_output: {
-            title: '  """   """  ',
-          },
-        }),
+        output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
+        rejectsNoSessionPersistence: true,
       },
       (textGeneration) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateThreadTitle({
             cwd: process.cwd(),
-            message: "Name this thread.",
+            message: "Investigate reconnect failures",
             modelSelection: {
               instanceId: ProviderInstanceId.make("claudeAgent"),
-              model: "claude-sonnet-4-6",
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
             },
           });
 
-          expect(generated.title).toBe("New thread");
+          expect(generated.title).toBe("Reconnect failures");
+        }),
+    ),
+  );
+
+  it.effect.each([
+    { verbose: false, label: "normal" },
+    { verbose: true, label: "verbose" },
+  ])("unwraps a JSON title in $label Claude output", ({ verbose }) => {
+    const result = {
+      type: "result",
+      structured_output: { title: '{"title": "Refresh ev-stg APP ASG instances"}' },
+    };
+    return withFakeClaudeEnv(
+      { output: JSON.stringify(verbose ? [result] : result) },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Refresh ev-stg APP ASG instances",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.title).toBe("Refresh ev-stg APP ASG instances");
+        }),
+    );
+  });
+
+  it.effect.each([
+    { previousTitle: undefined, label: "generating" },
+    { previousTitle: "Old thread title", label: "regenerating" },
+  ])("reads the result from verbose Claude output when $label a title", ({ previousTitle }) =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify([
+          { type: "system", subtype: "init" },
+          { type: "assistant", message: { content: [] } },
+          { type: "user", message: { content: [] } },
+          { type: "rate_limit_event" },
+          {
+            type: "result",
+            subtype: "success",
+            result: '{"title":"Refresh ev-stg APP ASG Instances"}',
+            structured_output: { title: "Refresh ev-stg APP ASG Instances" },
+          },
+        ]),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Refresh ev-stg APP ASG instances",
+            previousTitle,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.title).toBe("Refresh ev-stg APP ASG Instances");
+        }),
+    ),
+  );
+
+  it.effect.each([
+    ["empty message array", []],
+    ["missing result", [{ type: "assistant", structured_output: { title: "Not a result" } }]],
+    ["invalid title", [{ type: "result", structured_output: { title: 42 } }]],
+    [
+      "final result without structured output",
+      [
+        { type: "result", structured_output: { title: "Earlier result" } },
+        { type: "result", subtype: "error_max_structured_output_retries" },
+      ],
+    ],
+  ] as const)("rejects verbose Claude output with %s", ([, output]) =>
+    withFakeClaudeEnv({ output: JSON.stringify(output) }, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          }),
+        );
+
+        expect(error._tag).toBe("TextGenerationError");
+      }),
+    ),
+  );
+
+  const apiError = "API Error: 400 Model blocked by guardrail: 4 endpoints excluded";
+  const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  const structuredOutputError = "Failed to provide valid structured output after 5 attempts";
+  const structuredOutputFailure = {
+    type: "result",
+    subtype: "error_max_structured_output_retries",
+    is_error: true,
+    errors: [structuredOutputError],
+  };
+  it.effect.each([
+    [
+      "the errors list of a result with no result text",
+      JSON.stringify(structuredOutputFailure),
+      structuredOutputError,
+    ],
+    [
+      "the errors list from verbose output",
+      JSON.stringify([{ type: "system", subtype: "init" }, structuredOutputFailure]),
+      structuredOutputError,
+    ],
+    [
+      "the errors list without CLI telemetry",
+      JSON.stringify({
+        ...structuredOutputFailure,
+        subtype: "error_during_execution",
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a", apiError],
+      }),
+      apiError,
+    ],
+    [
+      "the stdout error over a stderr notice",
+      JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
+      apiError,
+    ],
+    [
+      "the verbose stdout error over a stderr notice",
+      JSON.stringify([
+        { type: "system", subtype: "init" },
+        { type: "result", is_error: true, result: apiError },
+        { type: "result", is_error: true, result: " " },
+      ]),
+      apiError,
+    ],
+    ["stderr when stdout has no error", "not json", wrapperNotice],
+    [
+      "a stdout error naming --no-session-persistence without retrying",
+      JSON.stringify({
+        is_error: true,
+        result: "error: unknown option '--no-session-persistence'",
+      }),
+      "error: unknown option '--no-session-persistence'",
+    ],
+  ] as const)("reports %s when the Claude CLI fails", ([, output, expected]) =>
+    withFakeClaudeEnv({ output, stderr: wrapperNotice, exitCode: 1 }, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          }),
+        );
+
+        expect(error.detail).toBe(`Claude CLI command failed: ${expected}`);
+      }),
+    ),
+  );
+
+  it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(`Claude CLI command failed: ${structuredOutputError}`);
         }),
     ),
   );

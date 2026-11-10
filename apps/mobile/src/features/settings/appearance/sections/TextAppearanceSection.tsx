@@ -10,12 +10,14 @@ import {
   TextAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 export function TextAppearanceSection() {
-  const { isReady, appearance, setBaseFontSize } = useAppearancePreferences();
+  const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
+    useAppearancePreferences();
 
   return (
-    <SettingsSection card title="Text">
+    <SettingsSection title="Text">
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
@@ -28,6 +30,13 @@ export function TextAppearanceSection() {
         step={BASE_FONT_SIZE_STEP}
         value={appearance.baseFontSize}
         valueLabel={`${appearance.baseFontSize} pt`}
+      />
+      <SettingsSwitchRow
+        disabled={!isReady}
+        icon="plusminus"
+        label="Render math"
+        value={mathRenderingEnabled}
+        onValueChange={setMathRenderingEnabled}
       />
     </SettingsSection>
   );

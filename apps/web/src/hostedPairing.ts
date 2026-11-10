@@ -1,6 +1,6 @@
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
-import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "./pairingUrl";
+import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 
 export interface HostedPairingRequest {
   readonly host: string;
@@ -31,7 +31,7 @@ function originFromUrl(value: string): string | null {
   }
 }
 
-export function isHostedStaticApp(url: URL = new URL(window.location.href)): boolean {
+export function isHostedStaticApp(url?: URL): boolean {
   if (configuredBackendUrl()) {
     return false;
   }
@@ -40,8 +40,12 @@ export function isHostedStaticApp(url: URL = new URL(window.location.href)): boo
     return true;
   }
 
+  if (url === undefined && (typeof window === "undefined" || window.location === undefined)) {
+    return false;
+  }
+
   const hostedOrigin = originFromUrl(configuredHostedAppUrl());
-  return hostedOrigin !== null && url.origin === hostedOrigin;
+  return hostedOrigin !== null && (url ?? new URL(window.location.href)).origin === hostedOrigin;
 }
 
 export function readHostedPairingRequest(url: URL = new URL(window.location.href)) {

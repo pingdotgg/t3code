@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   PullRequestReaction,
@@ -9,7 +10,6 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
@@ -20,29 +20,14 @@ import {
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
-} from "./pullRequestReactions.logic";
+  pullRequestReactionsSignature,
+} from "@t3tools/client-runtime/pull-request-reactions";
 
 const PILL_CLASS =
-  "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
 
-/** What the host last said, so a press in flight is forgotten the moment the real counts land. */
-function reactionsSignature(reactions: ReadonlyArray<PullRequestReaction>): string {
-  return reactions
-    .map((reaction) => `${reaction.content}:${reaction.count}:${reaction.viewerHasReacted ? 1 : 0}`)
-    .join(" ");
-}
-
-/**
- * The reaction pills under a remark, and the picker that adds one. The same bar serves the
- * description, a conversation comment and a review thread's comments: what differs between them
- * is only which subject the host is told about.
- *
- * The add button is revealed by hovering the remark it belongs to, the way GitHub's is, so the
- * parent must carry `group`. It stays put once there is something to press it beside, while the
- * picker is open, and whenever it is focused — a control only a mouse can find is no control.
- */
 export function PullRequestReactionBar({
   reactions,
   canReact,
@@ -54,7 +39,7 @@ export function PullRequestReactionBar({
 }: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
-  /** Absent reacts to the change request itself, which is where its description's reactions live. */
+  /** Omit to react to the pull request description. */
   readonly subjectId?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
@@ -66,9 +51,11 @@ export function PullRequestReactionBar({
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
   }>({ signature: "", values: EMPTY_PENDING });
-  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, { reportFailure: false });
+  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
+    reportFailure: false,
+  });
 
-  const signature = reactionsSignature(reactions);
+  const signature = pullRequestReactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(reactions, values);
 
@@ -98,7 +85,7 @@ export function PullRequestReactionBar({
   if (shown.length === 0 && !canReact) return null;
 
   return (
-    <div className={cn("flex flex-wrap items-center gap-1", className)}>
+    <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
       {shown.map((reaction) => (
         <Tooltip key={reaction.content}>
           <TooltipTrigger
@@ -136,16 +123,13 @@ export function PullRequestReactionBar({
                 className={cn(
                   PILL_CLASS,
                   "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                  shown.length === 0 &&
-                    !pickerOpen &&
-                    "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100",
                 )}
               />
             }
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>
-          <PopoverPopup align="start" className="w-auto" side="top" viewportClassName="py-2">
+          <PopoverPopup align="start" side="top" padding="compact">
             <div className="flex items-center gap-0.5">
               {PULL_REQUEST_REACTION_ORDER.map((content) => {
                 const reacted =
@@ -157,7 +141,7 @@ export function PullRequestReactionBar({
                     aria-pressed={reacted}
                     aria-label={pullRequestReactionName(content)}
                     className={cn(
-                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       reacted && "bg-primary/10",
                     )}
                     onClick={() => {

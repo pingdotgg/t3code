@@ -1,103 +1,145 @@
 #!/usr/bin/env node
-// alchemy CLI launcher
-//
-// Resolves the alchemy CLI entrypoint via node module resolution and execs it
-// under whichever runtime the user invoked us with. The shebang forces this
-// launcher to run as node even when bun was the invoker, but bun forwards
-// signals about itself via env vars on every child it spawns:
-//
-//   - `npm_execpath`           → path to bun (set for `bun run <script>`)
-//   - `npm_config_user_agent`  → "bun/<version> ..." (set for `bun run`,
-//                                `bunx`, and direct bun-launched bins)
-//
-// Either signal is enough to know bun is the outer runtime.
-//
-// Dev vs published: when this launcher runs out of an alchemy checkout
-// (i.e. *not* from inside a `node_modules/` tree) and bun is available, we
-// run the .ts source directly so dev iteration is edit → reload, no rebuild.
-// The published tarball ships the .ts files as well (alchemy's `bun`/`worker`
-// exports point at .ts source), but consumers install into `node_modules/`,
-// so the path check sends them to the bundled `alchemy.js` regardless.
-//
-// We use @alchemy.run/node-utils' foreground-child so we can pipe the
-// child's stderr through a filter — upstream hardcodes stdio = [0, 1, 2],
-// so the only way to drop bun's hard-coded watcher warning ("warn: File
-// <path> is not in the project directory and will not be watched", which is
-// noise in our monorepo and has no bun flag to silence) is to own the spawn
-// call. Everything else — signal proxying, watchdog, IPC bridging, exit-code
-// forwarding — matches upstream.
-import { fileURLToPath } from "node:url";
+// @ts-check
+
+import { spawn } from "node:child_process";
+import * as NodeModule from "node:module";
+import { pathToFileURL } from "node:url";
+import * as SemVer from "effect/SemVer";
+import * as SemVerRange from "effect/SemVerRange";
 import path from "pathe";
-import { foregroundChild } from "@alchemy.run/node-utils";
 
-const execpath = (process.env.npm_execpath ?? "").toLowerCase();
-const userAgent = (process.env.npm_config_user_agent ?? "").toLowerCase();
-const invokedByBun = execpath.includes("bun") || userAgent.startsWith("bun/");
+const binDir = path.dirname(import.meta.filename);
+const entry = path.join(binDir, "alchemy.js");
+const args = process.argv.slice(2);
 
-// Derive the bin dir from this launcher's own location rather than
-// require.resolve("alchemy/bin/alchemy.js"). The bundled alchemy.js is a
-// build artifact (tsdown output) and may not exist in a fresh checkout
-// (e.g. CI before `bun run build`); resolving it would throw
-// MODULE_NOT_FOUND before we get a chance to fall back to the .ts source.
-const binDir = path.dirname(fileURLToPath(import.meta.url));
-const jsEntry = path.join(binDir, "alchemy.js");
-const tsEntry = path.join(binDir, "alchemy.ts");
+// Alchemy's own TSX carries `@jsxRuntime automatic` pragmas and sigil's
+// jsx-dev-runtime is the production runtime, so Bun's startup JSX choice
+// (from the caller's tsconfig and NODE_ENV) cannot break the CLI. NODE_ENV
+// still names the mode for everything else.
+process.env.NODE_ENV = "production";
 
-// Treat any install-tree path as published.
-const isDev = !(
-  binDir.includes("/node_modules/") || binDir.includes("\\node_modules\\")
-);
+/**
+ * `bun run`/`bunx` start a node-shebang bin under Node but always point
+ * npm_execpath at bun. npm_config_user_agent only names the package-manager
+ * role (e.g. nub reports `bun/<v>` for a bun project while running Node).
+ */
+const launchedByBun = () => path.basename(process.env.npm_execpath ?? "").startsWith("bun");
 
-// We no longer force bun in dev when node is the invoker because this prevents us from testing in node.
-const runtime = invokedByBun ? "bun" : "node";
+/**
+ * `execve` needs a Node that has it and a platform that does (not Windows),
+ * and must not sever an IPC channel a parent holds to this process.
+ */
+const canReplaceProcess = () =>
+  process.platform !== "win32" && process.execve !== undefined && process.send === undefined;
 
-const args = [];
-
-if (runtime === "bun" && isDev) {
-  // Pin bun's tsconfig to alchemy's, not whatever happens to be in the
-  // invoking workspace's cwd. Bun's default is `$cwd/tsconfig.json`, which
-  // means invoking `alchemy` from e.g. `examples/cloudflare-solidstart`
-  // would transpile alchemy's own .tsx files with that example's JSX
-  // settings (jsx: "preserve", jsxImportSource: "solid-js"), breaking the
-  // React files inside the alchemy CLI.
-  args.push(`--tsconfig-override=${path.join(binDir, "..", "tsconfig.json")}`);
+if (typeof globalThis.Bun !== "undefined") {
+  await runUnderBun();
+} else if (launchedByBun()) {
+  handOffToBun();
+} else {
+  await runUnderNode();
 }
 
-// .ts only runs under bun.
-args.push(runtime === "bun" ? tsEntry : jsEntry, ...process.argv.slice(2));
+/** Already running under bun: nothing to set up. */
+async function runUnderBun() {
+  await import(pathToFileURL(entry).href);
+}
 
-process.on("uncaughtException", (error) => {
-  // STATUS_CONTROL_C_EXIT on Windows — the watchdog inherits Ctrl-C from the
-  // console and exits with this code instead of a SIGINT signal.
-  const WIN_CTRL_C = 3221225786;
-  if (
-    error.message.includes(
-      "foreground-child watchdog process died unexpectedly!",
-    ) &&
-    typeof error.cause === "object" &&
-    error.cause !== null &&
-    "watchedProcess" in error.cause &&
-    error.cause.watchedProcess !== null &&
-    "cmd" in error.cause.watchedProcess &&
-    (error.cause.signal === "SIGINT" || error.cause.code === WIN_CTRL_C)
-  ) {
-    console.log("Interrupted.");
-    process.exit(0);
+/**
+ * Started by bun as a package manager: run the CLI under bun, as asked.
+ * `npm_execpath` is the bun binary itself. Where possible this process is
+ * replaced outright (same pid, fds and process group, so the terminal's
+ * signals and the exit status are the CLI's own); otherwise the CLI runs as
+ * a child sharing this terminal.
+ */
+function handOffToBun() {
+  const bun = /** @type {string} */ (process.env.npm_execpath);
+  const bunArgs = [entry, ...args];
+  try {
+    if (canReplaceProcess()) {
+      process.execve(bun, [bun, ...bunArgs], process.env);
+    } else {
+      runAsChild(bun, bunArgs);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`alchemy: could not start ${bun}: ${message}\n`);
+    process.exit(1);
   }
-  console.error(error);
-});
+}
 
-// Substring match (not regex) — bun may wrap the line in ANSI color codes
-// when stderr is piped to a TTY-aware parent, so anchored regex is fragile.
-//
-// "directory mismatch for directory" is bun's known-benign internal warning
-// triggered by --tsconfig-override (oven-sh/bun#25730): the resolver openat()s
-// the tsconfig basename against a cached dir fd that isn't its parent, falls
-// back to an absolute open, and logs. Bun's own tsconfig-override tests
-// tolerate the same line. Only our dev path passes --tsconfig-override, which
-// is why published installs never see it.
-foregroundChild(runtime, args, {
-  stderrFilter: (line) =>
-    !line.includes("is not in the project directory and will not be watched") &&
-    !line.includes("directory mismatch for directory"),
-});
+/**
+ * Run `program` as a foreground child: signals, IPC messages and the exit
+ * status (or signal) are forwarded so the parent cannot tell the difference.
+ *
+ * @param {string} program
+ * @param {ReadonlyArray<string>} programArgs
+ */
+function runAsChild(program, programArgs) {
+  const child = spawn(program, programArgs, {
+    stdio: process.send ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+  });
+  child.on("error", (error) => {
+    process.stderr.write(`alchemy: could not start ${program}: ${error.message}\n`);
+    process.exit(1);
+  });
+
+  /** @type {Array<NodeJS.Signals>} */
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
+  for (const signal of signals) process.on(signal, () => child.kill(signal));
+
+  if (process.send) {
+    const serializable = /** @param {unknown} message */ (message) =>
+      /** @type {import("node:child_process").Serializable} */ (message);
+    child.on("message", (message, handle) => process.send?.(serializable(message), handle));
+    process.on("message", (message, handle) => child.send(serializable(message), handle));
+    process.on("disconnect", () => child.disconnect());
+  }
+
+  child.on("close", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+}
+
+/**
+ * Plain Node: check the version, install the Oxc TypeScript loader, then
+ * run the CLI. A checkout (outside node_modules) runs from `src/` with the
+ * dev-mode hooks; a published install runs its built `lib/`.
+ */
+async function runUnderNode() {
+  if (!supportsModuleHooks()) {
+    process.stderr.write(
+      `alchemy: node ${process.versions.node} is not supported. ` +
+        "Upgrade to node 22.22.3, 24.11.1 or newer.\n",
+    );
+    process.exit(1);
+  }
+  NodeModule.enableCompileCache?.();
+  // `--fast-distilled` opts in to distilled's lazy service stubs (see
+  // register-oxc.js). The env var carries the choice to the loader and to
+  // every Node child alchemy starts with it (dev exec child, sidecar).
+  // Flags after a `--` separator belong to someone else.
+  const separator = args.indexOf("--");
+  if ((separator === -1 ? args : args.slice(0, separator)).includes("--fast-distilled")) {
+    process.env.ALCHEMY_FAST_DISTILLED = "1";
+  }
+  const isCheckout = !(binDir.includes("/node_modules/") || binDir.includes("\\node_modules\\"));
+  const register = isCheckout ? "register-dev-mode.js" : "register-oxc.js";
+  await import(new URL(register, import.meta.url).href);
+  await import(pathToFileURL(entry).href);
+}
+
+/**
+ * Oxc's loader needs complete `module.registerHooks` support: 24.11.1 and
+ * 25.1 carry the load-step fix for imported CommonJS (nodejs/node#59929).
+ * Keep this in sync with `isRegisterHooksSupported` in src/Util/Node.ts; the
+ * launcher must run before any TypeScript can be loaded.
+ */
+function supportsModuleHooks() {
+  return SemVerRange.matches(
+    SemVerRange.parseUnsafe(">=22.22.3 <23.0.0-0 || >=24.11.1 <25.0.0-0 || >=25.1.0"),
+    SemVer.parseUnsafe(process.versions.node),
+    { includePrerelease: true },
+  );
+}

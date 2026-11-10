@@ -20,12 +20,13 @@ A Resource Provider implements the following Lifecycle Operations:
 - **Diff** - compares new props with old props and determines if the Resource needs to be updated or replaced. For updates, it can also specify a list of Stable Properties that will not be changed by the update.
 - **Read** - reads the current state of a Resource and returns the current Output Attributes. May return `Unowned(attrs)` to signal an existing-but-foreign resource that the engine should refuse to take over unless `--adopt` is set.
 - **Pre-Create** - an optional operation that creates a stub of a Resource before reconcile runs. Used to resolve circular dependencies — e.g. Function A and B depend on each other, so we create a stub of Function A first and then `reconcile` later wires up the real dependency.
+- **Observe** - an optional, read-only companion to Pre-Create. A cycle pre-creates on unresolved props, before Read can check ownership, so the engine first asks Observe what exists at the identity Pre-Create would claim. It returns the same shape as Read (`undefined`, attributes, or `Unowned(attrs)`), or `Unresolved` when that identity depends on props that haven't resolved yet; the engine refuses an `Unowned` result unless `--adopt` is set, and checks an `Unresolved` identity once it resolves, before Reconcile. Implement it whenever Pre-Create can write to a resource that already exists.
 - **Reconcile** - converges a Resource's actual cloud state to the desired state described by the new Input Properties. Called for both first-time provisioning and subsequent updates. The provider receives `output` (current Attributes) and `olds` (previous Props) which may both be `undefined` on a greenfield create, both defined on an update, or `output !== undefined && olds === undefined` on an adoption. See the **Reconciler doctrine** section below for the required shape.
 - **Delete** - deletes an existing Resource. It must be designed as idempotent because it is always possible for state persistence to fail after the delete operation is called. If the resource doesn't exist during deletion, it should not be considered an error.
 - **Capability** - a runtime requirement of a Function (e.g. require read access to an `R2Bucket`, or `SQS.SendMessage` on a `SQS.Queue`). A Capability is modeled as one or more `Binding.Service`s. Where the underlying API distinguishes access levels, split it into `Read` / `Write` / `ReadWrite` services (see the **Read/Write/ReadWrite binding convention** below); otherwise a single service suffices. Each service typically ships two interchangeable implementations: a native **binding** (`*Binding`) and a token-scoped **HTTP** client (`*Http`).
 - **Binding.Service** - an Effect Service that exposes a `.bind(resource)` method returning a typed runtime client. Its outer (init) Effect resolves the host Function/Worker and its environment, then registers the deploy-time binding — environment variables, IAM policy statements (AWS), or a native Cloudflare binding — by calling ``host.bind`${resource}`(data)``, guarded by `!globalThis.__ALCHEMY_RUNTIME__` so it is a no-op once running inside the deployed Function/Worker. Provided as a Layer on the **Function/Worker** Effect so it gets bundled into the Lambda/Worker. See [Binding](./packages/alchemy/src/Binding.ts).
 - **Binding** - data attached to a target Function/Worker via ``host.bind`${resource}`(data)`` from inside a `Binding.Service`. The binding data is collected on the Stack during plan/deploy. Bindings enable circular references between Resources — e.g. a capability binds `{ policyStatements: [...] }` (AWS) or `{ bindings: [...] }` (Cloudflare) onto the host. The Resource Provider then receives the resolved binding data in its `reconcile` lifecycle operation via the `bindings` parameter.
-- **Binding Contract** - the shape of data a Resource accepts from Bindings. For example, a Lambda Function accepts `{ env?: Record<string, any>, policyStatements?: PolicyStatement[] }` because it needs environment variables and IAM policies. A Cloudflare Worker accepts `{ bindings: Worker.Binding[] }` for its native binding system. The Binding Contract is declared as the fourth type parameter on the `Resource` interface. See [Lambda Function](./packages/alchemy/src/AWS/Lambda/Function.ts) and [Cloudflare Worker](./packages/alchemy/src/Cloudflare/Workers/Worker.ts).
+- **Binding Contract** - the shape of data a Resource accepts from Bindings. For example, a Lambda Function accepts `{ env?: Record<string, any>, policyStatements?: PolicyStatement[] }` because it needs environment variables and IAM policies. A Cloudflare Worker accepts `{ bindings: Worker.Binding[] }` for its native binding system. The Binding Contract is declared as the fourth type parameter on the `Resource` interface. See [Lambda Function](./packages/aws/src/Lambda/Function.ts) and [Cloudflare Worker](./packages/cloudflare/src/Workers/Worker.ts).
 - **Dependency** - Resources depend on other Resources through two mechanisms:
   - Output Properties of one Resource passed as Input Properties to another Resource (non-circular, directed acyclic graph)
   - Bindings that attach data (IAM policies, env vars, Cloudflare bindings) from one Resource to another, enabling circular references between Resources.
@@ -48,52 +49,67 @@ A Resource Provider implements the following Lifecycle Operations:
 
 # File System Conventions
 
+First-class sibling repositories we maintain live in `submodules/`:
+
+- `submodules/distilled` — generated Effect SDKs (workspace packages). Initialized by `git submodule update --init`. In a linked Alchemy worktree, the `post-checkout` hook (`scripts/bootstrap-distilled.mjs`) adds it as a worktree of the primary checkout's distilled and clones unchanged files from there, so on APFS, btrfs or XFS it shares their disk blocks (about 1.1 GB saved per worktree). `ALCHEMY_DISTILLED_CLONE=0` writes a full copy instead.
+- `submodules/floci` — our fork of the local AWS emulator. Skipped by default; fetch with `git submodule update --init --checkout -- submodules/floci`.
+
 Each Service's Resources follow the same pattern. Resource contract and provider are co-located in the same file. Each Capability lives in its own file(s) named after the capability and access level (`Binding.Service` contract + the `*Binding` / `*Http` implementations).
 
 ```sh
 # source files
-packages/alchemy/src/{Cloud}/{Service}/index.ts         # re-exports resources, capability contracts, and impl layers
-packages/alchemy/src/{Cloud}/{Service}/{Resource}.ts    # resource contract + resource provider
-packages/alchemy/src/{Cloud}/{Service}/{Capability}.ts  # Binding.Service contract + runtime client interface
+packages/{cloud}/src/{Service}/index.ts         # re-exports resources, capability contracts, and impl layers
+packages/{cloud}/src/{Service}/{Resource}.ts    # resource contract + resource provider
+packages/{cloud}/src/{Service}/{Capability}.ts  # Binding.Service contract + runtime client interface
 # test files
-packages/alchemy/test/{Cloud}/{Service}/{Resource}.test.ts
+packages/integration-tests/test/{Cloud}/{Service}/{Resource}.test.ts
 # docs (auto-generated from source-code JSDoc - DO NOT manually edit)
-website/src/content/docs/providers/{Cloud}/{Resource}.md  # API reference, generated by `bun generate:api-reference`
+website/src/content/docs/providers/{Cloud}/{Resource}.md  # API reference, generated by `pnpm docs:gen`
 ```
 
 A capability that exposes distinct access levels is split into a contract per level plus interchangeable native-binding and HTTP implementations, with shared scaffolding kept in *un-exported* helper files (see the **Read/Write/ReadWrite binding convention** below). For example, the Cloudflare R2 bucket capability:
 
 ```sh
-packages/alchemy/src/Cloudflare/R2/BucketTypes.ts          # shared types + error (exported)
-packages/alchemy/src/Cloudflare/R2/BucketRead.ts           # BucketRead Binding.Service + ReadBucketClient (exported)
-packages/alchemy/src/Cloudflare/R2/BucketWrite.ts          # BucketWrite Binding.Service + WriteBucketClient (exported)
-packages/alchemy/src/Cloudflare/R2/BucketReadWrite.ts      # BucketReadWrite Binding.Service + ReadWriteBucketClient (exported)
-packages/alchemy/src/Cloudflare/R2/BucketBinding.ts        # shared worker-binding scaffolding (NOT exported from index)
-packages/alchemy/src/Cloudflare/R2/BucketReadBinding.ts    # ReadBucketBinding layer + makeRead (exported)
-packages/alchemy/src/Cloudflare/R2/BucketWriteBinding.ts   # WriteBucketBinding layer + makeWrite (exported)
-packages/alchemy/src/Cloudflare/R2/BucketReadWriteBinding.ts # ReadWriteBucketBinding layer (exported)
-packages/alchemy/src/Cloudflare/R2/BucketHttp.ts           # shared HTTP/token scaffolding (NOT exported from index)
-packages/alchemy/src/Cloudflare/R2/BucketReadHttp.ts       # ReadBucketHttp layer (exported)
-packages/alchemy/src/Cloudflare/R2/BucketWriteHttp.ts      # WriteBucketHttp layer (exported)
-packages/alchemy/src/Cloudflare/R2/BucketReadWriteHttp.ts  # ReadWriteBucketHttp layer (exported)
+packages/cloudflare/src/R2/BucketTypes.ts          # shared types + error (exported)
+packages/cloudflare/src/R2/BucketRead.ts           # BucketRead Binding.Service + ReadBucketClient (exported)
+packages/cloudflare/src/R2/BucketWrite.ts          # BucketWrite Binding.Service + WriteBucketClient (exported)
+packages/cloudflare/src/R2/BucketReadWrite.ts      # BucketReadWrite Binding.Service + ReadWriteBucketClient (exported)
+packages/cloudflare/src/R2/BucketBinding.ts        # shared worker-binding scaffolding (NOT exported from index)
+packages/cloudflare/src/R2/BucketReadBinding.ts    # ReadBucketBinding layer + makeRead (exported)
+packages/cloudflare/src/R2/BucketWriteBinding.ts   # WriteBucketBinding layer + makeWrite (exported)
+packages/cloudflare/src/R2/BucketReadWriteBinding.ts # ReadWriteBucketBinding layer (exported)
+packages/cloudflare/src/R2/BucketHttp.ts           # shared HTTP/token scaffolding (NOT exported from index)
+packages/cloudflare/src/R2/BucketReadHttp.ts       # ReadBucketHttp layer (exported)
+packages/cloudflare/src/R2/BucketWriteHttp.ts      # WriteBucketHttp layer (exported)
+packages/cloudflare/src/R2/BucketReadWriteHttp.ts  # ReadWriteBucketHttp layer (exported)
 ```
 
 Examples of actual paths:
 
 ```sh
-packages/alchemy/src/AWS/S3/Bucket.ts          # S3 Bucket resource + provider
-packages/alchemy/src/AWS/S3/GetObject.ts       # S3 GetObject capability (Binding.Service)
-packages/alchemy/src/AWS/S3/PutObject.ts       # S3 PutObject capability (Binding.Service)
-packages/alchemy/src/AWS/SQS/Queue.ts          # SQS Queue resource + provider
-packages/alchemy/src/AWS/SQS/SendMessage.ts    # SQS SendMessage capability
-packages/alchemy/src/AWS/Kinesis/Stream.ts     # Kinesis Stream resource + provider
-packages/alchemy/src/AWS/Kinesis/PutRecord.ts  # Kinesis PutRecord capability
-packages/alchemy/src/AWS/Lambda/Function.ts    # Lambda Function resource + provider
-packages/alchemy/src/AWS/DynamoDB/Table.ts     # DynamoDB Table resource + provider
-packages/alchemy/src/AWS/DynamoDB/GetItem.ts   # DynamoDB GetItem capability
-packages/alchemy/src/AWS/EC2/Vpc.ts            # VPC resource + provider
-packages/alchemy/src/AWS/EC2/Subnet.ts         # Subnet resource + provider
+packages/aws/src/S3/Bucket.ts          # S3 Bucket resource + provider
+packages/aws/src/S3/GetObject.ts       # S3 GetObject capability (Binding.Service)
+packages/aws/src/S3/PutObject.ts       # S3 PutObject capability (Binding.Service)
+packages/aws/src/SQS/Queue.ts          # SQS Queue resource + provider
+packages/aws/src/SQS/SendMessage.ts    # SQS SendMessage capability
+packages/aws/src/Kinesis/Stream.ts     # Kinesis Stream resource + provider
+packages/aws/src/Kinesis/PutRecord.ts  # Kinesis PutRecord capability
+packages/aws/src/Lambda/Function.ts    # Lambda Function resource + provider
+packages/aws/src/DynamoDB/Table.ts     # DynamoDB Table resource + provider
+packages/aws/src/DynamoDB/GetItem.ts   # DynamoDB GetItem capability
+packages/aws/src/EC2/Vpc.ts            # VPC resource + provider
+packages/aws/src/EC2/Subnet.ts         # Subnet resource + provider
 ```
+
+## Package boundaries
+
+`packages/alchemy` is the provider-free core (engine, CLI, state, bundling, runtime hosts). Every provider is its own package under `packages/` (`@alchemy.run/aws`, `@alchemy.run/cloudflare`, `@alchemy.run/gcp`, …), as are shared building blocks (`@alchemy.run/docker`, `@alchemy.run/kubernetes`, `@alchemy.run/redis`, `@alchemy.run/sql`, `@alchemy.run/domain`). Core never imports a provider package; a provider reaches core only through `alchemy/*` specifiers and declares its CLI, auth and state stores through its `Contributions` module.
+
+A provider package's `exports` are generated from `src/`: its root, one entry per directory `index.ts` (`@alchemy.run/aws/S3`), and `./*` for every file (`@alchemy.run/aws/S3/Bucket`). Run `pnpm exports:sync` after adding or removing a directory; CI runs `pnpm exports:check`. Name a module nobody outside the package should import `internal.ts`, or put it under an `internal/` directory: published packages block both, and package source must not import another package's `internal/`.
+
+A package that uses another declares it in `package.json`: a `dependency` when its own providers always need it (AWS and GCP depend on `@alchemy.run/kubernetes` for their cluster adapters), an optional `peerDependency` (plus a `devDependency`) for an opt-in integration (`@alchemy.run/drizzle` on `@alchemy.run/cloudflare`). A package's own `declare global` block hides alchemy's globals under TypeScript 7, so build-time globals live in core's `Phase.ts`, and each package's `src/globals.d.ts` imports them.
+
+Provider suites, and core suites that deploy to a provider, live in `packages/integration-tests` and run with `pnpm test:integration`; `packages/alchemy/test` stays provider-free.
 
 # The Resource Factory Process
 
@@ -108,9 +124,9 @@ Alchemy resource coverage is produced as a **software factory**: fleets of agent
  update statuses <── regenerate service <── patch distilled
 ```
 
-1. **Catalog** — fan out research agents over the provider's distilled service modules (one batch per thematic group). Each agent reads the generated SDK (`distilled/packages/{cloud}/src/services/{service}.ts`), cross-references the vendor API docs, and writes a self-contained design spec to `processes/{Cloud}/catalog/{service}.md`: resources, namespaces, props/attrs with replacement rules, lifecycle-to-operation mapping, scope (account/zone), testability, priority. The coordinator aggregates a machine-readable `summary.json` + human `INDEX.md` that tracks `implemented | partial | missing` per resource — this is the factory's order book.
-2. **Implement + test** in waves (below). Tests run against the real cloud (`bun run test --profile testing`); zone-scoped tests use the standing test zone (`alchemy-test-2.us` via `findZoneByName`).
-3. **Patch the SDK, never the consumer** — every `UnknownCloudflareError`, out-of-union status error, or wrong request/response schema found by a test becomes a patch under `distilled/packages/{cloud}/patches/{service}/{op}.json` (see the Typed Error Doctrine section). Regenerate only that service. The typed union improves for every future consumer of the SDK — that is the flywheel's output.
+1. **Catalog** — fan out research agents over the provider's distilled service modules (one batch per thematic group). Each agent reads the generated SDK (`submodules/distilled/packages/{cloud}/src/services/{service}.ts`), cross-references the vendor API docs, and writes a self-contained design spec to `processes/{Cloud}/catalog/{service}.md`: resources, namespaces, props/attrs with replacement rules, lifecycle-to-operation mapping, scope (account/zone), testability, priority. The coordinator aggregates a machine-readable `summary.json` + human `INDEX.md` that tracks `implemented | partial | missing` per resource — this is the factory's order book.
+2. **Implement + test** in waves (below). Tests run against the real cloud (`pnpm test --profile testing`); zone-scoped tests use the standing test zone (`alchemy-test-2.us` via `findZoneByName`).
+3. **Patch the SDK, never the consumer** — every `UnknownCloudflareError`, out-of-union status error, or wrong request/response schema found by a test becomes an RFC 6902 JSON Patch against the service's Smithy model, under `submodules/distilled/packages/{cloud}/patches/{service}/{op}.json` (see the Typed Error Doctrine section). Regenerate only that service. The typed union improves for every future consumer of the SDK — that is the flywheel's output.
 4. **Update the catalog** statuses after each wave and pick the next batch from the order book. Repeat until everything left is documented as out of scope (deprecated APIs, billing/data-only endpoints, closed-beta, needs-external-systems).
 
 ## Orchestration rules (the coordinator)
@@ -125,14 +141,14 @@ Alchemy resource coverage is produced as a **software factory**: fleets of agent
 
 ## Resource budget: one type-checker for the whole factory
 
-`tsc -b` over the workspace is expensive; dozens of agents running it concurrently thrashes the machine (and concurrent `tsbuildinfo` writes race). Instead:
+`tsrs -b` over the workspace is expensive; dozens of agents running it concurrently thrashes the machine (and concurrent `tsbuildinfo` writes race). Instead:
 
-- **Agents are banned** from running `tsc` or `bun run build` (root or distilled) in any form. The coordinator owns type-checking and runs a one-shot `bun tsc -b` at wave boundaries.
-- **The test runner resolves distilled from `src/*.ts` directly, NOT the built `lib/`** (`alchemy-test` runs in plain bun, which resolves the `bun` export condition natively). So a regenerated service is **immediately test-visible** the moment `bun scripts/generate.ts --service {service}` (+ oxlint/oxfmt) finishes — there is nothing to rebuild and **nothing to wait for**. Do NOT sleep and do NOT gate a test re-run on a build after regenerating. This applies to response-schema patches as well as error-tag-only patches.
+- **Agents are banned** from running `tsrs`/`tsc` or `pnpm build` (root or distilled) in any form. The coordinator owns type-checking and runs a one-shot `pnpm exec tsrs -b` at wave boundaries.
+- **The test runner resolves distilled from `src/*.ts` directly, NOT the built `lib/`** (`alchemy-test` runs in plain bun, which resolves the `bun` export condition natively). So a regenerated service is **immediately test-visible** the moment `bun scripts/generate.ts --resource {service}` (+ oxfmt) finishes — there is nothing to rebuild and **nothing to wait for**. Do NOT sleep and do NOT gate a test re-run on a build after regenerating. This applies to response-schema patches as well as error-tag-only patches.
 
 ## Speed doctrine: never wait on a hang
 
-- Run tests with `bun run test` (works from the repo root or `packages/alchemy`; suite paths are relative to `packages/alchemy`, e.g. `test/Cloudflare/...`). Wrap **every** test invocation in a hard kill: `timeout 240 bun run test <suite> --profile testing`. Hitting the wall **is** the failure — read the partial output (and the run's log under `.alchemy/log/test/`), find the hang (unbounded retry, infinite pagination, the engine deadlock below), fix the root cause. Never just re-run hoping. The runner also prints the currently-running tests whenever nothing finishes for 10s — use that list to identify the hang.
+- Run tests with `pnpm test` (works from the repo root or `packages/alchemy`; suite paths are relative to `packages/alchemy`, e.g. `test/Cloudflare/...`). The runner enforces per-test timeouts and prints the currently-running tests whenever nothing finishes for 10s — use that list to identify a hang, read the run's log under `.alchemy/log/test/`, find the cause (unbounded retry, infinite pagination, the engine deadlock below), and fix the root cause. Never just re-run hoping.
 - Per-test timeout ≤ 90–120s (`{ timeout: ... }` on the test, or `--timeout` for the whole run). A suite needing more than ~3–5 minutes total is a bug.
 - Every `Effect.retry`/`Effect.repeat` is bounded: `times ≤ 8–10`, total backoff under ~45–60s. Never poll for asynchronous provisioning slower than ~90s — skipIf-gate instead.
 - **Known engine bug**: a deploy that *replaces* a resource while simultaneously *removing* its old dependency deadlocks. Keep both dependencies deployed across replacement steps in tests (see `test/Cloudflare/R2/BucketEventNotification.test.ts`).
@@ -156,17 +172,17 @@ A wave task prompt is a contract. Include, every time:
 1. The **distilled service the agent owns** and the resources to build (with namespace + directory).
 2. **Assess-first** instruction (finish partial work, don't rewrite).
 3. The reading list: this file's Reconciler doctrine + Typed Error Doctrine, the catalog spec, the distilled service module + existing patches, current exemplar resources/tests (account-level CRUD, zone singleton capture-and-restore, observe-before-delete), and the registration files.
-4. The **type-check/build ban** (above) — agents never run `tsc`/`bun run build`; the coordinator owns type-checking.
+4. The **type-check/build ban** (above) — agents never run `tsc`/`pnpm build`; the coordinator owns type-checking.
 5. The **speed doctrine** (above) verbatim — agents rediscover unbounded waits otherwise.
 6. The **Typed Error Doctrine** hard rule with the patch-regenerate command for *their* service only.
 7. Registration discipline for the shared files, including the nested-mergeAll note.
 8. Test requirements: `test.provider`, start **and** end with `stack.destroy()`, deterministic names (engine default or constant), out-of-band verification via distilled, typed wait-until-gone, replacement coverage where applicable.
-9. Known footguns: `diff` receives `Input<Props>` — narrow with `isResolved(news)` before property access; never `Input<T>` in declared Props; Effect 4 APIs (`Effect.result` + `Result.isSuccess/isFailure`, not `Effect.either`/`effect/Either`); request-schema patch keys are camelCase, response keys are wire snake_case; fixtures (CSRs, PEMs, JWKS) are generated once and checked in as constants, never at test time.
+9. Known footguns: `diff` receives `Input<Props>` — narrow with `isResolved(news)` before property access; never `Input<T>` in declared Props; Effect 4 APIs (`Effect.result` + `Result.isSuccess/isFailure`, not `Effect.either`/`effect/Either`); JSON Patches address the Smithy model, so shape IDs are `com.cloudflare.{service}#Name` and member names are wire names (snake_case) — the camelCase TS surface is derived at codegen; fixtures (CSRs, PEMs, JWKS) are generated once and checked in as constants, never at test time.
 10. A **structured result schema**: `{ service, resources, testsPassed, testCommand, files, patches (with reasons), skippedTests (with exact errors), notes }` — the coordinator aggregates these into the catalog.
 
 # Documentation Generation
 
-**Source of truth:** The source code is the single source of truth for all API documentation. JSDoc comments in `packages/alchemy/src/**/*.ts` are extracted and used to generate the public API reference markdown.
+**Source of truth:** The source code is the single source of truth for all API documentation. JSDoc comments in `packages/*/src/**/*.ts` are extracted and used to generate the public API reference markdown.
 
 :::warning
 **Never edit the generated markdown files** under `website/src/content/docs/providers/{Cloud}/`. They are overwritten on every regeneration.
@@ -177,17 +193,53 @@ To "update the docs", edit the JSDoc on the source `.ts` file (resource-level JS
 **How to generate docs:**
 
 ```sh
-bun generate:api-reference   # -> website/src/content/docs/providers/{Cloud}/{Resource}.md
+pnpm docs:gen   # -> website/src/content/docs/providers/{Cloud}/{Resource}.md
 ```
 
 This is the only doc generator that produces user-facing output. ([scripts/generate-api-reference.ts](./scripts/generate-api-reference.ts)) does the following:
 
-1. Discovers resource files in `packages/alchemy/src/{Cloud}/{Service}/`
-2. Parses TypeScript with `ts-morph`
-3. Extracts the resource-level summary plus `@section` / `@example` blocks from JSDoc
-4. Writes one markdown file per resource at `website/src/content/docs/providers/{Cloud}/{Resource}.md`
+1. Discovers documented files across its configured source roots — `packages/{cloud}/src/{Service}/` plus flat single-provider packages like `packages/better-auth/src/` (mapped onto a synthetic provider directory, e.g. `BetterAuth/`)
+2. Parses TypeScript with the TypeScript 7 API shipped by `tsrs` (`tsrs/unstable/*`)
+3. Extracts the page-level summary plus Markdown section/example blocks from JSDoc on the export tagged `@resource`, `@binding`, `@layer`, or `@primitive` (a building block exported as its module's `make`, e.g. `Domain.Event`; its page is named after the file)
+4. Writes one markdown file per page at `website/src/content/docs/providers/{Provider}/{Name}.md`
 
-After editing JSDoc on a resource, run `bun generate:api-reference` to refresh the website docs.
+**Layer pages** (`@layer`) document exported Layer factories — the pluggable implementations of a Context service (e.g. better-auth's database layers). Alongside the shared tags, a Layer declares what it satisfies and needs:
+
+```typescript
+/**
+ * Neon database layer for Better Auth over Neon's serverless driver.
+ *
+ * ### Connecting from a Worker or Lambda
+ * **Example:** Worker or Lambda with Neon-backed Better Auth
+ * ```typescript
+ * // ...
+ * ```
+ *
+ * @layer
+ * @provides BetterAuth.Database
+ * @peer @neondatabase/serverless
+ * @product Neon
+ */
+export const Neon = (url: ConnectionSource, options?: NeonOptions): Layer.Layer<Database> => ...
+```
+
+- `@provides <Service.Tag>` — the Context service tag(s) the Layer satisfies (repeatable)
+- `@peer <package>` — optional peer dependencies the Layer needs at runtime (repeatable)
+
+Both render as a metadata line under the page's `Source:` blockquote. Every Layer implementation should carry these annotations — a Layer without them is an undocumented integration surface.
+
+Keep all API-generator metadata tags (`@resource`, `@binding`, `@layer`,
+`@primitive`, `@product`, `@category`, `@title`, `@provides`, and `@peer`) together at the very end of
+the JSDoc block. Do not put prose, sections, or examples after them: TypeScript
+treats subsequent content as part of the block tag, which breaks editor JSDoc
+rendering. The generator also supports `@group` as an alias for `@category` and
+`@label` as an alias for `@product`. `@title <Heading>` overrides a section's
+heading, which is otherwise the export name, for when the name alone is ambiguous
+on its page (`SQL.D1` documents as `SQL` on the D1 page).
+
+After editing JSDoc on a resource, run `pnpm docs:gen` to refresh the website
+docs. Run `pnpm docs:check-jsdoc` to validate the source layout, or
+`pnpm docs:fix-jsdoc` to normalize it automatically.
 
 **Writing good documentation:** When adding or updating a resource, ensure all Props and Attrs have JSDoc comments:
 
@@ -211,13 +263,15 @@ The `@default` tag is used to document default values and will appear in the gen
 
 ### Examples and Sections (IMPORTANT)
 
-**Examples are critical for documentation.** Every resource should have examples demonstrating common use cases. Use `@section` and `@example` JSDoc tags on the main Resource export to organize examples into a navigable table of contents.
+**Examples are critical for documentation.** Every resource should have examples demonstrating common use cases. Use Markdown headings and labels on the main Resource export to organize examples into a navigable table of contents.
 
 **Format:**
 
-- `@section <Section Title>` - Creates a heading in the Examples section and adds an entry to the Quick Reference table of contents
-- `@example <Example Title>` - Creates a subheading for a specific code example (must follow a `@section`)
+- `### <Section Title>` - Creates a heading in the Examples section and adds an entry to the Quick Reference table of contents
+- `**Example:** <Example Title>` - Creates a labeled code example (must follow a section heading)
+- A level-three heading that is ordinary page prose rather than an example section must end with `<!-- api-prose -->`; the generator removes the marker and preserves it as `###` in the output
 - Code blocks inside examples use standard markdown fenced code blocks (` `)
+- Put the API-generator metadata tags after all sections and examples
 
 **Example:**
 
@@ -225,28 +279,28 @@ The `@default` tag is used to document default values and will appear in the gen
 /**
  * An S3 bucket for storing objects.
  *
- * @section Creating a Bucket
- * @example Basic Bucket
+ * ### Creating a Bucket
+ * **Example:** Basic Bucket
  * ```typescript
  * const bucket = yield* Bucket("my-bucket", {});
  * ```
  *
- * @example Bucket with Force Destroy
+ * **Example:** Bucket with Force Destroy
  * ```typescript
  * const bucket = yield* Bucket("my-bucket", {
  *   forceDestroy: true,
  * });
  * ```
  *
- * @section Reading Objects
- * @example Get Object from Bucket
+ * ### Reading Objects
+ * **Example:** Get Object from Bucket
  * ```typescript
  * const response = yield* getObject(bucket, { key: "my-key" });
  * const body = yield* Effect.tryPromise(() => response.Body?.transformToString());
  * ```
  *
- * @section Writing Objects
- * @example Put Object to Bucket
+ * ### Writing Objects
+ * **Example:** Put Object to Bucket
  * ```typescript
  * yield* putObject(bucket, {
  *   key: "hello.txt",
@@ -254,13 +308,15 @@ The `@default` tag is used to document default values and will appear in the gen
  *   contentType: "text/plain",
  * });
  * ```
+ *
+ * @resource
  */
 export const Bucket = Resource<...>("AWS.S3.Bucket");
 ````
 
 This generates:
 
-1. A "Quick Reference" section with links to each `@section`
+1. A "Quick Reference" section with links to each `###` section
 2. An "Examples" section with organized code examples under each section heading
 
 **Best practices for examples:**
@@ -374,30 +430,86 @@ Key invariants:
 
 The canonical reference reconcilers cover the common shapes:
 
-- [S3 Bucket](./packages/alchemy/src/AWS/S3/Bucket.ts) — uses `ensureBucketExists` + `syncBucketTags` + `syncBucketPolicy` helpers; each helper is itself a tiny reconciler.
-- [SQS Queue](./packages/alchemy/src/AWS/SQS/Queue.ts) — observe via `getQueueUrl`, ensure via `createQueue` (tolerates `QueueNameExists` race), sync attributes by diffing `getQueueAttributes` against desired, sync tags.
-- [Kinesis Stream](./packages/alchemy/src/AWS/Kinesis/Stream.ts) — many mutable aspects (mode, shards, retention, encryption, metrics), each its own observed-vs-desired sync block.
-- [DynamoDB Table](./packages/alchemy/src/AWS/DynamoDB/Table.ts) — multi-API observation (table + tags + PITR + TTL), per-aspect diffing, GSI delta application.
-- [EC2 Vpc](./packages/alchemy/src/AWS/EC2/Vpc.ts) — auto-assigned id, observe via `describeVpcs([output.vpcId])` with NotFound fallback to create, sync DNS attrs by reading `describeVpcAttribute`, sync tags from observed `vpc.Tags`.
-- [Lambda Function](./packages/alchemy/src/AWS/Lambda/Function.ts) — uses `createOrUpdateFunction` / `createOrUpdateFunctionUrl` / `attachBindings` helpers, each idempotent.
-- [Cloudflare Worker](./packages/alchemy/src/Cloudflare/Workers/Worker.ts) — non-AWS API; the underlying `putWorker` is a true upsert, so reconcile observes existing settings and delegates.
+- [S3 Bucket](./packages/aws/src/S3/Bucket.ts) — uses `ensureBucketExists` + `syncBucketTags` + `syncBucketPolicy` helpers; each helper is itself a tiny reconciler.
+- [SQS Queue](./packages/aws/src/SQS/Queue.ts) — observe via `getQueueUrl`, ensure via `createQueue` (tolerates `QueueNameExists` race), sync attributes by diffing `getQueueAttributes` against desired, sync tags.
+- [Kinesis Stream](./packages/aws/src/Kinesis/Stream.ts) — many mutable aspects (mode, shards, retention, encryption, metrics), each its own observed-vs-desired sync block.
+- [DynamoDB Table](./packages/aws/src/DynamoDB/Table.ts) — multi-API observation (table + tags + PITR + TTL), per-aspect diffing, GSI delta application.
+- [EC2 Vpc](./packages/aws/src/EC2/Vpc.ts) — auto-assigned id, observe via `describeVpcs([output.vpcId])` with NotFound fallback to create, sync DNS attrs by reading `describeVpcAttribute`, sync tags from observed `vpc.Tags`.
+- [Lambda Function](./packages/aws/src/Lambda/Function.ts) — uses `createOrUpdateFunction` / `createOrUpdateFunctionUrl` / `attachBindings` helpers, each idempotent.
+- [Cloudflare Worker](./packages/cloudflare/src/Workers/Worker.ts) — non-AWS API; the underlying `putWorker` is a true upsert, so reconcile observes existing settings and delegates.
 
 Existence-only resources (Lambda Permission, EC2 Route, EC2 RouteTableAssociation, IAM AccessKey, etc.) have nothing mutable beyond their identity. Their reconciler is just observe → if missing, create. There is no sync step.
 
+# SQL database migrations
+
+Every SQL database resource applies schema migrations at deploy time through a `migrations` prop. A database resource without it is a gap to fill. Users get the same DX on every cloud:
+
+```ts
+const db = yield* GCP.SQL.Database("App", {
+  instance: instance.instanceName,
+  migrations: "./migrations", // a directory, { dir, table }, or a Drizzle.Schema
+  migrationsUser: user.userName,
+  migrationsPassword: password.text,
+});
+```
+
+The shared engine lives in `@alchemy.run/sql/Migrations`. It reads the directory (flat `.sql` files, drizzle-kit, or Prisma layouts) and keeps history in Alchemy's `__alchemy_migrations` table. It converts a foreign drizzle-kit/Prisma/wrangler table once, and fails with `RewrittenMigrationHistoryError` when an applied file is edited or removed. The provider never reimplements any of this. It supplies one thing, a `SqlExecutor` for its database:
+
+```ts
+// Props
+migrations?: MigrationsInput;
+// Attributes
+migrationsDir: string | undefined;
+migrationsTable: string | undefined;
+migrationsHashes: Record<string, string>;
+
+// diff: pending files or a table move update in place, never replace
+if (yield* diffMigrations({ news, output })) return { action: "update" } as const;
+
+// reconcile: last, once the database is ready and every other aspect is synced
+const migrationsInput = migrationsInputOf(news);
+const run = migrationsInput
+  ? yield* runMigrations({
+      input: migrationsInput,
+      stamped: stampedOf(output),
+      withExecutor: (apply) => withExecutor(apply), // acquire a SqlExecutor, apply, release
+    })
+  : undefined;
+return { ...attrs, ...migrationsAttrs({ input: migrationsInput, run, output }) };
+```
+
+Rules:
+
+- **Where the prop goes.** Put it on the resource that owns one database's schema: the database (`GCP.SQL.Database`, Cloudflare D1, Turso), the branch (Neon, PlanetScale), or the instance or cluster when it serves exactly one database (`AWS.RDS.DBInstance`, `AWS.DSQL.Cluster`, the primary `GCP.AlloyDB.Instance`). Migrations need a running endpoint, so they go on the resource that is reconciled after the endpoint is ready, not on a parent that is created before it.
+- **Transport, in order of preference.** First, an HTTPS data API, which needs no network route from the deploying machine (D1 HTTP, the RDS Data API, Cloud SQL and AlloyDB `executeSql`). Second, a direct driver connection over a public endpoint or the cloud's connector. Third, a runner inside the private network (`AWS.RDS.MigrationRunner`). When there is more than one, expose `migrationsTransport`, and default to the data API whenever the target has it enabled.
+- **Credentials.** Use the platform's own credentials when it has them: RDS managed secrets, Neon and PlanetScale minted roles, D1 API tokens. Otherwise take `migrationsUser` and `migrationsPassword` (`string | Redacted<string>`). Never ask the user to stage a secret just for the transport; when an API only reads passwords from a secret store, the provider stages and removes one itself.
+- **Executors — reuse, don't rewrite.** `@alchemy.run/sql/Migrations` has the transport pieces; a provider writes only the call that is specific to its cloud:
+  - `withPgExecutor(config, use)` / `withMySqlExecutor(config, use)` — open a `pg`/`mysql2` connection (connection string, TLS, or a pre-connected `stream`), run, always close.
+  - `makeStatementExecutor({ dialect, execute, batch })` — any API that runs a SQL string and returns rows (Cloud SQL and AlloyDB `executeSql`). The provider supplies `execute`, failing on SQL errors inside a 200; `batch: "transaction"` wraps each migration in `BEGIN`/`COMMIT`, `"atomic"` relies on the API committing a call as a unit. `rowsFromCells` maps GCP-style `columns` + `rows[].values[]`.
+  - `splitSqlScript` / `scanSqlScript` — split a script into statements for APIs that take one at a time (PostgreSQL, MySQL, GoogleSQL quoting and comment rules; `scanSqlScript` adds an offset-aligned literal mask for capability checks).
+  - `migrationError(context)`, `retryLogin` / `probeExecutor` (a just-created user's login delay, retried before any batch), `migrationAttributesOf` / `MigrationAttributes`.
+
+  Targets that can't commit DDL atomically set `transactionalDdl: false` and override `applyMigration`: DSQL checkpoints each statement, and Spanner runs each DDL statement as an operation named after the migration and statement, so a crashed or fixed deploy resumes instead of rerunning applied statements.
+- **Errors.** Every transport failure surfaces as `MigrationError` with the database's own message. A SQL error inside a 200 response, as the data APIs return it, is a failure, not a success.
+- **Tests.** Write one live test per transport. Deploy one migration and verify the table and `__alchemy_migrations` out-of-band. Add a file and redeploy; only the new file runs. Redeploy unchanged and assert that `stack.plan` reports no update. Destroy and verify the database is gone. Write migration files into a scoped temp directory (`fs.makeTempDirectoryScoped`) and pass it as `migrations`.
+- **Docs.** Add a `### Migrations` section to the resource JSDoc, with one example per transport and credential source.
+
+References: [AWS.RDS.DBInstance](./packages/aws/src/RDS/DBInstance.ts) + [Migrations.ts](./packages/aws/src/RDS/Migrations.ts) (three transports), [Turso Database](./packages/turso/src/Database.ts) (one HTTP executor), [GCP.SQL.Database](./packages/gcp/src/SQL/Database.ts) (data API with a staged secret, plus the Cloud SQL connector), [GCP.Spanner.Database](./packages/gcp/src/Spanner/Database.ts) (non-transactional DDL, a GoogleSQL dialect in the shared engine).
+
 5. Research and design the test cases for each resource. Test cases can be single or multi-step. Single-step test cases are just testing a single create success or failure mode. Multi-step cases are testing a sequence of operations, starting with create and then updating or replacing the resource multiple times. Test cases should be designed to be exhaustive and cover all possible success and failure modes, starting from simple happy paths to long, complicated aggregate (including other resources) smoke tests.
-6. Implement the Resource contract and Provider in `packages/alchemy/src/{Cloud}/{Service}/{Resource}.ts`.
+6. Implement the Resource contract and Provider in `packages/{cloud}/src/{Service}/{Resource}.ts`.
 
 The Resource contract (Props, Attributes, Binding Contract) and the Resource Provider (lifecycle operations) are co-located in the same file.
 
 Read through the established examples to understand the pattern:
 
-- [S3 Bucket](./packages/alchemy/src/AWS/S3/Bucket.ts)
-- [SQS Queue](./packages/alchemy/src/AWS/SQS/Queue.ts)
-- [DynamoDB Table](./packages/alchemy/src/AWS/DynamoDB/Table.ts)
-- [Kinesis Stream](./packages/alchemy/src/AWS/Kinesis/Stream.ts)
-- [Lambda Function](./packages/alchemy/src/AWS/Lambda/Function.ts)
-- [VPC](./packages/alchemy/src/AWS/EC2/Vpc.ts)
-- [Subnet](./packages/alchemy/src/AWS/EC2/Subnet.ts)
+- [S3 Bucket](./packages/aws/src/S3/Bucket.ts)
+- [SQS Queue](./packages/aws/src/SQS/Queue.ts)
+- [DynamoDB Table](./packages/aws/src/DynamoDB/Table.ts)
+- [Kinesis Stream](./packages/aws/src/Kinesis/Stream.ts)
+- [Lambda Function](./packages/aws/src/Lambda/Function.ts)
+- [VPC](./packages/aws/src/EC2/Vpc.ts)
+- [Subnet](./packages/aws/src/EC2/Subnet.ts)
 
 The Resource interface takes four type parameters: `Resource<Type, Props, Attributes, BindingContract>`.
 
@@ -453,7 +565,7 @@ export interface LoadBalancerProps {
 `Input<T>` in a *function signature* is still legitimate when the function genuinely receives unresolved values at runtime (e.g. helpers that resolve tag maps, or `DurableObjectNamespace.from(scriptName: Input<string>)`).
 :::
 
-7. Implement each Capability as a `Binding.Service` in `packages/alchemy/src/{Cloud}/{Service}/{Capability}.ts`.
+7. Implement each Capability as a `Binding.Service` in `packages/{cloud}/src/{Service}/{Capability}.ts`.
 
 A single `Binding.Service` does both halves of a capability in one Effect:
 
@@ -464,15 +576,15 @@ There is no separate deploy-time policy object and nothing to register in `provi
 
 Read through the established capabilities to understand the pattern:
 
-- [S3 GetObject](./packages/alchemy/src/AWS/S3/GetObject.ts), [S3 PutObject](./packages/alchemy/src/AWS/S3/PutObject.ts)
-- [SQS SendMessage](./packages/alchemy/src/AWS/SQS/SendMessage.ts), [DynamoDB GetItem](./packages/alchemy/src/AWS/DynamoDB/GetItem.ts)
-- [Kinesis PutRecord](./packages/alchemy/src/AWS/Kinesis/PutRecord.ts), [Lambda InvokeFunction](./packages/alchemy/src/AWS/Lambda/InvokeFunction.ts)
-- Access-split Cloudflare capabilities: [R2 Bucket](./packages/alchemy/src/Cloudflare/R2/), [KV Namespace](./packages/alchemy/src/Cloudflare/KV/), [Queue](./packages/alchemy/src/Cloudflare/Queue/)
+- [S3 GetObject](./packages/aws/src/S3/GetObject.ts), [S3 PutObject](./packages/aws/src/S3/PutObject.ts)
+- [SQS SendMessage](./packages/aws/src/SQS/SendMessage.ts), [DynamoDB GetItem](./packages/aws/src/DynamoDB/GetItem.ts)
+- [Kinesis PutRecord](./packages/aws/src/Kinesis/PutRecord.ts), [Lambda InvokeFunction](./packages/aws/src/Lambda/InvokeFunction.ts)
+- Access-split Cloudflare capabilities: [R2 Bucket](./packages/cloudflare/src/R2/), [KV Namespace](./packages/cloudflare/src/KV/), [Queue](./packages/cloudflare/src/Queues/)
 
 For Event Sources, see:
 
-- [SQS QueueEventSource](./packages/alchemy/src/AWS/SQS/QueueEventSource.ts)
-- [S3 BucketEventSource](./packages/alchemy/src/AWS/S3/BucketEventSource.ts)
+- [SQS QueueEventSource](./packages/aws/src/SQS/QueueEventSource.ts)
+- [S3 BucketEventSource](./packages/aws/src/S3/BucketEventSource.ts)
 
 Each capability exports its contract plus one or more implementation layers:
 
@@ -519,7 +631,7 @@ Rules:
 - **No resource-level `bind`.** The Resource is plain `Resource<T>("Cloud.Type")` with no `bind:` field; callers bind via the namespaced capability, not `resource.bind`.
 - **Single-mode capabilities stay single.** A producer-only capability (e.g. Cloudflare Queue's send-only producer, which has no runtime read) ships just the `Write` service — don't invent a `Read` the runtime can't satisfy. The HTTP impl can still cover both directions where the API does.
 
-Reference: [Cloudflare R2 Bucket](./packages/alchemy/src/Cloudflare/R2/), [KV Namespace](./packages/alchemy/src/Cloudflare/KV/), [Queue](./packages/alchemy/src/Cloudflare/Queue/).
+Reference: [Cloudflare R2 Bucket](./packages/cloudflare/src/R2/), [KV Namespace](./packages/cloudflare/src/KV/), [Queue](./packages/cloudflare/src/Queues/).
 
 ### Runtime-only methods: color with `Alchemy.RuntimeContext`
 
@@ -551,7 +663,7 @@ Rules:
 - Resolve cloud-environment services (`WorkerEnvironment`, AWS SDK clients, etc.) once during Layer construction and close over them. Do NOT leak `WorkerEnvironment` / `Lambda.FunctionEnvironment` onto the runtime callable — that couples downstream service code to a specific cloud and breaks Layer encapsulation. The Function/Worker runtime satisfies `RuntimeContext` automatically.
 - The implementation can return `Effect.Effect<A, E>` without explicitly providing `RuntimeContext` (it's contravariant in `R`); just declare it on the interface.
 
-Why this matters: consumers can build cloud-agnostic services on top of bindings using `Layer.effect(Tag, ...)` without polluting their service interface with `WorkerEnvironment`. See [Layers concept](./website/src/content/docs/concepts/layers.mdx).
+Why this matters: consumers can build cloud-agnostic services on top of bindings using `Layer.effect(Tag, ...)` without polluting their service interface with `WorkerEnvironment`. See [Layers concept](./website/src/content/docs/infrastructure-as-effects/layers.mdx).
 
 After implementing, re-export the contract and implementation layers from the service's `index.ts` (but keep the shared `{Cap}Binding.ts`/`{Cap}Http.ts` scaffolding un-exported).
 
@@ -560,7 +672,57 @@ After implementing, re-export the contract and implementation layers from the se
 **Layer construction is isolate-scoped; the effects built services expose are request-scoped.**
 
 - **At layer build / Worker init (instance scope)** a layer MAY resolve services and env/config, register listeners and `bind` declarations, assemble `Effect.fn` clients, and perform one-shot I/O that produces a plain cached value (e.g. fetch a secret and cache it for a client). It MUST NOT acquire **disposable** resources — connections, pools, streams, anything with a finalizer (`Layer.scoped` / `Effect.acquireRelease` / init-level `Effect.addFinalizer`) — or retain I/O-backed *objects* or promises across events (workerd pins them to the creating request's IoContext). The runtime bridges (Worker event, Durable Object call, Workflow run, Lambda invoke) build the layer stack **once per instance** on the first event. Instance finalizers run at instance shutdown at best: **never on workerd** (no teardown hook), and in a **best-effort 500 ms SIGTERM window on Lambda** (the generated entry registers an internal extension to obtain it and closes the instance scope on SIGTERM; not delivered on hard failures). Server processes (Containers, ECS Tasks) close their root scope on graceful exit.
-- **At request scope**, anything needing I/O or cleanup is an effect requiring `Scope.Scope`, acquired lazily per call. Every bridge provides a fresh `Scope` per event; `Effect.addFinalizer` in a handler attaches to it and runs after the response (registered with `ctx.waitUntil` on workerd; settled inline on Lambda). Per-request memoization keys on the scope object (`yield* Effect.scope`) — see [Drizzle/Postgres.ts](./packages/alchemy/src/Drizzle/Postgres.ts) for the canonical WeakMap pattern. One pool/socket per event is the law on workerd (sockets are IoContext-pinned); Hyperdrive is the cross-request pooler.
+- **At request scope**, anything needing I/O or cleanup is an effect requiring `Scope.Scope`, acquired lazily per call. Every bridge provides a fresh `Scope` per event; `Effect.addFinalizer` in a handler attaches to it and runs after the response (registered with `ctx.waitUntil` on workerd; settled inline on Lambda). Per-request memoization keys on the scope object (`yield* Effect.scope`) — see [Drizzle/Postgres.ts](./packages/drizzle/src/Postgres.ts) for the canonical WeakMap pattern. One pool/socket per event is the law on workerd (sockets are IoContext-pinned); Hyperdrive is the cross-request pooler.
+
+### Effect workflow engines
+
+Users write durable workflows once with `effect/workflow` and core's `alchemy/Workflows`, and run them on each cloud's native durable runtime. A provider whose cloud has a durable execution engine (Cloudflare Workflows and Durable Objects, Lambda durable functions, Azure Durable Functions on the Durable Task Scheduler, …) ships an **engine**: a plain `Layer` that implements Effect's `WorkflowEngine` on that runtime. The workflow code doesn't change between clouds; only the engine Layer does.
+
+The DX every engine must keep:
+
+```ts
+// workflows.ts — cloud-agnostic
+export const Greet = Workflow.make("Greet", {
+  payload: { id: Schema.String, name: Schema.String },
+  success: Schema.String,
+  idempotencyKey: ({ id }) => id,
+});
+
+export const GreetLive = Workflows.layer(
+  Greet,
+  Effect.gen(function* () {
+    const receipts = yield* Cloudflare.R2.WriteBucket(Receipts); // bindings resolve once, at Layer build
+    return Effect.fn(function* ({ name }) {
+      return yield* Activity.make({ name: "greet", success: Schema.String, execute: Effect.succeed(`hello ${name}`) });
+    });
+  }),
+);
+
+// a runtime — start and read runs through the engine the runtime provides
+const greet = yield* Workflows.RunWorkflow(Greet);
+const run = yield* greet.start({ id: "g-1", name: "sam" });
+yield* run.status;                       // NotStarted | Running | Completed | Failed | Interrupted | Died
+yield* run.signal(Approval, "agent-7");
+yield* run.interrupt;
+```
+
+`Workflows.layer` marks a workflow `Implemented`, and `RunWorkflow` requires it, so running a workflow nothing implements is a type error. Keep that property in every engine.
+
+There are two engine shapes; pick the one the cloud's runtime forces:
+
+- **In-process engine** — the durable construct is hosted by the same runtime that starts runs. The engine is a Layer the user provides next to the workflow Layers: `GreetLive.pipe(Layer.provideMerge(Cloudflare.Workflows.NativeEngine))`. References: [NativeEngine.ts](./packages/cloudflare/src/Workflows/NativeEngine.ts) (one Cloudflare Workflow class hosts every workflow; steps are `step.do`, sleeps `step.sleep`, signals Workflow events) and [DurableObjectEngine.ts](./packages/cloudflare/src/Workflows/DurableObjectEngine.ts) (one Durable Object per run, journal in SQLite, wake-ups are alarms).
+- **Host + remote engine** — runs execute in a dedicated durable runtime resource. The provider ships a `<Runtime>WorkflowFunction`-style resource that lists the workflows it hosts (`.make(props, layer)` is a type error when the Layer leaves one out), and a `<Runtime>Engine(...hosts)` Layer other runtimes provide to start and read runs there; it also grants the caller access to each host. Reference: [AWS.Lambda.WorkflowFunction](./packages/aws/src/Lambda/WorkflowFunction.ts) + `AWS.Lambda.DurableFunctionEngine`.
+
+Build an engine from the shared pieces, never a private copy:
+
+- `alchemy/WorkflowEncoding` — payload/result/exit codecs and `CurrentActivity`; results are cached by schema identity.
+- `Workflows.Implemented` — the marker a remote engine provides for the workflows its hosts list.
+- The cloud's own primitives map onto Effect's: activities → durable steps (replayed, not re-run, once finished), `DurableClock.sleep` → the runtime's durable wait (no compute billed while waiting), `DurableDeferred` → the runtime's external-event/callback mechanism, interrupt → fail the pending wait so compensations run, child workflows → runs on the same engine.
+- Respect platform limits in the engine (instance-id length and charset, max wait, propagation after deploy) and retry only the typed transient errors.
+
+Every engine passes one shared conformance suite, [`test/Workflows/conformance/`](./packages/integration-tests/test/Workflows/conformance/), driven over HTTP against a deployed fixture. Don't copy it. The suite owns the workflows (`workflows.ts`), the routes (`app.ts`), and the cases (`conformance.ts`), drawn from Effect's own engine tests and from bugs found here: results, idempotent starts, durable sleeps that wake on time (between and inside activities), signals (early, repeated, late), compensations (on failures and interrupts), defects (captured, caught, retried, `SuspendOnFailure` with resume), `Activity.retry`, `Activity.raceAll`, finalizers and `ensuring` across suspensions, parallel activities, interrupts (while waiting, sleeping, on the way to a wait, after finishing), and child workflows (waiting and failing). An engine supplies a fixture that serves `app` over `WorkflowsLive` with its engine and a `Journal` layer over its cloud's storage, then calls `conformance({ test, url, napsWithinMillis, recoveryWithinMillis, timeout, unsupported })` from its suite. See [WorkflowEngines.test.ts](./packages/integration-tests/test/Cloudflare/Workers/WorkflowEngines.test.ts) (a Durable Object journal) and [WorkflowFunction.test.ts](./packages/integration-tests/test/AWS/Lambda/WorkflowFunction.test.ts) (a DynamoDB journal). A case an engine fails is an engine bug, not a reason to skip it. What the platform genuinely can't do goes in `unsupported`, and the engine dies with a clear defect the case checks for, never a hang: Cloudflare Workflows and Lambda durable functions can't look a step's result up before running it, so neither supports `raceAll`. An engine with a local provider runs the cases in dev too.
+
+Each engine gets a docs page at `website/src/content/docs/{cloud}/compute/effect-workflows.mdx` with the same headings as the AWS and Cloudflare pages (define a workflow, implement its steps, run it on the engine, start and read a run, sleep durably, wait for a signal, undo a step, use bindings in a step), and an `examples/{cloud}-effect-workflows` example.
 
 :::tip
 If you need to know what AWS region or account ID the resource is being created/updated in, you can use this inside any of the lifecycle operations.
@@ -599,6 +761,7 @@ Do not use `Effect.orDie` in the lifecycle operations since this will crash the 
 | `await fetch(...)`                                   | `yield* HttpClient.HttpClient` + `HttpClientRequest`        |
 | `Effect.promise(() => listSqlFiles(dir))`            | Make `listSqlFiles` itself return `Effect` and `yield*` it |
 | `new Promise((res) => setTimeout(res, ms))`          | `yield* Effect.sleep(Duration.millis(ms))`                  |
+| `process.env.DOCKER_CONFIG`                          | `yield* Config.String("DOCKER_CONFIG")` (`Config.withDefault` / `Config.option` when optional) |
 
 Sync, CPU-only Node APIs (e.g. `crypto.createHash().update().digest()`, `process.cwd()`, `Buffer`, `TextEncoder`) must still be wrapped in `Effect.sync(() => ...)` (or `Effect.try` if they can throw) so the call participates in the Effect runtime — tracing, interruption, and error channels. Don't call them as bare expressions inside `Effect.gen`.
 
@@ -609,7 +772,9 @@ const hash = yield* Effect.sync(() =>
 const cwd = yield* Effect.sync(() => process.cwd());
 ```
 
-This applies to **lifecycle operations, helpers, AND tests**. Tests must use `FileSystem.FileSystem`/`Path.Path` for any file/path access (see [Database.test.ts](./packages/alchemy/test/Cloudflare/D1/Database.test.ts) for the pattern).
+Environment variables are configuration: read them through `effect/Config`, never `process.env`, so a provided `ConfigProvider` (`.env` files, profiles, tests) is honored. `Effect.sync` is only for process facts `Config` can't express, like `process.platform` or `process.cwd()`. Module-scope test gates (`test.skipIf(!!process.env.FAST)`) run outside Effect and are exempt.
+
+This applies to **lifecycle operations, helpers, AND tests**. Tests must use `FileSystem.FileSystem`/`Path.Path` for any file/path access (see [Database.test.ts](./packages/integration-tests/test/Cloudflare/D1/Database.test.ts) for the pattern).
 :::
 
 :::tip
@@ -645,48 +810,109 @@ reconcile: Effect.fn(function* ({ id, news, output, session }) {
 
 :::
 
-9. Implement the test cases in `packages/alchemy/test/{Cloud}/{Service}/{Resource}.test.ts`.
+9. Implement the test cases in `packages/integration-tests/test/{Cloud}/{Service}/{Resource}.test.ts`.
+
+### Resource and runtime testing conventions
+
+Choose the deployment-based pattern that fits the behavior under test:
+
+- **Resource lifecycle and reconciliation:** use `test.provider` and `stack.deploy` for create, update, replacement, and deletion scenarios.
+- **Bindings and runtime behavior:** prefer a deployed Worker/Function fixture that exposes the behaviors under test. Share its deployment with `beforeAll`/`afterAll` and exercise it over HTTP or the relevant event source. Follow [Test Fixtures for Effect-Native Workers / Functions](#test-fixtures-for-effect-native-workers--functions).
+- **Lifecycle changes that affect runtime behavior:** a `test.provider` case can deploy a fixture and exercise it between updates.
+
+Keep regression cases in the relevant existing resource or binding suite. A Worker lifecycle feature belongs in `test/Cloudflare/Workers/Worker.test.ts`; binding fixtures belong beside their owning suite in `fixtures/`.
+
+- Assume Docker is installed. Never `skipIf`-gate a test on Docker availability; a missing daemon fails the test.
+- Start and end `test.provider` cases with `stack.destroy()`. Fixture suites deploy in `beforeAll` and destroy in `afterAll`. Use deterministic resource identities and verify deletion through the cloud API.
+- Exercise create, update, redeploy, and removal through the stack. **Do not mock HTTP or SDK responses, invoke provider lifecycle methods directly, or call extracted reconciliation helpers as a substitute for a deployment.**
+- Verify the resulting cloud state through distilled and exercise the deployed runtime when relevant. Use real SDK calls on test-owned resources to establish out-of-band state or verify API update semantics. Keep provider behavior assertions driven by `stack.deploy`.
+- For a partial-update regression, configure non-default neighboring settings, exercise the update, and verify that unrelated settings remain unchanged. Ensure the relevant update path actually runs.
+- Keep production logic in its natural resource/provider location. Do not extract one-off reconciliation functions or modules solely to make them directly testable.
+
+Pure utility and engine unit tests remain appropriate for their own behavior; they do not replace live resource lifecycle coverage.
 
 Read through the established test cases before continuing so that you understand the pattern and structure of the test cases.
 
-- [S3 Bucket Test Cases](./test/AWS/S3/Bucket.test.ts)
-- [SQS Queue Test Cases](./test/AWS/SQS/Queue.test.ts)
-- [Lambda Function Test Cases](./test/AWS/Lambda/Function.test.ts)
-- [Kinesis Stream Test Cases](./test/AWS/Kinesis/Stream.test.ts)
-- [DynamoDB Table Test Cases](./test/AWS/DynamoDB/Table.test.ts)
-- [VPC Test Cases](./test/AWS/EC2/Vpc.test.ts)
-- [Subnet Test Cases](./test/AWS/EC2/Subnet.test.ts)
+- [S3 Bucket Test Cases](./packages/integration-tests/test/AWS/S3/Bucket.test.ts)
+- [SQS Queue Test Cases](./packages/integration-tests/test/AWS/SQS/Queue.test.ts)
+- [Lambda Function Test Cases](./packages/integration-tests/test/AWS/Lambda/Function.test.ts)
+- [Kinesis Stream Test Cases](./packages/integration-tests/test/AWS/Kinesis/Stream.test.ts)
+- [DynamoDB Table Test Cases](./packages/integration-tests/test/AWS/DynamoDB/Table.test.ts)
+- [VPC Test Cases](./packages/integration-tests/test/AWS/EC2/Vpc.test.ts)
+- [Subnet Test Cases](./packages/integration-tests/test/AWS/EC2/Subnet.test.ts)
 
 :::warning
-Never use `Date.now()` when constructing the physical name of a resource. You should either:
+Never use `Date.now()`, UUIDs or other random values when constructing the physical name of a resource. Every run must be deterministic and leave no orphaned resources. You should either:
 
-1. Do not proide a name and rely on the resource provider to generate a unique name for you from the app, stage and logical ID.
-2. Construct a deterministic one unique to each test case. But it should be the same on each subsequent run of the test case.
+1. Not provide a name, and rely on the resource provider to generate one from the app, stage and logical ID. This is the default for every test.
+2. Only when the test is about explicitly provided names, construct a deterministic one unique to each test case and to the user running it: derive it from `stack.stage` (`test_$USER` by default). It must be the same on each subsequent run of the test case.
+3. Only for a resource the API can never delete (RealtimeKit apps, Intel indicator feeds), use one shared constant name that every run adopts, so the suite owns a single standing instance instead of leaking one per user.
    :::
 
 3. Consider implementing an aggregate Smoke test that brings together multiple resources that are often used together.
 
-See the [VPC Smoke Test](./test/AWS/EC2/Vpc.smoke.test.ts) for an example.
+See the [VPC Smoke Test](./packages/integration-tests/test/AWS/EC2/Vpc.smoke.test.ts) for an example.
 
-11. Add the resource-level JSDoc (`@section` + `@example` blocks) and field-level JSDoc on each prop/attribute on the source `.ts` file. Then run `bun generate:api-reference` to refresh `website/src/content/docs/providers/{Cloud}/{Resource}.md`. Do NOT manually edit the generated markdown.
+11. Add the resource-level JSDoc (`###` section headings + `**Example:**` labels, with generator metadata tags last) and field-level JSDoc on each prop/attribute on the source `.ts` file. Run `pnpm docs:check-jsdoc`, then `pnpm docs:gen` to refresh `website/src/content/docs/providers/{Cloud}/{Resource}.md`. Do NOT manually edit the generated markdown.
 
 # Typed Error Doctrine (distilled)
+
+## How distilled is built (Smithy + JSON Patch)
+
+Distilled is a Smithy-based SDK factory. Every provider package (`submodules/distilled/packages/{cloud}`) runs the same pipeline:
+
+1. **Convert** — the provider's spec source is converted into Smithy 2.0 JSON models, one per service, in `.generated-specs/{service}.json`. Cloudflare mines them from the downloaded API docs (`scripts/spec-to-smithy.ts` over `specs/api/resources/**`); AWS consumes the official `api-models-aws` Smithy models submodule directly. Hand-authored models for APIs the spec source doesn't cover live in `manual-specs/`.
+2. **Patch** — an **RFC 6902 JSON Patch chain** (files shaped `{ "description": ..., "patches": [ops] }`) is applied to the provider's intermediary spec before codegen. For Cloudflare, patches in `patches/{service}/*.json` target the **Smithy model**, applied in filename order with `*.manual.json` files last; `_metadata.json` carries service-level `/metadata/keyDictionary` and `/metadata/opAliases`. OpenAPI-sourced providers (Neon, PlanetScale, Stripe, …) patch the **OpenAPI document** upstream of the smithy conversion instead. A patch whose target path is stale (no longer in the model) warns and is skipped; a malformed patch **fails the generator run**.
+3. **Generate** — the shared smithy→SDK compiler in `@distilled.cloud/core/codegen` compiles each patched model into an Effect SDK module at `src/services/{service}.ts` plus the barrel.
+
+Consequences:
+
+- **Never edit `src/services/*.ts`** — regeneration overwrites it. Anything wrong in the generated SDK (missing error, wrong request/response schema, misnamed operation or member) is fixed with a JSON Patch (`add`/`remove`/`replace`/`move` on the model) in `patches/{service}/`.
+- Patch paths address the **Smithy model**: shape IDs are `com.cloudflare.{service}#Name`, and member names are **wire names** (snake_case). The camelCase TS surface is derived at codegen; `move` ops rename shapes and members.
+
+## The doctrine
 
 Every error a distilled operation can produce in practice MUST be a tagged error in that operation's **type-level** error union. The catch-all classes (`UnknownCloudflareError`, `CloudflareHttpError`, and the status-derived classes like `NotFound`/`BadRequest` that distilled leaves out of the typed union) exist only to *surface* gaps — they are never something alchemy code handles.
 
 **When you hit an unmatched error** (an `UnknownCloudflareError`, or you find yourself wanting to check `CloudflareHttpError.status` or an out-of-union `NotFound`), the fix is ALWAYS a distilled patch, never a catch in alchemy:
 
 1. Note the error's code / status / message from the failure output.
-2. Add or extend `distilled/packages/cloudflare/patches/{service}/{operation}.json` with a **meaningful, resource-specific tag** (e.g. `WidgetNotFound`, not a bare `NotFound`):
+2. Add or extend `submodules/distilled/packages/cloudflare/patches/{service}/{operation}.json` with a JSON Patch that (a) adds an error structure carrying the `smithy.api#error` trait and `com.cloudflare.protocols#errorMatchers` matchers, and (b) attaches it to the operation's `errors` list. Use a **meaningful, resource-specific tag** (e.g. `WidgetNotFound`, not a bare `NotFound`):
 
    ```json
-   { "errors": { "WidgetNotFound": [{ "code": 1234 }] } }
+   {
+     "description": "Type the not-found error on getWidget",
+     "patches": [
+       {
+         "op": "add",
+         "path": "/shapes/com.cloudflare.widgets#WidgetNotFound",
+         "value": {
+           "type": "structure",
+           "members": {
+             "code": { "target": "smithy.api#Integer" },
+             "message": { "target": "smithy.api#String" }
+           },
+           "traits": {
+             "smithy.api#error": "client",
+             "com.cloudflare.protocols#errorMatchers": [{ "code": 1234 }]
+           }
+         }
+       },
+       {
+         "op": "add",
+         "path": "/shapes/com.cloudflare.widgets#GetWidget/errors",
+         "value": [{ "target": "com.cloudflare.widgets#WidgetNotFound" }]
+       }
+     ]
+   }
    ```
 
-   Matchers may combine `code`, `status`, and `message` (`{ "includes": "..." }` / `{ "matches": "..." }`) — e.g. `[{ "status": 400, "message": { "includes": "snippet not found" } }]` when Cloudflare misuses 400 for a missing resource. Prefer matching the Cloudflare error `code` when one exists; fall back to `status` + `message` otherwise.
+   If the operation already has an `errors` array (from an earlier patch), append with `"path": ".../errors/-"` instead of adding the whole array. Matchers may combine `code`, `status`, and `message` (a string, or `{ "includes": "..." }` / `{ "matches": "..." }`) — e.g. `[{ "status": 400, "message": { "includes": "snippet not found" } }]` when Cloudflare misuses 400 for a missing resource. Prefer matching the Cloudflare error `code` when one exists; fall back to `status` + `message` otherwise. The most specific matcher wins; ties break by declaration order.
 
-3. Regenerate ONLY that service: `cd distilled/packages/cloudflare && bun scripts/generate.ts --service {service}` (then `bun oxlint --fix src/services/{service}.ts && bun oxfmt --write src/services/{service}.ts`).
+3. Regenerate ONLY that service: `cd submodules/distilled/packages/cloudflare && bun scripts/generate.ts --resource {service}` (then format: `pnpm exec oxfmt src/services/{service}.ts`). A warned-stale or failed patch is a bug in your patch — fix it; never leave a red generate.
 4. Handle the now-typed tag in alchemy code and re-run the tests.
+
+**AWS is the one exception to the JSON Patch format**: it layers typed-error metadata over the official Smithy models with a per-service schema file `submodules/distilled/packages/aws/patches/{service}.json` (error categories, aliases, synthetic errors with message matchers — see `submodules/distilled/packages/aws/scripts/spec-schema.ts`), regenerated with `cd submodules/distilled/packages/aws && bun scripts/generate.ts --sdk {service}`. The doctrine is identical; only the patch dialect differs.
 
 **Forbidden patterns** — these defeat the type system and must never appear in alchemy code or tests:
 
@@ -717,6 +943,41 @@ Effect.catchTag(["WidgetNotFound", "Gone"], () => Effect.succeed(undefined))
 
 If `Effect.catchTag("SomeTag", ...)` fails to typecheck, that is the signal that distilled's union is missing the error — patch distilled (step 2 above); do not loosen the alchemy-side types.
 
+# Provider Modes & Local Providers (doctrine)
+
+Some resource types have TWO implementations: a **live** provider (converges real cloud state, `alchemy deploy`) and a **local** provider (emulates the resource on the developer's machine, `alchemy dev`). Provider mode is a first-class engine concept — see [ProviderMode.ts](./packages/alchemy/src/ProviderMode.ts), [Local/ProviderLayer.ts](./packages/alchemy/src/Local/ProviderLayer.ts), [Local/LocalProvider.ts](./packages/alchemy/src/Local/LocalProvider.ts), and the user-facing guide at [website/src/content/docs/infrastructure-as-code/local-provider.mdx](./website/src/content/docs/infrastructure-as-code/local-provider.mdx).
+
+Engine semantics (never re-implement these per provider):
+
+- **Register both variants with `ProviderLayer.dual(cls, { live: () => ..., local: () => ... })`** — never select one at layer build. The run-default variant builds eagerly; the other is lazy and memoized, so mode-specific dependency layers (workerd, Docker) MUST compose *inside* the `local` thunk (e.g. `LocalWorkerProvider().pipe(Layer.provide(localRuntimeServices()))`), never globally — a plain deploy must not construct local machinery unless a local-mode row needs deleting. Dep layers shared across several local providers must be **module-memoized layer references** so the build MemoMap dedupes them to one instance.
+- **Every state commit stamps `providerMode`.** A persisted mode that differs from the resolved mode plans a REPLACEMENT (the provider diff is not consulted), and every delete — replacement old generations, GC chain draining, orphans, `destroy`, `sync`/`tail`/`logs` — resolves the provider variant of the row's *stamped* mode via `findProviderByType(type, mode)`. Legacy rows without a stamp are assumed **live** (pre-mode engines and mode-agnostic providers only ever acted on the real cloud), so a dev run replaces them like any stamped live row — assuming the run's mode instead would silently adopt a deployed live resource as a local instance and leak it untracked. The exception is an unstamped row whose attrs carry the local identity marker (`dev:`-prefixed ids, see `stampedMode` in `ProviderMode.ts`): it was reconciled by a pre-stamping `alchemy dev` run and is treated as **local**, so a plain destroy/deploy never hands its `dev:` identity to the live cloud API.
+- **`Alchemy.remote()`** opts a resource or scope OUT of local emulation during dev (captured at registration like `adopt()`; a no-op during deploy). There is deliberately no `local()` — dev mode IS the local default; tests simulate a dev run by overriding `AlchemyContext.dev` (`inDev` in [test.resources.ts](./packages/alchemy/test/test.resources.ts)) or `Test.make({ dev: true })`. Conflicting decorations on one FQN die with `ConflictingProviderModeError`. Single-implementation providers are **mode-agnostic**: they satisfy any requested mode, never stamp, never replace on a switch — dev runs over constructs mixing emulatable and live-only resources (DNS records) just work.
+
+## `LocalProvider.make` — long-running local providers
+
+A local provider whose physical resource is a **running process** (dev server, workerd instance) MUST be built with `LocalProvider.make(cls, providersUrl, spec)` — do not hand-roll FiberMap/instance-registry/hash machinery in the provider:
+
+- **`resolveConfig(ctx)`** — the restart surface. Plain, canonically-hashable data only (no closures or runtime objects: derive plain *descriptors* here and materialize `BindingHook`s etc. inside `start` — see the descriptor/hook split in [LocalWorkerProvider.ts](./packages/cloudflare/src/Workers/LocalWorkerProvider.ts)). Must be cheap and side-effect-free — it runs inside `diff` on every plan. Its canonical hash decides noop-vs-restart AND the same value is handed to `start`, so "what changed?" and "what starts?" can never drift. Deliberately EXCLUDE runtime wiring observed at start time (e.g. queue consumers read from `LocalRuntimeState`) — sibling reconciles drive those via restart hooks, not config.
+- **`start(ctx)`** — boot ONE instance in the ambient `Scope` and return Attributes at *readiness*; the process keeps running until the runner closes the scope on restart/delete. For processes that can die on their own, fork `ctx.invalidate` after the exit so the next plan reports `update`.
+- **`stop(ctx)`** — delete-only cleanup for state that intentionally survives restarts (URL proxies kept for address stability, restart hooks). NOT called on restarts.
+- Generated for you: instance registry, per-id lock (restarts never interleave), config-hash noop/restart, instanceId-guarded delete (a create-first replacement's old-generation delete cannot kill its successor), `list`. The provider is wrapped in `RpcProvider`, so during `alchemy dev` the registry lives in the sidecar and survives user-code hot reloads.
+- **Never use `Hash.structure` to compare configs** — it XOR-folds sibling fields, so a value mirrored into two subtrees (env ↔ bindings) cancels out. The helper's canonical hash (sorted-key JSON + sha256, Redacted/bytes/cycle-aware) is the law.
+
+Registry-style local providers (the "instance" is an in-memory row, e.g. Cloudflare's local Queue mutating `LocalRuntimeState`) do NOT use `LocalProvider.make` — write a plain provider and register it via `dual`.
+
+Reference implementations: [Command/Dev.ts](./packages/alchemy/src/Command/Dev.ts) (minimal: spawn + URL readiness), [Cloudflare Workers LocalWorkerProvider.ts](./packages/cloudflare/src/Workers/LocalWorkerProvider.ts) (full-size: bundler watch loop, cross-restart proxy in `stop`), [Cloudflare Queues Queue.ts](./packages/cloudflare/src/Queues/Queue.ts) (registry-style, no runner). Engine coverage lives in [test/provider-mode.test.ts](./packages/alchemy/test/provider-mode.test.ts) and the "provider modes" describes in [plan.test.ts](./packages/alchemy/test/plan.test.ts) / [apply.test.ts](./packages/alchemy/test/apply.test.ts).
+
+## Local tests (`{Resource}.local.test.ts`)
+
+Every resource with a local (dev) provider gets a **`{Resource}.local.test.ts`** co-located with its live test, using `Test.make({ providers, dev: true })`. Dev-mode tests run local providers behind a **file-scoped RPC sidecar by default** — the same `RpcProviderProxy` topology the real `alchemy dev` command uses, where `providerServicesEffect` layers (e.g. `localRuntimeServices()`) are EMPTY in the test process and RPC-backed providers run their lifecycle in the sidecar. This is what catches a plain local provider that needs those services in the main process (the class of bug behind #1007, which in-process tests masked). `Test.make({ ..., sidecar: false })` opts a file back into the in-process topology — reserve it for debugging provider code or pinning the in-process path a plain `alchemy deploy` takes when deleting `providerMode: "local"` rows.
+
+The suite must cover, minimum:
+
+1. **The local roundtrip** — deploy the resource + a worker binding it (file-based fixture `main`, never inline `script` — unsupported in dev) and drive the binding over HTTP against the local simulator. Assert the resource's identity carries the `dev:` marker (proof no cloud call ran; for the Worker itself the marker is a `http://localhost:<port>` `url`).
+2. **The `Alchemy.remote()` opt-out** — the same shape with the resource piped through `Alchemy.remote()`: assert a real (non-`dev:`) identity, round-trip through the remote-proxied binding, verify out-of-band via distilled that the write landed in the real cloud resource, and after `stack.destroy()` verify the cloud resource is gone (pins the stamped-mode delete path).
+
+Reference: [KV Namespace.local.test.ts](./packages/integration-tests/test/Cloudflare/KV/Namespace.local.test.ts) (includes the mixed local + live stack), [R2 Bucket.local.test.ts](./packages/integration-tests/test/Cloudflare/R2/Bucket.local.test.ts), [D1 Database.local.test.ts](./packages/integration-tests/test/Cloudflare/D1/Database.local.test.ts) (includes local migrations and the #1007 regression), [Queues Queue.local.test.ts](./packages/integration-tests/test/Cloudflare/Queues/Queue.local.test.ts) (produce→consume through RPC-backed providers). The harness contract itself is pinned by [TestSidecar.test.ts](./packages/integration-tests/test/Local/TestSidecar.test.ts).
+
 # Test Fixtures for Effect-Native Workers / Functions
 
 To test runtime behavior of an Effect-native Worker, Workflow, Lambda, etc., write a **fixture** that defines the Worker/Function with the bindings under test and exposes one HTTP route per behavior, then write a **test** that deploys the fixture once via `beforeAll` and drives it over HTTP.
@@ -726,8 +987,8 @@ To test runtime behavior of an Effect-native Worker, Workflow, Lambda, etc., wri
 Put fixtures in a `fixtures/` directory next to the test file. Each test suite owns its own fixtures — never reach across suites:
 
 ```sh
-packages/alchemy/test/{Cloud}/{Service}/{Resource}.test.ts
-packages/alchemy/test/{Cloud}/{Service}/fixtures/{worker|workflow|handler}.ts
+packages/integration-tests/test/{Cloud}/{Service}/{Resource}.test.ts
+packages/integration-tests/test/{Cloud}/{Service}/fixtures/{worker|workflow|handler}.ts
 ```
 
 ## Fixture shape
@@ -738,8 +999,8 @@ Resolve the bindings, expose one route per behavior, default-export the class so
 // fixtures/worker.ts
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Gateway } from "./gateway.ts";
 
 export default class TestWorker extends Cloudflare.Worker<TestWorker>()(
@@ -772,11 +1033,11 @@ Compose a `Stack` that deploys the fixture, share one deploy across the file wit
 // Service.test.ts
 import * as Alchemy from "@/index.ts";
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Alchemy";
-import { expect } from "alchemy-test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import { expect } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import TestWorker from "./fixtures/worker.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -841,16 +1102,16 @@ Notes:
   }
   ```
 
-  See [CronEventSource.test.ts](./packages/alchemy/test/Cloudflare/Workers/CronEventSource.test.ts) for a real-world example (polling a DO via the worker's `/times` route until the cron handler fires).
+  See [CronEventSource.test.ts](./packages/integration-tests/test/Cloudflare/Workers/CronEventSource.test.ts) for a real-world example (polling a DO via the worker's `/times` route until the cron handler fires).
 
 ## Reference implementations
 
-- Cloudflare.AI.Gateway — [worker fixture](./packages/alchemy/test/Cloudflare/AI/fixtures/TestWorker.ts) + [test](./packages/alchemy/test/Cloudflare/AI/Gateway.test.ts) (the deploy+fetch case lives at the bottom of the file)
-- Cloudflare D1Connection — [worker fixture](./packages/alchemy/test/Cloudflare/D1/d1-worker.ts) + [test](./packages/alchemy/test/Cloudflare/D1/D1Binding.test.ts)
-- Cloudflare Workflow — [workflow fixture](./packages/alchemy/test/Cloudflare/Workers/fixtures/test-workflow.ts) + [worker fixture](./packages/alchemy/test/Cloudflare/Workers/fixtures/workflow-worker.ts) + [test](./packages/alchemy/test/Cloudflare/Workers/Workflow.test.ts)
-- Cloudflare Cron Trigger — [worker + DO fixture](./packages/alchemy/test/Cloudflare/Workers/fixtures/cron-worker.ts) + [test](./packages/alchemy/test/Cloudflare/Workers/CronEventSource.test.ts) (cron handler writes to a DO; test polls a fetch route with `Effect.repeat` until the scheduled handler fires)
-- Cloudflare Images — [effect fixture](./packages/alchemy/test/Cloudflare/Images/fixtures/effect-worker.ts) + [async fixture](./packages/alchemy/test/Cloudflare/Images/fixtures/async-worker.ts) + [test](./packages/alchemy/test/Cloudflare/Images/Images.test.ts)
-- AWS Lambda (DynamoDB bindings) — [Lambda fixture](./packages/alchemy/test/AWS/DynamoDB/handler.ts) + [test](./packages/alchemy/test/AWS/DynamoDB/Bindings.test.ts) (one `describe("<BindingName>")` per binding, all driving the same deployed Lambda)
+- Cloudflare.AI.Gateway — [worker fixture](./packages/integration-tests/test/Cloudflare/AI/fixtures/TestWorker.ts) + [test](./packages/integration-tests/test/Cloudflare/AI/Gateway.test.ts) (the deploy+fetch case lives at the bottom of the file)
+- Cloudflare D1Connection — [worker fixture](./packages/integration-tests/test/Cloudflare/D1/fixtures/effect-worker.ts) + [test](./packages/integration-tests/test/Cloudflare/D1/D1Binding.test.ts)
+- Cloudflare Workflow — [workflow fixture](./packages/integration-tests/test/Cloudflare/Workers/fixtures/workflow/test-workflow.ts) + [worker fixture](./packages/integration-tests/test/Cloudflare/Workers/fixtures/workflow/workflow-worker.ts) + [test](./packages/integration-tests/test/Cloudflare/Workers/Workflow.test.ts)
+- Cloudflare Cron Trigger — [worker + DO fixture](./packages/integration-tests/test/Cloudflare/Workers/fixtures/cron/cron-worker.ts) + [test](./packages/integration-tests/test/Cloudflare/Workers/CronEventSource.test.ts) (cron handler writes to a DO; test polls a fetch route with `Effect.repeat` until the scheduled handler fires)
+- Cloudflare Images — [effect fixture](./packages/integration-tests/test/Cloudflare/Images/fixtures/effect-worker.ts) + [async fixture](./packages/integration-tests/test/Cloudflare/Images/fixtures/async-worker.ts) + [test](./packages/integration-tests/test/Cloudflare/Images/Images.test.ts)
+- AWS Lambda (DynamoDB bindings) — [Lambda fixture](./packages/integration-tests/test/AWS/DynamoDB/handler.ts) + [test](./packages/integration-tests/test/AWS/DynamoDB/Bindings.test.ts) (one `describe("<BindingName>")` per binding, all driving the same deployed Lambda)
 
 # Spec-Driven Service Bring-Up
 
@@ -873,32 +1134,45 @@ When a canonical resource needs mutable event-source configuration and there is 
 Always run type checking before committing changes:
 
 ```bash
-bun tsc -b
+pnpm exec tsrs -b
 ```
+
+[`tsrs`](https://www.npmjs.com/package/tsrs) is a Rust port of the TypeScript 7 compiler, taking the same flags as `tsc` and running several times faster. `typescript` stays installed for compatibility: `pnpm exec tsc -b` is the reference check if you suspect a tsrs conformance bug.
 
 This runs the TypeScript compiler in build mode, which checks all projects in the workspace (including the distilled packages, which are project references). This is critical because CI will fail if there are type errors.
 
+```bash
+pnpm typecheck      # rebuild stale dist packages, then tsrs -b
+pnpm ensure:built   # rebuild cloudflare-runtime / frontend-frameworks if stale
+pnpm build          # in a package: builds it and its workspace dependencies
+```
+
 ## Running tests
 
-`packages/alchemy/test` runs on **alchemy-test** (`packages/alchemy-test`), our own single-process, Effect-native test runner. The CLI is vitest/bun-test compatible: positional paths (files or directories) and `-t` work the same way.
+Tests run on **alchemy-test** (`@alchemy.run/test`, in `packages/alchemy-test`), our own single-process, Effect-native test runner. The CLI is vitest/bun-test compatible: positional paths (files or directories) and `-t` work the same way.
 
-There is exactly ONE entry point: `bun run test <options>`. It works identically from the repo root and from `packages/alchemy` (the root script just cds into `packages/alchemy`); suite paths are always relative to `packages/alchemy`. Compose the flags you need — there are no per-variant package scripts. NOTE: `bun run test`, not `bun test` — the latter invokes bun's own built-in test runner.
+There are two entry points, one per test package, both working identically from the repo root and from the package directory:
+
+- `pnpm test <options>` — core suites in `packages/alchemy/test` (paths relative to `packages/alchemy`).
+- `pnpm test:integration <options>` — provider suites and core suites that deploy to a provider, in `packages/integration-tests/test` (paths relative to `packages/integration-tests`).
+
+Compose the flags you need — there are no per-variant package scripts. NOTE: `pnpm test`, not `bun test` — the latter invokes bun's own built-in test runner.
 
 ```bash
 # a suite, against the real cloud
-bun run test test/Cloudflare/{Service}/{Resource}.test.ts --profile testing
+pnpm test:integration test/Cloudflare/{Service}/{Resource}.test.ts --profile testing
 
 # a directory, filtered by test name
-bun run test test/Cloudflare/Workers -t "cron" --profile testing
+pnpm test:integration test/Cloudflare/Workers -t "cron" --profile testing
 
 # positional args that aren't real paths are file-name substring filters
-bun run test Bucket --profile testing   # every *Bucket* test file
+pnpm test:integration Bucket --profile testing   # every *Bucket* test file
 
 # skip the slow tests (replaces the old FAST=1 env prefix)
-bun run test --fast --profile testing
+pnpm test --fast --profile testing
 
 # interactive TUI (humans only — never in an agent shell)
-bun run test --tui
+pnpm test --tui
 ```
 
 (`examples/` still use plain `bun test`.)
@@ -911,8 +1185,8 @@ make the test pass. Clean the testing account with the account-wide teardown
 command, then rerun the failing test:
 
 ```bash
-bun nuke
-bun clear:state --profile testing
+pnpm nuke
+pnpm clear:state --profile testing
 ```
 
 Lifecycle tests should continue to validate normal stack ownership and cleanup;
@@ -925,6 +1199,7 @@ Additional flags beyond vitest:
 | ----------------- | ------- | ------------------------------------------------------------- |
 | `-t <regex>`      | —       | Test-name pattern (regex, like bun/vitest) tested against the full nested title (`file > describes > name`), so any fragment matches regardless of nesting. An invalid regex degrades to a literal substring instead of erroring. Remember to escape regex metacharacters when filtering literally: `-t "create \(default\)"` |
 | `--profile <name>` | —      | Sets `ALCHEMY_PROFILE` before any test module is imported. Use `--profile testing` for live-cloud suites instead of an `ALCHEMY_PROFILE=testing` env prefix |
+| `--stage <name>`  | —       | Sets `ALCHEMY_TEST_STAGE` before any test module is imported, replacing `Test.make`'s default stage for the run. The default is `test_$USER` in a main checkout and `test_$USER_<worktree>` in a linked git worktree, so two worktrees running the same suite never share deployments |
 | `--fast`          | off     | Sets `FAST=1` before imports — suites `skipIf(process.env.FAST)` their slow tests (long-provisioning resources, smoke tests). Replaces the `FAST=1` env prefix |
 | `--timeout <ms>`  | 120000  | Default per-test timeout                                      |
 | `--retry <n>`     | 2       | Re-runs of a failing test body (use `--retry 0` when debugging) |
@@ -943,8 +1218,8 @@ Output behavior (plain mode, the default):
 Runner semantics to know:
 
 - Everything runs in ONE bun process: files run concurrently (respecting `describe.sequential`), imports of all test files happen up-front (they must be lazy and pure — registration only, no top-level side effects beyond `Test.make`/`describe`/`test`).
-- Tests that mutate process-global state (e.g. `process.env.PATH`) must pass `{ exclusive: true }` in the test options to take the whole-process write lock.
-- The harness (`alchemy-test` package) provides `describe`, `it`/`test` (incl. `it.effect`/`it.live`), hooks, `layer`, `expect`, and `assert` — the codemod `scripts/codemod-alchemy-test.ts` migrates vitest imports and is idempotent.
+- Tests that mutate process-global state (e.g. `process.env.PATH`, `process.chdir`, `globalThis.__ALCHEMY_RUNTIME__`) must pass `{ exclusive: true }` in the test options to take the whole-process write lock. Tests that only contend for a shared cloud resource (an account singleton, a quota) pass a label instead — `{ exclusive: "aws:ses-account" }` serializes them with other holders of that label while the rest of the run continues. The same option works on `beforeAll`/`afterAll` hooks.
+- The harness (`@alchemy.run/test` package) provides `describe`, `it`/`test` (incl. `it.effect`/`it.live`), hooks, `layer`, `expect`, and `assert`.
 - The runner runs in plain bun, so distilled resolves from `src/*.ts` via the `bun` export condition — a regenerated service is test-visible immediately, no `lib/` rebuild required.
 
 ## The convergence loop: nuke → test → census → fix-fleet
@@ -953,30 +1228,30 @@ Ironing out the AWS suite is an iterative loop, driven by a coordinator, that te
 
 Each iteration:
 
-0. **Clean slate** — first run `aws sso login` (the alchemy `testing` profile and the raw `aws` CLI ride the same SSO session; an expired token mid-round breaks the pipeline with auth errors — only escalate to a human if the login doesn't complete automatically). Then `bun nuke --yes` (deletes every alchemy-tagged cloud resource; `scripts/nuke.sh` already spares state buckets, SSO roles, and AWS-managed singletons) then `bun alchemy state clear ./stacks/nuke.ts --profile testing --yes`. Never overlap nuke with a running suite. Plain `bun clear:state` lacks the profile and dies on expired Cloudflare OAuth; nuke without `--yes` hangs on an interactive confirm in non-interactive shells.
-1. **Full suite, bounded** — `bun run test test/AWS --profile testing`. The runner defaults to `--concurrency 32`; NEVER override it to `unbounded` on a full-suite run: all ~775 files' `beforeAll` deploys start at once, the event loop saturates, and hundreds of fake 0ms `beforeAll TimeoutError` failures drown the real signal (heap is ~8.5 GB regardless of N — the constraint is CPU, not memory). Target ≤10 min wall-clock, hard cap 128; measured 32 → ~21 min clean. The saturation tell is `beforeAll` failures at 0ms; real failures fail slow. If the cap can't reach 10 min, the residual is individual slow files — skipIf-gate them per the speed doctrine.
-2. **Leak census** — `bun nuke --dry-run` after the suite; diff against the pre-suite baseline. Worklist = **failed services ∪ leaking services** (a service can pass green and still leak). Leave the leaked resources LIVE as forensic evidence for the fix agents; carry-over holdouts that survive repeated nuke passes (stuck deletes) go on the worklist too — their delete path is the bug.
-3. **Fix-fleet workflow** — one agent per service on the worklist (account-singleton services — CloudTrail, Config, SecurityHub, GuardDuty, ControlTower, IdentityCenter — run as a sequential chain; everything else fans out). Each agent gets its exact failures, its leak inventory, and this root-cause priority: **provider bug > distilled patch > test fix** — never paper over a provider leak in the test. Each agent runs ONLY its own suite (`timeout 240 bun run test test/AWS/{Service} --profile testing`), audits its tests for non-deterministic names (rely on PhysicalName auto-naming; random data in message payloads/idempotency tokens is fine), verifies zero orphans from its service via out-of-band distilled list/describe calls, and reports a structured result. Agents never run tsc/build and never run the account-wide nuke.
-4. **Gate** — the coordinator runs the one-shot `bun tsc -b`, fixes cross-cutting fallout, commits the iteration (+ distilled submodule bump when patches were made), and loops back to 0. Terminate on two consecutive iterations of green-suite + census reduced to documented-undeletable residue (e.g. BackupSearch terminal records, Contributor-Insights rules with no delete API, keys in scheduled deletion).
+0. **Clean slate** — first run `aws sso login` (the alchemy `testing` profile and the raw `aws` CLI ride the same SSO session; an expired token mid-round breaks the pipeline with auth errors — only escalate to a human if the login doesn't complete automatically). Then `pnpm nuke --yes` (deletes every alchemy-tagged cloud resource; `scripts/nuke.sh` already spares state buckets, SSO roles, and AWS-managed singletons) then `pnpm -C stacks alchemy state delete Nuke --config ./src/nuke.ts --profile testing --recursive`. Never overlap nuke with a running suite. Plain `pnpm clear:state` lacks the profile and dies on expired Cloudflare OAuth; nuke without `--yes` hangs on an interactive confirm in non-interactive shells.
+1. **Full suite, bounded** — `pnpm test:integration test/AWS --profile testing`. The runner defaults to `--concurrency 32`; NEVER override it to `unbounded` on a full-suite run: all ~775 files' `beforeAll` deploys start at once, the event loop saturates, and hundreds of fake 0ms `beforeAll TimeoutError` failures drown the real signal (heap is ~8.5 GB regardless of N — the constraint is CPU, not memory). Target ≤10 min wall-clock, hard cap 128; measured 32 → ~21 min clean. The saturation tell is `beforeAll` failures at 0ms; real failures fail slow. If the cap can't reach 10 min, the residual is individual slow files — skipIf-gate them per the speed doctrine.
+2. **Leak census** — `pnpm nuke --dry-run` after the suite; diff against the pre-suite baseline. Worklist = **failed services ∪ leaking services** (a service can pass green and still leak). Leave the leaked resources LIVE as forensic evidence for the fix agents; carry-over holdouts that survive repeated nuke passes (stuck deletes) go on the worklist too — their delete path is the bug.
+3. **Fix-fleet workflow** — one agent per service on the worklist (account-singleton services — CloudTrail, Config, SecurityHub, GuardDuty, ControlTower, IdentityCenter — run as a sequential chain; everything else fans out). Each agent gets its exact failures, its leak inventory, and this root-cause priority: **provider bug > distilled patch > test fix** — never paper over a provider leak in the test. Each agent runs ONLY its own suite (`pnpm test:integration test/AWS/{Service} --profile testing`), audits its tests for non-deterministic names (rely on PhysicalName auto-naming; random data in message payloads/idempotency tokens is fine), verifies zero orphans from its service via out-of-band distilled list/describe calls, and reports a structured result. Agents never run tsc/build and never run the account-wide nuke.
+4. **Gate** — the coordinator runs the one-shot `pnpm exec tsrs -b`, fixes cross-cutting fallout, commits the iteration (+ distilled submodule bump when patches were made), and loops back to 0. Terminate on two consecutive iterations of green-suite + census reduced to documented-undeletable residue (e.g. BackupSearch terminal records, Contributor-Insights rules with no delete API, keys in scheduled deletion).
 
 ## Multi-agent sessions: the coordinator owns type-checking
 
-When many agents work concurrently (see **The Resource Factory Process**), do NOT let each agent run `bun tsc -b` — concurrent runs thrash the machine and race on `tsbuildinfo`. Agents never invoke the compiler; the coordinator runs a one-shot `bun tsc -b` at wave boundaries as the authoritative type check.
+When many agents work concurrently (see **The Resource Factory Process**), do NOT let each agent run `pnpm exec tsrs -b` — concurrent runs thrash the machine and race on `tsbuildinfo`. Agents never invoke the compiler; the coordinator runs a one-shot `pnpm exec tsrs -b` at wave boundaries as the authoritative type check.
 
 ## Build Commands
 
 | Command           | Description                                                                                  |
 | ----------------- | -------------------------------------------------------------------------------------------- |
-| `bun tsc -b`      | Type check all projects (always run before committing)                                       |
-| `bun run build`   | Clean, type check, and build the alchemy package                                             |
-| `bun build:clean` | Full clean rebuild: cleans all artifacts, reinstalls dependencies, builds, and downloads env |
+| `pnpm exec tsrs -b`      | Type check all projects (always run before committing)                                       |
+| `pnpm build`   | Clean, type check, and build the alchemy package                                             |
+| `pnpm build:clean` | Full clean rebuild: cleans all artifacts, reinstalls dependencies, builds, and downloads env |
 
-Use `bun build:clean` when you encounter stale build artifacts or dependency issues. It runs:
+Use `pnpm build:clean` when you encounter stale build artifacts or dependency issues. It runs:
 
-1. `bun clean .` - Removes all untracked files except .env
-2. `bun i` - Reinstalls dependencies
-3. `bun run build` - Builds the project
-4. `bun download:env` - Downloads environment files
+1. `pnpm clean .` - Removes all untracked files except .env
+2. `pnpm install` - Reinstalls dependencies
+3. `pnpm build` - Builds the project
+4. `pnpm download:env` - Downloads environment files
 
 # Tutorial Documentation Standard
 
@@ -1052,6 +1327,21 @@ Rules of thumb:
 - Bullet/numbered lists are fine when they describe a recap, prerequisites, or genuinely list-shaped content (e.g. "the Worker now handles two routes: PUT and GET" at the end). They are **not** fine as a substitute for splitting a compound snippet.
 - A single API call that internally does several things (e.g. `Cloudflare.upgrade()`) doesn't need splitting — describe its behavior in prose.
 - Use `diff lang="typescript"` blocks so each step shows what's added on top of the previous step.
+
+# Package Skills
+
+A package can ship an agent skill under `packages/{package}/skills/{name}/` (e.g. [alchemy-domain](./packages/domain/skills/alchemy-domain/SKILL.md)): a `SKILL.md` plus `references/*.md`. The skill is an **entrypoint**, not a second copy of the docs. It gives an agent the workflow, the rules, and a short template per topic. The website holds the depth.
+
+- **`SKILL.md` links the docs hub and `https://alchemy.run/llms.txt`**, which lists every page, so an agent can find what the skill leaves out.
+- **Every `##`/`###` section ends with a `More:` line** linking the docs page, or the exact `#section`, that covers it in depth:
+
+  ```md
+  More: [Saga: Undo a step when a later one fails](https://alchemy.run/domain/saga#undo-a-step-when-a-later-one-fails).
+  ```
+
+- **Links must resolve.** Use absolute `https://alchemy.run/...` URLs (the skill is read outside the website), not `website/...` paths. After `pnpm --filter website build`, check that each linked page exists under `website/dist/` and that each `#anchor` is an `id` on it.
+- **Keep the skill in step with the docs.** Renaming a docs page or heading means updating the skill links to it. Adding a docs page a skill covers means adding a `More:` link from its section.
+- **Keep sections short.** If a section grows into an explanation, move the explanation to the docs page and link it.
 
 # Pull Request Conventions
 

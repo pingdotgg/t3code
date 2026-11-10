@@ -1,0 +1,103 @@
+---
+title: Regions
+description: Where Railway Services, Volumes, Postgres, and Buckets live.
+---
+
+A region is a Railway datacenter. [Services](/railway/compute/services),
+[Volumes](/railway/data/volumes), [Postgres](/railway/data/postgres),
+[MySQL](/railway/data/mysql), and [Mongo](/railway/data/mongo)
+take `region` as a Google-style code (`us-west2`, `us-east4`, …).
+[Buckets](/railway/data/buckets) use a shorter set (`sjc`, `iad`,
+`ams`, `sin`). A [Project](/railway/compute/projects) is not pinned
+to a region.
+
+Omit `region` and Railway picks the default for that resource.
+
+## Pin a Service
+
+```typescript
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    region: "us-west2",
+    port: 3000,
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Updating `region` on a Service is in place.
+
+## Pin Postgres
+
+Postgres `region` is shared by the service instance and its Volume.
+Changing it **replaces** Postgres.
+
+```typescript
+const db = yield* Railway.Postgres("Db", {
+  project: site,
+  region: "us-west2",
+});
+```
+
+## Volumes stay in the region
+
+A Volume is created in one region. Changing `region` replaces the
+Volume. Attach it to a Service in the same region.
+
+```typescript
+const data = yield* Railway.Volume("Data", {
+  project: site,
+  mountPath: "/data",
+  region: "us-west2",
+});
+```
+
+## Bucket regions
+
+Buckets speak S3. Their region codes are short:
+
+```typescript
+const data = yield* Railway.Bucket("Data", {
+  project: site,
+  region: "sjc",
+});
+```
+
+Default is `sjc`. Changing `region` replaces the Bucket.
+
+| Code | Location |
+| --- | --- |
+| `sjc` | San Jose, California (US) |
+| `iad` | Ashburn, Virginia (US) |
+| `ams` | Amsterdam, Netherlands |
+| `sin` | Singapore |
+
+## Service region codes
+
+Railway uses Google Cloud region names for compute. This list is
+what Railway published as of 2026. See
+[Railway regions](https://docs.railway.com/reference/regions) for
+the live set.
+
+| Code | Location |
+| --- | --- |
+| `us-west1` | Oregon, USA |
+| `us-west2` | California, USA |
+| `us-east4` | Virginia, USA |
+| `europe-west4` | Amsterdam, Netherlands |
+| `asia-southeast1` | Singapore |
+
+## Where next
+
+[Services](/railway/compute/services) pin `region` on the class.
+[Volumes](/railway/data/volumes) replace on region change.
+[Postgres](/railway/data/postgres) is a container + volume in one
+region. [Buckets](/railway/data/buckets) use `sjc` / `iad` / `ams` /
+`sin`.
