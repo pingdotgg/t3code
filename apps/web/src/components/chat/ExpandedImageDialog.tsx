@@ -1,6 +1,6 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -185,16 +185,18 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         }}
       >
         <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
+        {/* Windows and Linux draw the app's own Close X top-right, above this dialog. */}
         <Button
           type="button"
           ref={closeButtonRef}
-          size="icon-sm"
+          size="sm"
           variant="media-close"
-          className="absolute right-0 top-0 z-20"
+          className="absolute left-0 top-0 z-20"
           onClick={close}
           aria-label={`Close ${mediaLabel} preview`}
         >
-          <XIcon />
+          <ArrowLeftIcon />
+          Back
         </Button>
         {preview.images.length > 1 && (
           <Button
