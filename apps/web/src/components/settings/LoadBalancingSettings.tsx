@@ -84,7 +84,8 @@ export function LoadBalancingSettings({
             }}
           >
             <SelectTrigger
-              size="xs"
+              variant="well"
+              size="compact"
               className="w-32"
               aria-label={`${environment.label} load preference`}
             >
