@@ -1843,59 +1843,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
-  it.effect("an unadvertised model refusal names the advertised slugs to retry with", () =>
-    Effect.gen(function* () {
-      const codex = providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-      });
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          getThreadRecords: () => Effect.succeed(parentProjection([])),
-        }),
-        ServerSettings.layerTest(),
-        providerRegistryLayer([
-          {
-            ...codex,
-            models: ["gpt-6.1-sol", "gpt-6.1-terra"].map((slug) => ({
-              slug,
-              name: slug,
-              isCustom: false,
-              capabilities: null,
-            })),
-          },
-        ]),
-        adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const refusal = yield* service
-          .delegateTask(scope, {
-            task: "Summarize the diff.",
-            target: { providerInstanceId: codexInstanceId, model: "codemie/gpt-6.1-terra" },
-            mode: "async",
-            clientRequestId: "delegate-unadvertised-model",
-          })
-          .pipe(Effect.flip);
-        assert.equal(refusal.code, "model_unavailable");
-        assert.include(
-          refusal.message.replaceAll("codemie/gpt-6.1-terra", ""),
-          "gpt-6.1-terra",
-          "the refusal names the advertised slug to retry with",
-        );
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
-  );
-
-  it.effect("an unadvertised model with no close match lists a capped set of current slugs", () =>
+  it.effect("an unadvertised model refusal names advertised slugs to retry with", () =>
     Effect.gen(function* () {
       const codex = providerSnapshot({
         instanceId: codexInstanceId,
@@ -1927,17 +1875,27 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const refusal = yield* service
-          .delegateTask(scope, {
-            task: "Summarize the diff.",
-            target: { providerInstanceId: codexInstanceId, model: "opus-5.5" },
-            mode: "async",
-            clientRequestId: "delegate-unadvertised-model-listing",
-          })
-          .pipe(Effect.flip);
-        assert.equal(refusal.code, "model_unavailable");
+        const refuse = (model: string) =>
+          service
+            .delegateTask(scope, {
+              task: "Summarize the diff.",
+              target: { providerInstanceId: codexInstanceId, model },
+              mode: "async",
+              clientRequestId: `delegate-unadvertised-${model}`,
+            })
+            .pipe(Effect.flip);
+
+        const prefixed = yield* refuse("anthropic/claude-opus-5-3");
+        assert.equal(prefixed.code, "model_unavailable");
         assert.equal(
-          refusal.message,
+          prefixed.message,
+          "Model anthropic/claude-opus-5-3 is not advertised by provider codex. " +
+            "Did you mean claude-opus-5-3?",
+        );
+
+        const unmatched = yield* refuse("opus-5.5");
+        assert.equal(
+          unmatched.message,
           "Model opus-5.5 is not advertised by provider codex. Advertised models: " +
             "claude-opus-5-1, claude-opus-5-2, claude-opus-5-3, claude-opus-5-4, claude-opus-5-5, " +
             "claude-opus-5-6, claude-opus-5-7, claude-opus-5-8 and 2 more; " +
