@@ -17,7 +17,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl, resolveMarkdownLinkPresentation } from "./markdownLinks";
 import { resolveMobileMarkdownMediaSource } from "./markdownMediaSource";
 
-import type { FilePreviewSource } from "../components/FilePreviewModal";
+import type { FilePreviewSource } from "../components/ui/FilePreviewModal";
 import type { MediaVideoPreviewSource } from "./videoPreviewSource";
 import type { MediaActionsSource } from "./mediaActionsSource";
 
