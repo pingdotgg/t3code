@@ -160,7 +160,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         }),
         Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
         // No provider logins or Connect link, so startup records no owners.
-        FileSystem.layerNoop({}),
+        FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
         Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
         NodeCrypto.layer,
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
