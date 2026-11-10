@@ -6132,6 +6132,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "removes a worktree whose .git file git-annex replaced with a symlink",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "annexed");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/annexed",
+          });
+          const gitFile = pathService.join(worktreePath, ".git");
+          const adminDir = (yield* git(worktreePath, ["rev-parse", "--absolute-git-dir"])).trim();
+          NodeFS.rmSync(gitFile);
+          NodeFS.symlinkSync(adminDir, gitFile);
+
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
+
+          assert.isFalse(NodeFS.existsSync(worktreePath));
+          assert.isFalse(NodeFS.existsSync(adminDir));
+        }),
+    );
+
     it.effect("leaves a folder alone that only shares the worktree's short name", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
