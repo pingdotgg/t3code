@@ -6364,11 +6364,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    const requestedSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let modelSelection =
+    const capUltracode = (selection: ModelSelection) =>
       projection.thread.lesson === undefined && projection.thread.sideChat === undefined
-        ? requestedSelection
-        : withoutUltracode(requestedSelection);
+        ? selection
+        : withoutUltracode(selection);
+    let modelSelection = capUltracode(command.modelSelection ?? projection.thread.modelSelection);
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -6699,7 +6699,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       !followsCurrentConversation(incomingMessage) &&
       !isBufferedProviderNotification(incomingMessage)
     ) {
-      modelSelection = queueTailModelSelection(projection);
+      modelSelection = capUltracode(queueTailModelSelection(projection));
     }
     yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
     // Client messages resume held queues; server continuations and scheduled tasks do not.

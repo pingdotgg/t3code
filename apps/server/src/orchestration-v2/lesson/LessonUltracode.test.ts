@@ -87,6 +87,28 @@ it.layer(layerTest)("lesson Ultracode cap", (it) => {
       });
       const { runs } = yield* projections.getThreadProjection(threadId);
       assert.deepEqual(runs.at(-1)?.modelSelection.options, capped);
+
+      // An agent's queued send names no model, so it takes the thread's stored pick.
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("set:lesson-ultracode"),
+        threadId,
+        modelSelection: ultracode,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("queue:lesson-ultracode"),
+        threadId,
+        messageId: MessageId.make("message:lesson-ultracode-queued"),
+        text: "and then",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const queued = (yield* projections.getThreadProjection(threadId)).runs.at(-1);
+      assert.equal(queued?.status, "queued");
+      assert.deepEqual(queued?.modelSelection.options, capped);
     }),
   );
 });
