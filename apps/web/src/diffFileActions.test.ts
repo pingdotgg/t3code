@@ -94,11 +94,31 @@ describe("openDiffFilePrimaryAction", () => {
   });
 
   it.each([
+    {
+      filePath: "/repo/frontend/src/index.ts",
+      workspaceRoot: "/repo/frontend",
+      expected: "src/index.ts",
+    },
+    { filePath: "c:\\Repo\\src\\index.ts", workspaceRoot: "C:\\repo", expected: "src/index.ts" },
+  ])(
+    "opens absolute diff paths inside the workspace: $filePath",
+    ({ filePath, workspaceRoot, expected }) => {
+      expect(
+        resolveDiffPathForWorkspace({ filePath, workspaceRoot, repositoryRoot: workspaceRoot }),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
     "backend/server.ts",
     "frontend2/app.ts",
     "frontend/../secret.ts",
     "frontend/..\\secret.ts",
     "C:secret.ts",
+    "/repo/backend/server.ts",
+    "/repo/frontend/../backend/server.ts",
+    "/repo/frontend",
+    "/etc/passwd",
   ])("does not open an out-of-project diff path: %s", (filePath) => {
     const openInEditor = vi.fn();
 
