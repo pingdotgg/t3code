@@ -28,7 +28,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
   const [footerHeight, setFooterHeight] = useState(0);
-  const { selectedThread } = useThreadSelection();
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -114,6 +114,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           optionsVersion={{
             threadId: selectedThread?.id,
             cwd: selectedThreadCwd,
+            hasProject: selectedThreadProject !== null,
             commitMessage: dialogCommitMessage,
             filePaths: selectedFiles.map((file) => file.path),
             allSelected,

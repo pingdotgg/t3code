@@ -4,6 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   paths: ["a.txt", "b.txt"],
+  cwd: "/repo",
   commit: vi.fn(),
   renderFooter: (_footer: ReactNode) => {},
 }));
@@ -61,23 +62,26 @@ vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: { environmentId: "environment" } }),
 }));
 vi.mock("../../../state/use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/repo" }),
+  useSelectedThreadWorktree: () => ({ selectedThreadCwd: state.cwd }),
 }));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({ gitOperationLabel: null }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
-  useSelectedThreadGitActions: () => ({
-    canWriteSourceControl: true,
-    canChangeThreadBranch: true,
-    onRunSelectedThreadGitAction: state.commit,
-  }),
+  useSelectedThreadGitActions: () => {
+    const cwd = state.cwd;
+    return {
+      canWriteSourceControl: true,
+      canChangeThreadBranch: true,
+      onRunSelectedThreadGitAction: (input: unknown) => state.commit(cwd, input),
+    };
+  },
 }));
 vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
 
 import { GitCommitSheet } from "./GitCommitSheet";
 
-it("commits all files after an excluded file disappears and Select all is pressed", async () => {
+it("commits all files in the current worktree after Select all and a worktree switch", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const body = document.createElement("div");
   const footer = document.createElement("div");
@@ -85,6 +89,7 @@ it("commits all files after an excluded file disappears and Select all is presse
   const footerRoot = createRoot(footer);
   state.renderFooter = (children) => footerRoot.render(children);
   state.paths = ["a.txt", "b.txt"];
+  state.cwd = "/repo";
   state.commit.mockClear();
   const render = () =>
     act(() =>
@@ -102,12 +107,14 @@ it("commits all files after an excluded file disappears and Select all is presse
         .find((button) => button.textContent === "Select all")!
         .click(),
     );
+    state.cwd = "/other";
+    render();
     await act(async () => {
       Array.from([...footer.querySelectorAll("button"), ...body.querySelectorAll("button")])
         .find((button) => button.textContent === "Commit changes")!
         .click();
     });
-    expect(state.commit).toHaveBeenCalledExactlyOnceWith({
+    expect(state.commit).toHaveBeenCalledExactlyOnceWith("/other", {
       action: "commit",
       featureBranch: false,
     });
