@@ -105,7 +105,7 @@ import {
   retryAttachmentUpload,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
-import { waitForSnapShotContexts } from "../../lib/desktopSnapShot";
+import { waitForAllSnapShotContexts, waitForSnapShotContexts } from "../../lib/desktopSnapShot";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
@@ -357,11 +357,13 @@ export function useComposerSend(input: ComposerSendInput) {
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors approvals into refs that an async send reads after awaiting uploads
+  const activeEnvironmentUnavailableRef = useRef(activeEnvironmentUnavailable);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors approvals and connection state into refs that an async send reads after awaiting
   useLayoutEffect(() => {
     pendingApprovalsRef.current = pendingApprovals;
     respondingRequestIdsRef.current = respondingRequestIds;
-  }, [pendingApprovals, respondingRequestIds]);
+    activeEnvironmentUnavailableRef.current = activeEnvironmentUnavailable;
+  }, [pendingApprovals, respondingRequestIds, activeEnvironmentUnavailable]);
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -429,7 +431,7 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    if (activeEnvironmentUnavailable) {
+    const warnEnvironmentUnavailable = () => {
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
@@ -441,30 +443,29 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
+    };
+    if (activeEnvironmentUnavailable) {
+      warnEnvironmentUnavailable();
       return;
     }
     const readDraftImages = () =>
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.images ?? [];
-    const waitForDraftSnapShotText = () =>
-      waitForSnapShotContexts(readDraftImages().map(({ id }) => id));
-    let pendingSnapShotText = waitForDraftSnapShotText();
-    const waitedForSnapShotText = pendingSnapShotText !== null;
-    if (pendingSnapShotText) {
+    const readDraftImageIds = () => readDraftImages().map(({ id }) => id);
+    const waitedForSnapShotText = waitForSnapShotContexts(readDraftImageIds()) !== null;
+    if (waitedForSnapShotText) {
       sendInFlightRef.current = true;
-      try {
-        // A shot that lands during the wait joins this message, so wait for its text too.
-        while (pendingSnapShotText) {
-          await pendingSnapShotText;
-          pendingSnapShotText = waitForDraftSnapShotText();
-        }
-      } finally {
+      await waitForAllSnapShotContexts(readDraftImageIds).finally(() => {
         sendInFlightRef.current = false;
-      }
+      });
       // A thread switch or new typing during the wait leaves the draft for the user to send again.
       if (
         currentRouteThreadKeyRef.current !== routeThreadKey ||
         promptRef.current !== promptAtSend
       ) {
+        return;
+      }
+      if (activeEnvironmentUnavailableRef.current) {
+        warnEnvironmentUnavailable();
         return;
       }
     }

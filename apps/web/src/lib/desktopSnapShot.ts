@@ -33,3 +33,13 @@ export function waitForSnapShotContexts(ids: ReadonlyArray<string>): Promise<voi
   const pending = ids.flatMap((id) => pendingSnapShotContexts.get(id) ?? []);
   return pending.length > 0 ? Promise.all(pending).then(() => undefined) : null;
 }
+
+/** Also waits for captures that join the draft while earlier text is still loading. */
+export async function waitForAllSnapShotContexts(
+  readIds: () => ReadonlyArray<string>,
+): Promise<void> {
+  for (let pending = waitForSnapShotContexts(readIds()); pending;) {
+    await pending;
+    pending = waitForSnapShotContexts(readIds());
+  }
+}
