@@ -1,13 +1,13 @@
-import { MessageId, RunId, type ScreenReaderAnnouncements } from "@t3tools/contracts";
+import { MessageId, RunAttemptId, RunId, type ScreenReaderAnnouncements } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
+import type { TimelineAttempt, TimelineEntry, WorkLogEntry } from "../../session-logic";
 import {
   nextTurnDetailAnnouncement,
   turnDetail,
-  type TurnDetail,
   type TurnDetailMemory,
   type TurnDetailSnapshot,
+  type TurnMessage,
 } from "./turnDetailAnnouncement";
 
 const run = RunId.make("run-1");
@@ -53,6 +53,22 @@ const command = (id: string, fields: Partial<WorkLogEntry> = {}) =>
     ...fields,
   });
 const notice = work("notice", { itemType: "system_notice", tone: "info", label: "Heads up" });
+const steer = message("steer", "user", { inputIntent: "steer" });
+const inAttempt = (
+  entry: TimelineEntry,
+  id: string,
+  status: TimelineAttempt["status"],
+): TimelineEntry => ({
+  ...entry,
+  attempt: {
+    id: RunAttemptId.make(id),
+    runId: run,
+    attemptOrdinal: 1,
+    rootNodeId: `${id}-root` as TimelineAttempt["rootNodeId"],
+    status,
+    completedAt: null,
+  },
+});
 
 describe("turnDetail", () => {
   it.each<{
@@ -80,8 +96,18 @@ describe("turnDetail", () => {
       activity: "Editing src/a.ts",
     },
     {
+      name: "a web search, with the verb its icon stands for",
+      entries: [prompt, work("search", { itemType: "web_search", detail: "vitest fake timers" })],
+      activity: "Searching the web for vitest fake timers",
+    },
+    {
       name: "the step under a notice",
       entries: [prompt, command("git"), notice],
+      activity: "Running git",
+    },
+    {
+      name: "the step a request was about",
+      entries: [prompt, command("git"), work("ask", { itemType: "approval_request" })],
       activity: "Running git",
     },
     {
@@ -90,13 +116,17 @@ describe("turnDetail", () => {
       activity: null,
     },
     {
-      name: "the step a request was about",
-      entries: [prompt, command("git"), work("ask", { itemType: "approval_request" })],
-      activity: "Running git",
-    },
-    {
       name: "nothing once the agent is writing again",
       entries: [prompt, command("git"), message("reply", "assistant", { streaming: true })],
+      activity: null,
+    },
+    {
+      name: "nothing while the context is compacted",
+      entries: [
+        prompt,
+        command("git"),
+        work("compact", { tone: "info", sourceActivityKind: "context-compaction" }),
+      ],
       activity: null,
     },
     {
@@ -105,13 +135,13 @@ describe("turnDetail", () => {
       activity: null,
     },
   ])("names $name", ({ entries, activity }) => {
-    expect(turnDetail(entries, undefined).activity).toBe(activity);
+    expect(turnDetail(entries, undefined, null).activity).toBe(activity);
   });
 
   it.each<{
     name: string;
     entries: ReadonlyArray<TimelineEntry>;
-    messages: ReadonlyArray<string>;
+    finished: ReadonlyArray<string>;
   }>([
     {
       name: "a message the agent kept working after, but not its last",
@@ -121,7 +151,7 @@ describe("turnDetail", () => {
         command("git"),
         message("last", "assistant"),
       ],
-      messages: ["first"],
+      finished: ["first"],
     },
     {
       name: "a message once the next one starts",
@@ -130,65 +160,87 @@ describe("turnDetail", () => {
         message("first", "assistant"),
         message("second", "assistant", { streaming: true }),
       ],
-      messages: ["first"],
+      finished: ["first"],
     },
     {
       name: "a message across a steer",
+      entries: [prompt, message("first", "assistant"), steer, command("git")],
+      finished: ["first"],
+    },
+    {
+      name: "no message that is still streaming",
+      entries: [prompt, message("first", "assistant", { streaming: true }), command("git")],
+      finished: [],
+    },
+    {
+      name: "no reply a steer cut off",
       entries: [
         prompt,
-        message("first", "assistant"),
-        message("steer", "user", { inputIntent: "steer" }),
-        command("git"),
+        inAttempt(message("cut off", "assistant"), "attempt-1", "superseded"),
+        steer,
+        inAttempt(command("git"), "attempt-2", "running"),
       ],
-      messages: ["first"],
+      finished: [],
     },
     {
-      name: "nothing while the message is still streaming",
-      entries: [prompt, message("first", "assistant", { streaming: true }), command("git")],
-      messages: [],
-    },
-    {
-      name: "nothing for a last message that only a notice follows",
+      name: "no last message that only a notice follows",
       entries: [prompt, command("git"), message("last", "assistant"), notice],
-      messages: [],
+      finished: [],
     },
     {
-      name: "nothing for a last message when another run picks the thread up",
+      name: "no last message when another run picks the thread up",
       entries: [
         prompt,
         message("last", "assistant"),
         command("git", { runId: RunId.make("run-2") }),
       ],
-      messages: [],
+      finished: [],
     },
     {
-      name: "nothing from the turn before",
+      name: "no message from the turn before",
       entries: [message("earlier", "user"), message("first", "assistant"), command("git"), prompt],
-      messages: [],
+      finished: [],
     },
-  ])("reads $name", ({ entries, messages }) => {
-    expect(turnDetail(entries, undefined).messages.map((spoken) => spoken.text)).toEqual(messages);
+  ])("counts $name as finished", ({ entries, finished }) => {
+    const { messages } = turnDetail(entries, undefined, null);
+    expect(messages.filter((spoken) => spoken.finished).map((spoken) => spoken.text)).toEqual(
+      finished,
+    );
+  });
+
+  it("marks only messages after the entry last seen as fresh", () => {
+    const entries = [
+      prompt,
+      message("loaded", "assistant"),
+      command("seen"),
+      message("new", "assistant"),
+      command("git"),
+    ];
+    expect(turnDetail(entries, undefined, "seen").messages.map((spoken) => spoken.fresh)).toEqual([
+      false,
+      true,
+    ]);
   });
 });
 
-const working = (
-  activity: string | null,
-  messages: ReadonlyArray<string> = [],
-  status: TurnDetailSnapshot["status"] = "working",
-): TurnDetail & Pick<TurnDetailSnapshot, "status"> => ({
-  status,
-  activity,
-  messages: messages.map((id) => ({ id, text: id })),
+type Frame = Pick<TurnDetailSnapshot, "status" | "activity" | "messages">;
+const said = (id: string, finished = true, fresh = false): TurnMessage => ({
+  id,
+  text: id,
+  finished,
+  fresh,
 });
+const frame = (
+  activity: string | null,
+  messages: ReadonlyArray<TurnMessage> = [],
+  status: TurnDetailSnapshot["status"] = "working",
+): Frame => ({ status, activity, messages });
 
-function speak(
-  level: ScreenReaderAnnouncements,
-  snapshots: ReadonlyArray<TurnDetail & Pick<TurnDetailSnapshot, "status">>,
-) {
+function speak(level: ScreenReaderAnnouncements, frames: ReadonlyArray<Frame>) {
   let memory: TurnDetailMemory | null = null;
   const spoken: string[] = [];
-  for (const snapshot of snapshots) {
-    const result = nextTurnDetailAnnouncement(memory, { ...snapshot, level });
+  for (const next of frames) {
+    const result = nextTurnDetailAnnouncement(memory, { ...next, level, tailId: null });
     memory = result.memory;
     spoken.push(...result.messages);
     if (result.activity !== null) spoken.push(result.activity);
@@ -198,11 +250,11 @@ function speak(
 
 describe("nextTurnDetailAnnouncement", () => {
   const turn = [
-    working(null),
-    working("Running git"),
-    working("Running git"),
-    working("Reading a.ts", ["first"]),
-    working(null, ["first", "second"]),
+    frame(null),
+    frame("Running git", [said("first", false)]),
+    frame("Running git", [said("first", false)]),
+    frame("Reading a.ts", [said("first"), said("second", false)]),
+    frame(null, [said("first"), said("second")]),
   ];
 
   it.each<{ level: ScreenReaderAnnouncements; spoken: ReadonlyArray<string> }>([
@@ -219,36 +271,43 @@ describe("nextTurnDetailAnnouncement", () => {
   it("stays silent about what was there when the thread opened", () => {
     expect(
       speak("everything", [
-        working("Running git", ["first"]),
-        working("Running git", ["first"]),
-        working("Reading a.ts", ["first", "second"]),
+        frame("Running git", [said("first")]),
+        frame("Running git", [said("first")]),
+        frame("Reading a.ts", [said("first"), said("second", true, true)]),
       ]),
     ).toEqual(["T3 Code: second", "Reading a.ts"]);
   });
 
-  it("reads Markdown as plain text and skips a message with no text", () => {
-    const message = (id: string, text: string) => ({ id, text });
-    const first = message("first", "**Tests** pass in `web`.\n\n- See [docs](https://x)");
+  it("stays silent about history loaded above the messages it knows", () => {
     expect(
-      nextTurnDetailAnnouncement(
-        { activity: null, spokenMessageIds: new Set() },
-        {
-          level: "messages",
-          status: "working",
-          activity: null,
-          messages: [first, message("empty", "``")],
-        },
-      ).messages,
-    ).toEqual(["T3 Code: Tests pass in web. See docs"]);
+      speak("messages", [
+        frame(null, [said("recent")]),
+        frame(null, [said("older"), said("recent")]),
+        frame(null, [said("older"), said("recent")]),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("reads Markdown as the text it renders and skips a message with none", () => {
+    const first = {
+      ...said("first", true, true),
+      text: "**Tests** pass in `web`.\n\n- See [the docs](https://x.test/a(b)c?token=secret)<br>",
+    };
+    expect(
+      speak("messages", [
+        frame(null),
+        frame(null, [first, { ...said("empty", true, true), text: "<!-- note -->" }]),
+      ]),
+    ).toEqual(["T3 Code: Tests pass in web. See the docs"]);
   });
 
   it("says a step again after waiting on the user", () => {
     expect(
       speak("everything", [
-        working(null),
-        working("Running git"),
-        working("Running git", [], "approval"),
-        working("Running git"),
+        frame(null),
+        frame("Running git"),
+        frame("Running git", [], "approval"),
+        frame("Running git"),
       ]),
     ).toEqual(["Running git", "Running git"]);
   });
@@ -256,9 +315,9 @@ describe("nextTurnDetailAnnouncement", () => {
   it("stays silent about a turn that already ended", () => {
     expect(
       speak("everything", [
-        working(null, [], "idle"),
-        working("Running git", ["first"], "idle"),
-        working("Running git", ["first"]),
+        frame(null, [], "idle"),
+        frame("Running git", [said("first", true, true)], "idle"),
+        frame("Running git", [said("first")]),
       ]),
     ).toEqual(["Running git"]);
   });

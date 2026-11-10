@@ -61,7 +61,16 @@ const regions = (container: HTMLElement) => {
 };
 
 describe("ThreadActivityAnnouncer", () => {
-  it("drops a waiting step once the agent has moved on", async () => {
+  it.each<{ name: string; props: Partial<ComponentProps<typeof ThreadActivityAnnouncer>> }>([
+    {
+      name: "the agent has moved on",
+      props: { entries: [prompt, command("git"), message("reply", "assistant", true)] },
+    },
+    {
+      name: "the thread's detail falls behind",
+      props: { entries: [prompt, command("git")], detailBehind: true },
+    },
+  ])("drops a waiting step once $name", async ({ props }) => {
     // The announcer reads no route.
     await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {
       router: false,
@@ -72,9 +81,7 @@ describe("ThreadActivityAnnouncer", () => {
       using _timers = fakeTimers();
       await screen.rerender(announcer({}));
       await screen.rerender(announcer({ entries: [prompt, command("git")] }));
-      await screen.rerender(
-        announcer({ entries: [prompt, command("git"), message("reply", "assistant", true)] }),
-      );
+      await screen.rerender(announcer(props));
       await act(() => vi.advanceTimersByTime(5_000));
     }
 

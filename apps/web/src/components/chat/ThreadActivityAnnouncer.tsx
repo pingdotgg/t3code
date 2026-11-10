@@ -100,8 +100,8 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
       clearDetail();
       return;
     }
-    if (detailBehind) return;
     const waitingLabel = takeWaiting();
+    if (detailBehind) return;
     const previous = memoryRef.current?.threadKey === threadKey ? memoryRef.current : null;
     const turn = nextThreadAnnouncement(previous?.memory ?? null, {
       status,
@@ -112,7 +112,9 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
     // A new level starts from what the turn already holds, so raising it mid-turn replays nothing.
     const previousDetail = previous?.level === level ? previous.detail : null;
     const detail = nextTurnDetailAnnouncement(previousDetail, {
-      ...(level === "status" ? NO_TURN_DETAIL : turnDetail(entries, workspaceRoot)),
+      ...(level === "status"
+        ? NO_TURN_DETAIL
+        : turnDetail(entries, workspaceRoot, previousDetail?.tailId ?? null)),
       level,
       status,
     });
