@@ -134,7 +134,10 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
       suffix: " I read its report",
     },
     itemId: "turn-item-1",
-    subagents: [{ threadId: "thread-2", title: "review pr 412 (search)" }],
+    subagents: [
+      { threadId: "thread-2", title: "review pr 412 (search)" },
+      { threadId: "thread-3", title: "review pr 413", environmentId: "environment-2" },
+    ],
   },
 };
 

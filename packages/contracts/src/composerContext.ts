@@ -239,9 +239,14 @@ export const ResponseContextRecord = Schema.Struct({
   itemId: TurnItemId,
   /** The subagents whose results that response reported on. */
   subagents: Schema.optional(
-    Schema.Array(Schema.Struct({ threadId: ThreadId, title: ContextLabel })).check(
-      Schema.isMaxLength(20),
-    ),
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        title: ContextLabel,
+        /** Set when the subagent's thread lives on a linked environment. */
+        environmentId: Schema.optional(EnvironmentId),
+      }),
+    ).check(Schema.isMaxLength(20)),
   ),
 });
 export type ResponseContextRecord = typeof ResponseContextRecord.Type;

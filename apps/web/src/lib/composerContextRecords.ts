@@ -181,7 +181,11 @@ export function responseContextReference(record: ResponseContextRecord): Compose
 /** One record per response, so replying to it again reuses the same reference. */
 export function responseContextRecord(
   input: Pick<ResponseContextRecord, "citation" | "itemId"> & {
-    readonly subagents: ReadonlyArray<{ readonly threadId: ThreadId; readonly title: string }>;
+    readonly subagents: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly environmentId?: EnvironmentId;
+    }>;
   },
 ): ResponseContextRecord {
   return {
@@ -193,8 +197,8 @@ export function responseContextRecord(
     itemId: input.itemId,
     ...(input.subagents.length > 0
       ? {
-          subagents: input.subagents.slice(0, 20).map(({ threadId, title }) => ({
-            threadId,
+          subagents: input.subagents.slice(0, 20).map(({ title, ...subagent }) => ({
+            ...subagent,
             title: sanitizeComposerContextLabel(title, "response"),
           })),
         }

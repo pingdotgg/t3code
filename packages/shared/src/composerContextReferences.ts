@@ -356,6 +356,9 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       ];
       for (const subagent of record.subagents ?? []) {
         lines.push(`about subagent: ${subagent.title}`, `subagent threadId: ${subagent.threadId}`);
+        if (subagent.environmentId !== undefined) {
+          lines.push(`subagent environmentId: ${subagent.environmentId}`);
+        }
       }
       lines.push(
         `starts: ${citation.text.replace(/\s+/g, " ").trim()}`,

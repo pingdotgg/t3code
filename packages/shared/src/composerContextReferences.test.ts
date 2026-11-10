@@ -327,7 +327,14 @@ describe("provider projection", () => {
             suffix: " Here is what it found",
           },
           itemId: "item-1" as never,
-          subagents: [{ threadId: "review-search" as never, title: "review pr 412 (search)" }],
+          subagents: [
+            { threadId: "review-search" as never, title: "review pr 412 (search)" },
+            {
+              threadId: "review-remote" as never,
+              title: "review pr 413",
+              environmentId: "env-2" as never,
+            },
+          ],
         },
       ],
     });
@@ -336,7 +343,7 @@ describe("provider projection", () => {
     );
     expect(projected).toContain('<context kind="response" id="response_m1">');
     expect(projected).toContain(
-      "about subagent: review pr 412 (search)\nsubagent threadId: review-search",
+      "about subagent: review pr 412 (search)\nsubagent threadId: review-search\nabout subagent: review pr 413\nsubagent threadId: review-remote\nsubagent environmentId: env-2\nstarts:",
     );
     expect(projected).toContain("starts: Reviewer (search) finished and returned blocked.\n");
     expect(projected).toContain(
