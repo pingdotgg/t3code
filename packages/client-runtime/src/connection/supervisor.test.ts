@@ -39,6 +39,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { environmentMismatchError } from "./errors.ts";
 import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
@@ -1545,6 +1546,148 @@ describe("EnvironmentSupervisor routes", () => {
         "BearerConnectionTarget",
       );
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["hangs", "fails late", "rejects its identity late"] as const)(
+    "connects over relay when an answering LAN route's readiness %s",
+    (lanReadiness) =>
+      Effect.gen(function* () {
+        const lanWaiting = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            Effect.succeed(
+              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+            ),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          ready: (attempt) =>
+            attempt === 1
+              ? Deferred.succeed(lanWaiting, undefined).pipe(
+                  Effect.andThen(
+                    lanReadiness === "hangs"
+                      ? Effect.never
+                      : Effect.sleep("5 seconds").pipe(
+                          Effect.andThen(
+                            Effect.fail(
+                              lanReadiness === "fails late"
+                                ? transient("LAN readiness failed.")
+                                : environmentMismatchError({
+                                    expected: TARGET.environmentId,
+                                    actual: EnvironmentId.make("environment-2"),
+                                  }),
+                            ),
+                          ),
+                        ),
+                  ),
+                )
+              : Effect.void,
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* Deferred.await(lanWaiting);
+        yield* TestClock.adjust("500 millis");
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+        // The stuck LAN session is closed rather than left beside the relay one.
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps waiting for a slow LAN route when relay fails its identity check", () =>
+    Effect.gen(function* () {
+      const lanWaiting = yield* Deferred.make<void>();
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => {
+          attempted.push(target._tag);
+          return target._tag === "RelayConnectionTarget"
+            ? Effect.fail(
+                environmentMismatchError({
+                  expected: TARGET.environmentId,
+                  actual: EnvironmentId.make("environment-2"),
+                }),
+              )
+            : Effect.succeed(preparedFor(target));
+        },
+        ready: () =>
+          Deferred.succeed(lanWaiting, undefined).pipe(Effect.andThen(Effect.sleep("3 seconds"))),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(lanWaiting);
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      expect(attempted).toEqual(["BearerConnectionTarget", "RelayConnectionTarget"]);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps one session when LAN and relay become ready together", () =>
+    Effect.gen(function* () {
+      const waiting = yield* Ref.make(0);
+      const bothWaiting = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        ready: () =>
+          Ref.updateAndGet(waiting, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 2 ? Deferred.succeed(bothWaiting, undefined) : Effect.void,
+            ),
+            Effect.andThen(Deferred.await(ready)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* TestClock.adjust("500 millis");
+      yield* Deferred.await(bothWaiting);
+      yield* Deferred.succeed(ready, undefined);
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("closes both racing routes when the user disconnects", () =>
+    Effect.gen(function* () {
+      const lanWaiting = yield* Deferred.make<void>();
+      const relayWaiting = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        ready: (attempt) =>
+          Deferred.succeed(attempt === 1 ? lanWaiting : relayWaiting, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(lanWaiting);
+      yield* TestClock.adjust("500 millis");
+      yield* Deferred.await(relayWaiting);
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

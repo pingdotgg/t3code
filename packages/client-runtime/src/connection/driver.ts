@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import type * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -84,8 +85,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
   // Each route gets its own scope so a half-open session closes before the next try.
-  const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
-    const routeScope = yield* Scope.fork(attemptScope);
+  const attempt = Effect.fnUntraced(function* (
+    route: ConnectionRoute,
+    routeScope: Scope.Closeable,
+  ) {
     const result = yield* connectRoute(route).pipe(
       Scope.provide(routeScope),
       Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : Scope.close(routeScope, exit))),
@@ -97,8 +100,43 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     }
     return result;
   });
+  const relayIndex = routes.findIndex((route) => route.target._tag === "RelayConnectionTarget");
+  let relayTried = false;
+  // A direct route still connecting when the head start ends races relay. The
+  // first to connect wins; closing the other scope also ends a late session.
+  const attemptWithRelay = Effect.fnUntraced(function* (
+    route: ConnectionRoute,
+    relay: ConnectionRoute,
+  ) {
+    const directScope = yield* Scope.fork(attemptScope);
+    const direct = yield* Effect.forkChild(attempt(route, directScope));
+    const early = yield* Effect.raceFirst(
+      Fiber.join(direct).pipe(Effect.asSome),
+      Fiber.join(headStart).pipe(Effect.as(Option.none())),
+    );
+    if (Option.isSome(early)) return early.value;
+    relayTried = true;
+    const relayScope = yield* Scope.fork(attemptScope);
+    const settle =
+      (scope: Scope.Closeable) =>
+      (result: Result.Result<EnvironmentConnectionLease, ConnectionAttemptError>) =>
+        result._tag === "Success" || result.failure.reason === "unsupported"
+          ? Effect.succeed({ result, scope })
+          : Effect.fail(result);
+    const raced = yield* Effect.race(
+      Fiber.join(direct).pipe(Effect.flatMap(settle(directScope))),
+      attempt(relay, relayScope).pipe(Effect.flatMap(settle(relayScope))),
+    ).pipe(Effect.result);
+    yield* Fiber.interrupt(direct);
+    const winner = raced._tag === "Success" ? raced.success.scope : undefined;
+    for (const scope of [directScope, relayScope]) {
+      if (scope !== winner) yield* Scope.close(scope, Exit.void);
+    }
+    return raced._tag === "Success" ? raced.success.result : raced.failure;
+  });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
   for (const [index, route] of routes.entries()) {
+    if (index === relayIndex && relayTried) continue;
     const check =
       checks.length === 0
         ? "unchecked"
@@ -110,7 +148,11 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       silent.push({ route, index });
       continue;
     }
-    const result = yield* attempt(route);
+    const relay = routes[relayIndex];
+    const result =
+      check === "answered" && relay !== undefined && index < relayIndex && !relayTried
+        ? yield* attemptWithRelay(route, relay)
+        : yield* attempt(route, yield* Scope.fork(attemptScope));
     if (result._tag === "Success") return result.success;
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
@@ -125,7 +167,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     ...silent.filter((_, position) => late[position] === "silent"),
   ];
   for (const { route } of retry) {
-    const result = yield* attempt(route);
+    const result = yield* attempt(route, yield* Scope.fork(attemptScope));
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }

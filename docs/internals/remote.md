@@ -37,7 +37,9 @@ network receives no credential. That check is not proof of a working route:
 when every route stays silent, each is still tried. A route that fails to
 connect, including a blocked one such as a signed-out T3 Connect, moves on to
 the next; only an incompatible server stops the walk, because it is the same
-server on every route. While connected over a later route the
+server on every route. A direct route that answered the check but is still
+connecting when the check's head start ends races T3 Connect instead of holding
+it back, and the first to connect wins; the other closes. While connected over a later route the
 [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
 preflights the earlier ones and replaces the session when one would connect.
 Preflight includes authorization so a route that answers but rejects this
