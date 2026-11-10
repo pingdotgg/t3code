@@ -429,53 +429,52 @@ it.layer(
         const npmBinDir = NodePath.join(tempDir, "npm-bin");
         const npmPath = NodePath.join(npmBinDir, "npm");
         writeExecutable(npmPath);
+        const vitePlusNodePath = NodePath.join(tempDir, "vite-plus-node/bin/node");
         const binaryPath = NodePath.join(tempDir, ".vite-plus/bin/package-tool");
         writeExecutable(binaryPath);
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
+        const advise = (env: NodeJS.ProcessEnv, vitePlusPacks: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
             binaryPath,
-            env: { PATH: npmBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            // `npm view` ignores min-release-age; install-time resolution honours it.
-            stdoutSpawner(
-              (command, args) => {
-                if (command !== npmPath) return "";
-                if (args[0] === "view") return '"1.2.0"';
-                return args[0] === "pack" && args.includes("--dry-run")
-                  ? "example-package-tool-1.1.0.tgz\n"
+            env: { PATH: npmBinDir, ...env },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              // `vp i -g` runs the npm beside Vite+'s Node; `npm view` ignores min-release-age.
+              stdoutSpawner((command, args) => {
+                if (command === "vp") return `${vitePlusNodePath}\n`;
+                if (command === npmPath) {
+                  return args[0] === "view" ? '"1.2.0"' : "example-package-tool-1.2.0.tgz\n";
+                }
+                return command === NodePath.join(NodePath.dirname(vitePlusNodePath), "npm") &&
+                  args[0] === "pack"
+                  ? `example-package-tool-${vitePlusPacks}.tgz\n`
                   : "";
-              },
-              (args) => (["view", "pack"].includes(args[0] ?? "") ? 0 : 1),
+              }),
             ),
-          ),
-        );
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(
+                { ...installedPackageToolProvider, version: "1.1.0" },
+                capabilities,
+              ),
+            ),
+            Effect.map((snapshot) => snapshot.versionAdvisory),
+          );
 
-        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
-          { ...installedPackageToolProvider, version: "1.1.0" },
-          capabilities,
-        ).pipe(
-          Effect.provideServiceEffect(
-            ProviderLatestVersions.ProviderLatestVersions,
-            ProviderLatestVersions.make([]),
-          ),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make(() =>
-              Effect.die("a configured npm lookup must not fall back to public npm"),
-            ),
-          ),
-        );
-        expect(provider.versionAdvisory).toMatchObject({
+        expect(yield* advise({ npm_config_min_release_age: "7" }, "1.1.0")).toMatchObject({
           status: "current",
           currentVersion: "1.1.0",
           latestVersion: "1.1.0",
         });
-      }),
+        expect((yield* advise({}, "1.2.0"))?.latestVersion).toBe("1.2.0");
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() =>
+            Effect.die("a configured npm lookup must not fall back to public npm"),
+          ),
+        ),
+      ),
     { skip: windowsHost },
   );
 

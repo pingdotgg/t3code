@@ -486,22 +486,34 @@ function parseNpmPackVersion(stdout: string, packageName: string): string | null
   return version && !/\s/.test(version) ? version : null;
 }
 
-// `vp i -g` installs through npm, whose min-release-age and `before` `npm view` ignores;
-// pack resolves `@latest` the way install does. `--json=false` keeps its output to the tarball name.
-const resolveNpmInstallableLatestVersion = Effect.fn("resolveNpmInstallableLatestVersion")(
-  function* (packageName: string, env: NodeJS.ProcessEnv) {
-    const npmPath = yield* resolveCommandPath("npm", {
-      env: { ...(yield* HostProcess.Environment), ...env },
-    });
-    if (!npmPath) return null;
-    const packed = yield* runProbe(
-      npmPath,
-      ["pack", "--dry-run", "--json=false", "--global", `${packageName}@latest`],
-      env,
-    );
-    return packed ? parseNpmPackVersion(packed, packageName) : null;
-  },
-);
+// `vp i -g` installs through the npm beside Vite+'s Node, which can differ from PATH's npm.
+// Pack honours npm's min-release-age and `before`, which `npm view` ignores, and resolves
+// `@latest` the way install does. `--json=false` keeps its output to the tarball name.
+const resolveVitePlusInstallableLatestVersion = Effect.fn(
+  "resolveVitePlusInstallableLatestVersion",
+)(function* (packageName: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
+  const path = yield* Path.Path;
+  const nodePath = nonEmptyString(
+    yield* runProbe("vp", ["env", "exec", "node", "-p", "process.execPath"], env),
+  );
+  if (!nodePath || !path.isAbsolute(nodePath)) return null;
+  const npmPath = path.join(path.dirname(nodePath), platform === "win32" ? "npm.cmd" : "npm");
+  const packed = yield* runProbe(
+    npmPath,
+    ["pack", "--dry-run", "--json=false", "--global", `${packageName}@latest`],
+    env,
+  );
+  return packed ? parseNpmPackVersion(packed, packageName) : null;
+});
+
+/** Installers read settings from their environment, so each one gets its own cached answer. */
+function environmentCacheKey(env: NodeJS.ProcessEnv): string {
+  const hash = NodeCrypto.createHash("sha256");
+  for (const [name, value] of Object.entries(env).toSorted(([a], [b]) => (a < b ? -1 : 1))) {
+    hash.update(`${name}\0${value ?? ""}\0`);
+  }
+  return hash.digest("hex");
+}
 
 const MiseInstall = Schema.Struct({
   install_path: Schema.String,
@@ -603,14 +615,6 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     }
     const args = ["upgrade", miseTool];
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-    // Mise reads its settings from this environment, so each one gets its own cached answer.
-    const envHash = NodeCrypto.createHash("sha256");
-    for (const [name, value] of Object.entries(context.env).toSorted(([a], [b]) =>
-      a < b ? -1 : 1,
-    )) {
-      envHash.update(`${name}\0${value ?? ""}\0`);
-    }
-    const envKey = envHash.digest("hex");
     const capabilities = makeProviderMaintenanceCapabilities({
       ...owner,
       updateExecutable: misePath,
@@ -633,7 +637,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     });
     return {
       ...capabilities,
-      latestVersionCacheKey: ["mise", misePath, miseTool, envKey].join("\0"),
+      latestVersionCacheKey: ["mise", misePath, miseTool, environmentCacheKey(context.env)].join(
+        "\0",
+      ),
     };
   },
 );
@@ -731,17 +737,27 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-    return makeProviderMaintenanceCapabilities({
+    const capabilities = makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "vp",
       updateArgs: ["i", "-g", packageName],
       updateLockKey: "vite-plus-global",
       env: context.env,
-      lookupLatestVersion: resolveNpmInstallableLatestVersion(packageName, context.env).pipe(
-        Effect.provideContext(services),
-      ),
+      lookupLatestVersion: resolveVitePlusInstallableLatestVersion(
+        packageName,
+        context.env,
+        context.platform,
+      ).pipe(Effect.provideContext(services)),
     });
+    return {
+      ...capabilities,
+      latestVersionCacheKey: [
+        "vite-plus-global",
+        packageName,
+        environmentCacheKey(context.env),
+      ].join("\0"),
+    };
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
