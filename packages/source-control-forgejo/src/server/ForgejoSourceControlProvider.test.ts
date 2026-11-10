@@ -1043,10 +1043,27 @@ it.effect("branch lookups on a Forgejo that ignores head do not each read every 
     state: "open",
     merged: false,
     base: { ref: "main", label: "main", sha: "base", repo },
-    head: { ref: `other-${index + 1}`, label: `other-${index + 1}`, sha: "head", repo },
+    head: {
+      ref: index === 0 ? "feature-c" : `other-${index + 1}`,
+      label: index === 0 ? "feature-c" : `other-${index + 1}`,
+      sha: "head",
+      repo,
+    },
   }));
   return Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
+    const onPageOne = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature-c",
+      state: "all",
+      limit: 1,
+    });
+    assert.deepStrictEqual(
+      onPageOne.map((pr) => pr.number),
+      [1],
+    );
+    assert.strictEqual(listings.length, 1, listings.join("\n"));
+    listings.length = 0;
     for (const headSelector of ["feature-a", "feature-b"]) {
       const found = yield* provider.listChangeRequests({
         cwd: "/repo",
@@ -1057,6 +1074,17 @@ it.effect("branch lookups on a Forgejo that ignores head do not each read every 
       assert.deepStrictEqual(found, []);
     }
     assert.isAtMost(listings.length, 4, listings.join("\n"));
+    listings.length = 0;
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature-a",
+      state: "open",
+      limit: 1,
+    });
+    assert.isTrue(
+      listings.every((path) => path.includes("state=open&head=feature-a")),
+      listings.join("\n"),
+    );
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

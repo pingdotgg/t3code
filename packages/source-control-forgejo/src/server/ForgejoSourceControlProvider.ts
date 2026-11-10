@@ -346,11 +346,11 @@ export const make = Effect.gen(function* () {
       ForgejoPullRequestSchema,
     );
   });
-  // Forgejo 15 and Gitea ignore `head` on the pull request list, so every branch lookup would
-  // read the whole list. One complete scan per repository serves all branches for a minute.
+  // Forgejo 15 and Gitea ignore `head` on the pull request list, so each `state=all` branch lookup
+  // would read the whole list. One scan serves a sweep's lookups; the short TTL keeps refreshes fresh.
   const repositoryPulls = yield* Cache.makeWith((key: RepositoryPullsKey) => key.lookup, {
     capacity: 16,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(1) : Duration.zero),
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.seconds(5) : Duration.zero),
   });
   const listPage = (input: ForgejoCli.ForgejoRepositoryInput, repository: string, query: string) =>
     request(
@@ -394,21 +394,27 @@ export const make = Effect.gen(function* () {
               ? []
               : [normalized];
           });
-        const cached = yield* Cache.getOption(
-          repositoryPulls,
-          new RepositoryPullsKey(repo, scanFrom(input, repo, [])),
-        );
-        if (Option.isSome(cached)) return matching(cached.value).slice(0, limit);
+        const shareScan = input.state === "all";
+        if (shareScan) {
+          const cached = yield* Cache.getOption(
+            repositoryPulls,
+            new RepositoryPullsKey(repo, scanFrom(input, repo, [])),
+          );
+          if (Option.isSome(cached)) return matching(cached.value).slice(0, limit);
+        }
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         for (let page = 1; results.length < limit; page++) {
           const items = yield* listPage(
             input,
             repo.repository,
-            `state=all&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
+            `state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
           );
+          results.push(...matching(items));
           // Page 1 of an unfiltered `state=all` listing is the start of the full scan.
           if (
+            shareScan &&
             page === 1 &&
+            results.length < limit &&
             items.some((item) => item.head.ref !== branch && item.head.label !== branch)
           ) {
             const pulls = yield* Cache.get(
@@ -417,7 +423,6 @@ export const make = Effect.gen(function* () {
             );
             return matching(pulls).slice(0, limit);
           }
-          results.push(...matching(items));
           if (items.length === 0) break;
         }
         return results.slice(0, limit);
