@@ -50,9 +50,7 @@ for (const method of Playwright.SERVER_METHODS) {
       // Browser: the same deep link hydrates into the About view.
       await page.goto(new URL("/about", server.url).toString());
       await expect(page.locator("h1")).toHaveText("About");
-      await expect(page.locator("main")).toContainText(
-        "A page all about this website",
-      );
+      await expect(page.locator("main")).toContainText("A page all about this website");
     });
 
     it("serves the SPA shell (200) for a raw fetch of an unknown path", async ({
@@ -64,16 +62,11 @@ for (const method of Playwright.SERVER_METHODS) {
       expect(await raw.text()).toContain(SHELL_MARKER);
 
       // The shell hydrates into the router's catch-all 404 view.
-      await page.goto(
-        new URL("/definitely/not/a/route", server.url).toString(),
-      );
+      await page.goto(new URL("/definitely/not/a/route", server.url).toString());
       await expect(page.locator("h1")).toHaveText("404: Not Found");
     });
 
-    it("client-side routes between views without a full navigation", async ({
-      page,
-      server,
-    }) => {
+    it("client-side routes between views without a full navigation", async ({ page, server }) => {
       await page.goto(server.url.toString());
       await expect(page.locator("h1")).toHaveText("Home");
       // Plant a marker a full-page navigation would lose.
@@ -84,9 +77,7 @@ for (const method of Playwright.SERVER_METHODS) {
       await expect(page.locator("h1")).toHaveText("About");
       await page.click("a[href='/']");
       await expect(page.locator("h1")).toHaveText("Home");
-      expect(
-        await page.evaluate(() => (window as { __spa?: boolean }).__spa),
-      ).toBe(true);
+      expect(await page.evaluate(() => (window as { __spa?: boolean }).__spa)).toBe(true);
     });
 
     it("serves static assets directly", async ({ server }) => {
