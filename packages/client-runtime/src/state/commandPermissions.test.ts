@@ -10,6 +10,7 @@ import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -33,6 +34,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createShellEnvironmentAtoms } from "./shellCommands.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -591,4 +593,34 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+it.effect("requires the destination operate grant to open or reveal a file on its host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const { openInEditor } = createShellEnvironmentAtoms(runtime);
+      const authorization = createCommandPermissions(runtime, WS_METHODS.shellOpenInEditor);
+      registry.set(sessions(other), AsyncResult.success(grant(true)));
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthFilesystemReadScope],
+          permissions: [AuthFilesystemReadScope],
+        }),
+      );
+      expect(registry.get(openInEditor.permissionAtom(other))).toBe(true);
+      expect(registry.get(openInEditor.permissionAtom(env))).toBe(false);
+      const denied = yield* authorization.authorize(registry, env).pipe(Effect.flip);
+      expect(denied).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(openInEditor.permissionAtom(env))).toBe(true);
+      yield* authorization.authorize(registry, env);
+    }),
+  ),
 );

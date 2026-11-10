@@ -89,14 +89,15 @@ function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const canOpenInEditor = useAtomValue(shellEnvironment.openInEditor.permissionAtom(environmentId));
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const availableEditors = canOpenInEditor ? (serverConfig?.availableEditors ?? []) : [];
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
       environmentId !== null &&
       serverConfig?.shellRevealInFileManager === true &&
-      serverConfig.availableEditors.includes("file-manager")
+      availableEditors.includes("file-manager")
         ? serverConfig.shellRevealInFileManagerKind === undefined
           ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
@@ -117,7 +118,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       action === "open" || reveal
         ? ("file-manager" as const)
         : (action.slice("editor:".length) as EditorId);
-    if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
+    if (!capabilities.editorIds.includes(editor)) return;
+    if (reveal && capabilities.revealLabel === undefined) return;
 
     const result = await openInEditor({
       environmentId,
