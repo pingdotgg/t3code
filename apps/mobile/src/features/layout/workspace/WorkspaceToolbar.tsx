@@ -15,7 +15,7 @@ import {
   NativeWorkspaceTabActivityContext,
 } from "../../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
-import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { shouldRestoreNativeSearch, workspaceSearchBlurAction } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
@@ -46,7 +46,8 @@ export function WorkspaceToolbar(props: {
     activeNewTask === null;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { layout, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const searchRef = useRef<SearchBarCommands>(null);
   const settingsMenu = useSettingsEnvironmentMenu();
   // The Settings list takes the selected tab's place, so search follows it.
