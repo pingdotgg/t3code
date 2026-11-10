@@ -4320,6 +4320,10 @@ describe("OrchestratorMcpService pipelines", () => {
         ],
         [{ name: "New", steps: [] }, "Add at least one step"],
         [{ name: "x".repeat(81), steps: [step] }, "name has at most 80"],
+        [
+          { name: "New", steps: [{ ...step, name: "y".repeat(81) }] },
+          "Step 1: the name has at most",
+        ],
         [{ name: "New", steps: [{ name: "One" }] }, "needs a name and a promptTemplate"],
         [{ name: "New", steps: [{ ...step, skills: ["bad skill"] }] }, "invalid character"],
         [

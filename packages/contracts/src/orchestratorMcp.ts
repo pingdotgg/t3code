@@ -823,15 +823,10 @@ export type OrchestratorMcpPipeline = typeof OrchestratorMcpPipeline.Type;
 // Every field is optional so an edit names only what it changes; the service enforces the rest.
 const OrchestratorMcpPipelineStepFields = {
   name: Schema.optional(Schema.String),
-  promptTemplate: Schema.optional(
-    Schema.String.annotate({
-      description:
-        "Placeholders: {{input}}, {{previous.output}}, {{steps.<id or name>.output}} (earlier steps only).",
-    }),
-  ),
+  promptTemplate: Schema.optional(Schema.String),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   model: Schema.optional(Schema.String),
-  options: Schema.optional(OrchestratorMcpTargetOptions),
+  options: Schema.optional(OrchestratorMcpTargetOptionsFromRecord),
   runtimeMode: Schema.optional(RuntimeMode),
   skills: Schema.optional(Schema.Array(Schema.String)),
   pauseBefore: Schema.optional(Schema.Boolean),
@@ -848,23 +843,18 @@ export const OrchestratorMcpSavePipelineInput = Schema.Struct({
   steps: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        stepId: Schema.optional(
-          Schema.String.annotate({
-            description:
-              "An existing step's id: it keeps every field you omit. Without a match, the entry is a new step: `name` and `promptTemplate` are required.",
-          }),
-        ),
+        stepId: Schema.optional(Schema.String),
         ...OrchestratorMcpPipelineStepFields,
       }),
-    ).annotate({ description: "The full ordered step list. It replaces the pipeline's steps." }),
+    ),
   ),
   stepEdits: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        step: TrimmedNonEmptyString.annotate({ description: "Step id or name." }),
+        step: TrimmedNonEmptyString,
         ...OrchestratorMcpPipelineStepFields,
       }),
-    ).annotate({ description: "Changes to named steps only. Not with `steps`." }),
+    ),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });

@@ -213,7 +213,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const ListPipelinesTool = Tool.make("list_pipelines", {
   description:
-    "List the user's pipelines: saved chains of agent steps, each step in its own thread, each step's output feeding the next. Pass an id or exact name to `start_pipeline`. Prompt templates and skills: `get_pipeline`.",
+    "List the user's pipelines: saved chains of agent steps, each step in its own thread, each step's output feeding the next. Pass an id or exact name to `start_pipeline`. Full definitions: `get_pipeline`.",
   success: OrchestratorMcpListPipelinesResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -226,7 +226,7 @@ const ListPipelinesTool = Tool.make("list_pipelines", {
 
 const GetPipelineTool = Tool.make("get_pipeline", {
   description:
-    "Read one pipeline's full definition by id or exact name: each step's prompt template, skills, model, options, runtime mode and pause.",
+    "Read one pipeline by id or exact name, with each step's prompt template and skills.",
   parameters: OrchestratorMcpGetPipelineInput,
   success: OrchestratorMcpPipeline,
   failure: OrchestratorMcpFailure,
@@ -240,7 +240,7 @@ const GetPipelineTool = Tool.make("get_pipeline", {
 
 const SavePipelineTool = Tool.make("save_pipeline", {
   description:
-    "Create a pipeline, or change an existing one (`pipeline`), only when the user asks to add or change one. To change steps, prefer `stepEdits`: it touches only the named steps. `steps` replaces the whole list; an entry with an existing `stepId` keeps the fields it omits. New steps default to your model and runtime mode. Steps may not run broader than you; plan mode cannot save. Editing a pipeline made from a template stops it following template updates. Runs already started keep the version they started with. Returns the saved pipeline.",
+    "Create a pipeline, or change one (`pipeline`: id or exact name), only when the user asks to add or change one. To change steps, prefer `stepEdits`: it touches only the named steps (by id or name; not with `steps`). `steps` replaces the whole list; an entry with an existing `stepId` keeps the fields it omits, any other is a new step needing `name` and `promptTemplate`, in which {{input}}, {{previous.output}} and {{steps.<id or name>.output}} (earlier steps) are filled in. New steps default to your model and runtime mode; none may run broader than you; plan mode cannot save. Editing a template-made pipeline stops it following template updates. Runs already started keep the version they started with.",
   parameters: OrchestratorMcpSavePipelineInput,
   success: OrchestratorMcpPipeline,
   failure: OrchestratorMcpFailure,
@@ -253,7 +253,7 @@ const SavePipelineTool = Tool.make("save_pipeline", {
 
 const DeletePipelineTool = Tool.make("delete_pipeline", {
   description:
-    "Delete one pipeline by id or exact name, only when the user asks to delete that pipeline. Runs already started are not affected. A deleted template pipeline stays deleted; the user can recreate it from the template in Settings.",
+    "Delete one pipeline by id or exact name, only when the user asks to delete that pipeline. Runs already started are unaffected. A deleted template pipeline stays deleted; the user can recreate it from the template in Settings.",
   parameters: OrchestratorMcpDeletePipelineInput,
   success: OrchestratorMcpDeletePipelineResult,
   failure: OrchestratorMcpFailure,

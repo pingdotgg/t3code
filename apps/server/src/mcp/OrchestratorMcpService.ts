@@ -2568,9 +2568,13 @@ const make = Effect.gen(function* () {
         drafts.map(({ lockedId, step }) => ({ lockedId, name: step.name })),
       );
       const steps: PipelineStep[] = drafts.map(({ step }, index) => {
-        const label = step.name.trim() || `Step ${index + 1}`;
-        if (step.name.trim() === "") problem(`${label}: give the step a name.`);
-        else if (step.name.trim().length > PIPELINE_NAME_MAX_LENGTH) {
+        const trimmedName = step.name.trim();
+        const label =
+          trimmedName === "" || trimmedName.length > PIPELINE_NAME_MAX_LENGTH
+            ? `Step ${index + 1}`
+            : trimmedName;
+        if (trimmedName === "") problem(`${label}: give the step a name.`);
+        else if (trimmedName.length > PIPELINE_NAME_MAX_LENGTH) {
           problem(`${label}: the name has at most ${PIPELINE_NAME_MAX_LENGTH} characters.`);
         }
         if (step.promptTemplate.trim() === "") problem(`${label}: write a prompt template.`);
