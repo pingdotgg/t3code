@@ -498,6 +498,7 @@ describe("copying a table as HTML", () => {
     expect(
       content(
         new FakeText("run:"),
+        new FakeElement("DIV", ["select-none"]).append(new FakeText("madeup")),
         new FakeElement("PRE").append(
           new FakeElement("CODE").append(new FakeText("if x:\n\ty  =  1\n\nend\n")),
         ),

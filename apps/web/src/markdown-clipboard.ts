@@ -438,6 +438,7 @@ function collectHtmlCellText(node: Node, parts: string[], preformatted: boolean)
     }
     if (child.nodeType !== Node.ELEMENT_NODE) continue;
     const element = child as Element;
+    if (isSkippedElement(element)) continue;
     if (element.hasAttribute("data-markdown-math")) {
       parts.push(element.getAttribute("data-markdown-copy")?.trim() ?? "");
       continue;
