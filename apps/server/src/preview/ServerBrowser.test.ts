@@ -941,9 +941,11 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
         Effect.sync(() => resolvedEvaluation.resolve({ result: { value: true } })),
       );
       yield* Effect.promise(() => started.promise);
+      // The 4,000-character cap falls between the halves of the emoji.
+      const message = `Delete row?${" ".repeat(3_988)}😀`;
       const dialog = {
         type: () => "confirm",
-        message: () => "Delete row?",
+        message: () => message,
         defaultValue: () => "",
         accept: vi.fn(async () => {
           resolvedEvaluation.resolve({ result: { value: true } });
@@ -958,7 +960,7 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
         operation: "status",
         input: {},
       });
-      expect(status.dialog).toMatchObject({ type: "confirm", message: "Delete row?" });
+      expect(status.dialog).toMatchObject({ type: "confirm", message: message.slice(0, 3_999) });
       expect(page.title).not.toHaveBeenCalled();
       expect(dialog.dismiss).not.toHaveBeenCalled();
       const reuse = yield* broker

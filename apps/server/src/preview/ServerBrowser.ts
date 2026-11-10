@@ -370,6 +370,9 @@ const DOWNLOAD_LIMIT = 20;
 const ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS = 5_000;
 const DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 
+// Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+const cutDialogText = (text: string) => text.slice(0, 4_000).replace(/[\uD800-\uDBFF]$/, "");
+
 const tabKey = (threadId: string, tabId: string) => `${threadId}\u0000${tabId}`;
 
 const pushBounded = <A>(
@@ -537,8 +540,8 @@ const make = Effect.gen(function* () {
     tab.dialog
       ? {
           type: tab.dialog.type(),
-          message: tab.dialog.message().slice(0, 4000),
-          defaultValue: tab.dialog.defaultValue().slice(0, 4000),
+          message: cutDialogText(tab.dialog.message()),
+          defaultValue: cutDialogText(tab.dialog.defaultValue()),
         }
       : null;
 
