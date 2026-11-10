@@ -248,7 +248,7 @@ describe("composer file attachments", () => {
           name: "IMG_9280.png",
           mimeType: "image/png",
           sizeBytes: last.width * last.height * 4,
-          previewUri: image!.dataUrl,
+          previewUri: photo.uri,
         }),
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);

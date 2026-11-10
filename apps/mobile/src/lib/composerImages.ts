@@ -496,7 +496,7 @@ export async function pickComposerMedia(input: {
           base64: fitted?.base64 ?? base64,
           mimeType: originalMimeType,
           name,
-          previewUri: fitted ? `data:${originalMimeType};base64,${fitted.base64}` : asset.uri,
+          previewUri: asset.uri,
         };
       } else {
         const rendered = await renderPhoto(asset.uri);
