@@ -104,6 +104,10 @@ const fakeT3Serve = (publishDelayMs: number | null) => `const fs = require("node
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (args.join(" ") === "__ssh-helper home-dir") {
+  process.stdout.write(path.join(process.env.HOME, ".t3"));
+  process.exit(0);
+}
 const port = Number(args[args.indexOf("--port") + 1]);
 const userdata = path.join(args[args.indexOf("--base-dir") + 1], "userdata");
 const servers = path.join(process.env.HOME, "servers");
@@ -255,7 +259,7 @@ process.stdout.write(args[0] === "__ssh-helper"
           `#!${process.execPath}
 const fs = require("node:fs");
 const args = process.argv.slice(2);
-if (args[0] === "serve") process.exit(0);
+if (args[0] === "serve" || args[0] === "--version") process.exit(0);
 if (args[0] !== "__ssh-helper") process.exit(21);
 switch (args[1]) {
   case "home-dir": process.stdout.write(process.env.T3CODE_HOME); break;
