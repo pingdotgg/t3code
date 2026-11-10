@@ -9,7 +9,7 @@ import { newDraftId, newThreadId } from "~/lib/utils";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { buildDraftThreadRouteParams } from "../../threadRoutes";
 import { type DraftThreadEnvMode, useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { openPullRequestThreadDialog } from "./ChatOverlayHosts";

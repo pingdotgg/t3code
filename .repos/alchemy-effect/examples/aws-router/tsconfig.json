@@ -10,5 +10,8 @@
     "target": "ESNext",
     "jsx": "react-jsx"
   },
-  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+  "references": [
+    { "path": "../../packages/alchemy/tsconfig.json" },
+    { "path": "../../packages/aws/tsconfig.json" }
+  ]
 }

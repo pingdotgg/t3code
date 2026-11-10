@@ -1,0 +1,109 @@
+---
+title: Cloud Functions
+description: Deploy an Effect fetch handler as a 2nd-gen Cloud Function — built by Google from an uploaded bundle, so no local Docker is needed.
+---
+
+`GCP.CloudFunctions.Function` deploys the same Effect program as
+[Cloud Run](/gcp/compute/cloud-run), built a different way: Alchemy
+bundles your code for Node.js, uploads it, and Google builds it. You
+can deploy from a machine without Docker.
+
+## Declare a function
+
+```typescript
+// src/Notes.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { NotesDb } from "./resources.ts";
+
+export default class Notes extends GCP.CloudFunctions.Function<Notes>()(
+  "Notes",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const db = yield* GCP.Firestore.ReadWriteDatabase(NotesDb);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const { documents } = yield* db.list("notes", { pageSize: 100 });
+        return yield* HttpServerResponse.json({
+          notes: documents.map((doc) => doc.fields),
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Firestore.ReadWriteDatabaseHttp)),
+) {}
+```
+
+The function runs on Node.js 22 and serves `fetch` through Google's
+Functions Framework.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const notes = yield* Notes;
+  return { url: notes.url };
+}),
+```
+
+## Make it public
+
+A 2nd-gen function is served by a Cloud Run service. Grant
+`roles/run.invoker` to `allUsers` on that service to open it up:
+
+```typescript
+yield* GCP.IAM.Member("PublicInvoker", {
+  kind: "run.service",
+  name: notes.service.as<string>(),
+  role: "roles/run.invoker",
+  member: "allUsers",
+});
+```
+
+Without it, callers need a Google identity token.
+
+## Consume a topic
+
+Event sources work as on Cloud Run. Provide the Cloud Functions
+implementation:
+
+```typescript
+yield* GCP.PubSub.consumeTopicMessages(Orders, (messages) =>
+  messages.pipe(Stream.runForEach(({ message }) => Effect.log(message))),
+);
+// …provided with Effect.provide(GCP.CloudFunctions.TopicEventSource)
+```
+
+## Deploy your own source
+
+Leave out `main` to deploy an archive you built yourself:
+
+```typescript
+const hello = yield* GCP.CloudFunctions.Function("Hello", {
+  buildConfig: {
+    runtime: "nodejs22",
+    entryPoint: "helloHttp",
+    source: { storageSource: { bucket: "my-source", object: "hello.zip" } },
+  },
+});
+```
+
+## Cloud Functions or Cloud Run?
+
+Both run your program on Cloud Run. Pick Cloud Functions when you
+can't run Docker where you deploy. Pick a Cloud Run service otherwise:
+it deploys faster and gives you every revision setting.
+
+## Example
+
+[`examples/gcp-cloud-function`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-cloud-function)
+is a notes API over Firestore.
+
+## Where next
+
+- [Cloud Run](/gcp/compute/cloud-run) — the same program with a
+  locally built image.
+- [CloudFunctions reference](/providers/gcp/cloudfunctions#function) —
+  every prop and attribute.

@@ -10,6 +10,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
   type UnknownUnionMember,
@@ -37,6 +38,7 @@ export const ProjectScript = Schema.Struct({
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   runOnSettle: Schema.optional(Schema.Boolean),
+  stopOnSettle: Schema.optional(Schema.Boolean),
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
   autoOpenPreview: Schema.optional(Schema.Boolean),
@@ -160,6 +162,8 @@ export const Project = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -171,16 +175,6 @@ export const ProjectSnapshot = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type ProjectSnapshot = typeof ProjectSnapshot.Type;
-
-export const ProjectChange = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("project.upserted"), project: Project }),
-  Schema.Struct({
-    type: Schema.Literal("project.deleted"),
-    projectId: ProjectId,
-    deletedAt: IsoDateTime,
-  }),
-]);
-export type ProjectChange = typeof ProjectChange.Type;
 
 export const ProjectCreatePayload = Schema.Struct({
   title: TrimmedNonEmptyString,
@@ -200,6 +194,12 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  pinned: Schema.optional(Schema.Boolean),
+  archived: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Threads and files are kept.",
+    }),
+  ),
 });
 export type ProjectUpdatePayload = typeof ProjectUpdatePayload.Type;
 
@@ -536,6 +536,16 @@ export const ProjectCreateNewResult = Schema.Struct({
   commitError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
+
+export const ProjectCreateFromThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProjectCreateFromThreadInput = typeof ProjectCreateFromThreadInput.Type;
+
+export const ProjectCreateFromThreadResult = Schema.Struct({
+  projectId: ProjectId,
+});
+export type ProjectCreateFromThreadResult = typeof ProjectCreateFromThreadResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",

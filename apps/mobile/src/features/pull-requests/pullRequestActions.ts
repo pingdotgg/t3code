@@ -79,20 +79,6 @@ export const PR_ACTION_ICONS = {
   "approve-workflows": "checkmark",
 } as const satisfies Record<PullRequestAction, AppSymbolName>;
 
-export const ALL_PR_ACTIONS: readonly PullRequestAction[] = [
-  "merge",
-  "ready",
-  "draft",
-  "update-branch",
-  "enable-auto-merge",
-  "disable-auto-merge",
-  "approve-workflows",
-  "close",
-  "reopen",
-  "revert",
-  "delete-branch",
-];
-
 export function allowedMergeMethods(pr: ActionDetail) {
   return pr.capabilities.mergeMethods.filter((method) => pr.mergeCapabilities[method]);
 }
@@ -131,8 +117,6 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
   }
 }
 
-export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
-
 export function mergeUnavailableReason(
   pr: ActionDetail,
   connectionAllowsWrites: boolean,
@@ -146,27 +130,9 @@ export function mergeUnavailableReason(
   if (!pr.viewerPermissions.actions.includes("merge"))
     return `Your account cannot merge this ${terminology.singular}.`;
   if (pr.isDraft) return "Mark this draft ready for review before merging.";
-  if (pr.mergeability === "conflicting") return MERGE_CONFLICT_REASON;
+  if (pr.mergeability === "conflicting") return "Resolve the branch conflicts before merging.";
   if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
   return null;
-}
-
-export function mergeSummary(
-  pr: ActionDetail & Pick<PullRequestDetail, "autoMergeMethod">,
-  connectionAllowsWrites: boolean,
-  terminology: ChangeRequestTerminology,
-) {
-  if (pr.state === "merged") return "Merged";
-  if (pr.state === "closed") return "Closed";
-  if (pr.isDraft) return "Draft";
-  if (pr.mergeability === "conflicting") return "Has conflicts";
-  if (!connectionAllowsWrites) return "Read-only connection";
-  const allowed = allowedMergeMethods(pr);
-  const method = pr.autoMergeMethod ?? (allowed.includes("squash") ? "squash" : allowed[0]);
-  const methodLabel = method ? `${method[0]?.toUpperCase()}${method.slice(1)}` : "Merge";
-  if (pr.autoMergeEnabled) return `${methodLabel} · auto-merge on`;
-  if (mergeUnavailableReason(pr, connectionAllowsWrites, terminology)) return "Unavailable";
-  return `${methodLabel}${pr.autoMergeEnabled === false ? " · auto-merge off" : ""}`;
 }
 
 export const openOnProviderLabel = (provider: SourceControlProviderKind) =>

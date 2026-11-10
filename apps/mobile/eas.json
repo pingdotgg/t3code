@@ -66,11 +66,16 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "production",
-        "NODE_OPTIONS": "--max-old-space-size=4096"
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "SOURCEMAP_FILE": "/tmp/t3code-ios-main.jsbundle.map",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       },
       "channel": "production",
       "environment": "production",
       "autoIncrement": true,
+      "android": {
+        "gradleCommand": ":app:bundleRelease -x lintVitalAnalyzeRelease -x lintVitalRelease"
+      },
       "ios": {
         "image": "macos-tahoe-26.6-xcode-27.1"
       }

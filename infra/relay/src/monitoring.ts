@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -343,7 +343,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   ];
 };
 
-const notifierConfig = (name: string) =>
+export const notifierConfig = (name: string) =>
   Config.String(name).pipe(
     Config.option,
     Config.map(Option.flatMap((value) => Option.liftPredicate(value.trim(), Boolean))),
