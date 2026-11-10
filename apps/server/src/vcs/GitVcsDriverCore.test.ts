@@ -6472,7 +6472,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["feature/push", "origin/feature/push"])(
+    it.effect.each(["feature/push", "origin/feature/push", "origin/team/feature/push"])(
       "publishes %s when the configured diff base already contains HEAD",
       (branch) =>
         Effect.gen(function* () {
@@ -6485,6 +6485,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(originRemote, ["init", "--bare"]);
           yield* git(upstreamRemote, ["init", "--bare"]);
           yield* git(cwd, ["remote", "add", "origin", originRemote]);
+          yield* git(cwd, ["remote", "add", "origin/team", originRemote]);
           yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
           yield* git(cwd, ["push", "origin", "main", "main:refs/heads/feature/push"]);
           yield* git(cwd, ["checkout", "--no-track", "-b", branch]);

@@ -1740,7 +1740,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     branchName: string,
   ) {
     const remoteNames = yield* listRemoteNames(cwd).pipe(Effect.orElseSucceed(() => []));
-    const parsedRemoteRef = parseRemoteRefWithRemoteNames(branchName, remoteNames);
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+      branchName,
+      remoteNames.toSorted((left, right) => right.length - left.length),
+    );
     return parsedRemoteRef?.branchName ?? branchName;
   });
 
