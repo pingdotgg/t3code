@@ -48,7 +48,7 @@ import {
 } from "../platform/orchestrationCache.ts";
 import {
   decodeStoredThreadSnapshot,
-  encodeStoredThreadSnapshot,
+  makeStoredThreadSnapshotEncoder,
 } from "../platform/threadCacheEncoding.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
@@ -66,6 +66,13 @@ import {
   type ThreadSnapshotLoadResult,
 } from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+
+const encodeCompactRecord = makeStoredThreadSnapshotEncoder({
+  format: "compact",
+  yieldToHost: Effect.void,
+});
+const encodeStoredThreadSnapshot = (stored: Parameters<typeof encodeCompactRecord>[0]) =>
+  encodeCompactRecord(stored).pipe(Effect.map(Option.getOrThrow));
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),

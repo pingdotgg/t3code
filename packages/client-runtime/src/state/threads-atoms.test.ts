@@ -39,7 +39,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import {
   decodeStoredThreadSnapshot,
-  encodeStoredThreadSnapshot,
+  makeStoredThreadSnapshotEncoder,
 } from "../platform/threadCacheEncoding.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -54,6 +54,13 @@ import {
   type LeftThreadRetention,
 } from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+
+const encodeCompactRecord = makeStoredThreadSnapshotEncoder({
+  format: "compact",
+  yieldToHost: Effect.void,
+});
+const encodeStoredThreadSnapshot = (stored: Parameters<typeof encodeCompactRecord>[0]) =>
+  encodeCompactRecord(stored).pipe(Effect.map(Option.getOrThrow));
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
