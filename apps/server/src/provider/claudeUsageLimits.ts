@@ -185,7 +185,7 @@ export function claudeUsageResponseToLimits(input: {
         checkedAt,
         reason: "probeFailed",
         message:
-          "Claude Code's sign-in can't read plan limits. Run `claude auth login` to sign in again.",
+          "Claude Code's sign-in can't read plan limits. Run `claude auth login` on the machine running T3 Code, with the CLAUDE_CONFIG_DIR set in Claude's provider settings, to sign in again.",
       }),
       names: { overageIncluded: undefined },
     };
