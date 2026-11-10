@@ -20,11 +20,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -298,7 +296,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
           input.untilDelegatedWorkSettled === true &&
           (yield* Ref.get(thread.nested))
         ) {
-          const pendingInput = yield* Ref.getAndSet(thread.nestedInput, null);
+          const pendingInput = input.terminalOnly
+            ? null
+            : yield* Ref.getAndSet(thread.nestedInput, null);
           if (pendingInput !== null) {
             return {
               threadId: input.threadId,
@@ -1330,23 +1330,10 @@ it.effect.each([null, "question", "approval"] as const)(
           ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
         >([]);
         const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-        const clock = yield* Clock.Clock;
-        const sleeps: Array<number> = [];
         const a = yield* makeLaptop(database, offers);
         yield* linkTo(a.links, b, "full-access");
         yield* seedParent(a);
-        // The follower is forked by delegation, so it inherits this call's clock.
-        const delegated = yield* delegateToBox(a).pipe(
-          Effect.provideService(Clock.Clock, {
-            ...clock,
-            sleep: (duration) =>
-              Duration.toMillis(duration) === 5_000
-                ? Effect.sync(() => {
-                    sleeps.push(5_000);
-                  })
-                : clock.sleep(duration),
-          }),
-        );
+        const delegated = yield* delegateToBox(a);
 
         // The task's run there ends after delegating a review of its own.
         yield* Ref.set(thread.nested, true);
@@ -1359,7 +1346,8 @@ it.effect.each([null, "question", "approval"] as const)(
           taskResult(a, delegated.taskId).pipe(Effect.as("completed here" as const)),
         );
         expect(first).toBe("waiting there");
-        expect(sleeps).toEqual(pendingInput === null ? [] : [5_000]);
+        // The follower asks for a terminal-only wait, so pending input never ends it early.
+        expect(yield* Ref.get(thread.nestedInput)).toBe(pendingInput);
 
         // The review reports and wakes the thread there, whose next run answers.
         yield* Ref.set(thread.laterReply, "The review found two issues; both are fixed.");

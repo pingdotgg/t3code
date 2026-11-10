@@ -613,16 +613,13 @@ const make = Effect.gen(function* () {
         // tasks to wake it for the answer, which a task here waits for too.
         // An older peer ignores this and reports the run alone.
         untilDelegatedWorkSettled: true,
+        // Only the terminal state matters here; input-aware waits would return at once.
+        returnOnInput: false,
       })
       .pipe(Effect.raceFirst(endedHere));
     // The next look reads the result and stops it there.
     if ("endedHere" in waited) return false;
     if (waited.timedOut) return false;
-    if (waited.hasPendingQuestion || waited.pendingApproval !== null) {
-      // Input-aware waits return immediately; keep following without a hot loop.
-      yield* Effect.sleep(Duration.seconds(5)).pipe(Effect.raceFirst(endedHere));
-      return false;
-    }
     // A task recorded without its run waits on the thread's latest; a
     // thread there with none has nothing left to wait for.
     if (waited.runId === null) {
