@@ -15,9 +15,17 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutWorkspaceLeadTab,
+  type LayoutTab,
   type LayoutWorkspace,
 } from "./layoutModel";
+import { useLayoutTabLabel } from "./PaneTabs";
 import { useLayoutStore, type LayoutHint as LayoutHintState } from "./layoutStore";
+
+const NO_LEAD_TAB: LayoutTab = {
+  id: "none",
+  content: { kind: "launcher", id: "none", context: null },
+};
+const WORKSPACE_BARS = 5;
 
 const ARROWS: Record<string, string> = { Left: "←", Right: "→", Up: "↑", Down: "↓" };
 
@@ -176,7 +184,10 @@ export function LayoutStripHint() {
             const workspaces = countedLayoutWorkspaces(state.layout);
             const workspace = selectFocusedWorkspace(state.layout);
             // One workspace has nothing to tell apart.
-            if (workspaces.length < 2) return;
+            if (workspaces.length < 2) {
+              if (state.hint?.kind === "workspace-name") state.clearHint(state.hint.id);
+              return;
+            }
             state.showHint({
               kind: "workspace-name",
               workspaceId: workspace.id,
@@ -235,18 +246,16 @@ function TerminalHintPill({
 }
 
 /**
- * A workspace's name: the one the user gave it, else its first thread's
- * title, else what it is.
+ * A workspace's name: the one the user gave it, else the title its focused
+ * tab shows in the tab strip.
  */
 function useLayoutWorkspaceName(workspace: LayoutWorkspace | null): string {
   const lead = workspace ? selectLayoutWorkspaceLeadTab(workspace) : null;
-  const target = lead?.content.kind === "chat" ? lead.content.target : null;
-  const thread = useThreadShell(target?.kind === "server" ? target.threadRef : null);
+  const label = useLayoutTabLabel(lead ?? NO_LEAD_TAB);
   if (!workspace) return "Workspace";
   if (workspace.name) return workspace.name;
-  if (workspace.columns.length === 0) return "Empty workspace";
-  if (target?.kind === "draft") return "New thread";
-  return thread?.title ?? "Workspace";
+  if (!lead) return "Empty workspace";
+  return label.title;
 }
 
 /**
@@ -270,6 +279,7 @@ function WorkspaceHintPill({
       ? shortcutLabelForCommand(keybindings, hint.command)
       : null;
   const small = hint.kind === "workspace-name";
+  const firstBar = Math.max(0, Math.min(hint.index - 2, hint.count - WORKSPACE_BARS));
   const [placementRef, placement] = useHintPlacement();
   return (
     <div
@@ -284,17 +294,22 @@ function WorkspaceHintPill({
         leaving && "opacity-0",
       )}
     >
-      <span aria-hidden className="flex shrink-0 flex-col gap-0.5">
-        {Array.from({ length: Math.min(hint.count, 5) }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "rounded-xs",
-              small ? "h-1.25 w-2" : "h-1.5 w-2.5",
-              index === Math.min(hint.index, 4) ? "bg-foreground" : "bg-foreground/20",
-            )}
-          />
-        ))}
+      <span aria-hidden className="flex shrink-0 flex-col items-center gap-px">
+        {Array.from({ length: Math.min(hint.count, WORKSPACE_BARS) }, (_, bar) => {
+          const index = firstBar + bar;
+          const more =
+            (bar === 0 && index > 0) || (bar === WORKSPACE_BARS - 1 && index < hint.count - 1);
+          return (
+            <span
+              key={bar}
+              className={cn(
+                "h-1 rounded-xs",
+                small ? (more ? "w-1" : "w-2") : more ? "w-1.5" : "w-2.5",
+                index === hint.index ? "bg-foreground" : "bg-foreground/20",
+              )}
+            />
+          );
+        })}
       </span>
       <span className="min-w-0 truncate text-meta text-foreground">{name}</span>
 
