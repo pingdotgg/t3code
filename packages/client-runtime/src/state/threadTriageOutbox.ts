@@ -147,7 +147,11 @@ export function createThreadTriageOutbox<R, E>(input: {
     write(registry, (stored) => without(stored, entry.commandId));
 
   let loading: Promise<unknown> | undefined;
-  const load = (registry: AtomRegistry.AtomRegistry) => (loading ??= write(registry));
+  const load = (registry: AtomRegistry.AtomRegistry) =>
+    (loading ??= write(registry).then((result) => {
+      // A failed read is tried again the next time the queue is looked at.
+      if (!AsyncResult.isSuccess(result)) loading = undefined;
+    }));
   const environmentEntriesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const entries = get(entriesAtom);
