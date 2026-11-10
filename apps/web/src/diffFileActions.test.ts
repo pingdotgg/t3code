@@ -70,6 +70,13 @@ describe("openDiffFilePrimaryAction", () => {
         repositoryRoot: "/repo",
       }),
     ).toBe("src/a\\b.txt");
+    expect(
+      resolveDiffPathForWorkspace({
+        filePath: "pkg\\one/src/index.ts",
+        workspaceRoot: "/repo/pkg\\one",
+        repositoryRoot: "/repo",
+      }),
+    ).toBe("src/index.ts");
   });
 
   // regression: #6174 opening diff files broke for repositories at a filesystem root

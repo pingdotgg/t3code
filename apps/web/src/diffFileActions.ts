@@ -45,7 +45,8 @@ function repositoryRelativeWorkspaceSegments(
   const normalizedRepositoryRoot = normalizeProjectPathForComparison(repositoryRoot);
   if (normalizedWorkspaceRoot === normalizedRepositoryRoot) return [];
 
-  const separator = normalizedRepositoryRoot.includes("\\") ? "\\" : "/";
+  const windows = isWindowsAbsolutePath(workspaceRoot);
+  const separator = windows ? "\\" : "/";
   const repositoryPrefix = normalizedRepositoryRoot.endsWith(separator)
     ? normalizedRepositoryRoot
     : `${normalizedRepositoryRoot}${separator}`;
@@ -53,7 +54,7 @@ function repositoryRelativeWorkspaceSegments(
 
   return normalizedWorkspaceRoot
     .slice(repositoryPrefix.length)
-    .split(/[\\/]+/)
+    .split(windows ? /[\\/]+/ : /\/+/)
     .filter(Boolean);
 }
 
