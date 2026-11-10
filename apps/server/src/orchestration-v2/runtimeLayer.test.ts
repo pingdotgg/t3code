@@ -7291,6 +7291,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // Each fits one message; two together pass the serialized context limit.
+  const bulkyAnnotationContext = (prefix: string) => ({
+    version: 1 as const,
+    records: Array.from({ length: 3 }, (_, index) => ({
+      version: 1 as const,
+      kind: "preview-annotation" as const,
+      contextId: ComposerContextId.make(`${prefix}-${index}`),
+      label: "Annotation",
+      annotationId: `${prefix}-${index}`,
+      pageUrl: "http://localhost/",
+      pageTitle: null,
+      comment: "",
+      targetSummary: "body",
+      styleChanges: [],
+      styleChangeDetails: Array.from({ length: 200 }, () => ({
+        targetId: "body",
+        selector: null,
+        property: "background",
+        previousValue: "a".repeat(8_000),
+        value: "b".repeat(8_000),
+      })),
+    })),
+  });
+
   it.effect.each([
     [
       "an agent's message",
@@ -7346,6 +7370,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ],
         },
       },
+    ],
+    [
+      "more context than one message can carry",
+      { context: bulkyAnnotationContext("second") },
+      "Queued messages carry too much context to send as one.",
+      { context: bulkyAnnotationContext("first") },
     ],
     ["a command", { text: "/review" }, "Commands are sent on their own."],
     [

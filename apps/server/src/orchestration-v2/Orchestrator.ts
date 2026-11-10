@@ -28,6 +28,7 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
+  OrchestrationMessageContext,
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -195,6 +196,7 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
+const encodeMessageContext = Schema.encodeUnknownEffect(OrchestrationMessageContext);
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
@@ -10474,6 +10476,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: merged._tag === "Blocked" ? merged.reason : "The queued message was not found.",
       });
+    }
+    if (merged.context !== undefined) {
+      // Past its serialized limit the context fails the event store's encoding with no reason.
+      yield* encodeMessageContext(merged.context).pipe(
+        Effect.mapError(
+          () =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Queued messages carry too much context to send as one.",
+            }),
+        ),
+      );
     }
     yield* emitQueuedMessageRewrite({
       command,
