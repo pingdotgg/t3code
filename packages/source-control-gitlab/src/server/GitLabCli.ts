@@ -614,7 +614,14 @@ export const make = Effect.gen(function* () {
             configuredUrl.pathname === "/"
               ? yield* execute({
                   cwd: input.cwd,
-                  args: ["config", "get", "subfolder", "--host", configuredUrl.host],
+                  args: [
+                    "config",
+                    "get",
+                    "subfolder",
+                    "--host",
+                    // glab keys hosts by the exact string, default port included.
+                    glabHost.includes("://") ? configuredUrl.host : glabHost,
+                  ],
                 }).pipe(
                   Effect.map((result) => result.stdout.trim()),
                   Effect.orElseSucceed(() => ""),

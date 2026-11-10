@@ -176,6 +176,13 @@ layer("GitLabCli.layer", (it) => {
       webRoot: "https://example.com:8443/gitlab",
     },
     {
+      repository: "https://example.com/gitlab/gitlab/team/app.git",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com:443",
+      subfolder: "gitlab",
+      webRoot: "https://example.com/gitlab",
+    },
+    {
       repository: "http://example.com/gitlab/gitlab/team/app.git",
       projectPath: "gitlab/team/app",
       configuredHost: "example.com/gitlab",
