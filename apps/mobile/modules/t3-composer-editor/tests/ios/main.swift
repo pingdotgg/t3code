@@ -138,6 +138,41 @@ dropEditor.isEditable = true
 check(dropEditor.canPaste([imageProvider]), "An unlocked composer must accept image drops again")
 print("Composer image-drop eligibility checks passed")
 
+// Rich clipboard content can have data representations outside the public.text hierarchy.
+for type in [UTType.plainText, .html, .rtf, .flatRTFD, .webArchive] {
+  for name in [nil, "Copied selection", "unrelated.pdf"] as [String?] {
+    let provider = NSItemProvider(item: Data("copied text".utf8) as NSData, typeIdentifier: type.identifier)
+    provider.registerObject("copied text" as NSString, visibility: .all)
+    provider.suggestedName = name
+    check(T3ComposerPasteFiles.typeIdentifier(for: provider) == nil, "Copied \(type.identifier) content must stay inline")
+  }
+}
+
+for (name, type) in [
+  ("notes.txt", UTType.plainText),
+  ("page.html", .html),
+  ("document.rtf", .rtf),
+  ("page.webarchive", .webArchive),
+  ("report.pdf", .pdf),
+  ("archive.zip", .zip),
+  ("recording.m4a", .mpeg4Audio),
+] {
+  let provider = NSItemProvider(item: Data("file".utf8) as NSData, typeIdentifier: type.identifier)
+  provider.suggestedName = name
+  check(T3ComposerPasteFiles.typeIdentifier(for: provider) == type.identifier, "Named document \(name) must remain attachable")
+  check(T3ComposerPasteFiles.containsFiles([imageProvider, provider]), "A document mixed with an image must remain attachable")
+}
+
+private let fileURLProvider = NSItemProvider(
+  item: URL(fileURLWithPath: "/tmp/page.webarchive") as NSURL,
+  typeIdentifier: UTType.fileURL.identifier
+)
+fileURLProvider.registerObject("document" as NSString, visibility: .all)
+check(T3ComposerPasteFiles.typeIdentifier(for: fileURLProvider) == UTType.fileURL.identifier,
+      "Explicit file URLs must retain priority over inline representations")
+check(!T3ComposerPasteFiles.containsFiles([imageProvider, pngProvider]), "Image-only pastes must retain the image path")
+print("Composer clipboard file classification checks passed")
+
 private final class ImmediateImageProvider: NSItemProvider {
   let image: UIImage
   private(set) var loadCount = 0

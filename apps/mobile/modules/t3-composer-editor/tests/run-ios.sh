@@ -23,13 +23,17 @@ final class EventDispatcher {
   var payloads: [[String: Any]] = []
   func callAsFunction(_ payload: [String: Any] = [:]) { payloads.append(payload) }
 }
+final class Promise {
+  func resolve(_ value: Any?) {}
+}
 enum T3ComposerClipboard {
   static func hasThreadLink(_ text: String) -> Bool { false }
   static func read() -> [String: String] { [:] }
   static func write(text: String, fragment: String) {}
 }
 """
-Path(sys.argv[2]).write_text(source + "\n" + stubs + "\n" + (module / "tests/ios/main.swift").read_text())
+paste_files = (module / "ios/T3ComposerPasteFiles.swift").read_text()
+Path(sys.argv[2]).write_text(source + "\n" + paste_files + "\n" + stubs + "\n" + (module / "tests/ios/main.swift").read_text())
 PYTHON
 "$compiler" -target "$(uname -m)-apple-ios16.1-macabi" -sdk "$sdk" \
   -F "$sdk/System/iOSSupport/System/Library/Frameworks" \

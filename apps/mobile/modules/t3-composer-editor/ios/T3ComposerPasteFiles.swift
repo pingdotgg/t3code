@@ -6,12 +6,13 @@ enum T3ComposerPasteFiles {
     if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
       return UTType.fileURL.identifier
     }
+    let namedType = provider.suggestedName.flatMap { UTType(filenameExtension: ($0 as NSString).pathExtension) }
     return provider.registeredTypeIdentifiers.first { identifier in
       guard let type = UTType(identifier) else { return false }
-      let namedType = provider.suggestedName.flatMap { UTType(filenameExtension: ($0 as NSString).pathExtension) }
-      // Keep copied prose inline; named text documents can be imported as files.
+      // RTFD and web archives carry copied rich text without conforming to public.text.
+      let isInlineContent = type.conforms(to: .text) || type.conforms(to: .flatRTFD) || type.conforms(to: .webArchive)
       return type.conforms(to: .data) && !type.conforms(to: .url) &&
-        (!type.conforms(to: .text) || namedType?.conforms(to: type) == true)
+        (!isInlineContent || namedType?.conforms(to: type) == true)
     }
   }
 
