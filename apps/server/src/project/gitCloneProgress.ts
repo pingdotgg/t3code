@@ -16,7 +16,9 @@ const STAGE_PREFIXES: ReadonlyArray<readonly [RegExp, ProjectCloneStage]> = [
   [/^Checking out files/, "checkout"],
 ];
 
-const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(?:,\s*(.*?))?\s*(?:,\s*done\.)?\s*$/;
+// The tail is trimmed in code: optional groups of `\s*` and `.*?` backtrack cubically on long space runs.
+const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(.*)$/;
+const DONE_SUFFIX = ", done.";
 
 /** Pass each bare-CR progress redraw as a separate line. */
 export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | null {
@@ -26,8 +28,11 @@ export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | 
   const stage = stageEntry[1];
   const match = PERCENT.exec(trimmed);
   if (!match) return { stage, percent: null, detail: null };
+  let tail = (match[4] ?? "").trimEnd();
+  if (tail.endsWith(DONE_SUFFIX)) tail = tail.slice(0, -DONE_SUFFIX.length).trimEnd();
+  if (tail.length > 0 && !tail.startsWith(",")) return { stage, percent: null, detail: null };
   const percent = Number(match[1]);
-  const rawDetail = match[4]?.trim() ?? "";
+  const rawDetail = tail.slice(1).trim();
   const detail = rawDetail.length > 0 && rawDetail !== "done." ? rawDetail : null;
   return {
     stage,
