@@ -740,33 +740,12 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect(
-    "does not send once the shell stops being synchronized while the change is marked",
-    () =>
-      Effect.gen(function* () {
-        const flipped = yield* Queue.unbounded<void>();
-        const storage: { value: string | null; onModify?: () => void } = { value: null };
-        const h = yield* queued("settle", storage);
-        let calls = 0;
-        // Replay reads the queue, then marks the change. A reconnect whose shell has not
-        // synchronized yet lands during the mark.
-        storage.onModify = () => {
-          if (++calls !== 2) return;
-          h.registry.set(h.statusAtom(ENVIRONMENT_ID), "synchronizing");
-          Queue.offerUnsafe(flipped, undefined);
-        };
-        yield* h.reconnect();
-        yield* Queue.take(flipped);
-        // Undo reads storage after the mark, so its request can only follow a settle that was sent.
-        const undone = h.commands.unsettle.run(h.registry, undo);
-        const request = yield* Queue.take(h.requests);
-        expect(request.command.type).toBe("thread.unsettle");
-        yield* Deferred.succeed(request.reply, { sequence: 2 });
-        expect((yield* Effect.promise(() => undone))._tag).toBe("Success");
-      }),
-  );
-
-  it.effect("keeps a change cancellable when its send never left the device", () =>
+  it.effect.each([
+    // A reconnect whose shell has not synchronized yet lands while the change is being marked.
+    { when: "the shell stops being synchronized while it is marked", connected: true },
+    // The shell reports synchronized from a stale stream while the session is already gone.
+    { when: "its environment has no session", connected: false },
+  ])("leaves a change unsent and cancellable when $when", ({ connected }) =>
     Effect.gen(function* () {
       const unmarked = yield* Queue.unbounded<void>();
       const storage: { value: string | null; onModify?: () => void } = { value: null };
@@ -774,14 +753,20 @@ describe("settle and snooze while the environment is offline", () => {
       let calls = 0;
       // Replay reads the queue, marks the change, and takes the mark off again.
       storage.onModify = () => {
-        if (++calls === 3) Queue.offerUnsafe(unmarked, undefined);
+        calls += 1;
+        if (calls === 2 && connected) {
+          h.registry.set(h.statusAtom(ENVIRONMENT_ID), "synchronizing");
+        }
+        if (calls === 3) Queue.offerUnsafe(unmarked, undefined);
       };
-      // The shell reports synchronized from a stale stream while the session is already gone.
-      h.registry.set(h.statusAtom(ENVIRONMENT_ID), "live");
+      if (connected) yield* h.reconnect();
+      else h.registry.set(h.statusAtom(ENVIRONMENT_ID), "live");
       yield* Queue.take(unmarked);
       const result = yield* Effect.promise(() => h.commands.unsettle.run(h.registry, undo));
       expect(result._tag === "Success" && ThreadUndo.cancelledPendingSync(result.value)).toBe(true);
       expect(stored(storage)).toEqual([]);
+      yield* h.reconnect();
+      yield* expectNothingSent(h);
     }),
   );
 

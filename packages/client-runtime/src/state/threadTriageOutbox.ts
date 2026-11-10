@@ -216,8 +216,15 @@ export function createThreadTriageOutbox<R, E>(input: {
       // Storage no longer has it: cancelled, replaced, sent by another tab, or its environment
       // was removed.
       if (!marked.value.some((item) => item.commandId === entry.commandId)) continue;
+      // A change that never left the device loses the mark this pass made, so Undo can cancel it.
+      const unmark = async () => {
+        if (entry.attempted === true) return;
+        await write(registry, (current) =>
+          current.map((item) => (item.commandId === entry.commandId ? entry : item)),
+        );
+      };
       // Checked after the last wait, so the shell judged is the one the send goes through.
-      if (!isLive(registry, environmentId)) return;
+      if (!isLive(registry, environmentId)) return unmark();
       const thread = sourceThread(registry, environmentId, entry.threadId);
       // The live shell is the server's state. It wins over a change made against an older one,
       // which also covers a change that was sent before but whose reply was lost.
@@ -232,13 +239,7 @@ export function createThreadTriageOutbox<R, E>(input: {
       const result = await input.send(registry, entry);
       if (lifetime.ended) return;
       if (!AsyncResult.isSuccess(result) && isTransient(result.cause)) {
-        // It never left the device, so the mark this pass made comes off and Undo can cancel it.
-        if (isOffline(result.cause) && entry.attempted !== true) {
-          await write(registry, (current) =>
-            current.map((item) => (item.commandId === entry.commandId ? entry : item)),
-          );
-        }
-        return;
+        return isOffline(result.cause) ? unmark() : undefined;
       }
       await forget(registry, entry);
     }
