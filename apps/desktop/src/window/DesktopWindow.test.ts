@@ -78,6 +78,12 @@ function makeFakeBrowserWindow() {
       zoomLevel = level;
     }),
     isLoadingMainFrame: vi.fn(() => false),
+    navigationHistory: {
+      canGoBack: vi.fn(() => true),
+      canGoForward: vi.fn(() => true),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+    },
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
     }),
@@ -88,6 +94,7 @@ function makeFakeBrowserWindow() {
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
     setBackgroundThrottling: vi.fn(),
+    setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     toggleDevTools: vi.fn(),
   };
@@ -136,6 +143,8 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     reloadIgnoringCache: webContents.reloadIgnoringCache,
     toggleDevTools: webContents.toggleDevTools,
+    navigationHistory: webContents.navigationHistory,
+    setIgnoreMenuShortcuts: webContents.setIgnoreMenuShortcuts,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
@@ -224,7 +233,7 @@ function layerTest(input: {
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
-  readonly copiedTexts?: string[];
+  readonly onCopyText?: (text: string) => Effect.Effect<void>;
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
@@ -316,10 +325,7 @@ function layerTest(input: {
               return true;
             }),
           openSystemSettings: () => Effect.succeed(true),
-          copyText: (text) =>
-            Effect.sync(() => {
-              input.copiedTexts?.push(text);
-            }),
+          copyText: input.onCopyText ?? (() => Effect.void),
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
@@ -472,6 +478,69 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("restores a window saved 1px past a display edge, and nothing further out", () => {
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1280 },
+      { x: 1920, y: 0, width: 1280, height: 1920 },
+    ];
+    const snappedBounds = { x: 1921, y: 30, width: 1280, height: 945 };
+
+    assert.strictEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(snappedBounds, displays),
+      snappedBounds,
+    );
+    for (const bounds of [
+      { x: 1922, y: 30, width: 1280, height: 945 },
+      { x: 1918, y: 30, width: 1280, height: 945 },
+      { x: 1921, y: -2, width: 1279, height: 945 },
+      { x: 1920, y: 976, width: 1280, height: 946 },
+    ]) {
+      assert.deepEqual(
+        DesktopWindow.resolveInitialMainWindowBounds(bounds, displays),
+        DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+      );
+    }
+  });
+
+  it("rejects renderer navigations whose origin only serializes as null", () => {
+    for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
+      assert.isTrue(
+        DesktopWindow.isSameOriginRendererNavigation({
+          applicationUrl,
+          navigationUrl: `${applicationUrl}threads?id=1#latest`,
+        }),
+        applicationUrl,
+      );
+    }
+    for (const navigationUrl of [
+      "t3code://other/",
+      "t3code://app.example/",
+      "t3code://app:8080/",
+      "t3code://user@other/",
+      "t3code:app",
+      "t3code-dev://app/",
+      "file:///etc/passwd",
+      "data:text/html,<p>hi</p>",
+      "javascript:alert(1)",
+      "about:blank",
+      "blob:t3code://app/0b5e2c4a",
+    ]) {
+      assert.isFalse(
+        DesktopWindow.isSameOriginRendererNavigation({
+          applicationUrl: "t3code://app/",
+          navigationUrl,
+        }),
+        navigationUrl,
+      );
+    }
+    assert.isFalse(
+      DesktopWindow.isSameOriginRendererNavigation({
+        applicationUrl: "data:text/html,app",
+        navigationUrl: "data:text/html,other",
+      }),
+    );
+  });
+
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
     () =>
@@ -503,7 +572,80 @@ describe("DesktopWindow", () => {
       }),
   );
 
-  it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
+  it.effect.each(["before", "after"] as const)(
+    "keeps a closed startup window closed until activation %s backend readiness",
+    (activation) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          fake.windowListeners.get("ready-to-show")?.();
+          fake.isDestroyed.mockReturnValue(true);
+          fake.windowListeners.get("closed")?.();
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          if (activation === "after") {
+            yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+            assert.equal(yield* Ref.get(createCount), 1);
+          }
+          fake.isDestroyed.mockReturnValue(false);
+          yield* windows.activate;
+          assert.equal(yield* Ref.get(createCount), 2);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 2);
+        }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+      }),
+  );
+
+  it.effect.each(["renderer", "backend"] as const)(
+    "reveals the painted boot shell when %s becomes ready first",
+    (first) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const reveal = vi.fn();
+        const painted = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          assert.equal(fake.loadURL.mock.calls.length, 1);
+          yield* windows.activate;
+          yield* windows.revealOrCreateMain;
+          yield* windows.dispatchMenuAction("open-settings");
+          assert.equal(reveal.mock.calls.length, 0);
+          if (first === "backend") {
+            yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+            assert.equal(reveal.mock.calls.length, 0);
+          }
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => painted.promise);
+          assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.handleBackendNotReady;
+          yield* windows.activate;
+          assert.equal(reveal.mock.calls.length, 2);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => {
+                reveal();
+                painted.resolve();
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect("leaves Cmd+W to the renderer and blocks repeated presses", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -544,6 +686,13 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+
+        assert.deepEqual(
+          fakeWindow.setIgnoreMenuShortcuts.mock.calls.map(([ignore]) => ignore),
+          [true, true, false],
+        );
+        beforeInput(event, { ...input, key: "r", isAutoRepeat: false });
+        assert.isFalse(fakeWindow.setIgnoreMenuShortcuts.mock.lastCall?.[0]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -585,8 +734,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  // Ctrl+wheel bypasses the menu accelerators, so it has to take the same
-  // zoom step, preview restore included, from the window's zoom-changed event.
   it.effect("zooms the app from Ctrl+wheel like the menu does", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -897,6 +1044,39 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("maps macOS horizontal swipes to available history navigation", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const swipe = fakeWindow.windowListeners.get("swipe");
+        assert.isDefined(swipe);
+        if (!swipe) return;
+        const history = fakeWindow.navigationHistory;
+
+        swipe({}, "left");
+        assert.equal(history.goBack.mock.calls.length, 1);
+        assert.equal(history.goForward.mock.calls.length, 0);
+        swipe({}, "right");
+        assert.equal(history.goForward.mock.calls.length, 1);
+
+        swipe({}, "up");
+        swipe({}, "down");
+        history.canGoBack.mockReturnValue(false);
+        history.canGoForward.mockReturnValue(false);
+        swipe({}, "left");
+        swipe({}, "right");
+        assert.equal(history.goBack.mock.calls.length, 1);
+        assert.equal(history.goForward.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("persists the current main window bounds before the window closes", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -975,6 +1155,17 @@ describe("DesktopWindow", () => {
         if (!willNavigate) {
           return yield* Effect.die("will-navigate listener was not registered");
         }
+        for (const [url, expectedPrevented] of [
+          ["t3code-dev://app/threads?id=1#latest", false],
+          ["t3code-dev://other/", true],
+          ["t3code://app/", true],
+        ] as const) {
+          const preventDefault = vi.fn();
+          willNavigate({ preventDefault }, url);
+          assert.equal(preventDefault.mock.calls.length, expectedPrevented ? 1 : 0, url);
+        }
+        assert.deepEqual(openedExternalUrls, []);
+
         let prevented = false;
         willNavigate(
           {
@@ -988,6 +1179,56 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(prevented);
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("offers to copy the bare address when right-clicking a mailto link", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const copied = yield* Deferred.make<string>();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        onPopupTemplate: (input) => Deferred.succeed(popup, input),
+        onCopyText: (text) => Deferred.succeed(copied, text),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+        contextMenu(
+          { preventDefault: vi.fn() },
+          {
+            linkURL: "mailto:restaurant%40example.com?subject=Hi",
+            misspelledWord: "",
+            dictionarySuggestions: [],
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+          },
+        );
+
+        const { template } = yield* Deferred.await(popup);
+        const copyEmail = template.find((item) => item.label === "Copy Email Address");
+        assert.isDefined(
+          copyEmail,
+          `no "Copy Email Address" item in ${JSON.stringify(template.map((item) => item.label ?? item.role ?? item.type))}`,
+        );
+        copyEmail?.click?.(
+          {} as Electron.MenuItem,
+          fakeWindow.window,
+          {} as Electron.KeyboardEvent,
+        );
+        assert.equal(yield* Deferred.await(copied), "restaurant@example.com");
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1045,6 +1286,10 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fakeWindow.windowListeners.get("ready-to-show")?.();
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        operations.length = 0;
+        foreground = "Discord";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
         assert.equal(foreground, "T3 Code");
         foreground = "Explorer";

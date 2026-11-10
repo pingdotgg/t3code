@@ -20,10 +20,7 @@ export default {
 
     assert(performance !== undefined, "performance is missing");
     assert(global.performance !== undefined, "global.performance is missing");
-    assert(
-      globalThis.performance !== undefined,
-      "globalThis.performance is missing",
-    );
+    assert(globalThis.performance !== undefined, "globalThis.performance is missing");
 
     assert(process !== undefined, "process is missing");
     assert(global.process === process, "global.process is not synced");

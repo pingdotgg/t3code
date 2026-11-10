@@ -20,6 +20,7 @@ type CommandResult =
 const mocks = vi.hoisted(() => ({
   open: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
 }));
@@ -61,23 +62,39 @@ const deviceState: DeviceServiceState = {
   revision: 1,
 };
 let currentState = deviceState;
-vi.mock("~/state/device", () => ({
-  deviceEnvironment: { list: "list", open: "open", close: "close" },
-  useDeviceState: () => ({ state: currentState, loaded: true }),
-}));
+// One probe per environment, however many views mount it; each probe sends one list.
+vi.mock("~/state/device", async () => {
+  const Effect = await import("effect/Effect");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return {
+    deviceEnvironment: { list: "list", open: "open", close: "close" },
+    deviceHostProbeAtom: Atom.family((environmentId: string) =>
+      Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
+    ),
+    NO_DEVICE_PROBE_ATOM: Atom.make(AsyncResult.initial<void, never>()),
+    useDeviceState: () => ({ state: currentState, loaded: true }),
+  };
+});
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "open"
       ? mocks.open
       : command === "close"
         ? mocks.close
-        : () => Promise.resolve({ _tag: "Success", value: {} }),
+        : command === "list"
+          ? mocks.list
+          : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ openDevice: mocks.openDevice, closeSurface: mocks.closeSurface }),
+    getState: () => ({
+      byThreadKey: {},
+      openDevice: mocks.openDevice,
+      closeSurface: mocks.closeSurface,
+    }),
   },
+  selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
@@ -136,6 +153,7 @@ const errors = () => container.querySelectorAll('[role="alert"]');
 
 function setup() {
   vi.resetAllMocks();
+  mocks.list.mockResolvedValue({ _tag: "Success", value: { hostId: "local", deviceId: "" } });
   currentState = deviceState;
   container = document.createElement("div");
   container.style.width = "480px";
@@ -178,5 +196,41 @@ describe("DevicePanel thread switches", () => {
       [threadB, phoneTarget],
       [threadA, phoneTarget],
     ]);
+  });
+});
+
+describe("DevicePanel host probe", () => {
+  it("probes the hosts once while setup shows inside the panel", async () => {
+    setup();
+    currentState = { ...deviceState, onboardingCompleted: false };
+    // An environment no other test probed, so its probe starts fresh.
+    const threadRef = { ...threadA, environmentId: EnvironmentId.make("environment-setup") };
+    await using _screen = await render(devicePanel(threadRef), { container });
+
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    expect(mocks.list.mock.calls).toEqual([
+      [{ environmentId: threadRef.environmentId, input: {} }],
+    ]);
+  });
+});
+
+describe("DevicePanel discovery warning", () => {
+  it("a dismissal hides only the cause it was made for", async () => {
+    setup();
+    const withCause = (detail: string): DeviceServiceState => ({
+      ...deviceState,
+      hostStatuses: { local: { status: "ready", detail, incompletePlatforms: ["ios"] } },
+    });
+    const warning = "iOS list on This Mac may be incomplete.";
+    currentState = withCause("first cause");
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await screen.getByRole("button", { name: "Dismiss device warning for This Mac" }).click();
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText(warning)).not.toBeInTheDocument();
+
+    currentState = withCause("second cause");
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText(warning)).toBeVisible();
   });
 });

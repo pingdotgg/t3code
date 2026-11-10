@@ -76,9 +76,34 @@ describe("composerContextClipboard", () => {
     ).toBeNull();
     expect(decodeComposerContextClipboardHtml("<p>Ordinary clipboard</p>")).toBeNull();
   });
+  it("round-trips context whose text contains an apostrophe", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      source: { environmentId: "env-1" },
+      records: [
+        {
+          version: 1,
+          kind: "terminal",
+          contextId: "terminal",
+          label: "Build",
+          terminalId: "main",
+          terminalLabel: "Main",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "error: can't find module",
+        },
+      ],
+    });
+    const html = encodeComposerContextClipboardHtml("error: can't find module", raw);
+    expect(decodeComposerContextClipboardHtml(html)).toEqual(JSON.parse(raw));
+    expect(
+      decodeComposerContextClipboardHtml(
+        `<pre data-t3-context-fragment='${encodeURIComponent(raw).replaceAll("'", "%27")}'>x</pre>`,
+      ),
+    ).toEqual(JSON.parse(raw));
+  });
   it("accepts a large non-ASCII fragment through the HTML attribute", () => {
-    // `encodeURIComponent` expands each CJK code unit to nine characters, so a fragment well
-    // inside the character limit still produces a much longer attribute.
+    // CJK code units expand to nine encoded characters despite fitting the fragment limit.
     const raw = JSON.stringify({
       version: 1,
       source: { environmentId: "env-1" },

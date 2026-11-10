@@ -6,7 +6,7 @@ import {
   type ClientSettings,
   type DesktopSnapShotEvent,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -427,6 +427,7 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
 import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
+import { CaptureSetupRequiredError } from "./linuxCaptureSession.ts";
 
 const accessibilityApp = {
   byPid: accessibilityByPidMock,
@@ -518,11 +519,8 @@ const layerTest = (
         FileSystem.layerNoop(fileSystemOverrides),
         Path.layer,
         Layer.succeed(
-          Crypto.Crypto,
-          Crypto.make({
-            randomBytes: (size) => new Uint8Array(size),
-            digest: (_algorithm, data) => Effect.succeed(data),
-          }),
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size)),
         ),
       ),
     ),
@@ -674,11 +672,8 @@ function concurrentCaptureFixture(platform: NodeJS.Platform, animations: boolean
       readFileString: (path) => Effect.sync(() => metadata.get(path)!),
     }),
     Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size).fill(++randomByte),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      }),
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(++randomByte)),
     ),
     Layer.succeed(
       DesktopWindow.DesktopWindow,
@@ -798,7 +793,6 @@ it.effect.each(["darwin", "win32"] as const)(
 
         for (const finish of heldFlights) finish();
         yield* Fiber.join(landing);
-        // Landing releases the guard even before the first capture is acknowledged.
         yield* Effect.promise(fixture.trigger);
         assert.equal(fixture.state.snapshots, 2);
         assert.lengthOf(fixture.readyIds, 2);
@@ -984,7 +978,7 @@ it.effect.each(["succeeds", "fails"] as const)(
   },
 );
 
-it.effect("matches Windows accessibility windows on a scaled display", () => {
+it.effect("captures and reads Windows windows in physical pixels on a scaled display", () => {
   const png = Buffer.from([1, 2, 3]);
   const active = {
     platform: "windows",
@@ -993,26 +987,26 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
     owner: { name: "Editor", processId: 123 },
     bounds: { x: 10, y: 20, width: 800, height: 600 },
   } as const;
-  const dipBounds = { x: 5, y: 10, width: 400, height: 300 };
+  const window = (name: string, value: string) => ({
+    role: "window",
+    name,
+    bounds: active.bounds,
+    children: async () => [
+      {
+        role: "button",
+        name: "Save",
+        bounds: { x: 210, y: 220, width: 200, height: 100 },
+        children: async () => [],
+      },
+    ],
+    tree: async () => ({ name, value, children: [] }),
+  });
   activeWindowMock.mockReset().mockResolvedValue(active);
-  screenToDipRectMock.mockImplementation(() => dipBounds);
+  screenToDipRectMock.mockImplementation(() => ({ x: 5, y: 10, width: 400, height: 300 }));
   regionCaptureMock.mockReset().mockResolvedValue({ width: 800, height: 600, png });
   accessibilityForegroundMock.mockReset().mockResolvedValue({
     pid: 123,
-    asElement: () => ({
-      role: "window",
-      name: "Editor",
-      bounds: dipBounds,
-      children: async () => [
-        {
-          role: "button",
-          name: "Save",
-          bounds: { x: 105, y: 110, width: 100, height: 50 },
-          children: async () => [],
-        },
-      ],
-      tree: async () => ({ name: "Editor", value: "Scaled text", children: [] }),
-    }),
+    children: async () => [window("Settings", "Wrong window"), window("Editor", "Scaled text")],
   });
   let metadata = "";
   return Effect.scoped(
@@ -1021,6 +1015,7 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
       yield* service.configure(enabledSettings());
       yield* service.capture;
       const saved = yield* decodePendingMetadata(metadata);
+      assert.deepEqual(regionCaptureMock.mock.calls[0]?.[0], active.bounds);
       assert.include(saved.source.accessibleText, "Scaled text");
       assert.deepEqual(
         saved.source.accessibility?.format === "element-tree"
@@ -1049,9 +1044,15 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
   );
 });
 
-it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
-  "persists %s text without inventing AT-SPI screen coordinates",
-  (backend) => {
+it.effect.each([
+  { backend: "gnome", screenshot: "PNG" },
+  { backend: "niri", screenshot: "PNG" },
+  { backend: "kde", screenshot: "PNG" },
+  { backend: "hyprland", screenshot: "PNG" },
+  { backend: "gnome", screenshot: "invalid" },
+] as const)(
+  "persists $backend accessibility text with a $screenshot screenshot",
+  ({ backend, screenshot }) => {
     vi.stubEnv("XDG_SESSION_TYPE", "wayland");
     flashWindows.length = 0;
     const window = {
@@ -1068,7 +1069,16 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
       ...(backend === "niri" ? { accessibilityBoundsReliable: false } : {}),
       ...(backend === "kde" ? { clientBounds: { x: 479, y: 371, width: 700, height: 520 } } : {}),
     };
-    linuxCaptureMock.mockResolvedValueOnce({ png: Buffer.from([1, 2, 3]), window });
+    // The captured pixels differ from the compositor's logical window bounds.
+    const imageSize = screenshot === "PNG" ? { width: 1400, height: 1040 } : window.bounds;
+    const png =
+      screenshot === "PNG"
+        ? Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAABXgAAAQQAQAAAABwoA4ZAAAAyElEQVR4nO3BMQEAAADCoPVPbQwfoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgYyx4AAepc/c0AAAAASUVORK5CYII=",
+            "base64",
+          )
+        : Buffer.from([1, 2, 3]);
+    linuxCaptureMock.mockResolvedValueOnce({ png, window });
     activeWindowMock.mockClear();
     getSourcesMock.mockClear();
     accessibilityByPidMock.mockReset().mockResolvedValue({
@@ -1108,7 +1118,7 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
         assert.deepInclude(saved.source.accessibility, {
           format: "element-tree",
           coordinateSpace: "captured-image",
-          imageSize: { width: 700, height: window.bounds.height },
+          imageSize: { width: imageSize.width, height: imageSize.height },
           truncated: false,
         });
         assert.deepInclude(
@@ -1118,7 +1128,7 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
           {
             role: "window",
             name: "Editor",
-            bounds: { x: 0, y: 0, width: 700, height: window.bounds.height },
+            bounds: { x: 0, y: 0, width: imageSize.width, height: imageSize.height },
             state: { active: true },
           },
         );
@@ -1393,7 +1403,7 @@ it.each(["darwin", "win32", "linux"] as const)(
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
 
     const result = await readAccessibleWindowContext(
       { title: "Editor", bounds, owner: { processId: 123 } },
@@ -1433,7 +1443,7 @@ it.each(["darwin", "win32"] as const)(
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
     try {
       assert.isUndefined(
         await readAccessibleWindowText(
@@ -1475,7 +1485,7 @@ it.each([
     accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
     accessibilityForegroundMock
       .mockReset()
-      .mockResolvedValue({ pid: 123, asElement: () => window });
+      .mockResolvedValue({ pid: 123, children: async () => [window] });
     try {
       const result = await readAccessibleWindowContext(
         { title: "Editor", bounds, owner: { processId: 123 } },
@@ -1859,6 +1869,24 @@ it.effect("capture fails closed while snapshots are disabled", () => {
       assert.lengthOf(regionCaptureMock.mock.calls, 0);
     }),
   ).pipe(Effect.provide(layerTest("win32")));
+});
+
+it.effect("points capture setup failures at SnapShot settings", () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  linuxCaptureMock.mockRejectedValueOnce(
+    new CaptureSetupRequiredError({ state: "Install the helper." }),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      yield* service.configure(enabledSettings());
+      const failure = yield* Effect.flip(service.capture);
+      assert.equal(failure.operation, "setup-required");
+    }),
+  ).pipe(
+    Effect.provide(layerTest("linux", { makeDirectory: () => Effect.void })),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+  );
 });
 
 it.effect(

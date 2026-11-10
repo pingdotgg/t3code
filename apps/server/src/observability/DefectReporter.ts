@@ -2,10 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
 
-/**
- * RpcServer reports every failed handler exit; typed failures are expected responses, so only
- * dies are logged.
- */
+// RpcServer reports typed failures too; log only defects.
 const reporter: ErrorReporter.ErrorReporter = {
   [ErrorReporter.TypeId]: ErrorReporter.TypeId,
   report: ({ cause, fiber }) => {

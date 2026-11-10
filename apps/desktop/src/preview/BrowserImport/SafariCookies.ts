@@ -8,7 +8,6 @@ import { cookieScope, type ImportedCookie } from "./CookieDatabase.ts";
 /** Safari's timestamps count seconds from 2001-01-01, not the UNIX epoch. */
 const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 
-/** `u32 0x00000100`, `u32le cookieCount`, then one `u32le` offset per cookie. */
 const COOKIE_PAGE_HEADER_SIZE = 12;
 const COOKIE_RECORD_HEADER_SIZE = 56;
 
@@ -46,10 +45,7 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   }
 
   const pageCount = buffer.readUInt32BE(4);
-  // `Buffer.subarray` clamps silently, so accepting a short page or an overlong
-  // record would return a cookie set that is quietly missing entries or
-  // carrying fields read out of the next record — a partial import the user has
-  // no way to notice.
+  // Buffer.subarray silently clamps invalid bounds, so reject truncated pages and overlapping records.
   if (8 + pageCount * 4 > buffer.length) {
     throw new SafariCookieReadError({ reason: "readFailed" });
   }
@@ -74,9 +70,7 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
     if (offsetTableEnd > page.length) {
       throw new SafariCookieReadError({ reason: "readFailed" });
     }
-    // Every record accepted so far, so a later offset cannot point back into
-    // one of them: the page header, the offset table, and earlier records are
-    // all bytes that would otherwise parse as a fabricated cookie.
+    // Reject offsets into the header, table, or earlier records to avoid fabricated cookies.
     const accepted: Array<readonly [start: number, end: number]> = [];
     for (let index = 0; index < cookieCount; index += 1) {
       const cookieStart = page.readUInt32LE(8 + index * 4);
@@ -120,9 +114,6 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
         expiry > 0 ? Math.floor(expiry) + APPLE_EPOCH_OFFSET_SECONDS : undefined;
 
       cookies.push({
-        // Safari marks domain cookies with a leading dot like the other
-        // engines, so the shared scope rule applies: host-only cookies keep
-        // `domain` undefined, or Electron widens them to every subdomain.
         ...cookieScope(domain, path || "/", secure),
         name,
         value,
@@ -130,17 +121,13 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
         secure,
         httpOnly: (flags & FLAG_HTTP_ONLY) !== 0,
         expirationDate,
-        // Bits 3–5 of the flags carry something SameSite-shaped, but no public
-        // description of them agrees and real jars do not match any of them
-        // cleanly. Lax is the modern browser default; claiming "none" would
-        // widen every imported cookie's scope.
+        // Safari's SameSite flag encoding is undocumented; guessing None would widen cookie scope.
         sameSite: "lax",
       });
     }
   }
 
-  // Safari writes an 8-byte checksum after the pages, then an optional
-  // length-prefixed property list.
+  // Pages end with an 8-byte checksum and an optional length-prefixed plist.
   const trailer = buffer.length - pageStart;
   const validTrailer =
     trailer === 0 ||
@@ -154,20 +141,12 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
 }
 
 export const isPermissionDenied = (error: PlatformError.PlatformError): boolean => {
-  // TCC denies with EPERM, which Effect tags `Unknown` rather than
-  // `PermissionDenied` — so the errno is what identifies it. EACCES (and the
-  // `PermissionDenied` tag it maps to) is an ordinary POSIX permission or
-  // ACL failure that granting Full Disk Access cannot fix, so it stays a plain
-  // read failure rather than sending the user to a grant that won't help.
+  // TCC returns EPERM (Effect Unknown); EACCES is a POSIX denial that Full Disk Access cannot fix.
   const code = (error.reason as { cause?: { code?: unknown } }).cause?.code;
   return code === "EPERM";
 };
 
-/**
- * `stat` succeeds on the jar inside Safari's container even without Full Disk
- * Access — that is what lets the listing find it — so presence alone cannot
- * tell granted from denied.
- * */
+/** stat succeeds without Full Disk Access, so presence alone does not prove readable cookies. */
 export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
