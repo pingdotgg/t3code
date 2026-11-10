@@ -1,9 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
+  applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  pullRequestPendingEditsAtom,
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
@@ -368,6 +370,20 @@ export function restoredPullRequestList(
 
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+  acceptedEdit: ({ environmentId, input }, edit, registry) =>
+    Effect.map(Clock.currentTimeMillis, (observedAt) => {
+      const saved = registry.get(
+        savedPullRequestSummaryAtom(savedPullRequestKey(environmentId, input)),
+      );
+      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
+        const summary = applyPullRequestSummaryEdits(
+          input,
+          newestPullRequestSummary(observedPullRequestSummary(current), saved),
+          [edit],
+        );
+        return summary === null ? current : { ...current, metadata: { summary, observedAt } };
+      });
+    }),
   list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
       rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);
@@ -503,6 +519,7 @@ export function useSharedPullRequestSummary(
       ? "none"
       : pullRequestSummaryKey(environmentId, reference);
   const observations = useAtomValue(pullRequestObservationsAtom(key));
+  const edits = useAtomValue(pullRequestPendingEditsAtom(environmentId));
   const saved = useAtomValue(
     savedPullRequestSummaryAtom(
       environmentId === null || reference === null
@@ -510,7 +527,11 @@ export function useSharedPullRequestSummary(
         : savedPullRequestKey(environmentId, reference),
     ),
   );
-  return newestPullRequestSummary(observedPullRequestSummary(observations), saved);
+  return applyPullRequestSummaryEdits(
+    reference,
+    newestPullRequestSummary(observedPullRequestSummary(observations), saved),
+    edits,
+  );
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,

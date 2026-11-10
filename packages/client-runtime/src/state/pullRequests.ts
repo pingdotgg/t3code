@@ -149,7 +149,7 @@ interface ActionReplyPatch {
 const actionReplyPatches = new WeakMap<object, ActionReplyPatch>();
 
 /** What a write in flight will change, shown by every reader until the host answers. */
-interface PullRequestPendingEdit {
+export interface PullRequestPendingEdit {
   readonly reference: PullRequestRef;
   readonly state?: PullRequestState;
   readonly isDraft?: boolean;
@@ -171,7 +171,7 @@ interface EditableReader {
 }
 
 // Module-wide like the reply patches, so separately built readers see the same writes.
-const pendingEdits = Atom.family((_environmentId: EnvironmentId) =>
+export const pullRequestPendingEditsAtom = Atom.family((_environmentId: EnvironmentId | null) =>
   Atom.make<ReadonlyArray<PullRequestPendingEdit>>([]).pipe(Atom.keepAlive),
 );
 const editableReaders = new WeakMap<object, EditableReader>();
@@ -236,7 +236,7 @@ function editedQuery<A, E>(
   const shown = Atom.writable(
     (get) => {
       const result = get(inner);
-      const edits = get(pendingEdits(reader.environmentId));
+      const edits = get(pullRequestPendingEditsAtom(reader.environmentId));
       const value = AsyncResult.value(result);
       if (edits.length === 0 || Option.isNone(value)) return result;
       const next = edits.reduce(
@@ -264,7 +264,7 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
     run: async (registry, target) => {
       const edit = editOf(registry, target);
       if (edit === null) return command.run(registry, target);
-      const edits = pendingEdits(target.environmentId);
+      const edits = pullRequestPendingEditsAtom(target.environmentId);
       registry.update(edits, (current) => [...current, edit]);
       try {
         return await command.run(registry, target);
@@ -348,6 +348,21 @@ function samePullRequest(reader: PullRequestRef, acted: PullRequestRef) {
     reader.repository.toLowerCase() === acted.repository.toLowerCase() &&
     reader.number === acted.number &&
     reader.expectedAccountId === acted.expectedAccountId
+  );
+}
+
+export function applyPullRequestSummaryEdits(
+  reference: PullRequestRef | null,
+  summary: PullRequestSummary | null,
+  edits: ReadonlyArray<PullRequestPendingEdit>,
+): PullRequestSummary | null {
+  if (reference === null || summary === null) return summary;
+  return edits.reduce(
+    (current, edit) =>
+      samePullRequest(reference, edit.reference)
+        ? withEdit(current, edit, ["state", "isDraft", "autoMergeEnabled", "title"])
+        : current,
+    summary,
   );
 }
 
@@ -626,6 +641,7 @@ export interface PullRequestAnswerHandlers {
   readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
   /** Once per action reply, after the loaded readers show it; unscoped references only. */
   readonly actionReply?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>;
+  readonly acceptedEdit?: QueryAnswerHandler<PullRequestRef, PullRequestPendingEdit>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -1171,8 +1187,16 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: "environment-data:pull-requests:update",
         tag: WS_METHODS.pullRequestsUpdate,
         execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
-        onSuccess: ({ environmentId, input }, registry) =>
-          Effect.sync(() => settleEdit(registry, environmentId, updateEdit(input))),
+        onSuccess: (target, registry) => {
+          const edit = updateEdit(target.input);
+          return Effect.sync(() => settleEdit(registry, target.environmentId, edit)).pipe(
+            Effect.andThen(() =>
+              edit === null
+                ? Effect.void
+                : (onAnswer.acceptedEdit?.(target, edit, registry) ?? Effect.void),
+            ),
+          );
+        },
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),

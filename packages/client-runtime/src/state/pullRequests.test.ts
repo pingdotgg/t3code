@@ -7,6 +7,7 @@ import {
   AuthOrchestrationOperateScope,
   ProjectId,
   PullRequestOperationError,
+  SourceControlProviderKind,
   WS_METHODS,
   type AuthSessionState,
   type PullRequestListInput,
@@ -39,8 +40,10 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
+  applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
+  pullRequestPendingEditsAtom,
 } from "./pullRequests.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery, queryPersistenceKey } from "./runtime.ts";
@@ -2610,7 +2613,18 @@ it.effect.each(["accepted", "refused"] as const)(
               title = input.title;
             }),
         });
-        const { atoms, registry } = yield* makeTestRuntime(client);
+        let observedTitle = "Original";
+        const handlers = {
+          detail: (_target: unknown, detail: { readonly title: string }) =>
+            Effect.sync(() => {
+              observedTitle = detail.title;
+            }),
+          acceptedEdit: (_target: unknown, edit: { readonly title?: string }) =>
+            Effect.sync(() => {
+              observedTitle = edit.title ?? observedTitle;
+            }),
+        };
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, handlers);
         const target = { environmentId: TARGET.environmentId, input: actionReference };
         const detail = atoms.detail(target);
         const preview = atoms.preview(target);
@@ -2628,21 +2642,31 @@ it.effect.each(["accepted", "refused"] as const)(
           Option.getOrThrow(AsyncResult.value(registry.get(detail))).title,
           Option.getOrThrow(AsyncResult.value(registry.get(preview))).title,
           Option.getOrThrow(AsyncResult.value(registry.get(list))).entries[0]?.title,
+          applyPullRequestSummaryEdits(
+            actionReference,
+            {
+              ...actionReply,
+              provider: SourceControlProviderKind.make("github"),
+              title: observedTitle,
+            },
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+          )?.title,
         ];
 
         const editing = yield* Effect.promise(() =>
           atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(sent);
-        expect(titles()).toEqual(["Edited", "Edited", "Edited"]);
+        expect(titles()).toEqual(["Edited", "Edited", "Edited", "Edited"]);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(editing);
 
         expect(titles()).toEqual(
           outcome === "refused"
-            ? ["Original", "Original", "Original"]
-            : ["Edited", "Edited", "Edited"],
+            ? ["Original", "Original", "Original", "Original"]
+            : ["Edited", "Edited", "Edited", "Edited"],
         );
+        expect(observedTitle).toBe(outcome === "refused" ? "Original" : "Edited");
         // The edit is known, so no reader asks the host again.
         expect(reads).toBe(3);
       }),
