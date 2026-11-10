@@ -180,6 +180,12 @@ describe("QuickUsagePopover", () => {
       .closest<HTMLElement>('[data-slot="popover-positioner"]');
     expect(positioner?.getBoundingClientRect().left).toBe(0);
     await userEvent.click(page.getByRole("button", { name: "Cursor" }));
+    await expect
+      .element(page.getByText("Could not load subscription limits. Refresh to try again."))
+      .toBeVisible();
+    await userEvent.hover(
+      page.getByRole("button", { name: "Subscription limit error details for Desk" }),
+    );
     await expect.element(page.getByText("Could not read limits.")).toBeVisible();
   });
 
@@ -212,7 +218,18 @@ describe("QuickUsagePopover", () => {
 
   it("keeps spend summary and View more available when no provider reports limits", async () => {
     using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-25T16:30:00.000Z"));
-    const presentations = envPresentations([]);
+    const failedCodex = {
+      ...provider("codex", { session: 0, weekly: 0 }),
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: {
+          reason: "probeFailed",
+          message: "Codex could not read usage (JSON-RPC -32600).",
+        },
+      },
+    } as ServerProvider;
+    const presentations = envPresentations([failedCodex]);
     const merged = {
       daily: [
         { day: "2026-10-25", costUsd: 1 },
@@ -234,7 +251,9 @@ describe("QuickUsagePopover", () => {
     await using screen = await render(view(presentations, onOpenFull, usage));
 
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
-    await expect.element(page.getByText("No usage limits reported yet.")).toBeVisible();
+    await expect
+      .element(page.getByText("Could not load subscription limits. Refresh to try again."))
+      .toBeVisible();
     await expect.element(page.getByText("Spent today", { exact: true })).toBeVisible();
     await expect
       .element(page.getByRole("alert"))
@@ -249,6 +268,24 @@ describe("QuickUsagePopover", () => {
     await expect.element(viewMore).toBeVisible();
     await userEvent.click(viewMore);
     expect(onOpenFull).toHaveBeenCalledOnce();
+  });
+
+  it("keeps unsupported accounts distinct from failed limit probes", async () => {
+    const account = unavailableProvider();
+    const unsupported = {
+      ...account,
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "unsupported", message: "This account has no subscription limits." },
+      },
+    } as ServerProvider;
+    await using screen = await render(view(envPresentations([unsupported])));
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await expect.element(page.getByText("This account has no subscription limits.")).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Subscription limit error details for Desk" }))
+      .not.toBeInTheDocument();
   });
 
   it("keeps notice-only accounts distinct across environments", async () => {
@@ -266,7 +303,13 @@ describe("QuickUsagePopover", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
     await expect.element(page.getByRole("button", { name: "Cursor" })).toBeVisible();
+    await userEvent.hover(
+      page.getByRole("button", { name: "Subscription limit error details for Desk" }),
+    );
     await expect.element(page.getByText("Desk could not read limits.")).toBeVisible();
+    await userEvent.hover(
+      page.getByRole("button", { name: "Subscription limit error details for Remote" }),
+    );
     await expect.element(page.getByText("Remote could not read limits.")).toBeVisible();
   });
 

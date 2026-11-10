@@ -16,6 +16,7 @@ import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runti
 import { useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { InfoIcon } from "lucide-react";
 
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
@@ -26,6 +27,7 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popov
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { LimitWindows } from "./UsageLimits";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -37,6 +39,7 @@ type DriverLimits = {
     readonly label: string;
     readonly windows: NonNullable<ServerProvider["usageLimits"]>["windows"];
     readonly notice: string | null;
+    readonly noticeDetails: string | null;
     readonly checkedAt: string;
     readonly accentColor: string | undefined;
   }>;
@@ -86,6 +89,7 @@ function selectedDriverLimits(
         account.email?.trim() || account.displayName?.trim() || account.sourceLabel || "Account",
       windows: [...account.limits.windows],
       notice: null,
+      noticeDetails: null,
       checkedAt: account.limits.checkedAt,
       accentColor: account.accentColor,
     });
@@ -117,7 +121,14 @@ function selectedDriverLimits(
           provider.displayName?.trim() ||
           presentation.entry.target.label,
         windows: [],
-        notice,
+        notice:
+          limits.unavailable?.reason === "probeFailed"
+            ? "Could not load subscription limits. Refresh to try again."
+            : notice,
+        noticeDetails:
+          limits.unavailable?.reason === "probeFailed"
+            ? (limits.unavailable.message ?? null)
+            : null,
         checkedAt: limits.checkedAt,
         accentColor: provider.accentColor,
       });
@@ -367,9 +378,27 @@ export function QuickUsagePopover({
                         stacked
                       />
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        {account.notice ?? "No usage limits reported yet."}
-                      </p>
+                      <div className="flex items-start gap-1">
+                        <p className="text-sm text-muted-foreground">
+                          {account.notice ?? "No usage limits reported yet."}
+                        </p>
+                        {account.noticeDetails ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label={`Subscription limit error details for ${account.label}`}
+                                />
+                              }
+                            >
+                              <InfoIcon />
+                            </TooltipTrigger>
+                            <TooltipPopup>{account.noticeDetails}</TooltipPopup>
+                          </Tooltip>
+                        ) : null}
+                      </div>
                     )}
                   </section>
                 ))}
