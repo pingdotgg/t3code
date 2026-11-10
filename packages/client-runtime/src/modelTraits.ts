@@ -156,7 +156,6 @@ export function buildTraitsTriggerDisplay(input: {
       }
     }
     if (
-      input.provider === "codex" &&
       descriptor.id === "cyberAccessProgram" &&
       getProviderOptionCurrentValue(
         descriptor,

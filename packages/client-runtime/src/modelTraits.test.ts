@@ -1,8 +1,4 @@
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ProviderOptionDescriptor,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, type ProviderOptionDescriptor } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildTraitsTriggerDisplay, getDescriptorStringValue } from "./modelTraits.ts";
@@ -40,7 +36,6 @@ describe("buildTraitsTriggerDisplay", () => {
   it("labels Codex cyber access only when a program is chosen", () => {
     const display = (currentValue: string, reportedProgram?: string) =>
       buildTraitsTriggerDisplay({
-        provider: ProviderDriverKind.make("codex"),
         primarySelectDescriptorId: "reasoningEffort",
         ultrathinkPromptControlled: false,
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
