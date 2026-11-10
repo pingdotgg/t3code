@@ -1,3 +1,4 @@
+import { dismissOpenKeyboard } from "../../features/keyboard/dismissOpenKeyboard";
 import { type RefObject, use, useRef, useState } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
@@ -68,7 +69,7 @@ function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }
     search.onClose?.();
   };
   useHardwareBack(searching && !inline && !controlled, () => {
-    close();
+    if (!dismissOpenKeyboard()) close();
     return true;
   });
   return <AppBarView {...props} searchState={{ searching, open, close, inputRef }} />;

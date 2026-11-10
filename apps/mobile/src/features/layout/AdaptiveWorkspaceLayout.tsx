@@ -1,3 +1,4 @@
+import { dismissOpenKeyboard } from "../keyboard/dismissOpenKeyboard";
 import {
   WorkspaceColumnsRendererContext,
   WorkspacePresentationHostContext,
@@ -812,7 +813,7 @@ function AdaptiveWorkspaceLayoutContent(
       if (state && workspaceRoutesOf(state.routes.slice(0, state.index + 1)).overlays.length > 0) {
         return false;
       }
-      setPrimarySidebarVisible(false);
+      if (!dismissOpenKeyboard()) setPrimarySidebarVisible(false);
       return true;
     });
     return () => subscription.remove();

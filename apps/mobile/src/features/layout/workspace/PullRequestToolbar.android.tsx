@@ -1,3 +1,4 @@
+import { dismissOpenKeyboard } from "../../keyboard/dismissOpenKeyboard";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
 import { BackHandler, Keyboard } from "react-native";
@@ -46,8 +47,7 @@ export function PullRequestToolbar(props: {
       const state = navigation.getState();
       if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive("pullRequests"))
         return false;
-      if (Keyboard.isVisible()) Keyboard.dismiss();
-      else closeSearch();
+      if (!dismissOpenKeyboard()) closeSearch();
       return true;
     });
     return () => subscription.remove();

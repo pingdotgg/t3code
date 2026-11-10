@@ -2,6 +2,10 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+vi.mock("../../features/keyboard/dismissOpenKeyboard", () => ({
+  dismissOpenKeyboard: () => false,
+}));
+
 vi.mock("react-native", () => ({
   View: (props: { readonly children?: ReactNode }) => <div>{props.children}</div>,
   Keyboard: { dismiss: () => {} },

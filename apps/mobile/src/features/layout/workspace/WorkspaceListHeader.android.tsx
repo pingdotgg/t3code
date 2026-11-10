@@ -1,3 +1,4 @@
+import { dismissOpenKeyboard } from "../../keyboard/dismissOpenKeyboard";
 import { useEffect, useState } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { BackHandler, Keyboard } from "react-native";
@@ -49,8 +50,7 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
         isTabActive?.("threads") === false
       )
         return false;
-      if (Keyboard.isVisible()) Keyboard.dismiss();
-      else closeSearch();
+      if (!dismissOpenKeyboard()) closeSearch();
       return true;
     });
     return () => subscription.remove();

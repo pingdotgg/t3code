@@ -15,9 +15,20 @@ vi.mock("react-native-keyboard-controller/src/bindings", () => ({
       return { remove: () => named.delete(listener) };
     },
   },
-  KeyboardControllerNative: { dismiss: () => {} },
+  KeyboardControllerNative: { dismiss: vi.fn() },
 }));
 
+vi.mock("react-native", () => ({
+  Keyboard: { isVisible: () => false, dismiss: vi.fn() },
+}));
+vi.mock("react-native-keyboard-controller", async () => {
+  const { KeyboardController } = await import("react-native-keyboard-controller/src/module");
+  const { KeyboardEvents } = await import("react-native-keyboard-controller/src/bindings");
+  return { KeyboardController, KeyboardEvents };
+});
+
+import { dismissOpenKeyboard } from "./dismissOpenKeyboard";
+import { KeyboardControllerNative } from "react-native-keyboard-controller/src/bindings";
 import { useKeyboardState } from "react-native-keyboard-controller/src/hooks/useKeyboardState";
 import { KeyboardController } from "react-native-keyboard-controller/src/module";
 
@@ -81,4 +92,30 @@ it("waits for the native hide before dismiss resolves after a didShow-only repai
   expect(dismissed).toBe(false);
   emit("keyboardDidHide", 0);
   await dismissal;
+});
+
+it("dismisses the custom composer before Back navigates, including after resume", () => {
+  using _keyboard = setup();
+  const dismiss = vi.mocked(KeyboardControllerNative.dismiss);
+  dismiss.mockClear();
+
+  emit("keyboardDidShow", 376);
+  expect(dismissOpenKeyboard()).toBe(true);
+  expect(dismiss).toHaveBeenCalledTimes(1);
+  emit("keyboardDidHide", 0);
+  expect(dismissOpenKeyboard()).toBe(false);
+
+  emit("keyboardDidShow", 376);
+  expect(dismissOpenKeyboard()).toBe(true);
+  // A dropped hide event must not trap later Back presses in a stale visible cache.
+  expect(dismissOpenKeyboard()).toBe(false);
+  expect(dismiss).toHaveBeenCalledTimes(2);
+
+  emit("keyboardWillShow", 376);
+  expect(dismissOpenKeyboard()).toBe(true);
+  expect(dismissOpenKeyboard()).toBe(false);
+  emit("keyboardDidShow", 376);
+  expect(dismissOpenKeyboard()).toBe(true);
+  emit("keyboardDidHide", 0);
+  expect(dismissOpenKeyboard()).toBe(false);
 });
