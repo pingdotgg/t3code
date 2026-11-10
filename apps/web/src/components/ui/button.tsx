@@ -121,7 +121,7 @@ const contentButtonVariants = cva("outline-none", {
         "flex h-7.5 items-center gap-2 rounded-control px-2 text-start text-label text-foreground hover:surface-ghost-hover focus-visible:surface-ghost-hover disabled:pointer-events-none disabled:opacity-64",
       "action-row-destructive":
         "flex h-7.5 items-center gap-2 rounded-control px-2 text-start text-label text-destructive-foreground hover:surface-ghost-hover focus-visible:surface-ghost-hover disabled:pointer-events-none disabled:opacity-64",
-      tab: "inline-flex h-7 min-w-0 max-w-80 cursor-pointer items-center gap-1.75 rounded-control px-2.5 text-left text-control text-muted-foreground [-webkit-app-region:no-drag] hover:surface-ghost-hover hover:text-foreground focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
+      tab: "inline-flex h-7 min-w-0 max-w-80 cursor-pointer items-center gap-1.75 rounded-control px-2.5 text-left text-control text-muted-foreground [-webkit-app-region:no-drag] hover:surface-ghost-hover hover:text-foreground group-hover/tab:surface-ghost-hover group-hover/tab:text-foreground focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
       "tab-close":
         "flex size-4 cursor-pointer items-center justify-center rounded-kbd text-foreground opacity-0 [-webkit-app-region:no-drag] group-hover/tab:opacity-100 focus-visible:opacity-100 focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
     },

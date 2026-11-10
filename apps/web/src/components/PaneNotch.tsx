@@ -31,7 +31,7 @@ export function PaneTabButton({ className, render, ...props }: useRender.Compone
         type: render ? undefined : "button",
         className: cn(
           PANE_TAB_CLASS,
-          "cursor-pointer text-left hover:surface-ghost-hover",
+          "cursor-pointer text-left hover:surface-ghost-hover group-hover/tab:surface-ghost-hover",
           className,
         ),
       },
