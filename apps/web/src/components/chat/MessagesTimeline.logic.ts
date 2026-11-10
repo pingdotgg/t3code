@@ -529,6 +529,7 @@ const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesWorkLog?: boolean;
+  readonly superseded?: boolean;
   /** A user prompt followed directly by another prompt sits in the same prompt stack. */
   readonly continuesPromptStack?: boolean;
 };
@@ -2624,15 +2625,32 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  const supersededRowIds = new Set<string>();
+  for (const fold of supersededFoldsByAnchorEntryId.values()) {
+    if (!input.expandedAttemptIds?.has(fold.attemptId)) continue;
+    for (const entryId of fold.hiddenEntryIds) {
+      supersededRowIds.add(entryId);
+      supersededRowIds.add(`work-toggle:${entryId}`);
+      supersededRowIds.add(`work-live:${entryId}`);
+      supersededRowIds.add(`${workGroupId(entryId)}:details`);
+      const entry = timelineEntryById.get(entryId);
+      if (entry?.kind === "message") {
+        supersededRowIds.add(`assistant-meta:${entry.message.id}`);
+      }
+    }
+  }
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
   return withPromptGrouping(
-    result.map((row, index) =>
-      timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+    result.map((sourceRow, index) => {
+      const row = supersededRowIds.has(sourceRow.id)
+        ? { ...sourceRow, superseded: true }
+        : sourceRow;
+      return timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
         ? { ...row, continuesWorkLog: true }
-        : row,
-    ),
+        : row;
+    }),
   );
 }
 
@@ -3486,6 +3504,7 @@ function withPreviousWindowItems(
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
   if (a.continuesPromptStack !== b.continuesPromptStack) return false;
+  if (a.superseded !== b.superseded) return false;
 
   switch (a.kind) {
     case "background-activity": {
