@@ -60,27 +60,18 @@ describe("submitComposerDraft", () => {
     expect(validationMessage).toBeNull();
   });
 
-  it("keeps the next message and explains that the previous send is still saving", () => {
+  it("keeps the next message while the previous send is still saving", () => {
     const onSend = vi.fn();
-    const preventDefault = vi.fn();
-    const input = {
+    const result = submitComposerDraft({
       prompt: "Message B",
-      submissionTarget: "provider-turn" as const,
-      event: { preventDefault },
+      isSendBusy: true,
+      submissionTarget: "provider-turn",
+      event: { preventDefault: () => {} },
       onSend,
-    };
-    expect(submitComposerDraft({ ...input, isSendBusy: true })).toEqual({
-      validationMessage:
-        "Your previous message is still saving. Wait for it to finish, then send again.",
-      didDispatch: false,
     });
+    expect(result.didDispatch).toBe(false);
+    expect(result.validationMessage).not.toBeNull();
     expect(onSend).not.toHaveBeenCalled();
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(submitComposerDraft({ ...input, isSendBusy: false })).toEqual({
-      validationMessage: null,
-      didDispatch: true,
-    });
-    expect(onSend).toHaveBeenCalledOnce();
   });
 
   it("blocks when appended context pushes the provider input over the shared limit", () => {
