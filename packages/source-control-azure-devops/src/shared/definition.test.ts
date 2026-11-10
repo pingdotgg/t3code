@@ -202,12 +202,18 @@ describe("Azure DevOps repository labels", () => {
     ["https://org.visualstudio.com/DefaultCollection/Platform/_git/Web", "Platform/Web"],
     ["ssh://git@ssh.dev.azure.com/v3/Org/Platform/Web", "Platform/Web"],
     ["Org@vs-ssh.visualstudio.com:v3/Org/Platform/Web", "Platform/Web"],
+    ["https://dev.azure.com/Org/Platform/_git/_full/Web", "Platform/Web"],
+    ["https://org.visualstudio.com/Platform/_git/_optimized/Web", "Platform/Web"],
   ])("names %s by project and repository", (remoteUrl, label) => {
     expect(registry.repositoryLabel(remoteUrl)).toBe(label);
   });
 
   it("leaves remotes it cannot read, or another host's, to the repository path", () => {
     expect(registry.repositoryLabel("https://dev.azure.com/org")).toBeNull();
+    expect(
+      registry.repositoryLabel("https://dev.azure.com/org/Platform/_git/Web/extra"),
+    ).toBeNull();
+    expect(registry.repositoryLabel("git@ssh.dev.azure.com:v3/org/Platform/_full/Web")).toBeNull();
     expect(registry.repositoryLabel("git@github.com:owner/repo.git")).toBeNull();
   });
 });

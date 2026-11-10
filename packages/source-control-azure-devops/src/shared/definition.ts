@@ -55,7 +55,10 @@ function decodeUrlPathSegment(segment: string): string {
   }
 }
 
-/** `{project}/{repository}` in the remote's own case, from the web or the SSH (`v3/`) spelling. */
+/**
+ * `{project}/{repository}` in the remote's own case, from the web spelling (with or without the
+ * `_full`/`_optimized` clone route) or the SSH (`v3/`) one. Null for any other path.
+ */
 function repositoryLabel(remoteUrl: string): string | null {
   const scheme = remoteUrl.indexOf("://");
   const path =
@@ -64,13 +67,18 @@ function repositoryLabel(remoteUrl: string): string | null {
       : remoteUrl.slice(remoteUrl.indexOf("/", scheme + 3) + 1);
   const segments = path.split("/").filter((segment) => segment.length > 0);
   const gitSegment = segments.indexOf("_git");
-  const [project, repository] =
-    gitSegment > 0
-      ? [segments[gitSegment - 1], segments[gitSegment + 1]]
-      : segments[0] === "v3"
-        ? segments.slice(2, 4)
-        : [];
-  if (!project || !repository) return null;
+  let project: string | undefined;
+  let rest: ReadonlyArray<string> = [];
+  if (gitSegment > 0) {
+    project = segments[gitSegment - 1];
+    rest = segments.slice(gitSegment + 1);
+    if (rest[0] === "_full" || rest[0] === "_optimized") rest = rest.slice(1);
+  } else if (segments[0] === "v3" && segments.length === 4) {
+    project = segments[2];
+    rest = segments.slice(3);
+  }
+  const [repository] = rest;
+  if (!project || !repository || rest.length !== 1) return null;
   return `${decodeUrlPathSegment(project)}/${decodeUrlPathSegment(repository.replace(/\.git$/iu, ""))}`;
 }
 

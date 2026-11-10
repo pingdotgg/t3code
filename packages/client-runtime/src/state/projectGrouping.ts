@@ -200,10 +200,18 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+/** Servers too old to send an origin's URL still send its key, whose first segment is the host. */
+function repositoryGroupingRemoteOf(identity: RepositoryIdentity): string {
+  const { origin } = identity;
+  if (!origin) return identity.locator.remoteUrl;
+  if (origin.remoteUrl) return origin.remoteUrl;
+  const [host] = origin.canonicalKey.split("/");
+  return `https://${origin.displayName ? `${host}/${origin.displayName}` : origin.canonicalKey}`;
+}
+
 function repositoryGroupingLabelOf(identity: RepositoryIdentity): string | undefined {
-  const remoteUrl = identity.origin ? identity.origin.remoteUrl : identity.locator.remoteUrl;
   return (
-    (remoteUrl === undefined ? null : sourceControlClients.repositoryLabel(remoteUrl)) ??
+    sourceControlClients.repositoryLabel(repositoryGroupingRemoteOf(identity)) ??
     repositoryGroupingDisplayNameOf(identity)
   );
 }
