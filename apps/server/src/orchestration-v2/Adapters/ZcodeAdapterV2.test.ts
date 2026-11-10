@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
@@ -36,7 +37,11 @@ import {
   zcodeServerRequest,
   zcodeSessionEvent,
 } from "./ZcodeAdapterV2.testkit.ts";
-import type { ZcodeAdapterV2Options } from "@t3tools/provider-zcode/testing";
+import type {
+  ZcodeAdapterV2Options,
+  ZcodeConnection,
+  ZcodeProtocolError,
+} from "@t3tools/provider-zcode/testing";
 
 const INSTANCE_ID = ProviderInstanceId.make("zcode_frame_test");
 const THREAD_ID = ThreadId.make("thread-zcode-frame-test");
@@ -103,11 +108,15 @@ const makeTurnInput = Effect.fnUntraced(function* (
   };
 });
 
-const makeHarness = Effect.fnUntraced(function* (override: Partial<ZcodeAdapterV2Options> = {}) {
+const makeHarness = Effect.fnUntraced(function* (
+  override: Partial<ZcodeAdapterV2Options> = {},
+  // Lets a test intercept client→server methods on the injected fake connection.
+  wrapConnection: (connection: ZcodeConnection) => ZcodeConnection = (connection) => connection,
+) {
   const scenario = yield* makeFakeZcodeConnection();
   const adapter = yield* makeZcodeAdapterV2({
     ...makeZcodeAdapterOptions(),
-    makeConnection: () => Effect.succeed(scenario.connection),
+    makeConnection: () => Effect.succeed(wrapConnection(scenario.connection)),
     ...override,
   });
   const runtime = yield* adapter.openSession({
@@ -231,6 +240,35 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
       }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 
+  it.effect(
+    "forceNewNativeThread opens a fresh native session instead of resuming the cached one",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        assert.equal(harness.providerThread.nativeThreadRef?.nativeId, "sess_1");
+        // Recovery (ProviderTurnStartService) re-ensures the same provider thread row with the
+        // native ref cleared and demands a fresh native conversation.
+        const replacement = yield* harness.runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: MODEL_SELECTION,
+          runtimePolicy,
+          existingProviderThread: { ...harness.providerThread, nativeThreadRef: null },
+          forceNewNativeThread: true,
+        });
+        assert.equal(replacement.id, harness.providerThread.id);
+        assert.equal(replacement.nativeThreadRef?.nativeId, "sess_2");
+        const creates = harness.scenario.requests.filter(
+          (call) => call.method === "session/create",
+        );
+        assert.equal(creates.length, 2);
+        assert.isUndefined(
+          harness.scenario.requests.find((call) => call.method === "session/resume"),
+        );
+        assert.equal(harness.scenario.createdSessionId(), "sess_2");
+        assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+      }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
   it.effect("streams text deltas and completes the turn with token usage", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -290,6 +328,74 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
         (event) => event.providerTurn.status === "completed",
       );
       assert.equal(finalTurnUpdate.providerTurn.tokenUsage?.usedTokens, 120);
+      yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
+      assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+    }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect("keeps reasoning and answer deltas of one message as separate stream items", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.startTurn();
+      yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      yield* harness.offerTurnEvent("turn.started", {});
+      // One assistant message streams reasoning first, then the answer; each kind must own
+      // its own item and completion state.
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_mix",
+        delta: "pondering",
+        kind: "reasoning_delta",
+        done: false,
+      });
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_mix",
+        delta: "",
+        kind: "reasoning_delta",
+        done: true,
+      });
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_mix",
+        delta: "the answer",
+        kind: "text_delta",
+        done: false,
+      });
+      yield* harness.offerTurnEvent("model.streaming", {
+        assistantMessageId: "msg_mix",
+        delta: "",
+        kind: "text_delta",
+        done: true,
+      });
+      yield* harness.offerTurnEvent("turn.completed", {
+        response: "the answer",
+        tokenCount: 8,
+        toolCallCount: 0,
+        duration: 90,
+        resultType: "success",
+      });
+
+      const reasoningChunk = yield* harness.takeEvent("command_output.delta");
+      assert.equal(reasoningChunk.chunk, "pondering");
+      // Takes discard non-matching events, so consume in emission order: the reasoning item
+      // completes (its done frame) before the answer delta streams.
+      yield* harness.takeEvent("turn_item.updated", (event) =>
+        event.turnItem.type === "reasoning"
+          ? event.turnItem.streaming === false && event.turnItem.text === "pondering"
+          : false,
+      );
+      const answerChunk = yield* harness.takeEvent(
+        "command_output.delta",
+        (event) => event.chunk === "the answer",
+      );
+      assert.notEqual(answerChunk.itemId, reasoningChunk.itemId);
+
+      yield* harness.takeEvent("turn_item.updated", (event) =>
+        event.turnItem.type === "assistant_message"
+          ? event.turnItem.streaming === false && event.turnItem.text === "the answer"
+          : false,
+      );
       yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
       assert.deepEqual(harness.scenario.unexpectedMethods(), []);
     }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
@@ -444,9 +550,13 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
         decision: "accept",
       });
 
-      const relayed = harness.scenario.responds.find((respond) => respond.id === broker.id);
-      assert.isDefined(relayed);
-      assert.deepEqual(relayed!.result, allowResponse);
+      // The respond queue synchronizes this with the adapter's pump: the answer may
+      // resolve while the broker record is still pending.
+      let relayed = yield* harness.scenario.takeRespond;
+      while (relayed.id !== broker.id) {
+        relayed = yield* harness.scenario.takeRespond;
+      }
+      assert.deepEqual(relayed.result, allowResponse);
       yield* harness.takeEvent(
         "runtime_request.updated",
         (event) => event.runtimeRequest.status === "resolved",
@@ -488,5 +598,172 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
       yield* harness.takeEvent("turn.terminal", (event) => event.status === "interrupted");
       assert.deepEqual(harness.scenario.unexpectedMethods(), []);
     }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect("keeps the real terminal when session/stop rejects", () =>
+    Effect.gen(function* () {
+      const stopRejection = {
+        _tag: "ZcodeProtocolError",
+        operation: "session/stop",
+        detail: "session rejected the stop",
+      } as unknown as ZcodeProtocolError;
+      const attempted: Array<string> = [];
+      const harness = yield* makeHarness({}, (connection) => ({
+        ...connection,
+        request: (method, params, timeoutMs) => {
+          if (method !== "session/stop") return connection.request(method, params, timeoutMs);
+          attempted.push(method);
+          return Effect.fail(stopRejection);
+        },
+      }));
+      yield* harness.startTurn();
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      const stopError = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurn.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(stopError._tag, "ProviderAdapterInterruptError");
+      assert.deepEqual(attempted, ["session/stop"]);
+      // With the stop rejected, the turn keeps its actual outcome instead of being
+      // reported as interrupted.
+      yield* harness.offerTurnEvent("turn.completed", {
+        response: "done",
+        tokenCount: 5,
+        toolCallCount: 0,
+        duration: 50,
+        resultType: "success",
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.equal(terminal.providerTurnId, running.providerTurn.id);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+    }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect("finalizes the failed turn and session when session/send is rejected", () =>
+    Effect.gen(function* () {
+      // A server-side method rejection surfaces as a ZcodeProtocolError on the request
+      // channel; the testing export ships the shape as a type only, so tag it directly.
+      const sendRejection = {
+        _tag: "ZcodeProtocolError",
+        operation: "session/send",
+        detail: "session rejected the prompt",
+      } as unknown as ZcodeProtocolError;
+      const attempted: Array<string> = [];
+      const harness = yield* makeHarness({}, (connection) => ({
+        ...connection,
+        request: (method, params, timeoutMs) => {
+          if (method !== "session/send") return connection.request(method, params, timeoutMs);
+          attempted.push(method);
+          return Effect.fail(sendRejection);
+        },
+      }));
+
+      const startFiber = yield* Effect.forkChild(harness.startTurn().pipe(Effect.flip));
+      // The whole terminal sequence must reach the event stream before the start error
+      // surfaces: the run subscriber stops as soon as the caller sees the start failure.
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      const failed = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "failed",
+      );
+      assert.equal(failed.providerTurn.id, running.providerTurn.id);
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => event.providerThread.status === "idle",
+      );
+      const erroredSession = yield* harness.takeEvent(
+        "provider_session.updated",
+        (event) => event.providerSession.status === "error",
+      );
+      assert.equal(erroredSession.providerSession.lastError, "ZCode failed to start the turn.");
+      yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) => event.turnItem.status === "failed" && event.turnItem.type === "error",
+      );
+      const terminal = yield* harness.takeEvent(
+        "turn.terminal",
+        (event) => event.status === "failed",
+      );
+      assert.equal(terminal.providerTurnId, failed.providerTurn.id);
+
+      const startError = yield* Fiber.join(startFiber);
+      assert.equal(startError._tag, "ProviderAdapterTurnStartError");
+      assert.deepEqual(attempted, ["session/send"]);
+      assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+    }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect(
+    "finalizes the failed compact turn and keeps the thread usable when session/compact is rejected",
+    () =>
+      Effect.gen(function* () {
+        const compactRejection = {
+          _tag: "ZcodeProtocolError",
+          operation: "session/compact",
+          detail: "session rejected the compaction",
+        } as unknown as ZcodeProtocolError;
+        const attempted: Array<string> = [];
+        const harness = yield* makeHarness({}, (connection) => ({
+          ...connection,
+          request: (method, params, timeoutMs) => {
+            if (method !== "session/compact") return connection.request(method, params, timeoutMs);
+            attempted.push(method);
+            return Effect.fail(compactRejection);
+          },
+        }));
+
+        const compactInput = yield* makeTurnInput(harness.providerThread, "/compact");
+        yield* harness.runtime.compactThread!(compactInput);
+
+        yield* harness.takeEvent(
+          "provider_turn.updated",
+          (event) => event.providerTurn.status === "running",
+        );
+        yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "compaction" && event.turnItem.status === "failed",
+        );
+        const failed = yield* harness.takeEvent(
+          "provider_turn.updated",
+          (event) => event.providerTurn.status === "failed",
+        );
+        yield* harness.takeEvent(
+          "provider_thread.updated",
+          (event) => event.providerThread.status === "idle",
+        );
+        const erroredSession = yield* harness.takeEvent(
+          "provider_session.updated",
+          (event) => event.providerSession.status === "error",
+        );
+        assert.equal(erroredSession.providerSession.lastError, "ZCode context compaction failed.");
+        const terminal = yield* harness.takeEvent(
+          "turn.terminal",
+          (event) => event.status === "failed",
+        );
+        assert.equal(terminal.providerTurnId, failed.providerTurn.id);
+
+        // The dead compact turn must not hold the thread: a later startTurn works normally.
+        yield* harness.startTurn();
+        assert.isDefined(requestFor(harness.scenario, "session/send"));
+        yield* harness.offerTurnEvent("turn.completed", {
+          response: "after compaction failure",
+          tokenCount: 4,
+          toolCallCount: 0,
+          duration: 30,
+          resultType: "success",
+        });
+        yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
+        assert.deepEqual(attempted, ["session/compact"]);
+        assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+      }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 });

@@ -1245,7 +1245,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
               turn,
               kind === "text_delta" ? "assistant_message" : "reasoning",
               messageId,
-              messageId,
+              kind === "text_delta" ? "text" : "reasoning",
             );
             item.text += delta;
             yield* emit({
@@ -1779,13 +1779,18 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         }
         const existing = threadInput.existingProviderThread;
         if (
+          !threadInput.forceNewNativeThread &&
           threadState !== null &&
           existing !== undefined &&
           threadState.providerThread.id === existing.id
         ) {
           return threadState.providerThread;
         }
-        const nativeId = existing?.nativeThreadRef?.nativeId ?? threadState?.nativeSessionId;
+        // Recovery (forceNewNativeThread) must open a fresh conversation even though the
+        // provider thread row and threadState still reference the old native session.
+        const nativeId = threadInput.forceNewNativeThread
+          ? undefined
+          : (existing?.nativeThreadRef?.nativeId ?? threadState?.nativeSessionId);
         const nativeSessionId =
           nativeId !== undefined
             ? yield* resumeNativeSession(nativeId, threadInput)
@@ -2000,15 +2005,23 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 const turn = yield* installTurn(state, turnInput, nativeTurnId);
                 yield* beginTurnWork(state, turn);
                 yield* request("session/send", sendParams).pipe(
-                  Effect.tapError(() =>
-                    Effect.sync(() => {
-                      if (state.activeTurn === turn) state.activeTurn = null;
+                  Effect.tapError((cause) =>
+                    Effect.gen(function* () {
+                      if (state.activeTurn !== turn) return;
+                      turn.failure = makeProviderFailure({
+                        cause,
+                        message: "ZCode failed to start the turn.",
+                        class: "provider_error",
+                      });
+                      // The rejection reaches the caller as a turn start error, whose handler
+                      // stops the event subscriber; the terminal sequence must be queued first.
+                      yield* finalizeTurn(state);
                     }),
                   ),
                 );
               }),
             );
-            // session/send acks before turn events; rejections surface via turn.failed.
+            // session/send acks before turn events; rejections there surface via turn.failed.
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -2055,13 +2068,15 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                   },
                   SESSION_CREATE_TIMEOUT_MS,
                 ).pipe(
-                  Effect.mapError((cause) => {
+                  // Recover instead of re-failing: the failed-item + finalizeTurn sequence below
+                  // must still run or state.activeTurn stays installed and blocks later turns.
+                  Effect.catch((cause) => {
                     turn.failure = makeProviderFailure({
                       cause,
                       message: "ZCode context compaction failed.",
                       class: "provider_error",
                     });
-                    return cause;
+                    return Effect.undefined;
                   }),
                 );
                 const resultRecord = Predicate.isObject(result) ? result : {};
@@ -2168,8 +2183,15 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 `ZCode turn ${interruptInput.providerTurnId} is not active`,
               );
             }
+            const wasInterrupted = turn.interrupted;
             turn.interrupted = true;
-            yield* request("session/stop", { sessionId: state.nativeSessionId });
+            yield* request("session/stop", { sessionId: state.nativeSessionId }).pipe(
+              Effect.onError(() =>
+                Effect.sync(() => {
+                  turn.interrupted = wasInterrupted;
+                }),
+              ),
+            );
           },
           (effect, interruptInput) =>
             effect.pipe(
