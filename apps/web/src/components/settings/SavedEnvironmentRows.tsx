@@ -6,8 +6,10 @@ import {
   RouteIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
+  AuthOrchestrationOperateScope,
   AuthRelayWriteScope,
   type EnvironmentId,
   connectReachabilityHelpUrl,
@@ -55,7 +57,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
-import { readEnvironmentScope } from "~/state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
@@ -124,6 +126,10 @@ export function SavedBackendListRow({
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
+  const navigate = useNavigate();
+  // The Welcome page only scans this computer; this opens it for the connected one.
+  const canImportSessions =
+    useEnvironmentScope(environmentId, AuthOrchestrationOperateScope) && enabled && isConnected;
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
@@ -418,6 +424,11 @@ export function SavedBackendListRow({
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}
           </MenuItem>
+          {canImportSessions ? (
+            <MenuItem onClick={() => void navigate({ to: "/welcome", search: { environmentId } })}>
+              Import sessions…
+            </MenuItem>
+          ) : null}
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
           ) : null}
