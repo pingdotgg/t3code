@@ -107,7 +107,6 @@ const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 const PROJECTS_PER_READ = 10;
 /** GitLab's largest page; a deeper first page is read per project, as `listChangeRequests` does. */
 const ROWS_PER_PROJECT = 100;
-const PROJECT_READ_CONCURRENCY = 4;
 
 /** The checkout whose `glab` reads a host's version; any checkout of a project on it answers. */
 class VersionReadCheckout extends Context.Service<VersionReadCheckout, { readonly cwd: string }>()(
@@ -321,6 +320,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("listChangeRequests")),
       ),
 
+    repositoriesPerRead: PROJECTS_PER_READ,
     listChangeRequestsInRepositories: Effect.fn(
       "GitLabPullRequestProvider.listChangeRequestsInRepositories",
     )(function* (input) {
@@ -334,39 +334,31 @@ export const make = Effect.gen(function* () {
           detail: "This GitLab version lists one project at a time.",
         });
       }
-      const chunks: Array<ReadonlyArray<string>> = [];
-      for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
-        chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
-      }
-      const pages = yield* Effect.forEach(
-        chunks,
-        (repositories) =>
-          cli
-            .listMergeRequestsInProjects({
-              cwd: input.cwd,
-              host: input.host,
-              repositories,
-              state: input.state,
-              involvement: input.involvement,
-              viewer: input.viewer,
-              first: input.limit,
-              query: input.query,
-              filters: input.filters,
-            })
-            .pipe(
-              // Left out, its projects are read on their own.
-              Effect.catchIf(
-                (error) => !isAccountFailure(error),
-                (error) =>
-                  Effect.logWarning("GitLab merge request list across projects failed", {
-                    host: input.host,
-                    reason: error._tag,
-                  }).pipe(Effect.as([])),
-              ),
-            ),
-        { concurrency: PROJECT_READ_CONCURRENCY },
-      ).pipe(Effect.mapError(failed));
-      return pages.flat().map(({ repository, batch: { listStates: states, ...batch } }) => ({
+      const pages = yield* cli
+        .listMergeRequestsInProjects({
+          cwd: input.cwd,
+          host: input.host,
+          repositories: input.repositories.slice(0, PROJECTS_PER_READ),
+          state: input.state,
+          involvement: input.involvement,
+          viewer: input.viewer,
+          first: input.limit,
+          query: input.query,
+          filters: input.filters,
+        })
+        .pipe(
+          // Left out, its projects are read on their own.
+          Effect.catchIf(
+            (error) => !isAccountFailure(error),
+            (error) =>
+              Effect.logWarning("GitLab merge request list across projects failed", {
+                host: input.host,
+                reason: error._tag,
+              }).pipe(Effect.as([])),
+          ),
+          Effect.mapError(failed),
+        );
+      return pages.map(({ repository, batch: { listStates: states, ...batch } }) => ({
         repository,
         page: {
           ...batch,

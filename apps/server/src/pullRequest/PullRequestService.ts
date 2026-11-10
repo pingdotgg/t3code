@@ -124,6 +124,8 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
+// Each batched read is one host request; this many per host stays polite to its quota.
+const BATCHED_READS_PER_HOST = 4;
 const FILTERED_LIST_READS = 5;
 
 // Host reads spawn CLIs and hit low quotas; briefly share results and identical in-flight reads.
@@ -541,6 +543,9 @@ function withRateLimitBackoff(
       : {
           listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
         }),
+    ...(api.repositoriesPerRead === undefined
+      ? {}
+      : { repositoriesPerRead: api.repositoriesPerRead }),
     ...(api.listChangeRequestsInRepositories === undefined
       ? {}
       : {
@@ -1637,9 +1642,17 @@ export const make = Effect.gen(function* () {
       }
     }
     for (const group of firstPages.values()) {
-      for (let start = 0; start < group.length; start += REPOSITORY_SEARCH_CHUNK) {
-        reads.push(readFirstPages(group.slice(start, start + REPOSITORY_SEARCH_CHUNK)));
+      // One call per host read, so a rate limit on one read keeps the pages its siblings answered.
+      const size = group[0]!.api.repositoriesPerRead ?? REPOSITORY_SEARCH_CHUNK;
+      const chunks: Array<ReadonlyArray<SupportedProject>> = [];
+      for (let start = 0; start < group.length; start += size) {
+        chunks.push(group.slice(start, start + size));
       }
+      reads.push(
+        Effect.forEach(chunks, readFirstPages, { concurrency: BATCHED_READS_PER_HOST }).pipe(
+          Effect.map((batches) => batches.flat()),
+        ),
+      );
     }
     const batches = (yield* Effect.all(reads, { concurrency: REPOSITORY_CONCURRENCY })).flat();
 

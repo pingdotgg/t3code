@@ -1071,6 +1071,54 @@ describe("review decisions", () => {
         expect(yield* failure(new GitLabCli.GitLabCliRateLimitError(context))).toBe("rate-limited");
       }),
     );
+
+    it.effect(
+      "sends a host that cannot list projects together back to single reads, asking once",
+      () =>
+        Effect.gen(function* () {
+          const context = {
+            operation: "execute" as const,
+            command: "glab" as const,
+            cwd: "/w",
+            cause: null,
+          };
+          const readTwice = (
+            probe: Effect.Effect<boolean, GitLabPullRequestCli.GitLabPullRequestCliError>,
+          ) =>
+            Effect.gen(function* () {
+              let versionReads = 0;
+              const provider = yield* providerWith(() => Effect.succeed(new Map()), {
+                supportsGraphqlList: () => {
+                  versionReads += 1;
+                  return probe;
+                },
+                listMergeRequestsInProjects: () => Effect.die("no batched read on this host"),
+              });
+              const reasons: Array<string> = [];
+              for (const _ of [1, 2]) {
+                assert.isDefined(provider.listChangeRequestsInRepositories);
+                const error = yield* Effect.flip(provider.listChangeRequestsInRepositories(across));
+                reasons.push(error.reason);
+              }
+              return { reasons, versionReads };
+            });
+
+          expect(yield* readTwice(Effect.succeed(false))).toEqual({
+            reasons: ["failed", "failed"],
+            versionReads: 1,
+          });
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliCommandError(context))),
+          ).toEqual({ reasons: ["failed", "failed"], versionReads: 1 });
+          // The caller has to see these to back off or ask for a login, so they are not cached.
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliRateLimitError(context))),
+          ).toEqual({ reasons: ["rate-limited", "rate-limited"], versionReads: 2 });
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliAuthenticationError(context))),
+          ).toEqual({ reasons: ["unauthenticated", "unauthenticated"], versionReads: 2 });
+        }),
+    );
   });
 
   it.effect.each([

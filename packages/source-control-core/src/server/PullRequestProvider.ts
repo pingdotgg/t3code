@@ -354,9 +354,13 @@ export interface PullRequestProviderApi {
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
+  /** Most repositories one `listChangeRequestsInRepositories` call reads; absent means no cap. */
+  readonly repositoriesPerRead?: number;
+
   /**
-   * Each repository's first page, as `listChangeRequests` would answer it, from fewer reads.
-   * The caller reads a repository missing from the answer on its own.
+   * Each repository's first page, as `listChangeRequests` would answer it, from one host read, so
+   * a rate limit fails only that read. The caller reads a repository missing from the answer on
+   * its own.
    */
   readonly listChangeRequestsInRepositories?: (input: {
     readonly cwd: string;
