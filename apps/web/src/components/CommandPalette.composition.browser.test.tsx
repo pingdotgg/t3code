@@ -16,7 +16,10 @@ const pickerMocks = vi.hoisted(() => ({
   deniedScope: undefined as string | undefined,
 }));
 
-function setup({ enabled = false, deniedScope }: { enabled?: boolean; deniedScope?: string } = {}) {
+function setup({
+  enabled = false,
+  deniedScope,
+}: { enabled?: boolean; deniedScope?: string | undefined } = {}) {
   if (!Object.getOwnPropertyDescriptor(window, "desktopBridge")) {
     Object.defineProperty(window, "desktopBridge", { configurable: true, get: () => undefined });
   }
