@@ -23,6 +23,23 @@ const shortcut = {
   modKey: true,
 };
 
+it.effect("preserves Space shortcuts through the resolved keybindings JSON codec", () =>
+  Effect.gen(function* () {
+    const rules = [
+      { command: "terminal.toggle", shortcut },
+      {
+        command: "composer.dictation",
+        shortcut: { ...shortcut, key: " ", metaKey: true, modKey: false },
+        whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+      },
+    ] as const;
+    const codec = Schema.toCodecJson(ResolvedKeybindingsConfig);
+    const encoded = yield* Schema.encodeEffect(codec)(rules);
+    assert.deepEqual(encoded, rules);
+    assert.deepEqual(yield* decode(codec, encoded), rules);
+  }),
+);
+
 it.effect("drops resolved rules with commands this build does not know", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
@@ -41,6 +58,8 @@ it.effect("drops malformed resolved rule entries", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       "garbage",
+      { command: "composer.dictation", shortcut: { ...shortcut, key: "" } },
+      { command: "composer.dictation", shortcut: { ...shortcut, key: "x".repeat(65) } },
       { command: "terminal.toggle", shortcut },
       null,
     ]);
