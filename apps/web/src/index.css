@@ -3634,13 +3634,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l - 0.069) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.029) calc(c * 0.833) calc(h - 4.399)) 0%,
-    oklch(from var(--destructive) calc(l - 0.076) calc(c * 0.944) calc(h - 1.58)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.029), 0.55) calc(c * 0.833) calc(h - 4.399)) 0%,
+    oklch(from var(--destructive) min(calc(l - 0.076), 0.55) calc(c * 0.944) calc(h - 1.58)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.071) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.03) c h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -3690,13 +3690,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l + 0.055) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.029) calc(c * 0.833) calc(h - 4.399)) 0%,
-    oklch(from var(--destructive) calc(l - 0.076) calc(c * 0.944) calc(h - 1.58)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.029), 0.55) calc(c * 0.833) calc(h - 4.399)) 0%,
+    oklch(from var(--destructive) min(calc(l - 0.076), 0.55) calc(c * 0.944) calc(h - 1.58)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.349) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.804) calc(c * 0.35) h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -3753,15 +3753,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l - 0.069) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.069) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) calc(l + 0.005) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) calc(l - 0.086) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) calc(l - 0.028) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.082) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.03) c h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -3812,15 +3812,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l + 0.055) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.069) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) calc(l + 0.005) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) calc(l - 0.086) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) calc(l - 0.028) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.4) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.804) calc(c * 0.35) h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -3875,15 +3875,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l - 0.069) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.069) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) calc(l + 0.005) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) calc(l - 0.086) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) calc(l - 0.028) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.082) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.03) c h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -3938,15 +3938,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-label: oklch(from var(--foreground) calc(l + 0.055) c h) !important;
   --destructive-fill: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.069) calc(c * 0.795) calc(h - 1.176)) 0%,
-    oklch(from var(--destructive) calc(l + 0.005) calc(c * 0.91) calc(h - 0.566)) 50%,
-    oklch(from var(--destructive) calc(l - 0.086) calc(c * 0.967) calc(h + 0.842)) 50%,
-    oklch(from var(--destructive) calc(l - 0.028) calc(c * 0.894) calc(h - 0.252)) 100%
+    oklch(from var(--destructive) min(calc(l + 0.069), 0.55) calc(c * 0.795) calc(h - 1.176)) 0%,
+    oklch(from var(--destructive) min(calc(l + 0.005), 0.55) calc(c * 0.91) calc(h - 0.566)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.086), 0.55) calc(c * 0.967) calc(h + 0.842)) 50%,
+    oklch(from var(--destructive) min(calc(l - 0.028), 0.55) calc(c * 0.894) calc(h - 0.252)) 100%
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: var(--ss-none) !important;
   --destructive-shadow: 0px 1px 2px 0px rgb(0 0 0 / 0.4) !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.804) calc(c * 0.35) h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: var(--ss-none) !important;
   --pill-fill: linear-gradient(
@@ -4005,17 +4005,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-hover-shadow: 0 0 #0000 !important;
   --raised-label: oklch(from var(--foreground) calc(l - 0.069) c h) !important;
   --destructive-fill: linear-gradient(
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934)),
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934))
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934)),
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934))
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.172) calc(c * 0.438) calc(h - 3.603)) 0%,
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934) / 0) 100%
+    oklch(from var(--destructive) min(calc(l + 0.172), 0.55) calc(c * 0.438) calc(h - 3.603)) 0%,
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934) / 0)
+      100%
   ) !important;
   --destructive-shadow: 0 0 #0000 !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.03) c h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: linear-gradient(
     180deg in srgb,
@@ -4080,17 +4081,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --raised-hover-shadow: 0 0 #0000 !important;
   --raised-label: oklch(from var(--foreground) calc(l + 0.055) c h) !important;
   --destructive-fill: linear-gradient(
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934)),
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934))
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934)),
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934))
   ) !important;
   --destructive-hover-fill: var(--ss-hover-layer), var(--destructive-fill) !important;
   --destructive-rim: linear-gradient(
     180deg in srgb,
-    oklch(from var(--destructive) calc(l + 0.172) calc(c * 0.438) calc(h - 3.603)) 0%,
-    oklch(from var(--destructive) calc(l - 0.04) calc(c * 0.945) calc(h - 3.934) / 0) 100%
+    oklch(from var(--destructive) min(calc(l + 0.172), 0.55) calc(c * 0.438) calc(h - 3.603)) 0%,
+    oklch(from var(--destructive) min(calc(l - 0.04), 0.55) calc(c * 0.945) calc(h - 3.934) / 0)
+      100%
   ) !important;
   --destructive-shadow: 0 0 #0000 !important;
-  --destructive-label: oklch(from var(--background) calc(l + 0.804) calc(c * 0.35) h) !important;
+  --destructive-label: #fff !important;
   --danger-hover-fill: var(--ss-hover-layer), var(--raised-fill) !important;
   --danger-hover-rim: linear-gradient(
     180deg in srgb,
@@ -4304,6 +4306,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.black-chrome[data-surface-style="soft-gradient"] [data-chrome-scope] {
   --popover-top: oklch(from var(--popover-bottom) calc(l + 0.03) c h) !important;
   --popover-rim: var(--ss-none) !important;
+  --card-rim: var(--ss-none) !important;
+  --tint-rim-top: 0%;
+  --tint-rim-bottom: 0%;
+  --kbd-on-destructive-foreground: #fff !important;
+  --gloss-thumb-fill: linear-gradient(
+    oklch(from var(--primary-foreground) calc(l + 0.025) c h),
+    oklch(from var(--primary-foreground) calc(l - 0.025) c h)
+  ) !important;
+  --gloss-off-thumb-fill: var(--ss-default-gloss-off-thumb-fill) !important;
   --card-fill: linear-gradient(
     180deg,
     oklch(from var(--card-bottom) calc(l + 0.025) c h),
@@ -4346,11 +4357,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     color-mix(in srgb, var(--foreground) 4%, transparent)
   ) !important;
   --sidebar-row-selected-rim: transparent !important;
-  --well-rim: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--foreground) 14%, transparent),
-    color-mix(in srgb, var(--foreground) 4%, transparent)
-  ) !important;
+  --well-rim: var(--ss-none) !important;
 }
 
 /* Aqua gloss: a hard gloss split on every control fill, a lit rim on floating
