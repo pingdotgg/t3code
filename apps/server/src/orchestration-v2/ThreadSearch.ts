@@ -109,6 +109,9 @@ const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
 const NON_ASCII = /[\u0080-\uffff]/;
+// Index tokens an exact phrase may span beyond its own length: line breaks and
+// indentation between its words.
+const EXACT_PHRASE_SLACK = 16;
 
 /** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
 function shortTokenSpellings(token: string): ReadonlyArray<string> {
@@ -164,13 +167,17 @@ function buildMessageSearch(
   query: string,
   hasIndex: boolean,
 ): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds"> | null {
-  const { long, short } = messageSearchTokens(query);
+  const { long, short, words, exact } = messageSearchTokens(query);
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
+  const phrases = long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ");
+  // An exact query's words sit together, so the index reads only hits that hold them that
+  // close: words spread over a message would otherwise use up the hit limit.
+  const near = exact && long.length > 1 ? words.join(" ").length + EXACT_PHRASE_SLACK : null;
   return {
-    match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
+    match: !indexed ? null : near === null ? phrases : `NEAR(${phrases}, ${near})`,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
       token,
       accentInsensitive: accentInsensitiveGlob(token),

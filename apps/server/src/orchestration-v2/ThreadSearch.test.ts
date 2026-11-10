@@ -695,6 +695,46 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
+  it.effect("finds a query in double quotes only where its words are together", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:exact");
+      const together = ThreadId.make("thread:exact-together");
+      const wrapped = ThreadId.make("thread:exact-wrapped");
+      const apart = ThreadId.make("thread:exact-apart");
+      const apartText = `missing notes. ${"Other words. ".repeat(8)}The osprey files`;
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(together, project),
+          message(together, "exact-together", "user", "the Missing osprey files turned up"),
+          thread(wrapped, project),
+          message(wrapped, "exact-wrapped", "assistant", "still missing\n    osprey files"),
+          thread(apart, project),
+          message(apart, "exact-apart", "user", apartText),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+      // Newer messages with the words apart do not use up the hit limit.
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'exact-apart:' || i, ${apart}, 'user', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${apartText})
+        FROM n
+      `;
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+    }),
+  );
+
   it.effect("keeps a thread picked for the query when the limit cuts", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
