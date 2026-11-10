@@ -698,6 +698,29 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+      expect(refused.message).toContain("t3 service uninstall");
+
+      // A shared $HOME: the served home's server recorded another machine.
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(baseDir, "userdata", "server-runtime.json"),
+        JSON.stringify({
+          version: 1,
+          pid: 1,
+          hostname: "host-a",
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      const shared = yield* other.install().pipe(Effect.flip);
+      expect(shared).toMatchObject({
+        _tag: "BootServiceOtherBaseDirError",
+        ownerHostname: "host-a",
+      });
+      expect(shared.message).toContain("runs on host-a");
+      expect(shared.message).not.toContain("t3 service uninstall");
+      expect((yield* other.status).otherBaseDirHostname).toBe("host-a");
     }),
   );
 

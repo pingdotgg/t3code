@@ -234,11 +234,17 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           activeVersion: "1.0.0",
         }),
       );
+      // A shared $HOME: the owner recorded another machine.
+      yield* fs.makeDirectory(path.join(root, "userdata"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "userdata", "server-runtime.json"),
+        JSON.stringify({ hostname: "host-a" }),
+      );
       const refused = Promise.withResolvers<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("owns this T3 home")) refused.resolve();
+            if (String(chunk).includes("server on host-a owns this T3 home")) refused.resolve();
             return true;
           }),
         ),

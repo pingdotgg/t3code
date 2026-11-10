@@ -31,6 +31,7 @@ import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
   isProcessAlive,
+  otherMachineOf,
   persistServerRuntimeState,
   readPersistedServerRuntimeState,
   type PersistedServerRuntimeState,
@@ -38,13 +39,17 @@ import {
 
 export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
-  { stateDir: Schema.String },
+  { stateDir: Schema.String, hostname: Schema.optional(Schema.String) },
 ) {
   // Distinct exit codes let supervisors stop restarting an already-owned server.
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
+    const owner =
+      this.hostname === undefined
+        ? `A T3 Code server already owns ${this.stateDir}. Stop that server`
+        : `A T3 Code server on ${this.hostname} already owns ${this.stateDir}, which this machine shares. Stop it on ${this.hostname}`;
+    return `${owner}, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
   }
 }
 
@@ -227,6 +232,18 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         Effect.ignore({ log: true }),
         Effect.ensuring(Effect.sync(() => db.close())),
       ),
+  ).pipe(
+    Effect.catchTags({
+      ServerAlreadyRunningError: Effect.fn("acquireServerOwnership.nameOwner")(function* (error) {
+        const owner = yield* readPersistedServerRuntimeState(statePath);
+        const hostname = Option.isSome(owner)
+          ? otherMachineOf(owner.value, yield* HostProcess.Hostname)
+          : undefined;
+        return yield* hostname === undefined
+          ? error
+          : new ServerAlreadyRunningError({ stateDir, hostname });
+      }),
+    }),
   );
 
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(

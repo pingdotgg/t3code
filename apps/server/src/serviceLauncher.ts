@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
@@ -47,6 +48,20 @@ interface ManagedChild {
   role: ChildRole;
   readonly process: NodeChildProcess.ChildProcess;
 }
+
+// Mirrors serverRuntimeState's otherMachineOf: on a shared $HOME the owner may run elsewhere.
+const ownerOnOtherMachine = async (baseDir: string): Promise<string | undefined> => {
+  try {
+    const record = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "server-runtime.json"), "utf8"),
+    ) as { readonly hostname?: unknown };
+    return typeof record.hostname === "string" && record.hostname !== NodeOS.hostname()
+      ? record.hostname
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
@@ -800,8 +815,11 @@ export class Launcher {
     }
     // Signal listeners alone do not keep Node alive.
     this.#timer = setInterval(() => {}, 2_147_483_647);
+    const hostname = await ownerOnOtherMachine(this.#baseDir);
     process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+      hostname === undefined
+        ? "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n"
+        : `[service-launcher] A T3 Code server on ${hostname} owns this T3 home, which this machine shares. Stop it on ${hostname}, then restart this service.\n`,
     );
   }
 
