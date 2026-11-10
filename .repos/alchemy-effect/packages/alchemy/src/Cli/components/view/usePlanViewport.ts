@@ -1,12 +1,7 @@
 import { useMemo, useState } from "@alchemy.run/sigil/react";
 import { useTerminalInput } from "../ui/index.ts";
+import { type PlanRow, type PlanTree, type PlanTreeState, type PlanView } from "./PlanTree.ts";
 import { stackOutputLineCount } from "./StackOutputs.tsx";
-import {
-  type PlanRow,
-  type PlanTree,
-  type PlanTreeState,
-  type PlanView,
-} from "./PlanTree.ts";
 import { isTerminalStatus } from "./statusStyle.ts";
 
 export type VirtualPlanLine =
@@ -23,10 +18,7 @@ export type VirtualPlanLine =
       readonly paddingLeft: number;
     };
 
-const planLines = (
-  rows: readonly PlanRow[],
-  detailed: boolean,
-): VirtualPlanLine[] =>
+const planLines = (rows: readonly PlanRow[], detailed: boolean): VirtualPlanLine[] =>
   rows.flatMap((row): VirtualPlanLine[] => {
     const lines: VirtualPlanLine[] = [{ kind: "row", row }];
     if (row.type !== "resource") return lines;
@@ -41,11 +33,7 @@ const planLines = (
           paddingLeft: row.depth * 2 + 2,
         })),
       );
-    } else if (
-      row.action === "update" ||
-      row.action === "adopted" ||
-      row.action === "replace"
-    ) {
+    } else if (row.action === "update" || row.action === "adopted" || row.action === "replace") {
       lines.push({
         kind: "note",
         key: `${row.key}:note`,
@@ -78,14 +66,9 @@ export const usePlanViewport = (options: {
   const hasOutput = output !== undefined;
   const selectedView = view === "output" && hasOutput ? "output" : "plan";
   const virtual = viewport === "virtual";
-  const expandedLines = useMemo(
-    () => planLines(rows, detailed),
-    [rows, detailed],
-  );
+  const expandedLines = useMemo(() => planLines(rows, detailed), [rows, detailed]);
   const available =
-    lineBudget === Number.POSITIVE_INFINITY
-      ? rows.length
-      : Math.max(1, Math.floor(lineBudget));
+    lineBudget === Number.POSITIVE_INFINITY ? rows.length : Math.max(1, Math.floor(lineBudget));
   const length =
     selectedView === "output"
       ? stackOutputLineCount(output)
@@ -96,8 +79,7 @@ export const usePlanViewport = (options: {
   // consume its budget rather than extending the complete widget. Reserve
   // both even when following the end (where only the upper marker is shown),
   // because manual scrolling can make both visible without changing height.
-  const budget =
-    virtual && length > available ? Math.max(1, available - 2) : available;
+  const budget = virtual && length > available ? Math.max(1, available - 2) : available;
   const maxOffset = Math.max(0, length - budget);
   const activeRow = tree.progressRows.find((row) => {
     const status = tasks.get(row.key)?.status;
@@ -105,30 +87,21 @@ export const usePlanViewport = (options: {
   });
   const activeRowIndex = activeRow === undefined ? -1 : rows.indexOf(activeRow);
   const activeLineIndex = virtual
-    ? expandedLines.findIndex(
-        (line) => line.kind === "row" && line.row === rows[activeRowIndex],
-      )
+    ? expandedLines.findIndex((line) => line.kind === "row" && line.row === rows[activeRowIndex])
     : activeRowIndex;
   const followedOffset =
     selectedView === "output"
       ? maxOffset
       : Math.min(
           maxOffset,
-          Math.max(
-            0,
-            (activeLineIndex < 0 ? length : activeLineIndex) -
-              Math.floor(budget / 3),
-          ),
+          Math.max(0, (activeLineIndex < 0 ? length : activeLineIndex) - Math.floor(budget / 3)),
         );
-  const [manualOffsets, setManualOffsets] = useState<
-    Record<PlanView, number | undefined>
-  >({ plan: undefined, output: undefined });
-  const offset = virtual
-    ? Math.min(maxOffset, manualOffsets[selectedView] ?? followedOffset)
-    : 0;
-  const setOffset = (
-    update: (current: number | undefined) => number | undefined,
-  ) =>
+  const [manualOffsets, setManualOffsets] = useState<Record<PlanView, number | undefined>>({
+    plan: undefined,
+    output: undefined,
+  });
+  const offset = virtual ? Math.min(maxOffset, manualOffsets[selectedView] ?? followedOffset) : 0;
+  const setOffset = (update: (current: number | undefined) => number | undefined) =>
     setManualOffsets((current) => ({
       ...current,
       [selectedView]: update(current[selectedView]),
@@ -147,12 +120,9 @@ export const usePlanViewport = (options: {
     if (!virtual) return;
     const page = Math.max(1, Math.floor(lineBudget));
     if (key.up) setOffset((current) => Math.max(0, (current ?? offset) - 1));
-    else if (key.down)
-      setOffset((current) => Math.min(maxOffset, (current ?? offset) + 1));
-    else if (key.pageUp)
-      setOffset((current) => Math.max(0, (current ?? offset) - page));
-    else if (key.pageDown)
-      setOffset((current) => Math.min(maxOffset, (current ?? offset) + page));
+    else if (key.down) setOffset((current) => Math.min(maxOffset, (current ?? offset) + 1));
+    else if (key.pageUp) setOffset((current) => Math.max(0, (current ?? offset) - page));
+    else if (key.pageDown) setOffset((current) => Math.min(maxOffset, (current ?? offset) + page));
     else if (key.home) setOffset(() => 0);
     else if (key.end) setOffset(() => undefined);
   });
@@ -165,8 +135,6 @@ export const usePlanViewport = (options: {
     offset,
     hiddenBelow: virtual ? Math.max(0, length - offset - budget) : 0,
     planLines:
-      virtual && selectedView === "plan"
-        ? expandedLines.slice(offset, offset + budget)
-        : undefined,
+      virtual && selectedView === "plan" ? expandedLines.slice(offset, offset + budget) : undefined,
   };
 };
