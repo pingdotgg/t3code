@@ -131,9 +131,16 @@ export function attachTimelineViewport(
   const stopListeningToListAdjust = listen("scrollAdjust", () =>
     queueMicrotask(() => scrolledUp({ ...scrollPosition(), programmatic: true })),
   );
+  // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
+  // the reader's: the browser clamps scrollTop when content briefly shrinks.
+  const frameHasInput = () =>
+    scrollNode.querySelector("iframe:hover") !== null ||
+    (document.activeElement instanceof HTMLIFrameElement &&
+      scrollNode.contains(document.activeElement));
   const handleScroll = () => {
     if (
       scrolledUp({ ...scrollPosition(), programmatic: programmaticHolds > 0 }) &&
+      frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
