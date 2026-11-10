@@ -1,16 +1,11 @@
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
-import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import {
-  brandTitleOffset,
-  CompactBrandTitle,
-  getCompactBrandHeaderOptions,
-} from "../../components/CompactBrandTitle";
+import { useDeadlinePassed } from "../../lib/clock";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   workspaceConnectionStatusPresentation,
@@ -37,29 +32,24 @@ export function WorkspaceConnectionStatusProvider(props: { readonly children: Re
   const { state } = useWorkspaceState();
   const presentation = workspaceConnectionStatusPresentation(state);
   const hasStatus = presentation !== null;
-  const [phase, setPhase] = useState<"waiting" | "fading" | "shown">("waiting");
-
-  useEffect(() => {
-    if (!hasStatus) return;
-    const timers = [
-      setTimeout(() => setPhase("fading"), STATUS_SHOW_DELAY_MS),
-      setTimeout(() => setPhase("shown"), STATUS_SHOW_DELAY_MS + FADE_IN_MS),
-    ];
-    return () => {
-      for (const timer of timers) clearTimeout(timer);
-      setPhase("waiting");
-    };
-  }, [hasStatus]);
+  // When the current status run began; a gap in the status restarts the delay.
+  const [statusSince, setStatusSince] = useState(() => (hasStatus ? Date.now() : null));
+  if (hasStatus !== (statusSince !== null)) {
+    // oxlint-disable-next-line react/purity -- Reads the clock only in the render-phase adjustment that runs when the status appears.
+    setStatusSince(hasStatus ? Date.now() : null);
+  }
+  const since = hasStatus ? statusSince : null;
+  const fadeStarted = useDeadlinePassed(since === null ? null : since + STATUS_SHOW_DELAY_MS);
+  const fadeEnded = useDeadlinePassed(
+    since === null ? null : since + STATUS_SHOW_DELAY_MS + FADE_IN_MS,
+  );
 
   const label = presentation?.label;
   const showsProgress = presentation?.showsProgress ?? false;
-  const status = useMemo(
-    () =>
-      label === undefined || phase === "waiting"
-        ? null
-        : { label, showsProgress, fadeIn: phase === "fading" },
-    [label, showsProgress, phase],
-  );
+  const status =
+    label === undefined || since === null || !fadeStarted
+      ? null
+      : { label, showsProgress, fadeIn: !fadeEnded };
   return <ConnectionStatusContext value={status}>{props.children}</ConnectionStatusContext>;
 }
 
@@ -72,7 +62,7 @@ function StatusFadeIn(props: {
 }) {
   const { animate } = props;
   const [opacity] = useState(() => new Animated.Value(0));
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the Animated opacity fade-in and stops it on cleanup
   useEffect(() => {
     if (!animate) return;
     const animation = Animated.timing(opacity, {
@@ -162,25 +152,4 @@ export function WorkspaceConnectionTitle(props: {
       </Pressable>
     </StatusFadeIn>
   );
-}
-
-export function getConnectionAwareBrandHeaderOptions(opts: {
-  readonly headerWidth: number;
-  readonly trailingItemCount?: number;
-  readonly onOpenEnvironments: () => void;
-  readonly fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"];
-}): NativeStackNavigationOptions {
-  const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
-
-  return {
-    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
-    headerTitle: () => (
-      <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle />}
-        maxWidth={maxWidth}
-        onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset()}
-      />
-    ),
-  };
 }

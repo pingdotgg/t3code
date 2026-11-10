@@ -8,7 +8,14 @@ private final class WorkspaceTabBar: UITabBar {
     super.layoutSubviews()
     // iOS 26.6 doesn't copy item identifiers onto its tab buttons; the bar holds no other controls.
     let identified = tabButtons(in: self) { $0.accessibilityIdentifier?.hasPrefix("workspace-tab-") == true }
-    let buttons = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
+    let candidates = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
+    // Pressing a tab adds a magnified copy of the row for the glass lens, without identifiers.
+    // Sizing compose from it leaves compose enlarged until the bar lays out again.
+    // The copy is many points larger; the tolerance only absorbs conversion rounding.
+    let buttons = candidates.filter {
+      let size = convert($0.bounds, from: $0).size
+      return abs(size.width - $0.bounds.width) < 1 && abs(size.height - $0.bounds.height) < 1
+    }
     let row = buttons.reduce(CGRect.null) { $0.union(convert($1.bounds, from: $1)) }
     if !row.isNull { onContentLayout?(row) }
   }
@@ -92,8 +99,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     }
     configuration.cornerStyle = .capsule
     configuration.baseForegroundColor = .label
-    configuration.image = UIImage(systemName: "square.and.pencil")
-    configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 24)
+    configuration.image = tabIcon(UIImage(systemName: "square.and.pencil"))
     composeButton.configuration = configuration
   }
 

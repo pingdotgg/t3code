@@ -1,20 +1,21 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const { gitHubApiUrls, normalizeHost } = GitHubRequestPolicy;
+const { gitHubApiUrls } = GitHubRequestPolicy;
 type GitHubApiError = GitHubRequestPolicy.GitHubApiError;
 
 export interface GitHubRestResponse {
@@ -48,12 +49,8 @@ export class GitHubRest extends Context.Service<
   GitHubRest,
   {
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
-    readonly credential: (
-      host: string,
-    ) => Effect.Effect<
-      { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
-      GitHubApiError
-    >;
+    readonly credential: GitHubRequestPolicy.GitHubRequestPolicy["Service"]["credential"];
+    readonly appCredential: GitHubRequestPolicy.GitHubRequestPolicy["Service"]["appCredential"];
   }
 >()("@t3tools/source-control-github/server/GitHubRest") {}
 
@@ -211,7 +208,11 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubRest.of({ rest, credential: policy.credential });
+  return GitHubRest.of({
+    rest,
+    credential: policy.credential,
+    appCredential: policy.appCredential,
+  });
 });
 
 export const layer = Layer.effect(GitHubRest, make).pipe(
@@ -225,5 +226,6 @@ export const layer = Layer.effect(GitHubRest, make).pipe(
  */
 export const layerWithDependencies = layer.pipe(
   Layer.provideMerge(GitHubCredentials.layer),
+  Layer.provideMerge(GitHubAppSignIn.layer),
   Layer.provideMerge(GitHubQuota.layer),
 );

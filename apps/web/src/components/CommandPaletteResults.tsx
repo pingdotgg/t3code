@@ -1,3 +1,4 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
@@ -22,11 +23,8 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
-import {
-  HighlightedSearchText,
-  SearchMatchHintLine,
-  ThreadSearchMatchExcerpt,
-} from "./ThreadSearchMatch";
+import { ProjectPinButton } from "./ProjectPinButton";
+import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -80,12 +78,11 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 }
 
 export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
-  const element = list?.getState?.().elementAtIndex(rowIndex);
-  if (element instanceof HTMLElement) {
-    element.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+  void list?.scrollIndexIntoView({
+    index: rowIndex,
+    animated: false,
+    viewportMargin: { start: 24, end: 24 },
+  });
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
@@ -99,15 +96,15 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
-    const scrollElement = listRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const top = scrollElement.scrollTop > 1;
-    const bottom =
-      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    const top = !metrics.isAtStart;
+    const bottom = !metrics.isAtEnd;
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
   };
+  const scrollRef = useLegendListRef(listRef, updateScrollFade);
 
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
@@ -116,8 +113,9 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   return (
     <CommandListVirtualized>
       <LegendList<CommandPaletteRow>
-        ref={listRef}
+        ref={scrollRef}
         data={props.rows}
+        initialScrollOffset={0}
         keyExtractor={(row) => row.key}
         getItemType={(row) => row.kind}
         extraData={props.highlightedItemValue}
@@ -142,9 +140,12 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         drawDistance={400}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
+        onReady={updateScrollFade}
+        // Legend counts style padding (not class padding) in its size, end state and row positions.
+        style={{ paddingTop: 8, paddingBottom: 8 }}
         contentContainerClassName="px-2"
         className={cn(
-          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain py-2 [&::-webkit-scrollbar-track]:my-2",
+          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain [&::-webkit-scrollbar-track]:my-2",
           getVirtualizedScrollFadeClassName(scrollFade),
         )}
       />
@@ -159,16 +160,12 @@ export function CommandPaletteTitleIcon(props: { children: ReactNode }) {
 function CommandPaletteTitle({
   item,
 }: {
-  item: Pick<CommandPaletteActionItem | CommandPaletteSubmenuItem, "title" | "titleRanges">;
+  item: Pick<CommandPaletteActionItem | CommandPaletteSubmenuItem, "title">;
 }) {
   const { title } = item;
   return (
     <span className="truncate" dir={typeof title === "string" ? textDirection(title) : undefined}>
-      {typeof title === "string" && item.titleRanges ? (
-        <HighlightedSearchText text={title} ranges={item.titleRanges} />
-      ) : (
-        title
-      )}
+      {title}
     </span>
   );
 }
@@ -276,6 +273,14 @@ function CommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.kind === "action" && props.item.pin ? (
+        <ProjectPinButton
+          name={props.item.pin.name}
+          pinned={props.item.pin.pinned}
+          onToggle={props.item.pin.toggle}
+          shortcutLabel={shortcutLabelForCommand(props.keybindings, "thread.pin")}
+        />
+      ) : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

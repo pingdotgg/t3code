@@ -18,6 +18,7 @@ export interface HighlightNativeReviewDiffVisibleRowsInput {
   readonly overscanRows?: number;
   readonly maxRows?: number;
   readonly alreadyHighlightedRowIds?: ReadonlySet<string>;
+  readonly collapsedFileIds?: ReadonlySet<string>;
   readonly signal?: AbortSignal;
   readonly onChunk?: (chunk: NativeReviewDiffHighlightChunk) => void;
 }
@@ -290,6 +291,7 @@ export async function highlightNativeReviewDiffVisibleRows(
       row &&
       isHighlightableLineRow(row) &&
       visibleFileIds.has(row.fileId) &&
+      !input.collapsedFileIds?.has(row.fileId) &&
       !input.alreadyHighlightedRowIds?.has(row.id) &&
       fileMap.has(row.fileId)
     ) {

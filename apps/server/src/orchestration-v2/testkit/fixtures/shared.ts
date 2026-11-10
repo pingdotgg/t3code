@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 
 import type {
   OrchestratorV2ScenarioResult,
@@ -116,35 +117,6 @@ export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
 export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
   "Respond with the following text: source fork seed ok";
 export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
-const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
-const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER} for later in this conversation. Respond with exactly: source marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
-  "Return the two opaque markers previously provided in chronological order, separated by a single | character. Respond with only the markers and separator.";
-const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
-const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
-const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
-export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
-export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
-const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
-export const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
-export const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
-export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_FORK_MARKER}.`,
-  "- Assistant confirmed: merge fork stored",
-  "",
-  "User message:",
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_RECALL_PROMPT =
-  "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
 const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
 const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
 const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
@@ -204,6 +176,12 @@ export type OrchestratorFixtureInputStep =
       readonly attachments?: ReadonlyArray<ChatAttachment>;
     }
   | {
+      /** Forks the thread at a run into a second thread, then sends `text` there. */
+      readonly type: "fork";
+      readonly fromRunIndex: number;
+      readonly text: string;
+    }
+  | {
       readonly type: "queue_message";
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -256,6 +234,10 @@ export type OrchestratorFixtureInputStep =
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
+      /** With waitForTurnItemType: wait until that item has this status. */
+      readonly waitForTurnItemStatus?: OrchestrationV2TurnItem["status"];
+      /** With waitForTurnItemType: wait for it in one of the run's subagent threads. */
+      readonly inSubagentThread?: boolean;
     }
   | {
       readonly type: "stop_background_work";
@@ -286,6 +268,11 @@ export type OrchestratorFixtureInputStep =
   | {
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
+    }
+  | {
+      /** Picks another model of the same provider instance; later messages use it. */
+      readonly type: "set_model";
+      readonly model: string;
     };
 
 export interface OrchestratorFixtureInput {
@@ -351,6 +338,18 @@ export const MUSE_MODEL_SELECTION = {
 export const GROK_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("grok"),
   model: "grok-build",
+} satisfies ModelSelection;
+
+/** fx fixtures run on fx's Default; the replay adapter has no probed model, so it writes none. */
+export const FX_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("fx"),
+  model: "default",
+} satisfies ModelSelection;
+
+/** Kiro's cheapest listed model, so recordings stay cheap and do not depend on "auto" routing. */
+export const KIRO_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("kiro"),
+  model: "claude-haiku-4.5",
 } satisfies ModelSelection;
 
 export const OPENCODE_MODEL_SELECTION = {
@@ -504,11 +503,14 @@ export function materializeFixtureInput(input: {
     const steps: Array<OrchestratorV2ScenarioStep> = [];
     let messageIndex = 0;
     let runIndex = 0;
+    let forkThreadId: ThreadId | undefined;
     const activeRunDispatchKeys = new Set<string>();
 
     const runIdFor = (runOrdinal: number) =>
       idAllocator.derive.run({ threadId: ids.threadId, ordinal: runOrdinal });
 
+    // A `set_model` step changes the selection every later message carries.
+    let modelSelection = input.modelSelection;
     const pushDispatch = (
       command: OrchestrationV2Command,
       options: {
@@ -537,7 +539,7 @@ export function materializeFixtureInput(input: {
         }),
         ids,
         scenario: input.scenario,
-        modelSelection: input.modelSelection,
+        modelSelection,
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),
@@ -580,7 +582,7 @@ export function materializeFixtureInput(input: {
                   commandName: `message-${messageIndex}`,
                 }),
                 ids,
-                modelSelection: input.modelSelection,
+                modelSelection,
                 messageId: yield* idAllocator.allocate.message({
                   threadId: ids.threadId,
                   ordinal: messageIndex,
@@ -614,7 +616,7 @@ export function materializeFixtureInput(input: {
                 commandName: `queue-message-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -752,7 +754,7 @@ export function materializeFixtureInput(input: {
                 commandName: `steer-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -792,7 +794,7 @@ export function materializeFixtureInput(input: {
                 commandName: `restart-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -830,6 +832,10 @@ export function materializeFixtureInput(input: {
               threadId: ids.threadId,
               runId: runIdFor(step.targetRunIndex),
               itemType: step.waitForTurnItemType,
+              ...(step.waitForTurnItemStatus === undefined
+                ? {}
+                : { itemStatus: step.waitForTurnItemStatus }),
+              ...(step.inSubagentThread === true ? { inSubagentThreads: true } : {}),
             });
           }
           pushDispatch(
@@ -879,6 +885,56 @@ export function materializeFixtureInput(input: {
         case "advance_clock":
           steps.push({ type: "advance_clock", duration: step.duration });
           break;
+        case "set_model":
+          modelSelection = { ...input.modelSelection, model: step.model };
+          pushDispatch({
+            type: "thread.model-selection.set",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `set-model-${step.model}`,
+            }),
+            threadId: ids.threadId,
+            modelSelection,
+          });
+          break;
+        case "fork":
+          {
+            const targetThreadId = yield* idAllocator.allocate.thread({
+              fixtureName: `${input.scenario}-fork`,
+              projectId: ids.projectId,
+            });
+            forkThreadId = targetThreadId;
+            pushDispatch({
+              type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: yield* idAllocator.allocate.command({
+                fixtureName: input.scenario,
+                commandName: "thread-fork",
+              }),
+              sourceThreadId: ids.threadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId: runIdFor(step.fromRunIndex) },
+              title: "Forked thread",
+            });
+            pushDispatch(
+              dispatchMessageCommand({
+                commandId: yield* idAllocator.allocate.command({
+                  fixtureName: input.scenario,
+                  commandName: "fork-message",
+                }),
+                ids: { ...ids, threadId: targetThreadId },
+                modelSelection,
+                messageId: yield* idAllocator.allocate.message({
+                  threadId: targetThreadId,
+                  ordinal: 1,
+                }),
+                text: step.text,
+              }),
+            );
+            steps.push({ type: "await_thread_idle", threadId: targetThreadId });
+          }
+          break;
         case "rollback":
           {
             const scopeId = yield* idAllocator.allocate.checkpointScope({
@@ -912,9 +968,15 @@ export function materializeFixtureInput(input: {
     return {
       commands,
       steps,
-      projectionThreadIds: [ids.threadId],
+      projectionThreadIds:
+        forkThreadId === undefined ? [ids.threadId] : [ids.threadId, forkThreadId],
     };
   });
+}
+
+/** Reads `key` from a recorded frame or payload of unknown shape. */
+export function field(value: unknown, key: string): unknown {
+  return Predicate.hasProperty(value, key) ? value[key] : undefined;
 }
 
 export function projectionFor(
@@ -1380,20 +1442,6 @@ export function assertUserMessagesInclude(
         (item) => item.type === "user_message" && item.text.includes(expectedText),
       ),
       `expected user input to include ${JSON.stringify(expectedText)}`,
-    );
-  }
-}
-
-function assertUserMessagesExclude(
-  projection: OrchestrationV2ThreadProjection,
-  rejectedTexts: ReadonlyArray<string>,
-) {
-  for (const rejectedText of rejectedTexts) {
-    assert.isFalse(
-      projection.turnItems.some(
-        (item) => item.type === "user_message" && item.text.includes(rejectedText),
-      ),
-      `expected user input to exclude ${JSON.stringify(rejectedText)}`,
     );
   }
 }

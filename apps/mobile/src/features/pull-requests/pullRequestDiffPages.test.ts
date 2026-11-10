@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { combinePullRequestDiffPages, retainPullRequestDiffPage } from "./pullRequestDiffPages";
+import * as reviewModel from "../review/reviewModel";
+import {
+  combinePullRequestDiffPages,
+  getCachedPullRequestDiffPages,
+  retainPullRequestDiffPage,
+} from "./pullRequestDiffPages";
 
 const GITHUB = sourceControlClients.get("github").changeRequest;
 
@@ -24,6 +29,65 @@ function withheldDiff(): PullRequestDiffResult {
 }
 
 describe("paged mobile pull request diffs", () => {
+  it("isolates scopes, cursors, and provider terminology for the same result", () => {
+    const result = withheldDiff();
+    const pages = [{ cursor: null, result }];
+    const first = getCachedPullRequestDiffPages(pages, "first", GITHUB);
+    const otherScope = getCachedPullRequestDiffPages(pages, "second", GITHUB);
+    const otherCursor = getCachedPullRequestDiffPages(
+      [{ cursor: "next", result }],
+      "first",
+      GITHUB,
+    );
+    const otherProvider = getCachedPullRequestDiffPages(
+      pages,
+      "first",
+      sourceControlClients.get("gitlab").changeRequest,
+    );
+    expect(otherScope).not.toBe(first);
+    expect(otherCursor).not.toBe(first);
+    expect(otherProvider).not.toBe(first);
+    if (first.kind !== "files" || otherScope.kind !== "files" || otherProvider.kind !== "files")
+      throw new Error("Expected structured files");
+    expect(otherScope.files[0]?.id).not.toBe(first.files[0]?.id);
+    expect(first.notice).toContain("pull request");
+    expect(otherProvider.notice).toContain("merge request");
+    expect(getCachedPullRequestDiffPages(pages, "first", GITHUB)).toBe(first);
+  });
+
+  it("reuses earlier pages on append and invalidates changed continuation results", () => {
+    using parse = vi.spyOn(reviewModel, "buildReviewParsedDiff");
+    const firstPage = { cursor: null, result: diff("first.ts") };
+    const first = getCachedPullRequestDiffPages([firstPage], "append", GITHUB);
+    const nextPage = { cursor: "next", result: withheldDiff() };
+    const combined = getCachedPullRequestDiffPages([firstPage, nextPage], "append", GITHUB);
+    expect(parse).toHaveBeenCalledTimes(2);
+    if (first.kind !== "files" || combined.kind !== "files") throw new Error("Expected files");
+    expect(combined.files[0]).toBe(first.files[0]);
+    expect(combined.files.map((file) => file.path)).toEqual(["first.ts", "large.ts"]);
+    expect(getCachedPullRequestDiffPages([firstPage, nextPage], "append", GITHUB)).toBe(combined);
+    const refreshed = getCachedPullRequestDiffPages(
+      [
+        firstPage,
+        {
+          ...nextPage,
+          result: {
+            ...nextPage.result,
+            omittedFileStats: [{ path: "large.ts", additions: 4000, deletions: 2000 }],
+          },
+        },
+      ],
+      "append",
+      GITHUB,
+    );
+    expect(parse).toHaveBeenCalledTimes(3);
+    expect(refreshed).not.toBe(combined);
+    if (refreshed.kind !== "files") throw new Error("Expected refreshed files");
+    expect(refreshed.files[0]).toBe(first.files[0]);
+    expect(refreshed.files[1]).toMatchObject({ additions: 4000, deletions: 2000 });
+    expect(combined.files[1]?.additions).toBe(3000);
+  });
+
   it("withheld PR hunks must retain provider line counts", () => {
     const result = withheldDiff();
     const cache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
