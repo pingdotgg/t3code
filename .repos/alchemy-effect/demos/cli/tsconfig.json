@@ -13,6 +13,7 @@
   "references": [
     {
       "path": "../../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../../packages/cloudflare/tsconfig.json" }
   ]
 }

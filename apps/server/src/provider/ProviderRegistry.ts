@@ -92,6 +92,12 @@ export class ProviderRegistry extends Context.Service<
       readonly fresh?: boolean | undefined;
     }) => Effect.Effect<void>;
 
+    /**
+     * For an opened model picker: refetch a model manifest older than a few
+     * minutes. When it changed, recheck latest CLI versions and probe providers.
+     */
+    readonly refreshModelCatalog: Effect.Effect<void>;
+
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
       provider: ProviderDriverKind,
@@ -444,10 +450,6 @@ export const layer = Layer.effect(
     );
     const syncSemaphore = yield* Semaphore.make(1);
 
-    const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
-      liveSubsRef,
-    ).pipe(Effect.map((map) => Array.from(map.values(), buildSnapshotSource)));
-
     const persistProvider = Effect.fn("ProviderRegistry.persistProvider")(function* (
       provider: ServerProvider,
     ) {
@@ -601,17 +603,25 @@ export const layer = Layer.effect(
       },
     );
 
-    const refreshOneSource = Effect.fn("refreshOneSource")(function* (
-      providerSource: ProviderSnapshotSource,
-    ) {
+    const isCurrentInstance = (instance: ProviderInstance) =>
+      instanceRegistry
+        .getInstance(instance.instanceId)
+        .pipe(Effect.map((current) => current === instance));
+
+    const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
+      const providerSource = buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
-      return yield* providerSource.refresh.pipe(
+      const probe = yield* providerSource.refresh.pipe(
         Effect.andThen(providerSource.getSnapshot),
-        Effect.flatMap((nextProvider) =>
-          correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
-          ),
-        ),
+        Effect.exit,
+      );
+      // Settings can replace or remove the instance mid-probe; its late result or failure is stale.
+      if (!(yield* isCurrentInstance(instance))) {
+        return yield* Ref.get(providersRef);
+      }
+      const nextProvider = yield* probe;
+      return yield* correlateSnapshotWithSource(providerSource, nextProvider).pipe(
+        Effect.flatMap(syncProvider),
       );
     });
 
@@ -619,6 +629,9 @@ export const layer = Layer.effect(
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
       Option.none(),
     );
+
+    // What the last full pass could see; a later manifest fetch does not reach providers by itself.
+    const probedManifestUpdatedAt = yield* Ref.make(initialManifest.updatedAt);
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
       const claimed = yield* Ref.modify(
@@ -639,15 +652,20 @@ export const layer = Layer.effect(
       if (claimed.owner) {
         // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
         // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
-        yield* syncLiveSourcesAndContinue.pipe(
-          Effect.andThen(getLiveSources),
-          Effect.flatMap((sources) =>
-            Effect.forEach(sources, (source) => refreshOneSource(source), {
-              concurrency: "unbounded",
-              discard: true,
-            }),
+        yield* manifestService.current.pipe(
+          Effect.flatMap(({ updatedAt }) =>
+            syncLiveSourcesAndContinue.pipe(
+              Effect.andThen(Ref.get(liveSubsRef)),
+              Effect.flatMap((instances) =>
+                Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
+                  concurrency: "unbounded",
+                  discard: true,
+                }),
+              ),
+              Effect.andThen(Ref.get(providersRef)),
+              Effect.tap(() => Ref.set(probedManifestUpdatedAt, updatedAt)),
+            ),
           ),
-          Effect.andThen(Ref.get(providersRef)),
           Effect.onExit((exit) =>
             Ref.set(refreshAllInFlightRef, Option.none()).pipe(
               Effect.andThen(Deferred.done(claimed.completion, exit)),
@@ -663,27 +681,22 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const defaultInstanceId = defaultInstanceIdForDriver(provider);
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find(
-        (candidate) => candidate.instanceId === defaultInstanceId,
-      );
-      if (!providerSource) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
+      if (!instance) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(instance);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
       yield* syncLiveSourcesAndContinue;
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      if (!instance) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(instance);
     });
 
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
@@ -744,15 +757,18 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         instances.filter((instance) => !failedInstances.has(instance.instanceId)),
         (instance) =>
-          refreshOneSource(buildSnapshotSource(instance)).pipe(
+          refreshOneSource(instance).pipe(
             Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause)),
           ),
         { concurrency: "unbounded", discard: true },
       );
+      // A replaced instance's cached row did not come from this pass's probe.
+      const refreshedInstances = yield* Effect.filter(
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        isCurrentInstance,
+      );
       const refreshedInstanceIds = new Set(
-        instances
-          .filter((instance) => !failedInstances.has(instance.instanceId))
-          .map((instance) => instance.instanceId),
+        refreshedInstances.map((instance) => instance.instanceId),
       );
       return (yield* Ref.get(providersRef)).filter((candidate) =>
         refreshedInstanceIds.has(candidate.instanceId),
@@ -1067,6 +1083,17 @@ export const layer = Layer.effect(
       );
     });
 
+    const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
+      const { updatedAt } = yield* manifestService.refreshOnDemand;
+      // The first pass can be one that started before the fetch, so allow one more.
+      for (let pass = 0; pass < 2; pass++) {
+        if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) return;
+        // A new model usually ships with the CLI release that supports it.
+        yield* latestVersions.invalidateAll;
+        yield* refreshAll();
+      }
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1079,6 +1106,10 @@ export const layer = Layer.effect(
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
       invalidateModelCaches,
+      refreshModelCatalog: refreshModelCatalog().pipe(
+        Effect.catchCause(recoverRefreshFailure),
+        Effect.asVoid,
+      ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
