@@ -490,7 +490,10 @@ const make = Effect.gen(function* () {
     if (Option.isSome(issuedHere)) {
       return yield* new PeerLinkError({
         reason: "pairing_rejected",
-        message: `That pairing code was created on ${self.label}, not on ${peer.label}. Create the link on ${peer.label} and paste its code here.`,
+        message:
+          self.label === peer.label
+            ? `That pairing code was created on this environment, not on the ${peer.label} at ${primary}. Create the link there and paste its code here.`
+            : `That pairing code was created on ${self.label}, not on ${peer.label}. Create the link on ${peer.label} and paste its code here.`,
       });
     }
     const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
