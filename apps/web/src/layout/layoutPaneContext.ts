@@ -96,6 +96,7 @@ export const RELATED_CHAT_COMMANDS: ReadonlySet<string> = new Set([
   "terminal.toggle",
   "rightPanel.toggle",
   "diff.toggle",
+  "pullRequests.toggle",
   "threadPanel.toggle",
   "preview.toggle",
   "editor.openFavorite",

@@ -1151,6 +1151,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn("flex min-h-0 flex-1 flex-col", notched && PANE_BODY_UNDER_HEADER_CLASS)}
         data-right-panel-surface-content
+        data-right-panel-surface-kind={focusedSurface?.kind}
       >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
