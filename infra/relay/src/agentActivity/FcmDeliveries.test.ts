@@ -488,6 +488,37 @@ describe("Android delivery routing", () => {
     ),
   );
 
+  it.effect("an unchanged refresh preserves old attention exclusions after the job lifetime", () =>
+    withRegisteredDevice(({ h, register, target }) =>
+      Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+        h.current.otherStates = [other];
+        yield* register(preferences);
+        yield* delivery.process({ ...h.job, state: null, replay: true });
+        yield* TestClock.adjust("1 second");
+        yield* register({ ...preferences, disabledEnvironmentIds: [other.environmentId] });
+        h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }];
+        yield* delivery.process({ ...h.job, state: null, replay: true });
+        yield* TestClock.adjust("1 second");
+        yield* register(preferences);
+        yield* TestClock.adjust("6 minutes");
+        yield* register(preferences);
+        h.current.state = {
+          ...state,
+          phase: "waiting_for_input",
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        };
+        yield* delivery.enqueue({ target: yield* target, state: h.current.state });
+        yield* delivery.process(h.queued[0]);
+        expect(h.sent.filter((message) => message.alert).map((message) => message.data)).toEqual([
+          expect.objectContaining({ alert_title: state.threadTitle }),
+        ]);
+        expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+      }),
+    ),
+  );
+
   const cardsOff = { name: "with activity cards off", cards: false, notificationOnly: false };
   const notificationOnly = {
     name: "for a notification-only environment",

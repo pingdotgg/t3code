@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
-import { ANDROID_DELIVERY_JOB_TTL_MS } from "./agentActivityAlerts.ts";
+import { MAX_AGENT_ACTIVITY_ROW_TTL_MS } from "./agentActivityPayloads.ts";
 
 export class DeviceRegistrationPersistenceError extends Schema.TaggedError<DeviceRegistrationPersistenceError>()(
   "DeviceRegistrationPersistenceError",
@@ -164,7 +164,7 @@ const make = Effect.gen(function* () {
                   from jsonb_each(
                     coalesce(${relayMobileDevices.environmentRevealedAt}, '{}'::jsonb)
                   ) as kept
-                  where (kept.value)::bigint >= ${now.epochMilliseconds - ANDROID_DELIVERY_JOB_TTL_MS}
+                  where (kept.value)::bigint >= ${now.epochMilliseconds - MAX_AGENT_ACTIVITY_ROW_TTL_MS}
                 ), '{}'::jsonb)
                 || coalesce((
                   select jsonb_object_agg(revealed.id, ${now.epochMilliseconds}::bigint)

@@ -22,7 +22,7 @@ const a = EnvironmentId.make("env-a");
 const b = EnvironmentId.make("env-b");
 
 describe("Devices", () => {
-  it.effect("records when each environment is re-enabled for the delivery job lifetime", () =>
+  it.effect("records when each environment is re-enabled for the activity lifetime", () =>
     Effect.gen(function* () {
       const db = yield* makeTestRelayDb;
       const services = Layer.mergeAll(Devices.layer, LiveActivities.layer).pipe(
@@ -63,13 +63,16 @@ describe("Devices", () => {
         yield* at(3_000);
         yield* register(undefined);
         expect(yield* revealedAt).toEqual({ [a]: 1_000, [b]: 3_000 });
-        // Entries outlive every job queued before them, then expire.
+        // Waiting attention outlives queued jobs, so an unchanged refresh must preserve this history.
         yield* at(1_000 + 5 * 60_000 + 1);
         yield* register([a]);
+        expect(yield* revealedAt).toEqual({ [a]: 1_000, [b]: 3_000 });
+        yield* at(1_000 + 24 * 60 * 60_000 + 1);
+        yield* register([a]);
         expect(yield* revealedAt).toEqual({ [b]: 3_000 });
-        yield* at(400_000);
+        yield* at(2_000 + 24 * 60 * 60_000);
         yield* register([]);
-        expect(yield* revealedAt).toEqual({ [a]: 400_000 });
+        expect(yield* revealedAt).toEqual({ [a]: 2_000 + 24 * 60 * 60_000, [b]: 3_000 });
       }).pipe(Effect.provide(services));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
