@@ -149,5 +149,19 @@ describe("MCP app tool output", () => {
       },
     });
     expect(turnItemOutputText(item)).toBe("chart\n[image]");
+
+    const bounded = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: [
+        { type: "text", text: "chart" },
+        { type: "image", mimeType: "image/png" },
+      ],
+    });
+    expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
   });
 });

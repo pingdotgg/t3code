@@ -15,6 +15,7 @@ import {
   dedupeSubagentBodies,
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import {
   compactDynamicToolOutput,
   omitToolOutputImageData,
@@ -226,7 +227,7 @@ function boundDynamicValue(value: unknown): unknown {
 }
 
 /** Preserve ordered image markers in truncated output so clients can load images by index. */
-function boundToolOutput(output: unknown): unknown {
+function boundToolResult(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);
   const bounded = boundDynamicValue(omitted);
   if (typeof bounded !== "string" || typeof omitted === "string") return bounded;
@@ -237,6 +238,15 @@ function boundToolOutput(output: unknown): unknown {
         { type: "text", text: bounded },
         ...images.map((image) => ({ type: "image", mimeType: image.mimeType })),
       ];
+}
+
+function boundToolOutput(output: unknown): unknown {
+  return typeof output === "object" &&
+    output !== null &&
+    MCP_APP_OUTPUT_KEY in output &&
+    "result" in output
+    ? { [MCP_APP_OUTPUT_KEY]: output[MCP_APP_OUTPUT_KEY], result: boundToolResult(output.result) }
+    : boundToolResult(output);
 }
 
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {

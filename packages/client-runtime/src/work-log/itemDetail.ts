@@ -191,9 +191,11 @@ function dynamicToolOutputText(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>,
 ): string | null {
   const output = item.output;
-  return isRecord(output) && MCP_APP_OUTPUT_KEY in output && isRecord(output.result)
-    ? formatToolValue(mcpToolResultOutput(output.result), false, [])
-    : formatToolValue(output, item.viewedImagePath !== undefined);
+  if (!isRecord(output) || !(MCP_APP_OUTPUT_KEY in output) || !("result" in output)) {
+    return formatToolValue(output, item.viewedImagePath !== undefined);
+  }
+  const result = output.result;
+  return formatToolValue(isRecord(result) ? mcpToolResultOutput(result) : result, false, []);
 }
 
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
