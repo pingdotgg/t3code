@@ -295,7 +295,15 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
         cursorSource(true),
       ]);
       expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
-      expect(harness.requests()).toBe(2);
+      // The first read takes the server's saved answer, which is not final: when the
+      // follow-up fails, a full read replaces it.
+      expect(
+        harness.inputs().map(({ provisional, awaitRefresh }) => ({ provisional, awaitRefresh })),
+      ).toEqual([
+        { provisional: true, awaitRefresh: undefined },
+        { provisional: undefined, awaitRefresh: true },
+        { provisional: undefined, awaitRefresh: undefined },
+      ]);
       unmount();
     }),
   ),

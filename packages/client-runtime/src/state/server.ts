@@ -1340,14 +1340,19 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
-    // long enough that switching windows or re-rendering does not rescan.
+    // long enough that switching windows or re-rendering does not rescan. With
+    // nothing to show yet, ask for the server's last scan first: it answers at
+    // once and marks its sources refreshing, which starts the full read below.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
-      execute: (input, emit) =>
-        request(WS_METHODS.serverGetUsageSummary, input).pipe(
+      execute: (input, emit, previous) =>
+        request(
+          WS_METHODS.serverGetUsageSummary,
+          Option.isSome(previous) ? input : { ...input, provisional: true },
+        ).pipe(
           Effect.filterOrElse(
             (summary) => !summary.sources.some((source) => source.refreshing === true),
             (summary) =>
@@ -1358,7 +1363,12 @@ export function createServerEnvironmentAtoms<R, E>(
                 Effect.catch((error) =>
                   Effect.logWarning("Could not refresh slow usage sources.").pipe(
                     Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                    Effect.as(summary),
+                    // A saved answer is not final, so read the transcripts in full instead.
+                    Effect.andThen(
+                      Option.isSome(previous)
+                        ? Effect.succeed(summary)
+                        : request(WS_METHODS.serverGetUsageSummary, input),
+                    ),
                   ),
                 ),
               ),
