@@ -56,7 +56,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   referenceSigils: [],
   review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
   // Reviewer candidates require separate identity/graph APIs and permissions.
-  reviewers: { request: true, listCandidates: false },
+  reviewers: { request: true, listCandidates: false, searchCandidates: false },
   edit: { changeRequest: true, comment: false },
   // Azure's viewed marks use an undocumented endpoint and are invalidated by each push.
   viewedFiles: "environment",

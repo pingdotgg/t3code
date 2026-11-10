@@ -42,7 +42,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
 };
@@ -496,6 +496,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           repository: input.repository,
           number: input.number,
+          query: input.query,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
