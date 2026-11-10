@@ -269,6 +269,12 @@ const PAIRING_TOKEN_PATTERN = new RegExp(
   "i",
 );
 
+/** Only credentials in the issued pairing-code formats are case-insensitive. */
+export const normalizePairingCredential = (credential: string) =>
+  PAIRING_TOKEN_PATTERN.test(credential)
+    ? credential.toUpperCase()
+    : (parseMcpApprovalCode(credential)?.code ?? credential);
+
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
@@ -560,10 +566,7 @@ const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      // Only credentials in the issued pairing-code formats are case-insensitive.
-      const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
-        ? credential.toUpperCase()
-        : (parseMcpApprovalCode(credential)?.code ?? credential);
+      const pairingCredential = normalizePairingCredential(credential);
 
       // Check scopes in the UPDATE so rejected requests cannot spend one-time links.
       const consumed = yield* pairingLinks

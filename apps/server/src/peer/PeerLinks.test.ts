@@ -26,6 +26,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -92,6 +93,7 @@ const makeA = (
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
+      auth: Context.get(context, EnvironmentAuth.EnvironmentAuth),
       peer: Context.get(context, PeerMcpClient.PeerMcpClient),
       sql: Context.get(context, SqlClient.SqlClient),
       settings: Context.get(context, ServerSettings.ServerSettingsService),
@@ -205,6 +207,30 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       expect(notFound).toMatchObject({ code: "thread_not_found", message: "No such thread." });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a pairing code this environment issued is refused by name and never sent to the peer",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const a = yield* makeA(laptop);
+        const own = yield* a.auth.issuePairingCredential();
+
+        for (const pairingCode of [own.credential, ` ${own.credential.toLowerCase()} `]) {
+          const refused = yield* a.links
+            .link({ url: b.url, pairingCode, access: "read-only" })
+            .pipe(Effect.flip);
+          expect(refused.reason).toBe("pairing_rejected");
+          expect(refused.message).toContain("Laptop");
+          expect(refused.message).toContain("Box");
+        }
+        expect((yield* Ref.get(b.paths)).filter((path) => path.startsWith("/oauth/mcp/"))).toEqual(
+          [],
+        );
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(

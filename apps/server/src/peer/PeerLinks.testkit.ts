@@ -70,6 +70,7 @@ export const servePeer = <E, R>(
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
+    const paths = yield* Ref.make<ReadonlyArray<string>>([]);
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
@@ -89,6 +90,7 @@ export const servePeer = <E, R>(
       (httpEffect) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* Ref.update(paths, (seen) => [...seen, request.url]);
           if (request.url.startsWith("/.well-known/t3/environment")) {
             yield* Ref.update(probes, (count) => count + 1);
           }
@@ -154,6 +156,8 @@ export const servePeer = <E, R>(
       bearers,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
       probes,
+      /** Every path it was asked for, in order. */
+      paths,
       /** The sessions linking created there, which its Connections lists. */
       linkedSessions: auth
         .listSessions()
@@ -168,8 +172,9 @@ export const servePeer = <E, R>(
 export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 
 /**
- * The environment that links: its own database and secret store, reaching
- * peers over plain HTTP. Provide it to anything built on its links.
+ * The environment that links: its own database, secret store and pairing
+ * codes, reaching peers over plain HTTP. Provide it to anything built on its
+ * links.
  */
 export const layerLinkingEnvironment = <E = never>(
   descriptor: ExecutionEnvironmentDescriptor,
@@ -181,6 +186,11 @@ export const layerLinkingEnvironment = <E = never>(
 ) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
+    Layer.provideMerge(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(Layer.mergeAll(ManagedPolicy.layerTest(), ServerEnvironment.layerIdentity)),
+      ),
+    ),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(database),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
