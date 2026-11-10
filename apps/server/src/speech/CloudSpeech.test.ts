@@ -193,6 +193,7 @@ it.effect("sends Deepgram raw WAV with its token and reads the first transcript"
     const sent = new URL(String(url));
     expect(sent.origin + sent.pathname).toBe("https://api.deepgram.com/v1/listen");
     expect(sent.searchParams.get("model")).toBe("nova-3");
+    expect(sent.searchParams.get("redact_usage")).toBe("true");
     expect(sent.searchParams.get("language")).toBe("ru");
     expect(sent.searchParams.getAll("keyterm")).toEqual(["T3 Code"]);
     expect(init?.redirect).toBe("error");
@@ -204,7 +205,7 @@ it.effect("sends Deepgram raw WAV with its token and reads the first transcript"
     expect(wav.readInt16LE(46)).toBe(16384);
     yield* transcribe("auto");
     expect(new URL(String(upstream.mock.calls[1]![0])).searchParams.get("language")).toBe("multi");
-    upstream.mockResolvedValueOnce(
+    const keytermLimit = () =>
       Response.json(
         {
           err_code: "Bad Request",
@@ -212,8 +213,8 @@ it.effect("sends Deepgram raw WAV with its token and reads the first transcript"
             "Bad Request: Keyterm limit exceeded. The maximum number of tokens across all keyterms is 500.",
         },
         { status: 400 },
-      ),
-    );
+      );
+    upstream.mockResolvedValueOnce(keytermLimit());
     expect(yield* transcribe("en")).toBe("hello");
     const [limited, retried] = upstream.mock.calls.slice(-2).map(([url]) => new URL(String(url)));
     expect(limited!.searchParams.getAll("keyterm")).toEqual(["T3 Code"]);
@@ -227,6 +228,20 @@ it.effect("sends Deepgram raw WAV with its token and reads the first transcript"
     });
     upstream.mockResolvedValueOnce(Response.json({ results: { channels: [] } }));
     expect(yield* Effect.flip(transcribe("en"))).toMatchObject({ reason: "unavailable" });
+    // Removing the key during the first upload must stop the keyterm-free retry.
+    const uploadStarted = Promise.withResolvers<void>();
+    const rejection = Promise.withResolvers<Response>();
+    upstream.mockImplementationOnce(() => {
+      uploadStarted.resolve();
+      return rejection.promise;
+    });
+    const uploads = upstream.mock.calls.length;
+    const job = yield* transcribe("en").pipe(Effect.forkChild);
+    yield* Effect.promise(() => uploadStarted.promise);
+    yield* service.setKey("deepgram", null);
+    rejection.resolve(keytermLimit());
+    expect(yield* Effect.flip(Fiber.join(job))).toMatchObject({ reason: "missing-key" });
+    expect(upstream).toHaveBeenCalledTimes(uploads + 1);
   }),
 );
 

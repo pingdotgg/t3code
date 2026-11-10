@@ -115,6 +115,7 @@ function deepgramUrl(language: string, options: SpeechTranscriptionOptions, keyt
   const url = new URL(endpoints.deepgram.url);
   url.searchParams.set("model", endpoints.deepgram.model);
   url.searchParams.set("smart_format", "true");
+  url.searchParams.set("redact_usage", "true");
   // `multi` transcribes speech that switches languages, such as English terms in other speech.
   url.searchParams.set("language", language === "auto" ? "multi" : language);
   if (keyterms)
@@ -247,13 +248,16 @@ export const layer = Layer.effect(
                   : audioBody(provider, audio, language, options),
               );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
-        // A catalog fetch or vault lookup may have outlived the credential it started with.
-        const current = (yield* credentials)[provider];
-        if (!current || !sameCredential(source, current))
-          return yield* new CloudSpeechError({
-            provider,
-            reason: current ? "key-changed" : "missing-key",
-          });
+        // A catalog fetch, vault lookup, or earlier upload may have outlived the credential.
+        const ensureCurrentKey = Effect.gen(function* () {
+          const current = (yield* credentials)[provider];
+          if (!current || !sameCredential(source, current))
+            return yield* new CloudSpeechError({
+              provider,
+              reason: current ? "key-changed" : "missing-key",
+            });
+        });
+        yield* ensureCurrentKey;
         let response = yield* execute(request).pipe(Effect.mapError(unavailable));
         // Deepgram caps keyterms in tokens clients cannot count; the dictionary still fixes the text below.
         if (
@@ -261,8 +265,10 @@ export const layer = Layer.effect(
           response.status === 400 &&
           options.speechCustomWords.length > 0 &&
           (yield* response.text.pipe(Effect.orElseSucceed(() => ""))).includes("Keyterm limit")
-        )
+        ) {
+          yield* ensureCurrentKey;
           response = yield* execute(deepgramRequest(false)).pipe(Effect.mapError(unavailable));
+        }
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({
             provider,
