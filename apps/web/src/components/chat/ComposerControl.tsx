@@ -24,10 +24,9 @@ function composerControlClassName(
       : "h-7 gap-1.5 px-2.5 font-medium text-secondary-label [&_svg:not([class*='text-'])]:text-muted-foreground hover:text-foreground sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
     "aria-pressed:surface-selected-soft aria-pressed:text-strong-foreground aria-pressed:hover:surface-ghost-hover",
     variant === "settings"
-      ? "surface-raised text-foreground hover:surface-raised-hover data-pressed:surface-raised-hover"
+      ? "surface-well text-foreground"
       : "hover:surface-ghost-hover data-pressed:surface-ghost-hover",
-    // Settings rows set it beside `SelectTrigger size="sm"`, so it takes the same heights.
-    variant === "settings" && size === "sm" && "h-8 sm:h-7",
+    variant === "settings" && "h-7 sm:h-7",
     className,
   );
 }
