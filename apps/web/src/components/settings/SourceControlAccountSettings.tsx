@@ -146,7 +146,11 @@ export function SourceControlAccountSettings({
                       });
                     }}
                   >
-                    <SelectTrigger size="sm" aria-label={`${label} account for ${group.host}`}>
+                    <SelectTrigger
+                      variant="well"
+                      size="sm"
+                      aria-label={`${label} account for ${group.host}`}
+                    >
                       <SelectValue>
                         {(value: string) =>
                           value === ACTIVE_ACCOUNT ? (
