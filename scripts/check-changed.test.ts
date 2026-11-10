@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Option from "effect/Option";
-import { assert, describe, it } from "@effect/vitest";
+import { afterAll, assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -198,6 +198,32 @@ describe("check:changed", () => {
     });
   });
 
+  it("opens the built desktop app only for startup, settlement, and sidebar changes", () => {
+    const packages = readWorkspace();
+    const launches = (file: string) => decide([file], packages, false).outputs.desktop_launch;
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
+      "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+      "apps/desktop/src/backend/DesktopBackendManager.ts",
+      "apps/desktop/src/electron/ElectronProtocol.ts",
+      "packages/contracts/src/settings.ts",
+      "scripts/fixtures/desktop-launch/statev2.sqlite",
+    ]) {
+      assert.isTrue(launches(file), file);
+    }
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts",
+      "apps/web/src/components/chat/ChatView.tsx",
+      "apps/desktop/src/updates/DesktopRemoteUpdates.ts",
+      "packages/contracts/src/orchestration.ts",
+    ]) {
+      assert.isFalse(launches(file), file);
+    }
+    // A script-only change still builds the app it opens.
+    assert.isTrue(decide(["scripts/smoke-desktop-app.ts"], packages, false).outputs.build);
+  });
+
   it.each([
     "packages/shared/src/testing/longTempDir.ts",
     "packages/shared/src/testing/providerEnv.ts",
@@ -208,14 +234,21 @@ describe("check:changed", () => {
 
 // Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
 // ~/.config/git/ignore can ignore or sign fixture files.
+// Git for Windows rejects the null device as a config path, so use an empty file.
+const emptyConfigDir = NodeFS.mkdtempSync(
+  NodePath.join(NodeOS.tmpdir(), "t3-check-changed-config-"),
+);
+const emptyConfig = NodePath.join(emptyConfigDir, "empty.gitconfig");
+NodeFS.writeFileSync(emptyConfig, "");
+afterAll(() => NodeFS.rmSync(emptyConfigDir, { recursive: true, force: true }));
 const fixtureConfig = {
-  "core.excludesFile": NodeOS.devNull,
+  "core.excludesFile": emptyConfig,
   "user.name": "Fixture",
   "user.email": "fixture@example.invalid",
 };
 const env = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
-  GIT_CONFIG_GLOBAL: NodeOS.devNull,
+  GIT_CONFIG_GLOBAL: emptyConfig,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
   ...Object.fromEntries(
@@ -312,7 +345,13 @@ function launcherFixture() {
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
-    JSON.stringify({ type: "module", scripts: { "knip:check": "knip --include files" } }),
+    JSON.stringify({
+      type: "module",
+      scripts: {
+        "knip:check:files": "knip --include files",
+        "knip:check:exports": "knip --exports",
+      },
+    }),
   );
   write("packages/example/package.json", JSON.stringify({ name: "example" }));
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
@@ -419,7 +458,9 @@ it("lints an Astro component and runs knip when only it changed", () => {
     "--no-error-on-unmatched-pattern",
     page,
   ]);
-  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
+  const commands = calls.map(({ args }) => args);
+  expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
+  expect(commands).toContainEqual(["exec", "knip", "--exports"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
