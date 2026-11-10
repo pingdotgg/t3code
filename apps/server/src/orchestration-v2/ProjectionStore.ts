@@ -3487,7 +3487,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','starting','running','waiting')
                 OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR parent_node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+                OR parent_node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
+                -- Lineage lists every child thread, not just the window's.
+                OR child_thread_id IS NOT NULL)
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `,
           fields !== undefined && !fields.includes("providerSessions")
