@@ -170,7 +170,7 @@ function enrichedStyle(
 
 /**
  * Diagram and math fences, as web draws them, and code enriched-markdown cannot colour.
- * A fence streams as native code until it closes.
+ * Diagrams and math stream as native code until they close; fallback code keeps one block throughout.
  */
 function codeBlockElement(
   block: MarkdownCodeBlock,
@@ -179,6 +179,20 @@ function codeBlockElement(
   mathRenderingEnabled: boolean,
   scheme: HighlightScheme,
 ): ReactElement | undefined {
+  const language = fallbackHighlightLanguage(block.language);
+  if (language && markdownStyle.codeBlock) {
+    return (
+      <HighlightedCodeBlock
+        code={block.code}
+        fence={block.language}
+        language={language}
+        complete={block.isComplete}
+        scheme={scheme}
+        textStyle={textStyle}
+        codeStyle={markdownStyle.codeBlock}
+      />
+    );
+  }
   if (!block.isComplete) return undefined;
   if (block.language === "mermaid") {
     return <MermaidCodeBlock code={block.code} textStyle={textStyle} />;
@@ -195,19 +209,6 @@ function codeBlockElement(
         selectable
         selectionColor={textStyle.selectionColor}
         selectionHandleColor={textStyle.selectionHandleColor}
-      />
-    );
-  }
-  const language = fallbackHighlightLanguage(block.language);
-  if (language && markdownStyle.codeBlock) {
-    return (
-      <HighlightedCodeBlock
-        code={block.code}
-        fence={block.language}
-        language={language}
-        scheme={scheme}
-        textStyle={textStyle}
-        codeStyle={markdownStyle.codeBlock}
       />
     );
   }

@@ -64,11 +64,13 @@ export function fallbackHighlightLanguage(fence: string): string | null {
   return language === "text" ? null : language;
 }
 
-/** A complete fence in a language enriched-markdown cannot colour, drawn like its native block. */
+/** A fence in a language enriched-markdown cannot colour, drawn like its native block. */
 export function HighlightedCodeBlock(props: {
   readonly code: string;
   readonly fence: string;
   readonly language: string;
+  /** Highlighting waits for the closing fence, as the native block's does. */
+  readonly complete: boolean;
   readonly scheme: HighlightScheme;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly codeStyle: NonNullable<MarkdownStyle["codeBlock"]>;
@@ -79,7 +81,7 @@ export function HighlightedCodeBlock(props: {
     code,
     language: props.language,
     theme: props.scheme,
-    enabled: true,
+    enabled: props.complete,
   });
   const fence = props.fence.toLowerCase();
   let offset = 0;
