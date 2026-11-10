@@ -25,7 +25,8 @@ const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
 const WEB_CITATION_OPEN = "\uE200";
 // OpenAI web-search citations: U+E200 "cite" (U+E202 id)+ U+E201. T3 has no sources for the ids.
 const WEB_CITATION_MARKER = /([ \t]?)\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
-const DROPS_PRECEDING_SPACE = /^(?:\s|[.,;:!?)\]]|$)/u;
+// Past any closing emphasis or code delimiters, nothing the space separates follows.
+const DROPS_PRECEDING_SPACE = /[*_~`]*(?:\s|[.,;:!?)\]]|$)/uy;
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataCodexArtifactTemplate",
@@ -251,16 +252,18 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
-// The space before a marker goes with it only where nothing it separates follows.
-function webCitationReplacement(space: string, following: string): string {
-  return DROPS_PRECEDING_SPACE.test(following) ? "" : space;
+function webCitationReplacement(space: string, text: string, markerEnd: number): string {
+  DROPS_PRECEDING_SPACE.lastIndex = markerEnd;
+  return DROPS_PRECEDING_SPACE.test(text) ? "" : space;
 }
 
-// `after` is the source text past this string, for a marker that ends it.
-function removeWebCitationMarkers(text: string, after = ""): string {
+// A marker that ends `text` is judged by the source past `textEnd`.
+function removeWebCitationMarkers(text: string, source = "", textEnd = 0): string {
   return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) => {
     const markerEnd = offset + marker.length;
-    return webCitationReplacement(space, text.slice(markerEnd, markerEnd + 1) || after);
+    return markerEnd < text.length
+      ? webCitationReplacement(space, text, markerEnd)
+      : webCitationReplacement(space, source, textEnd);
   });
 }
 
@@ -276,17 +279,17 @@ function collectWebCitationMarkers(
     matches.push({
       start: markerStart,
       end: markerEnd,
-      markdown: webCitationReplacement(marker[1] ?? "", source.slice(markerEnd, markerEnd + 1)),
+      markdown: webCitationReplacement(marker[1] ?? "", source, markerEnd),
     });
   }
 }
 
 function transformCodexDirectives(node: MarkdownAstNode, source: string, insideLink = false): void {
   if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
-    const end = node.position?.end.offset;
     node.value = removeWebCitationMarkers(
       node.value,
-      end === undefined ? "" : source.slice(end, end + 1),
+      source,
+      node.position?.end.offset ?? source.length,
     );
     return;
   }
@@ -356,10 +359,6 @@ function collectDirectiveMatches(
       collectWebCitationMarkers(source, start, end, matches);
       return;
     }
-    if (node.type === "link" || node.type === "definition") {
-      const destinationStart = node.children?.at(-1)?.position?.end.offset ?? start;
-      collectWebCitationMarkers(source, destinationStart, end, matches);
-    }
     if (node.data?.codexFileCitationMarkdown !== undefined) {
       matches.push({ start, end, markdown: node.data.codexFileCitationMarkdown });
       return;
@@ -367,6 +366,10 @@ function collectDirectiveMatches(
     if (node.data?.codexArtifactTemplate !== undefined) {
       matches.push({ start, end, template: node.data.codexArtifactTemplate });
       return;
+    }
+    if (node.type === "link" || node.type === "definition") {
+      const destinationStart = node.children?.at(-1)?.position?.end.offset ?? start;
+      collectWebCitationMarkers(source, destinationStart, end, matches);
     }
     const labelStart = node.children?.[0]?.position?.start.offset;
     const labelEnd = node.children?.at(-1)?.position?.end.offset;

@@ -146,6 +146,11 @@ describe.each([
     ["red \uE200cite\uE202turn0search0\uE201**blue**", "red **blue**"],
     ["red \uE200cite\uE202turn0search0\uE201[blue](https://a.dev)", "red [blue](https://a.dev)"],
     ["red \uE200cite\uE202turn0search0\uE201`blue`", "red `blue`"],
+    ["**Result \uE200cite\uE202turn0search0\uE201**.", "**Result**."],
+    [
+      ':codex-file-citation{path="src/foo.ts" note="\uE200cite\uE202turn0search0\uE201"} trailing',
+      "[foo.ts](<src/foo.ts>) trailing",
+    ],
     ["[s](https://a.dev\uE200cite\uE202turn0search0\uE201)", "[s](https://a.dev)"],
     ["[s]\n\n[s]: https://a.dev\uE200cite\uE202turn0search0\uE201", "[s]\n\n[s]: https://a.dev"],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
