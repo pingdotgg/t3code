@@ -7,7 +7,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 import { assert, expect, it } from "@effect/vitest";
-import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  EnvironmentId,
+  PreviewAutomationControlInterruptedError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -244,6 +249,10 @@ it("passes a good run and names every rule a bad run breaks", () => {
     callsMustNot: [{ tool: "delegate_task", args: { runtimeMode: "approval-required" } }],
     notCalls: ["t3_thread_send"],
     order: ["orchestrator_capabilities", "delegate_task"],
+    firstCall: {
+      tools: ["delegate_task", "t3_thread_send"],
+      calls: [{ tool: "t3_thread_send" }, { tool: "delegate_task", args: { task: "~FINDING" } }],
+    },
     minCalls: { orchestrator_capabilities: 1 },
     maxCalls: { task_status: 0 },
     endsTurnAfter: "delegate_task",
@@ -287,6 +296,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     'callsMustNot delegate_task {"runtimeMode":"approval-required"}',
     "notCalls t3_thread_send",
     "order orchestrator_capabilities > delegate_task",
+    'firstCall t3_thread_send or delegate_task {"task":"~FINDING"}',
     "minCalls orchestrator_capabilities >= 1",
     "maxCalls task_status <= 0",
     "endsTurnAfter delegate_task",
@@ -576,6 +586,24 @@ it("lists link tools only while a case turns the beta on, and sends chips as T3 
     projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext! }),
   );
   assert.include(prompt?.text, "environmentId: environment-vps");
+});
+
+const decodeInterrupted = Schema.decodeUnknownSync(PreviewAutomationControlInterruptedError);
+it("replays an earlier preview error as T3's error result, with its contracts message", () => {
+  const base = buildBase(template, { model: "claude-opus-5-5", keepUserInstructions: false });
+  const busyCase = NodeFS.readFileSync(
+    new URL("./cases/visual-preview.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((c) => c.id === "preview-busy-tab-opens-new-tab")!;
+  const prior = busyCase.setup.priorTurns!.at(-1)!.toolCalls!.at(-1)!;
+  const error = decodeInterrupted(prior.result);
+  assert.equal(error.reason, "busy");
+  const replayed = buildMessages(makeSample(busyCase, base)).at(-1)?.content.at(-1);
+  assert.deepInclude(replayed, { content: error.message, is_error: true });
 });
 
 it("replays earlier capability results with the model under test as the caller", () => {

@@ -18,6 +18,7 @@ import {
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
+  PreviewAutomationError,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -190,6 +191,10 @@ const McpToolUseExpect = Schema.Struct({
   notCalls: Schema.optional(Schema.Array(Schema.String)),
   /** First calls of these tools happen in this order. */
   order: Schema.optional(Schema.Array(Schema.String)),
+  /** The first call of any tool in `tools` matches one of `calls`. */
+  firstCall: Schema.optional(
+    Schema.Struct({ tools: Schema.Array(Schema.String), calls: Schema.Array(McpToolUseCall) }),
+  ),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   /**
@@ -388,6 +393,10 @@ const toolResult = (id: string, content: unknown): Block => ({
   tool_use_id: id,
   content: valueText(content),
 });
+const decodePreviewError = Schema.decodeUnknownOption(PreviewAutomationError);
+/** A prior result that is a T3 preview error, `{"_tag": "PreviewAutomationTimeoutError", ...}`. */
+const previewFailure = (value: unknown) =>
+  Option.getOrUndefined(Option.map(decodePreviewError(value), (error) => error.message));
 const texts = (content: typeof Content.Type) =>
   typeof content === "string" ? [content] : content.flatMap((block) => block.text ?? []);
 const isT3Name = (name: string) => name.startsWith(T3_PREFIX) || name.startsWith("mcp__t3_code__");
@@ -1008,7 +1017,14 @@ export const buildMessages = (sample: Sample) => {
         normalizeToolName(tool.name) === "orchestrator_capabilities"
           ? capabilities(sample, result)
           : (sample.priorResults.get(prior) ?? result);
-      push("user", toolResult(id, replayed));
+      // T3 sends a preview tool's failure as an error result with only its message.
+      const failure = previewFailure(replayed);
+      push(
+        "user",
+        failure === undefined
+          ? toolResult(id, replayed)
+          : { ...toolResult(id, failure), is_error: true },
+      );
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
@@ -1781,6 +1797,12 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
     add(`order ${expect.order.join(" > ")}`, inOrder);
+  }
+  if (expect.firstCall !== undefined) {
+    const { tools, calls: allowed } = expect.firstCall;
+    const first = calls.find((call) => tools.includes(call.tool));
+    const ok = first !== undefined && allowed.some((call) => found(call, [first]));
+    add(`firstCall ${allowed.map(label).join(" or ")}`, ok);
   }
   for (const [t, n] of Object.entries(expect.minCalls ?? {}))
     add(`minCalls ${t} >= ${n}`, count(t) >= n);
