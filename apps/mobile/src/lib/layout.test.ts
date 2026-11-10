@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   alignListPaneToHinge,
   deriveLayout,
+  constrainAuxiliaryPaneWidth,
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -141,14 +142,14 @@ describe("isPrimarySidebarPinned", () => {
 
 describe("deriveWorkspacePaneLayout", () => {
   it.each([660, 745, 1100])(
-    "splits Android content equally and steps the sidebar aside at %s dp",
+    "defaults Android content to equal panes and retains resized widths at %s dp",
     (viewportWidth) => {
       const layout = deriveLayout({ width: viewportWidth + 96, height: 900 });
       for (const primarySidebarFloats of [false, true]) {
         const input = {
           layout,
           viewportWidth,
-          equalAuxiliarySplit: true,
+          balancedAuxiliarySplit: true,
           primarySidebarFloats,
           primarySidebarPreferredVisible: true,
           auxiliaryPanePreferredVisible: true,
@@ -160,6 +161,17 @@ describe("deriveWorkspacePaneLayout", () => {
           auxiliaryPaneWidth: (viewportWidth - 4) / 2,
           contentPaneWidth: viewportWidth,
         });
+        for (const preferredWidth of [320, 350, viewportWidth]) {
+          const width = constrainAuxiliaryPaneWidth({
+            preferredWidth,
+            availableWidth: viewportWidth,
+            balancedAuxiliarySplit: true,
+          });
+          expect(width).toBe(Math.min(preferredWidth, viewportWidth - 4 - 320));
+          expect(
+            deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
+          ).toMatchObject({ auxiliaryPaneWidth: width, primarySidebarVisible: false });
+        }
         expect(
           deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),
         ).toMatchObject({ primarySidebarVisible: true });

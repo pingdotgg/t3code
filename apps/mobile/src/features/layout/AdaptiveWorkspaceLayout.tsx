@@ -371,7 +371,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveFileInspectorPaneLayout({
         layout,
         viewportWidth: width,
-        equalAuxiliarySplit: Platform.OS === "android",
+        balancedAuxiliarySplit: Platform.OS === "android",
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
           shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
@@ -407,7 +407,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
-        equalAuxiliarySplit: Platform.OS === "android",
+        balancedAuxiliarySplit: Platform.OS === "android",
         horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,

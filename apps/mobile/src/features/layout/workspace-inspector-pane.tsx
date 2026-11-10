@@ -89,6 +89,7 @@ export function WorkspaceInspectorPane(props: {
       constrainAuxiliaryPaneWidth({
         preferredWidth: resizeStartWidth.current + delta,
         availableWidth: panes.contentPaneWidth,
+        balancedAuxiliarySplit: Platform.OS === "android",
       }),
     );
   };
@@ -98,7 +99,7 @@ export function WorkspaceInspectorPane(props: {
 
   return (
     <>
-      {inspectorVisible && Platform.OS !== "android" ? (
+      {inspectorVisible ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize detail pane"
           currentWidth={inspectorWidth ?? 0}

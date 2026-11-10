@@ -209,7 +209,7 @@ export function deriveWorkspacePaneLayout(input: {
   /** Width UIKit keeps out of its columns, such as the Duo's system bar. */
   readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
-  readonly equalAuxiliarySplit?: boolean;
+  readonly balancedAuxiliarySplit?: boolean;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
@@ -230,7 +230,7 @@ export function deriveWorkspacePaneLayout(input: {
     layout: input.layout,
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
-    equalAuxiliarySplit: input.equalAuxiliarySplit,
+    balancedAuxiliarySplit: input.balancedAuxiliarySplit,
     reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
@@ -240,7 +240,7 @@ export function deriveWorkspacePaneLayout(input: {
   const primarySidebarSuppressedByAuxiliary =
     preferredPrimarySidebarVisible &&
     auxiliaryPaneVisible &&
-    (input.equalAuxiliarySplit === true ||
+    (input.balancedAuxiliarySplit === true ||
       (!floats &&
         inspectorWidth !== null &&
         input.layout.listPaneWidth !== null &&
@@ -289,14 +289,23 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly viewportWidth: number;
   readonly preferredWidth?: number;
   readonly reservedLeadingWidth?: number;
-  readonly equalAuxiliarySplit?: boolean;
+  readonly balancedAuxiliarySplit?: boolean;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
-  if (input.equalAuxiliarySplit) {
+  if (input.balancedAuxiliarySplit) {
     // Android keeps a 4dp trailing card gap; the divider overlays the column boundary.
-    const width = Math.max(0, viewportWidth - 4) / 2;
-    const supported = input.layout.usesSplitView && width >= 320;
-    return { supported, width: supported ? width : null };
+    const defaultWidth = Math.max(0, viewportWidth - 4) / 2;
+    const supported = input.layout.usesSplitView && defaultWidth >= 320;
+    return {
+      supported,
+      width: supported
+        ? constrainAuxiliaryPaneWidth({
+            preferredWidth: input.preferredWidth ?? defaultWidth,
+            availableWidth: viewportWidth,
+            balancedAuxiliarySplit: true,
+          })
+        : null,
+    };
   }
   const reservedLeadingWidth = Number.isFinite(input.reservedLeadingWidth)
     ? Math.max(0, input.reservedLeadingWidth ?? 0)
@@ -325,6 +334,7 @@ export function deriveFileInspectorPaneLayout(input: {
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;
+  readonly balancedAuxiliarySplit?: boolean;
 }): number {
   const safePreferredWidth = Number.isFinite(input.preferredWidth)
     ? input.preferredWidth
@@ -332,6 +342,9 @@ export function constrainAuxiliaryPaneWidth(input: {
   const availableWidth = Number.isFinite(input.availableWidth)
     ? Math.max(0, input.availableWidth)
     : 0;
+  if (input.balancedAuxiliarySplit) {
+    return clamp(safePreferredWidth, 320, Math.max(320, availableWidth - 4 - 320));
+  }
   const maxWidth = Math.max(
     AUXILIARY_PANE_MIN_WIDTH,
     Math.min(AUXILIARY_PANE_MAX_WIDTH, availableWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
