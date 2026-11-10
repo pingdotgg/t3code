@@ -141,6 +141,57 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
+  it.each([
+    { width: 744, leadingWidth: 72, hinge: null, inspectorWidth: 372, maximumWidth: 372, gap: 0 },
+    {
+      width: 900,
+      leadingWidth: 72,
+      hinge: { x: 450, width: 0 },
+      inspectorWidth: 450,
+      maximumWidth: 508,
+      gap: 0,
+    },
+    {
+      width: 744,
+      leadingWidth: 72,
+      hinge: { x: 372, width: 8 },
+      inspectorWidth: 364,
+      maximumWidth: 372,
+      gap: 8,
+    },
+  ])(
+    "keeps the default Fold panes on either side of the physical split ($width dp)",
+    ({ width, leadingWidth, hinge, inspectorWidth, maximumWidth, gap }) => {
+      const input = {
+        layout: deriveLayout({ width, height: 900 }),
+        viewportWidth: width - leadingWidth,
+        inspectorSizing: "foldable" as const,
+        foldableWindow: { width, leadingWidth, hinge },
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+      };
+      expect(deriveWorkspacePaneLayout(input)).toMatchObject({
+        auxiliaryPaneVisible: true,
+        auxiliaryPaneWidth: inspectorWidth,
+        auxiliaryPaneGap: gap,
+        primarySidebarVisible: false,
+      });
+      expect(width - inspectorWidth - gap).toBe(hinge?.x ?? width / 2);
+      expect(
+        deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
+      ).toMatchObject({
+        auxiliaryPaneWidth: maximumWidth,
+        auxiliaryPaneGap: 0,
+      });
+      expect(
+        deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: 320 }),
+      ).toMatchObject({
+        auxiliaryPaneWidth: 320,
+        auxiliaryPaneGap: 0,
+      });
+    },
+  );
+
   it.each([660, 744, 745, 1100])(
     "defaults Android content to equal panes and retains resized widths at %s dp",
     (viewportWidth) => {

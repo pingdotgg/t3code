@@ -86,9 +86,17 @@ export interface WorkspacePaneLayout {
   readonly supportsAuxiliaryPane: boolean;
   readonly auxiliaryPaneVisible: boolean;
   readonly auxiliaryPaneWidth: number | null;
+  readonly auxiliaryPaneGap?: number;
+}
+
+export interface FoldableWindow {
+  readonly width: number;
+  readonly leadingWidth: number;
+  readonly hinge: VerticalHinge | null;
 }
 
 export interface FileInspectorPaneLayout {
+  readonly gap?: number;
   readonly supported: boolean;
   readonly width: number | null;
 }
@@ -210,6 +218,7 @@ export function deriveWorkspacePaneLayout(input: {
   readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
   readonly inspectorSizing?: "foldable" | "tablet";
+  readonly foldableWindow?: FoldableWindow;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
@@ -231,6 +240,7 @@ export function deriveWorkspacePaneLayout(input: {
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
     inspectorSizing: input.inspectorSizing,
+    foldableWindow: input.foldableWindow,
     reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
@@ -261,6 +271,7 @@ export function deriveWorkspacePaneLayout(input: {
     primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
     primarySidebarSuppressedByAuxiliary,
     contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
+    auxiliaryPaneGap: auxiliaryPaneVisible ? (fileInspector.gap ?? 0) : 0,
     supportsAuxiliaryPane: fileInspector.supported,
     auxiliaryPaneVisible,
     auxiliaryPaneWidth: fileInspector.width,
@@ -290,19 +301,25 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly preferredWidth?: number;
   readonly reservedLeadingWidth?: number;
   readonly inspectorSizing?: "foldable" | "tablet";
+  readonly foldableWindow?: FoldableWindow;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
   if (input.inspectorSizing === "foldable") {
-    // Android keeps a 4dp trailing card gap; the divider overlays the column boundary.
-    const defaultWidth = Math.max(0, viewportWidth - 4) / 2;
-    const supported = input.layout.usesSplitView && defaultWidth >= 320;
+    const window = input.foldableWindow;
+    const gap = input.preferredWidth === undefined ? (window?.hinge?.width ?? 0) : 0;
+    const defaultWidth = window
+      ? window.width - (window.hinge?.x ?? window.width / 2) - gap
+      : Math.max(0, viewportWidth - 4) / 2;
+    const supported = input.layout.usesSplitView && viewportWidth - gap >= 640;
     return {
       supported,
+      gap: supported ? gap : 0,
       width: supported
         ? constrainAuxiliaryPaneWidth({
             preferredWidth: input.preferredWidth ?? defaultWidth,
-            availableWidth: viewportWidth,
+            availableWidth: viewportWidth - gap,
             inspectorSizing: "foldable",
+            foldableWindow: window,
           })
         : null,
     };
@@ -350,6 +367,7 @@ export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;
   readonly inspectorSizing?: "foldable" | "tablet";
+  readonly foldableWindow?: FoldableWindow;
 }): number {
   const safePreferredWidth = Number.isFinite(input.preferredWidth)
     ? input.preferredWidth
@@ -358,7 +376,11 @@ export function constrainAuxiliaryPaneWidth(input: {
     ? Math.max(0, input.availableWidth)
     : 0;
   if (input.inspectorSizing === "foldable") {
-    return clamp(safePreferredWidth, 320, Math.max(320, availableWidth - 4 - 320));
+    const window = input.foldableWindow;
+    const mainReserve = window
+      ? Math.min(320, (window.hinge?.x ?? window.width / 2) - window.leadingWidth)
+      : 324;
+    return clamp(safePreferredWidth, 320, Math.max(320, availableWidth - mainReserve));
   }
   if (input.inspectorSizing === "tablet") {
     return nativeInspectorColumnWidth({

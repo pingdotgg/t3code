@@ -374,15 +374,21 @@ function AdaptiveWorkspaceLayoutContent(
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const inspectorSizing =
     Platform.OS === "android" ? (isFoldable ? "foldable" : "tablet") : undefined;
-  const auxiliaryPanePreferredWidth =
-    fileInspectorPreferredWidth ??
-    (isFoldable ? viewportWidth - (windowHinge?.x ?? viewportWidth / 2) : undefined);
+  const auxiliaryPanePreferredWidth = fileInspectorPreferredWidth ?? undefined;
+  const foldableWindow = useMemo(
+    () =>
+      isFoldable
+        ? { width: viewportWidth, leadingWidth: viewportWidth - width, hinge: windowHinge }
+        : undefined,
+    [isFoldable, viewportWidth, width, windowHinge],
+  );
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
         layout,
         viewportWidth: width,
         inspectorSizing,
+        foldableWindow,
         preferredWidth: auxiliaryPanePreferredWidth,
         reservedLeadingWidth:
           shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
@@ -392,6 +398,7 @@ function AdaptiveWorkspaceLayoutContent(
     [
       auxiliaryPanePreferredWidth,
       inspectorSizing,
+      foldableWindow,
       layout,
       showPrimarySidebar,
       shouldRenderPrimarySidebar,
@@ -420,6 +427,7 @@ function AdaptiveWorkspaceLayoutContent(
         layout,
         viewportWidth: width,
         inspectorSizing,
+        foldableWindow,
         horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,
@@ -436,6 +444,7 @@ function AdaptiveWorkspaceLayoutContent(
       fileInspectorPreferredVisible,
       auxiliaryPanePreferredWidth,
       inspectorSizing,
+      foldableWindow,
       inspectorActive,
       layout,
       nativeWorkspace,
@@ -643,6 +652,7 @@ function AdaptiveWorkspaceLayoutContent(
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
+  const inspectorGap = panes.auxiliaryPaneGap ?? 0;
   // ScreenContent supplies both margins at an inspector boundary.
   const contentEndGap =
     Platform.OS === "android" && layout.usesSplitView && !panes.auxiliaryPaneVisible ? 4 : 0;
@@ -664,6 +674,7 @@ function AdaptiveWorkspaceLayoutContent(
         0,
         (contentSpansSidebar ? width : panes.contentPaneWidth) -
           inspectorColumnTargetWidth -
+          inspectorGap -
           contentEndGap,
       );
   // A workspace page (Usage) lays out at this width even while hidden behind another tab, so
@@ -876,7 +887,8 @@ function AdaptiveWorkspaceLayoutContent(
       viewportWidth -
         (sidebarFloats ? 0 : renderedRailWidth.value) -
         (workspacePage || sidebarFloats ? 0 : renderedSidebarWidth.value) -
-        renderedInspectorWidth.value,
+        renderedInspectorWidth.value -
+        inspectorGap,
     ),
   );
   // Android can resize the native row before React removes its split panes on a fold.
@@ -893,7 +905,7 @@ function AdaptiveWorkspaceLayoutContent(
             // back to the row, so a column after it stays put while the strip slides.
             width: Math.max(
               0,
-              viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value,
+              viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value - inspectorGap,
             ),
             marginRight: -sidebarSlotWidth,
             transform: [{ translateX: stripOffset.value }],
@@ -935,6 +947,7 @@ function AdaptiveWorkspaceLayoutContent(
       layout,
       viewportWidth: width,
       inspectorSizing,
+      foldableWindow,
       preferredWidth,
       reservedLeadingWidth:
         shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
@@ -1150,6 +1163,7 @@ function AdaptiveWorkspaceLayoutContent(
           />
         </Animated.View>
       ) : null}
+      {inspectorGap > 0 ? <View style={{ width: inspectorGap }} /> : null}
       <PaneContext value="inspector">
         <WorkspaceInspectorPane
           renderedInspectorWidth={renderedInspectorWidth}
