@@ -1850,7 +1850,7 @@ it.live("a select answer applies the option that was offered, wherever the page 
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("navigating away withdraws an offered select menu", () =>
+it.live("navigating away or releasing control withdraws an offered select menu", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { page, viewer, click, output } = yield* realSelectPage(
@@ -1883,6 +1883,20 @@ it.live("navigating away withdraws an offered select menu", () =>
         _tag: "selectMenuClosed",
         id: framed!.id,
       });
+
+      yield* Effect.promise(() =>
+        page.setContent(
+          `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
+            <option>One</option></select>`,
+        ),
+      );
+      yield* Queue.clear(viewer.output);
+      yield* click(140, 35);
+      const [held] = yield* output("selectMenu");
+      yield* viewer.input({ type: "releaseControl" });
+      expect(yield* output("selectMenuClosed"), "releasing control withdraws its offer").toEqual([
+        { _tag: "selectMenuClosed", id: held!.id },
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );

@@ -2523,6 +2523,7 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
       releaseSelectHandle(viewer, session, press);
     }
+    withdrawSelectMenu(viewer);
     viewer.requestedSize = null;
   };
 
