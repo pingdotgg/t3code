@@ -11,7 +11,13 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type MouseEvent,
+  type ReactNode,
+  useContext,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -19,7 +25,8 @@ import {
 } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
-import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
@@ -397,7 +404,8 @@ export function SettingsRow({
       source === "project" || source === "mixed" ? (
         <SettingResetButton
           label={typeof title === "string" ? title : "override"}
-          tooltip="Reset to inherited value"
+          state="Overridden"
+          action="Reset to inherited value"
           onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
         />
       ) : null
@@ -502,7 +510,7 @@ export function SettingsRow({
     >
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
+          <div className="flex min-h-5 flex-wrap items-center gap-x-1.5 gap-y-1">
             <h3 className="text-sm font-medium text-foreground">{title}</h3>
             {renderedInheritance ? (
               <span
@@ -517,9 +525,7 @@ export function SettingsRow({
                 {renderedInheritance}
               </span>
             ) : null}
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {renderedReset}
-            </span>
+            {renderedReset}
           </div>
           {description ? (
             <p className="max-w-2xl text-pretty text-xs leading-normal text-muted-foreground">
@@ -549,36 +555,69 @@ export function SettingsRow({
 
 export function SettingResetButton({
   label,
-  tooltip = "Reset to default",
+  action = "Reset to default",
+  defaultLabel,
+  state = "Changed",
+  compact = false,
   disabled = false,
   onClick,
 }: {
   label: string;
-  tooltip?: string;
+  action?: string;
+  /** Names the value a reset restores, so the action reads "Reset to Show all". */
+  defaultLabel?: string | undefined;
+  state?: string;
+  /** Icon-only form for card headers that have no room for the state and action text. */
+  compact?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const actionText = defaultLabel === undefined ? action : `Reset to ${defaultLabel}`;
+  const reset = (event: MouseEvent) => {
+    event.stopPropagation();
+    onClick();
+  };
+  if (compact) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              aria-label={`Reset ${label} to default`}
+              disabled={disabled}
+              onClick={reset}
+            >
+              <Undo2Icon className="size-3" />
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{actionText}</TooltipPopup>
+      </Tooltip>
+    );
+  }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
-            disabled={disabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClick();
-            }}
-          >
-            <Undo2Icon className="size-3" />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
-    </Tooltip>
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-xs">
+      <Badge variant="info" size="sm">
+        {state}
+      </Badge>
+      <InlineButton
+        tone="muted"
+        aria-label={`Reset ${label} to default`}
+        disabled={disabled}
+        onClick={reset}
+      >
+        {actionText}
+      </InlineButton>
+    </span>
   );
+}
+
+export function DefaultOptionMark<T>({ value, defaultValue }: { value: T; defaultValue: T }) {
+  return value === defaultValue ? (
+    <span className="ms-2 text-muted-foreground text-xs">Default</span>
+  ) : null;
 }
 
 export function SettingsPageContainer({

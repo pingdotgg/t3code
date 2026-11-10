@@ -96,6 +96,7 @@ import {
   rememberEnabledProjectGroupingMode,
 } from "./SettingsPanels.logic";
 import {
+  DefaultOptionMark,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsPageContainer,
@@ -822,6 +823,11 @@ export function GeneralSettingsPanel() {
             DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
               <SettingResetButton
                 label="project order"
+                defaultLabel={
+                  SIDEBAR_PROJECT_SORT_ORDER_LABELS[
+                    DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
+                  ]
+                }
                 onClick={() =>
                   updateSettings({
                     sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
@@ -848,6 +854,10 @@ export function GeneralSettingsPanel() {
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
                     {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                    <DefaultOptionMark
+                      value={sortOrder}
+                      defaultValue={DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder}
+                    />
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -966,6 +976,7 @@ export function GeneralSettingsPanel() {
               settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
                 <SettingResetButton
                   label="quit shortcut behavior"
+                  defaultLabel={QUIT_CONFIRMATION_MODE_LABELS[DEFAULT_UNIFIED_SETTINGS.confirmQuit]}
                   onClick={() =>
                     updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
                   }
@@ -992,6 +1003,10 @@ export function GeneralSettingsPanel() {
                   {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
                     <SelectItem hideIndicator key={value} value={value}>
                       {label}
+                      <DefaultOptionMark
+                        value={value}
+                        defaultValue={DEFAULT_UNIFIED_SETTINGS.confirmQuit}
+                      />
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -1009,6 +1024,7 @@ export function GeneralSettingsPanel() {
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
                 label="time format"
+                defaultLabel={TIMESTAMP_FORMAT_LABELS[DEFAULT_UNIFIED_SETTINGS.timestampFormat]}
                 onClick={() =>
                   updateSettings({
                     timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -1032,12 +1048,24 @@ export function GeneralSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="locale">
                   {TIMESTAMP_FORMAT_LABELS.locale}
+                  <DefaultOptionMark
+                    value="locale"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.timestampFormat}
+                  />
                 </SelectItem>
                 <SelectItem hideIndicator value="12-hour">
                   {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                  <DefaultOptionMark
+                    value="12-hour"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.timestampFormat}
+                  />
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                  <DefaultOptionMark
+                    value="24-hour"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.timestampFormat}
+                  />
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -1094,6 +1122,11 @@ export function ChatSettingsPanel() {
             settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
               <SettingResetButton
                 label="send shortcut"
+                defaultLabel={
+                  sendShortcutOptions.find(
+                    (option) => option.value === DEFAULT_UNIFIED_SETTINGS.sendShortcut,
+                  )?.label
+                }
                 onClick={() =>
                   updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
                 }
@@ -1124,7 +1157,13 @@ export function ChatSettingsPanel() {
                 {sendShortcutOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     <span className="flex items-center justify-between gap-4">
-                      {option.label}
+                      <span>
+                        {option.label}
+                        <DefaultOptionMark
+                          value={option.value}
+                          defaultValue={DEFAULT_UNIFIED_SETTINGS.sendShortcut}
+                        />
+                      </span>
                       {settings.sendShortcut === option.value && <CheckIcon aria-hidden="true" />}
                     </span>
                   </SelectItem>
@@ -1175,6 +1214,9 @@ export function ChatSettingsPanel() {
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
               <SettingResetButton
                 label="follow-up behavior"
+                defaultLabel={
+                  DEFAULT_UNIFIED_SETTINGS.followUpBehavior === "queue" ? "Queue" : "Steer"
+                }
                 onClick={() =>
                   updateSettings({
                     followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1198,8 +1240,20 @@ export function ChatSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="queue">Queue</SelectItem>
-                <SelectItem value="steer">Steer</SelectItem>
+                <SelectItem value="queue">
+                  Queue
+                  <DefaultOptionMark
+                    value="queue"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.followUpBehavior}
+                  />
+                </SelectItem>
+                <SelectItem value="steer">
+                  Steer
+                  <DefaultOptionMark
+                    value="steer"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.followUpBehavior}
+                  />
+                </SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -1233,6 +1287,7 @@ function ToolCallVisibilityRow() {
         settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility ? (
           <SettingResetButton
             label="tool calls in chat"
+            defaultLabel={TOOL_CALL_VISIBILITY_LABELS[DEFAULT_UNIFIED_SETTINGS.toolCallVisibility]}
             onClick={() =>
               updateSettings({ toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility })
             }
@@ -1253,6 +1308,10 @@ function ToolCallVisibilityRow() {
             {ToolCallVisibility.literals.map((value) => (
               <SelectItem key={value} value={value}>
                 {TOOL_CALL_VISIBILITY_LABELS[value]}
+                <DefaultOptionMark
+                  value={value}
+                  defaultValue={DEFAULT_UNIFIED_SETTINGS.toolCallVisibility}
+                />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -1273,6 +1332,11 @@ function DiffColorsSettingsRow() {
         settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme ? (
           <SettingResetButton
             label="diff colors"
+            defaultLabel={
+              DEFAULT_UNIFIED_SETTINGS.diffColorScheme === "blue-orange"
+                ? "Blue & orange"
+                : "Red & green"
+            }
             onClick={() =>
               updateSettings({ diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme })
             }
@@ -1305,8 +1369,20 @@ function DiffColorsSettingsRow() {
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="red-green">Red & green (default)</SelectItem>
-              <SelectItem value="blue-orange">Blue & orange</SelectItem>
+              <SelectItem value="red-green">
+                Red & green
+                <DefaultOptionMark
+                  value="red-green"
+                  defaultValue={DEFAULT_UNIFIED_SETTINGS.diffColorScheme}
+                />
+              </SelectItem>
+              <SelectItem value="blue-orange">
+                Blue & orange
+                <DefaultOptionMark
+                  value="blue-orange"
+                  defaultValue={DEFAULT_UNIFIED_SETTINGS.diffColorScheme}
+                />
+              </SelectItem>
             </SelectPopup>
           </Select>
         </div>
@@ -1329,6 +1405,7 @@ export function DiffsSettingsPanel() {
             settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
               <SettingResetButton
                 label="diff layout"
+                defaultLabel={DIFF_LAYOUT_LABELS[DEFAULT_UNIFIED_SETTINGS.diffLayout]}
                 onClick={() => updateSettings({ diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout })}
               />
             ) : null
@@ -1348,9 +1425,17 @@ export function DiffsSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="stacked">
                   {DIFF_LAYOUT_LABELS.stacked}
+                  <DefaultOptionMark
+                    value="stacked"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.diffLayout}
+                  />
                 </SelectItem>
                 <SelectItem hideIndicator value="split">
                   {DIFF_LAYOUT_LABELS.split}
+                  <DefaultOptionMark
+                    value="split"
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.diffLayout}
+                  />
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -1388,6 +1473,9 @@ export function DiffsSettingsPanel() {
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton
                 label="default diff file state"
+                defaultLabel={
+                  DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? "Collapsed" : "Expanded"
+                }
                 onClick={() =>
                   updateSettings({
                     diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -1415,9 +1503,17 @@ export function DiffsSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="expanded">
                   Expanded
+                  <DefaultOptionMark
+                    value={false}
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed}
+                  />
                 </SelectItem>
                 <SelectItem hideIndicator value="collapsed">
                   Collapsed
+                  <DefaultOptionMark
+                    value={true}
+                    defaultValue={DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed}
+                  />
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -1480,6 +1576,11 @@ function ScopedCompactIdleThreadsRow() {
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
             label="compact idle threads"
+            defaultLabel={
+              IDLE_COMPACTION_MODES.find(
+                (mode) => mode.value === globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS),
+              )?.label
+            }
             onClick={() =>
               updateSettings({ idleCompaction: globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) })
             }
@@ -1513,6 +1614,10 @@ function ScopedCompactIdleThreadsRow() {
                 disabled={mode.value === "off" && !idleCompaction.neverAvailable}
               >
                 {mode.label}
+                <DefaultOptionMark
+                  value={mode.value}
+                  defaultValue={globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS)}
+                />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -1904,6 +2009,9 @@ export function ThreadsSettingsPanel() {
               settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode ? (
                 <SettingResetButton
                   label="response streaming"
+                  defaultLabel={
+                    RESPONSE_STREAMING_MODE_LABELS[DEFAULT_UNIFIED_SETTINGS.responseStreamingMode]
+                  }
                   onClick={() =>
                     updateSettings({
                       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
@@ -1931,9 +2039,17 @@ export function ThreadsSettingsPanel() {
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem hideIndicator value="turn">
                     {RESPONSE_STREAMING_MODE_LABELS.turn}
+                    <DefaultOptionMark
+                      value="turn"
+                      defaultValue={DEFAULT_UNIFIED_SETTINGS.responseStreamingMode}
+                    />
                   </SelectItem>
                   <SelectItem hideIndicator value="paragraph">
                     {RESPONSE_STREAMING_MODE_LABELS.paragraph}
+                    <DefaultOptionMark
+                      value="paragraph"
+                      defaultValue={DEFAULT_UNIFIED_SETTINGS.responseStreamingMode}
+                    />
                   </SelectItem>
                 </SelectPopup>
               </Select>

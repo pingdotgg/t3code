@@ -107,6 +107,7 @@ import {
 } from "~/hooks/useSettings";
 
 import {
+  DefaultOptionMark,
   SettingsUnavailableGroup,
   SettingResetButton,
   SettingsPageContainer,
@@ -374,6 +375,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
             label="default browser viewport"
+            defaultLabel={viewportSelectLabel(DEFAULT_BROWSER_VIEWPORT)}
             onClick={() => updateSettings({ browserDefaultViewport: DEFAULT_BROWSER_VIEWPORT })}
           />
         ) : null
@@ -393,7 +395,13 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
               <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value={FILL_VALUE}>Fill panel</SelectItem>
+              <SelectItem value={FILL_VALUE}>
+                Fill panel
+                <DefaultOptionMark
+                  value={FILL_VALUE}
+                  defaultValue={viewportSelectValue(DEFAULT_BROWSER_VIEWPORT)}
+                />
+              </SelectItem>
               <SelectItem value={RESPONSIVE_VALUE}>Responsive</SelectItem>
               <SelectGroup>
                 <SelectGroupLabel>Standard</SelectGroupLabel>
@@ -482,6 +490,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
           <SettingResetButton
             label="default browser zoom"
+            defaultLabel={zoomLabel(DEFAULT_PREVIEW_ZOOM_FACTOR)}
             onClick={() =>
               updateSettings({ browserDefaultZoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR })
             }
@@ -504,6 +513,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
             {PREVIEW_ZOOM_LEVELS.map((level) => (
               <SelectItem hideIndicator key={level} value={String(level)}>
                 {zoomLabel(level)}
+                <DefaultOptionMark value={level} defaultValue={DEFAULT_PREVIEW_ZOOM_FACTOR} />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -525,6 +535,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
           <SettingResetButton
             label="default browser appearance"
+            defaultLabel={APPEARANCE_LABELS[DEFAULT_PREVIEW_APPEARANCE]}
             onClick={() => updateSettings({ browserDefaultAppearance: DEFAULT_PREVIEW_APPEARANCE })}
           />
         ) : null
@@ -550,6 +561,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
             {Object.entries(APPEARANCE_LABELS).map(([value, label]) => (
               <SelectItem hideIndicator key={value} value={value}>
                 {label}
+                <DefaultOptionMark value={value} defaultValue={DEFAULT_PREVIEW_APPEARANCE} />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -609,6 +621,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
         !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
           <SettingResetButton
             label="browser recording frame rate"
+            defaultLabel={`${DEFAULT_BROWSER_RECORDING_FRAME_RATE} fps`}
             onClick={() =>
               updateSettings({ browserRecordingFrameRate: DEFAULT_BROWSER_RECORDING_FRAME_RATE })
             }
@@ -637,6 +650,10 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
             {BROWSER_RECORDING_FRAME_RATES.map((rate) => (
               <SelectItem hideIndicator key={rate} value={String(rate)}>
                 {rate} fps
+                <DefaultOptionMark
+                  value={rate}
+                  defaultValue={DEFAULT_BROWSER_RECORDING_FRAME_RATE}
+                />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -663,6 +680,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
             label="link target"
+            defaultLabel={LINK_TARGET_LABELS[DEFAULT_BROWSER_LINK_TARGET]}
             onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
           />
         ) : null
@@ -684,6 +702,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
               <SelectItem hideIndicator key={target} value={target}>
                 {LINK_TARGET_LABELS[target]}
+                <DefaultOptionMark value={target} defaultValue={DEFAULT_BROWSER_LINK_TARGET} />
               </SelectItem>
             ))}
           </SelectPopup>
@@ -717,6 +736,7 @@ function BrowserSearchEngineSetting() {
           engine !== DEFAULT_BROWSER_SEARCH_ENGINE || customUrl !== "" ? (
             <SettingResetButton
               label="search engine"
+              defaultLabel={SEARCH_ENGINE_LABELS[DEFAULT_BROWSER_SEARCH_ENGINE]}
               onClick={() =>
                 updateSettings({
                   browserSearchEngine: DEFAULT_BROWSER_SEARCH_ENGINE,
@@ -743,6 +763,7 @@ function BrowserSearchEngineSetting() {
               {BrowserSearchEngine.literals.map((literal) => (
                 <SelectItem hideIndicator key={literal} value={literal}>
                   {SEARCH_ENGINE_LABELS[literal]}
+                  <DefaultOptionMark value={literal} defaultValue={DEFAULT_BROWSER_SEARCH_ENGINE} />
                 </SelectItem>
               ))}
             </SelectPopup>

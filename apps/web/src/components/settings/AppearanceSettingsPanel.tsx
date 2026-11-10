@@ -3,8 +3,8 @@ import { useState } from "react";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
-  type ChatWidth,
-  type EffortDisplay,
+  ChatWidth,
+  EffortDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
@@ -26,6 +26,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
+  DefaultOptionMark,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -264,6 +265,7 @@ export function AppearanceSettingsPanel() {
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton
                 label="chat width"
+                defaultLabel={CHAT_WIDTH_LABELS[DEFAULT_UNIFIED_SETTINGS.chatWidth]}
                 onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
               />
             ) : null
@@ -281,9 +283,15 @@ export function AppearanceSettingsPanel() {
                   <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
-                  <SelectItem value="wide">Wide</SelectItem>
-                  <SelectItem value="full">Full</SelectItem>
+                  {ChatWidth.literals.map((width) => (
+                    <SelectItem key={width} value={width}>
+                      {CHAT_WIDTH_LABELS[width]}
+                      <DefaultOptionMark
+                        value={width}
+                        defaultValue={DEFAULT_UNIFIED_SETTINGS.chatWidth}
+                      />
+                    </SelectItem>
+                  ))}
                 </SelectPopup>
               </Select>
             </div>
@@ -297,6 +305,7 @@ export function AppearanceSettingsPanel() {
             settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay ? (
               <SettingResetButton
                 label="effort display"
+                defaultLabel={EFFORT_DISPLAY_LABELS[DEFAULT_UNIFIED_SETTINGS.effortDisplay]}
                 onClick={() =>
                   updateSettings({ effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay })
                 }
@@ -316,8 +325,15 @@ export function AppearanceSettingsPanel() {
                   <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="label">Word (default)</SelectItem>
-                  <SelectItem value="bars">Bars</SelectItem>
+                  {EffortDisplay.literals.map((display) => (
+                    <SelectItem key={display} value={display}>
+                      {EFFORT_DISPLAY_LABELS[display]}
+                      <DefaultOptionMark
+                        value={display}
+                        defaultValue={DEFAULT_UNIFIED_SETTINGS.effortDisplay}
+                      />
+                    </SelectItem>
+                  ))}
                 </SelectPopup>
               </Select>
             </div>
@@ -415,6 +431,11 @@ export function AppearanceSettingsPanel() {
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton
                   label="environment identification"
+                  defaultLabel={
+                    environmentIdentificationOptionList.find(
+                      ([value]) => value === DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+                    )?.[1]
+                  }
                   onClick={() =>
                     updateSettings({
                       environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
@@ -444,6 +465,10 @@ export function AppearanceSettingsPanel() {
                   {environmentIdentificationOptionList.map(([value, label]) => (
                     <SelectItem hideIndicator key={value} value={value}>
                       {label}
+                      <DefaultOptionMark
+                        value={value}
+                        defaultValue={DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE}
+                      />
                     </SelectItem>
                   ))}
                 </SelectPopup>

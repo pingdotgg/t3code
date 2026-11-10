@@ -1148,7 +1148,8 @@ export function ProviderInstanceCard({
               />
               <SettingResetButton
                 label={`${displayName} enablement`}
-                tooltip="Reset to the device setting"
+                compact
+                action="Reset to the device setting"
                 disabled={readOnly || !canWriteSettings}
                 onClick={projectOverride.onReset}
               />
