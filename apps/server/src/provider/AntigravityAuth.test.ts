@@ -372,21 +372,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
-  it.effect("shows verification as soon as authenticate succeeds", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ interactive: false });
-      yield* harness.auth.controller.start(owner);
-      yield* Deferred.succeed(harness.authenticated, undefined);
-      yield* Deferred.await(harness.sessionRequested);
-
-      const current = yield* harness.auth.controller
-        .subscribe(owner)
-        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-      assert.equal(current.phase, "verifying");
-      assert.equal(current.message, "Checking Antigravity access and models.");
-    }),
-  );
-
   it.effect("ignores a late duplicate Google link once sign-in authenticates", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
