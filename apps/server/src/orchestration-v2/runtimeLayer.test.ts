@@ -1,6 +1,7 @@
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -329,7 +330,16 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
     Layer.mergeAll(
       ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      // The orchestrator depends on this layer, so read the shell from its projection.
+      Layer.unwrap(
+        ProjectionStore.ProjectionStoreV2.pipe(
+          Effect.map(({ getThreadShell }) =>
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: (threadId) => getThreadShell(threadId).pipe(Effect.orDie),
+            }),
+          ),
+        ),
+      ).pipe(Layer.provide(ProjectionStore.layer)),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -401,6 +411,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         const projectId = ProjectId.make(`automation-delete-project:${deletion}`);
         const threadId = ThreadId.make(`automation-delete-thread:${deletion}`);
         const otherThreadId = ThreadId.make(`automation-surviving-thread:${deletion}`);
+        const otherProjectId = ProjectId.make("automation-other-project");
         yield* projects.create({
           commandId: CommandId.make(`automation-create-project:${deletion}`),
           projectId,
@@ -414,7 +425,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             createdBy: "user",
             creationSource: "web",
             threadId: id,
-            projectId: id === threadId ? projectId : ProjectId.make("automation-other-project"),
+            projectId: id === threadId ? projectId : otherProjectId,
             title: "Automation target",
             modelSelection,
             runtimeMode: "full-access",
@@ -432,7 +443,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             prompt: "Check orchestration progress",
             enabled: !webhook,
             schedule: webhook ? { type: "webhook" } : { type: "interval", everyMs: 60_000 },
-            projectId,
+            projectId: target === otherThreadId ? otherProjectId : projectId,
             threadId: target,
             workspaceStrategy: { type: "root" },
             modelSelection,
@@ -3503,12 +3514,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
+  it.effect.each(["pending", "action-required"] as const)("recovers %s watches", (initialStatus) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-owed");
-      const projectId = ProjectId.make("pr-watch-owed-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-owed-${initialStatus}`);
+      const projectId = ProjectId.make(`pr-watch-owed-project-${initialStatus}`);
       yield* seedProject({
         projectId,
         title: "Watch owed",
@@ -3520,7 +3531,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-owed-create"),
+        commandId: CommandId.make(`pr-watch-owed-create-${initialStatus}`),
         threadId,
         projectId,
         title: "Watch owed",
@@ -3533,7 +3544,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const watch = (on: boolean, id: string) =>
         orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-owed-${id}`),
+          commandId: CommandId.make(`pr-watch-owed-${initialStatus}-${id}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -3543,7 +3554,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* watch(true, "start");
 
-      let remainingStatus: "pending" | "success" = "pending";
+      let remainingStatus: "pending" | "action-required" | "success" = initialStatus;
+      const approval = initialStatus === "action-required";
+      const firstSummary = approval ? "#12: checks await approval" : "#12: checks passed";
+      const runUrl = "https://github.com/pingdotgg/t3code/actions/runs/123";
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -3560,7 +3574,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 name,
                 status: name === "test" ? remainingStatus : ("success" as const),
                 description: null,
-                url: null,
+                url: name === "test" ? `${runUrl}/job/7` : null,
                 required: name === "lint",
               })),
             })),
@@ -3585,38 +3599,42 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       assert.deepEqual(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
-        ["test"],
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.[
+          approval ? "awaitingApproval" : "owedChecks"
+        ],
+        approval ? [runUrl] : ["test"],
       );
       // The fresh reactor reloads the nonempty obligation from the persisted watch.
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       // A new watch on the same pull request knows what the last one told.
       yield* watch(false, "stop");
       yield* watch(true, "again");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       assert.deepEqual(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
-        ["test"],
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.[
+          approval ? "awaitingApproval" : "owedChecks"
+        ],
+        approval ? [runUrl] : ["test"],
       );
       remainingStatus = "success";
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary, "#12: checks passed"]);
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary, "#12: checks passed"]);
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
         [],
@@ -4151,6 +4169,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     "repeated cursor",
     "missing comments",
     "thread list truncated",
+    "hidden reply",
   ])("wakes a watched thread once: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4226,7 +4245,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         body: "Twelfth reply.",
         createdAt: "2999-01-01T00:00:02.000Z",
       };
-      const incomplete = mode !== "single page" && mode !== "paginated";
+      const incomplete = mode !== "single page" && mode !== "paginated" && mode !== "hidden reply";
       let recovering = false;
       let pagesRead = 0;
       const reactor = yield* PullRequestWatchReactor.make.pipe(
@@ -4257,7 +4276,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                             isResolved: false,
                             isOutdated: false,
                             comments: firstTen,
-                            commentCount: 12,
+                            commentCount: mode === "hidden reply" ? 13 : 12,
                             nextCommentsCursor: "after-10",
                           },
                         ],
@@ -4284,7 +4303,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 if (!recovering && mode === "missing comments") {
                   return Effect.succeed({ comments: [], nextCursor: null });
                 }
-                return Effect.succeed({ comments: [eleventh, twelfth], nextCursor: null });
+                return Effect.succeed({
+                  comments: [eleventh, twelfth],
+                  nextCursor: null,
+                  ...(mode === "hidden reply" ? { hiddenCount: 1 } : {}),
+                });
               },
             }),
           ),
@@ -7190,11 +7213,6 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
       const threadId = yield* createThread("main", folder);
       const siblingId = yield* createThread("sibling", folder);
       const otherId = yield* createThread("other", `${SCRATCH_ROOT}/2026-01-01-elsewhere`);
-      yield* orchestrator.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("promotion-moves-sibling-archive"),
-        threadId: siblingId,
-      });
       const { task } = yield* tasks.upsert({
         id: ScheduledTaskId.make("promotion-moves-bound"),
         title: "Bound",
@@ -7209,6 +7227,11 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         interactionMode: "default",
         createdBy: "user",
         creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("promotion-moves-sibling-archive"),
+        threadId: siblingId,
       });
 
       const { projectId } = yield* promotion.promote({ threadId });
@@ -8165,6 +8188,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 
   it.effect.each([
     "resume",
+    "resume-started",
+    "resume-untagged",
     "queued-resume",
     "rearm",
     "snooze-race",
@@ -8643,17 +8668,97 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(resume);
       }
       const after = yield* orchestrator.getThreadProjection(threadId);
-      if (scenario === "resume") {
+      if (
+        scenario === "resume" ||
+        scenario === "resume-started" ||
+        scenario === "resume-untagged"
+      ) {
         assert.deepInclude(after.messages.at(-1), {
           text: "Continue where you left off.",
           createdBy: "agent",
           creationSource: "server",
         });
+        const continuation = after.runs.at(-1)!;
+        assert.equal(continuation.status, "starting");
+        if (scenario === "resume-started") {
+          const startedAt = yield* DateTime.now;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make("recovery:continuation-started:resume-started"),
+                type: "run.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: startedAt,
+                payload: { ...continuation, status: "running", startedAt },
+              },
+            ],
+          });
+        }
+        if (scenario === "resume-untagged") {
+          // A server older than the run tag stored the resume run without it.
+          const { usageLimitContinuationOfRunId: _, ...untagged } = continuation;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make("recovery:continuation-untagged"),
+                type: "run.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: yield* DateTime.now,
+                payload: untagged,
+              },
+            ],
+          });
+        }
+        yield* (yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService).reconcile(
+          "startup",
+        );
+        const restartedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const retry = limitRecoveryCommand(
+          restartedShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        if (scenario === "resume-started") assert.isNull(retry);
+        else assert(retry?.type === "message.dispatch");
+        if (scenario === "resume") {
+          assert.notEqual(retry!.commandId, resume!.commandId);
+        } else {
+          assert.equal(
+            restartedShell.limitRecovery?.requestId,
+            after.thread.limitRecovery?.requestId,
+          );
+        }
+        if (retry !== null) {
+          yield* orchestrator.dispatch(retry);
+          yield* orchestrator.dispatch(retry);
+        }
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        const visible = createOrchestrationV2TurnItemVisibility({
+          runs: resumed.runs,
+          attempts: resumed.attempts,
+          items: resumed.turnItems,
+        });
+        assert.deepEqual(
+          resumed.turnItems.flatMap((item) =>
+            item.type === "user_message" && visible(item) ? [item.runId] : [],
+          ),
+          [run.id, resumed.runs.at(-1)!.id],
+        );
+        assert.deepEqual(
+          resumed.runs.map((row) => row.status),
+          scenario === "resume" ? ["failed", "cancelled", "starting"] : ["failed", "cancelled"],
+        );
       }
       assert.lengthOf(
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "resume-started" ||
+          scenario === "resume-untagged" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8665,6 +8770,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "resume-started" ||
+          scenario === "resume-untagged" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
