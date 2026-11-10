@@ -65,7 +65,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
-    authMethod?: "oauth-personal" | "gemini-api-key";
+    authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -330,11 +330,12 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // Oracle: the existing endpoint merge keeps the most-used reading.
-  it.effect("keeps the used endpoint reading and its reset over an untouched reading", () =>
+  // Oracle: workspace sign-ins are metered on cloudcode-pa, so its reading wins even when less used.
+  it.effect("reports a business account's quota from the endpoint it is metered on", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")));
       const { probe } = yield* fixture({
+        authMethod: "oauth-business",
         summaryByHost: {
           "daily-cloudcode-pa.googleapis.com": {
             buckets: [
@@ -383,9 +384,8 @@ describe("Antigravity subscription limits", () => {
           id: "3p-weekly",
           label: "Claude & GPT (shared) · Weekly",
           kind: "weekly",
-          usedPercent: 50,
+          usedPercent: 0,
           windowDurationMins: 10080,
-          resetsAt: "2026-10-27T10:16:04.000Z",
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -474,7 +474,43 @@ describe("Antigravity subscription limits", () => {
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
-      expect(byId.get("3p-weekly")?.usedPercent).toBe(100);
+      expect(byId.get("3p-weekly")?.usedPercent).toBe(50);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // Oracle: reported payloads for a personal sign-in, whose runtime meters on the daily endpoint.
+  it.effect("reports a personal account's quota from the daily endpoint it is metered on", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-07T12:00:00Z")));
+      const argon = (remainingFraction: number, resetTime: string) => ({
+        groups: [
+          {
+            displayName: "Gemini 4 Argon",
+            buckets: [
+              {
+                bucketId: "gemini-argon-wtu-weekly",
+                window: "weekly",
+                remainingFraction,
+                resetTime,
+              },
+            ],
+          },
+        ],
+      });
+      const { probe } = yield* fixture({
+        authMethod: "oauth-personal",
+        summaryByHost: {
+          "daily-cloudcode-pa.googleapis.com": argon(0.8623059, "2026-11-14T08:41:35Z"),
+          "cloudcode-pa.googleapis.com": argon(0, "2026-11-08T18:27:14Z"),
+        },
+      });
+      expect((yield* probe).windows).toEqual([
+        expect.objectContaining({
+          id: "gemini-argon-wtu-weekly",
+          usedPercent: expect.closeTo(13.77, 2),
+          resetsAt: "2026-11-14T08:41:35.000Z",
+        }),
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
