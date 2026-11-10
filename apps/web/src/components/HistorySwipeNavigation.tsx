@@ -39,17 +39,19 @@ function readMainContentBounds(): SwipeBounds {
 }
 
 // Electron cannot tell a wheel from a trackpad, but Chromium's legacy wheelDelta counts wheel
-// notches in multiples of 120, while macOS trackpads report it as -3x the pixel delta.
+// notches in multiples of 120, divided by page zoom and rounded to an integer. A trackpad
+// swipe's first event is a few pixels, so it rarely lands on a multiple.
 function isMouseWheelNotch(event: WheelEvent): boolean {
   const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
     wheelDeltaX?: number;
     wheelDeltaY?: number;
   };
   if (wheelDeltaX === 0 && wheelDeltaY === 0) return false;
-  if (wheelDeltaX % WHEEL_NOTCH_DELTA !== 0 || wheelDeltaY % WHEEL_NOTCH_DELTA !== 0) return false;
-  return (
-    Math.abs(wheelDeltaX + 3 * event.deltaX) >= 1 || Math.abs(wheelDeltaY + 3 * event.deltaY) >= 1
-  );
+  const zoom = window.desktopBridge?.getWindowZoomFactor() ?? 1;
+  return [wheelDeltaX, wheelDeltaY].every((wheelDelta) => {
+    const notches = (wheelDelta * zoom) / WHEEL_NOTCH_DELTA;
+    return Math.abs(notches - Math.round(notches)) * WHEEL_NOTCH_DELTA <= zoom;
+  });
 }
 
 // `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.

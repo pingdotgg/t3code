@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 const navigateHistory = vi.hoisted(() => vi.fn());
@@ -60,15 +60,42 @@ describe("HistorySwipeNavigation", () => {
   });
 
   it.each([
-    ["a macOS trackpad swipe navigates", -120, 360, true],
-    ["a macOS horizontal mouse wheel notch keeps the thread", -200, 240, false],
-    ["a Linux horizontal mouse wheel notch keeps the thread", -120, 120, false],
-  ])("%s", async (_name, deltaX, wheelDeltaX, navigates) => {
+    [
+      "a macOS trackpad swipe navigates",
+      1,
+      [
+        [-4, 12],
+        [-60, 180],
+        [-60, 180],
+      ],
+      true,
+    ],
+    ["an accelerated macOS mouse wheel notch keeps the thread", 1, [[-200, 240]], false],
+    [
+      "slow macOS mouse wheel notches keep the thread",
+      1,
+      [
+        [-40, 120],
+        [-40, 120],
+        [-40, 120],
+      ],
+      false,
+    ],
+    ["a macOS mouse wheel notch at 120% zoom keeps the thread", 1.2, [[-166.67, 200]], false],
+    ["a macOS mouse wheel notch at 110% zoom keeps the thread", 1.1, [[-181.82, 218]], false],
+    ["a Linux horizontal mouse wheel notch keeps the thread", 1, [[-120, 120]], false],
+  ] as const)("%s", async (_name, zoomFactor, events, navigates) => {
     navigateHistory.mockReset();
+    using _bridge = stubGlobal("desktopBridge", {
+      getWindowZoomFactor: () => zoomFactor,
+      onTrackpadScrollBegin: () => () => {},
+      onTrackpadScrollEnd: () => () => {},
+    });
     await using screen = await render(<HistorySwipeNavigation />);
     const target = screen.container.appendChild(document.createElement("div"));
-    for (const init of [{ deltaX, wheelDeltaX }, { deltaX: 0 }]) {
-      target.dispatchEvent(new WheelEvent("wheel", { ...init, bubbles: true }));
+    for (const [deltaX, wheelDeltaX] of [...events, [0, 0]]) {
+      const init = { deltaX, wheelDeltaX, bubbles: true };
+      target.dispatchEvent(new WheelEvent("wheel", init));
     }
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
