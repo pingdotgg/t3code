@@ -105,6 +105,7 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
+const VIEWER_COMMAND_TIMEOUT = "5 seconds";
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -1787,6 +1788,14 @@ const make = Effect.gen(function* () {
     return started;
   };
 
+  const withinViewerDeadline = <A>(command: Promise<A>): Promise<A | null> =>
+    runPromise(
+      Effect.promise(() => command.catch(() => null)).pipe(
+        Effect.timeoutOption(VIEWER_COMMAND_TIMEOUT),
+        Effect.map(Option.getOrNull),
+      ),
+    );
+
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
@@ -2560,15 +2569,15 @@ const make = Effect.gen(function* () {
       screencastScale = scale;
       screencastParams = screencastParams.then(async () => {
         if (tab.capturing > 0) return;
-        await session.send("Page.stopScreencast").catch(constVoid);
-        await session
-          .send("Page.startScreencast", {
+        await withinViewerDeadline(session.send("Page.stopScreencast"));
+        await withinViewerDeadline(
+          session.send("Page.startScreencast", {
             format: "jpeg",
             quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
             maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
             maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
-          })
-          .catch(constVoid);
+          }),
+        );
       });
       return screencastParams;
     };
@@ -2601,9 +2610,9 @@ const make = Effect.gen(function* () {
         }
       },
       pause: () => {
-        screencastParams = screencastParams.then(() =>
-          session.send("Page.stopScreencast").then(constVoid, constVoid),
-        );
+        screencastParams = screencastParams
+          .then(() => withinViewerDeadline(session.send("Page.stopScreencast")))
+          .then(constVoid);
         return screencastParams;
       },
       resume: () => startScreencast(screencastScale),
@@ -2630,7 +2639,9 @@ const make = Effect.gen(function* () {
     pushFileChooser(tab);
     const pushStill = async () => {
       const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+        withinViewerDeadline(
+          ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+        ),
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
