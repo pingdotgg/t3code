@@ -1250,6 +1250,7 @@ export const layerQueryRunner: Layer.Layer<
               child.stderr
                 .setEncoding("utf8")
                 .on("data", (chunk: string) => options.stderr?.(chunk));
+              if (stopScope !== undefined) child.once("exit", stopScope);
               return child;
             });
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
@@ -1258,6 +1259,9 @@ export const layerQueryRunner: Layer.Layer<
           const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
             const child = spawnProcess(spawnOptions);
             spawnedProcess = child;
+            if (unit !== undefined && "pid" in child && typeof child.pid === "number") {
+              runFork(agentScope.adopt(unit, child.pid));
+            }
             // A spawn that fails emits only "error".
             const releaseAgent = portDiscovery.trackAgent();
             child.once("exit", releaseAgent);

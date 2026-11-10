@@ -26,7 +26,10 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as TrackedAgentScope from "../../process/trackedAgentScope.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
@@ -577,6 +580,92 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => leftoverStopped);
       assert.strictEqual(yield* Deferred.await(stopped), "t3code-claude-test.scope");
     }),
+  );
+
+  // A Bash tool job can move to its own group and outlive its shell, as a
+  // timed-out search did after Claude Code stopped tracking it.
+  it.live("stops a job that left the CLI's group and lost its shell when the session closes", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli('"$(dirname "$0")/shell.sh" &\ncat > /dev/null');
+      const dir = NodePath.dirname(cli);
+      const file = (name: string) => NodePath.join(dir, name);
+      NodeFS.writeFileSync(
+        file("shell.sh"),
+        [
+          "#!/bin/sh",
+          'dir=$(dirname "$0")',
+          'exec 4> "$dir/shell"',
+          `perl -e 'setpgrp(0, 0); exec @ARGV' "$dir/job.sh" 4>&- &`,
+          'read -r _ < "$dir/release"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        file("job.sh"),
+        '#!/bin/sh\necho $$ > "$(dirname "$0")/job.pid"\nexec sleep 600 > "$(dirname "$0")/alive"\n',
+        { mode: 0o755 },
+      );
+      for (const fifo of ["alive", "shell", "release"]) {
+        NodeChildProcess.execFileSync("mkfifo", [file(fifo)]);
+      }
+      const jobPid = () => Number(NodeFS.readFileSync(file("job.pid"), "utf8"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(jobPid(), "SIGKILL");
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const closed = (name: string) => {
+        const stream = NodeFS.createReadStream(file(name)).resume();
+        return {
+          opened: new Promise<void>((resolve) => stream.once("open", () => resolve())),
+          closed: new Promise<void>((resolve) => stream.once("close", () => resolve())),
+        };
+      };
+      const job = closed("alive");
+      const shell = closed("shell");
+
+      const tracked = yield* TrackedAgentScope.make;
+      const adopted = yield* Deferred.make<void>();
+      const session = yield* openFakeCli(cli).pipe(
+        Effect.provide(
+          realQueryRunner.pipe(
+            Layer.provide(
+              Layer.succeed(AgentScope, {
+                ...tracked.scope,
+                adopt: (unit, pid) =>
+                  tracked.scope
+                    .adopt(unit, pid)
+                    .pipe(Effect.ensuring(Deferred.done(adopted, Exit.void))),
+              }),
+            ),
+          ),
+        ),
+      );
+      yield* Deferred.await(adopted);
+      yield* Effect.promise(() => job.opened);
+      yield* tracked.refresh;
+      NodeFS.writeFileSync(file("release"), "\n");
+      yield* Effect.promise(() => shell.closed);
+
+      // Background work keeps running while its session does.
+      process.kill(jobPid(), 0);
+      const pgid = Number(
+        NodeChildProcess.execFileSync("ps", ["-o", "pgid=", "-p", `${jobPid()}`]),
+      );
+      assert.strictEqual(pgid, jobPid());
+      yield* session.close;
+      yield* Effect.promise(() => job.closed);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProcessRunner.layer,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-cli-scope-" }),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    ),
   );
 
   const rootRefusal =

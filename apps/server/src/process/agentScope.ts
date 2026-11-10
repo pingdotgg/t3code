@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as TrackedAgentScope from "./trackedAgentScope.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
@@ -99,6 +100,7 @@ const MAX_TRACKED_THREADS = 500;
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
+  if (platform === "darwin" || platform === "win32") return (yield* TrackedAgentScope.make).scope;
   if (platform !== "linux") return AgentScope.defaultValue();
 
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -420,6 +422,7 @@ export const make = Effect.gen(function* () {
       };
       return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
     }),
+    adopt: () => Effect.void,
     oomKilled,
     stop,
     kill,

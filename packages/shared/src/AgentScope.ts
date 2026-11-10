@@ -16,6 +16,11 @@ export interface AgentScopeShape {
      */
     readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
+  /**
+   * Records the pid a wrapped command started, for scopes that track processes
+   * instead of containing them (macOS, Windows). A no-op under systemd.
+   */
+  readonly adopt: (unit: string, pid: number) => Effect.Effect<void>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
    * Reaps processes left after the owning agent exits, including setsid
@@ -39,13 +44,14 @@ export interface AgentScopeShape {
 export interface AgentScopeCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
-  /** The systemd scope the command runs in, for `stop`. */
+  /** What `stop` and `adopt` take: the systemd scope on Linux, a tracked session elsewhere. */
   readonly unit?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
+    adopt: () => Effect.void,
     oomKilled: () => Effect.succeed(false),
     stop: () => Effect.void,
     kill: () => Effect.succeed(false),
