@@ -8,18 +8,6 @@
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "examples/monorepo-multi-stack/frontend"
   },
-  "dependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@types/react-dom": "catalog:",
-    "@types/react": "catalog:",
-    "alchemy": "workspace:*",
-    "@monorepo-multi-stack/backend": "workspace:*",
-    "effect": "catalog:",
-    "react-dom": "catalog:",
-    "react": "catalog:",
-    "vite": "catalog:"
-  },
   "scripts": {
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
@@ -27,5 +15,18 @@
     "logs": "alchemy logs",
     "tail": "alchemy logs --tail",
     "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@monorepo-multi-stack/backend": "workspace:*",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "vite": "catalog:"
   }
 }

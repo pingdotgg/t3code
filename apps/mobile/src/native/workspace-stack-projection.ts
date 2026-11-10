@@ -161,3 +161,9 @@ export function reconcileStackScreens<T extends { readonly key: string }>(
   });
   return screens;
 }
+
+/** Whether a route is presented over the stack (a sheet or modal) rather than pushed. */
+export function isPresentedRoute(options: { readonly presentation?: string } | undefined) {
+  const presentation = options?.presentation;
+  return presentation !== undefined && presentation !== "card";
+}

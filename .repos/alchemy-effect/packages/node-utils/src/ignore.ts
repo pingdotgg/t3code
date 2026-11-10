@@ -1,3 +1,5 @@
+// oxlint-disable unicorn/prefer-string-starts-ends-with no-control-regex
+
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 //
@@ -348,13 +350,11 @@ const TRAILING_WILD_CARD_REPLACERS: Record<MatcherMode, Replacer> = {
 // @param {pattern}
 const makeRegexPrefix = (pattern: string): string =>
   REPLACERS.reduce(
-    (prev, [matcher, replacer]) =>
-      prev.replace(matcher, replacer.bind(pattern)),
+    (prev, [matcher, replacer]) => prev.replace(matcher, replacer.bind(pattern)),
     pattern,
   );
 
-const isString = (subject: unknown): subject is string =>
-  typeof subject === "string";
+const isString = (subject: unknown): subject is string => typeof subject === "string";
 
 // > A blank line matches no files, so it can serve as a separator for readability.
 const checkPattern = (pattern: string): boolean =>
@@ -430,10 +430,7 @@ class IgnoreRule {
   }
 }
 
-const createRule = (
-  { pattern, mark }: PatternParams,
-  ignoreCase: boolean,
-): IgnoreRule => {
+const createRule = ({ pattern, mark }: PatternParams, ignoreCase: boolean): IgnoreRule => {
   let negative = false;
   let body = pattern;
 
@@ -489,19 +486,15 @@ class RuleManager {
   }
 
   // @param {Array<string> | string | Ignore} pattern
-  add(
-    pattern: string | Ignore | PatternParams | readonly (string | Ignore)[],
-  ): boolean {
+  add(pattern: string | Ignore | PatternParams | readonly (string | Ignore)[]): boolean {
     this._added = false;
 
-    const patterns: readonly (string | Ignore | PatternParams)[] = isString(
-      pattern,
-    )
+    const patterns: readonly (string | Ignore | PatternParams)[] = isString(pattern)
       ? splitPattern(pattern)
       : Array.isArray(pattern)
         ? pattern
         : [pattern as Ignore | PatternParams];
-    patterns.forEach(this._add, this);
+    patterns.forEach((p) => this._add(p));
 
     return this._added;
   }
@@ -514,11 +507,7 @@ class RuleManager {
   // - check `string` either `MODE_IGNORE` or `MODE_CHECK_IGNORE`
 
   // @returns {TestResult} true if a file is ignored
-  test(
-    path: string,
-    checkUnignored: boolean,
-    mode: MatcherMode,
-  ): IgnoreTestResult {
+  test(path: string, checkUnignored: boolean, mode: MatcherMode): IgnoreTestResult {
     let ignored = false;
     let unignored = false;
     let matchedRule: IgnoreRule | undefined;
@@ -570,27 +559,21 @@ class RuleManager {
 }
 
 type ErrorConstructor = new (message: string) => Error;
-type InvalidPathHandler = (
-  message: string,
-  constructor: ErrorConstructor,
-) => boolean;
+type InvalidPathHandler = (message: string, constructor: ErrorConstructor) => boolean;
 
 const throwError: InvalidPathHandler = (message, Ctor) => {
   throw new Ctor(message);
 };
 
 interface CheckPath {
-  (path: unknown, originalPath: unknown, doThrow: InvalidPathHandler): boolean;
+  (path: unknown, originalPath: string, doThrow: InvalidPathHandler): boolean;
   isNotRelative: (path: string) => boolean;
   convert: (path: string) => string;
 }
 
 const checkPath: CheckPath = (path, originalPath, doThrow) => {
   if (!isString(path)) {
-    return doThrow(
-      `path must be a string, but got \`${originalPath}\``,
-      TypeError,
-    );
+    return doThrow(`path must be a string, but got \`${originalPath}\``, TypeError);
   }
 
   // We don't know if we should ignore EMPTY, so throw
@@ -601,17 +584,13 @@ const checkPath: CheckPath = (path, originalPath, doThrow) => {
   // Check if it is a relative path
   if (checkPath.isNotRelative(path)) {
     const r = "`path.relative()`d";
-    return doThrow(
-      `path should be a ${r} string, but got "${originalPath}"`,
-      RangeError,
-    );
+    return doThrow(`path should be a ${r} string, but got "${originalPath}"`, RangeError);
   }
 
   return true;
 };
 
-const isNotRelative = (path: string): boolean =>
-  REGEX_TEST_INVALID_PATH.test(path);
+const isNotRelative = (path: string): boolean => REGEX_TEST_INVALID_PATH.test(path);
 
 checkPath.isNotRelative = isNotRelative;
 
@@ -646,9 +625,7 @@ class Ignore {
     this._testCache = Object.create(null);
   }
 
-  add(
-    pattern: string | Ignore | readonly (string | Ignore)[] | PatternParams,
-  ): this {
+  add(pattern: string | Ignore | readonly (string | Ignore)[] | PatternParams): this {
     if (this._rules.add(pattern)) {
       // Some rules have just added to the ignore,
       //   making the behavior changed,
@@ -676,11 +653,7 @@ class Ignore {
       // Supports nullable path
       checkPath.convert(originalPath);
 
-    checkPath(
-      path,
-      originalPath,
-      this._strictPathCheck ? throwError : RETURN_FALSE,
-    );
+    checkPath(path, originalPath, this._strictPathCheck ? throwError : RETURN_FALSE);
 
     return this._t(path, cache, checkUnignored, slices);
   }
@@ -696,12 +669,7 @@ class Ignore {
     slices.pop();
 
     if (slices.length) {
-      const parent = this._t(
-        slices.join(SLASH) + SLASH,
-        this._testCache,
-        true,
-        slices,
-      );
+      const parent = this._t(slices.join(SLASH) + SLASH, this._testCache, true, slices);
 
       if (parent.ignored) {
         return parent;
@@ -738,19 +706,10 @@ class Ignore {
 
     // If the path has no parent directory, just test it
     if (!slices.length) {
-      return (cache[path] = this._rules.test(
-        path,
-        checkUnignored,
-        MODE_IGNORE,
-      ));
+      return (cache[path] = this._rules.test(path, checkUnignored, MODE_IGNORE));
     }
 
-    const parent = this._t(
-      slices.join(SLASH) + SLASH,
-      cache,
-      checkUnignored,
-      slices,
-    );
+    const parent = this._t(slices.join(SLASH) + SLASH, cache, checkUnignored, slices);
 
     // If the path contains a parent directory, check the parent first
     return (cache[path] = parent.ignored
@@ -762,6 +721,13 @@ class Ignore {
 
   ignores(path: string): boolean {
     return this._test(path, this._ignoreCache, false).ignored;
+  }
+
+  // Alchemy addition: match one path against the rules without checking its
+  // parent directories, so callers can start the parent walk below a
+  // boundary (e.g. a working directory inside an ignored folder).
+  matches(path: string): IgnoreTestResult {
+    return this._rules.test(checkPath.convert(path), true, MODE_IGNORE);
   }
 
   createFilter(): (path: string) => boolean {
@@ -783,13 +749,9 @@ const factory = (options?: IgnoreOptions): Ignore => new Ignore(options);
 const isPathValid = (path: string): boolean =>
   checkPath(path && checkPath.convert(path), path, RETURN_FALSE);
 
-/* istanbul ignore next */
 const setupWindows = () => {
-  /* eslint no-control-regex: "off" */
   const makePosix = (str: string): string =>
-    /^\\\\\?\\/.test(str) || /["<>|\u0000-\u001F]+/u.test(str)
-      ? str
-      : str.replace(/\\/g, "/");
+    /^\\\\\?\\/.test(str) || /["<>|\u0000-\u001F]+/u.test(str) ? str : str.replace(/\\/g, "/");
 
   checkPath.convert = makePosix;
 
@@ -815,9 +777,7 @@ if (
 // `setupWindows` via `Symbol.for("setupWindows")` for its own test suite; we
 // drop that hook since it's unused.
 
-export default factory as unknown as (
-  options?: IgnoreOptions,
-) => IgnoreInstance;
+export default factory as unknown as (options?: IgnoreOptions) => IgnoreInstance;
 export { Ignore, isPathValid };
 
 // --- Type declarations -----------------------------------------------------
@@ -845,15 +805,16 @@ export interface IgnoreOptions {
 
 export interface IgnoreInstance {
   add(
-    patterns:
-      | string
-      | IgnoreInstance
-      | readonly (string | IgnoreInstance)[]
-      | PatternParams,
+    patterns: string | IgnoreInstance | readonly (string | IgnoreInstance)[] | PatternParams,
   ): this;
   filter(pathnames: readonly Pathname[]): Pathname[];
   createFilter(): (pathname: Pathname) => boolean;
   ignores(pathname: Pathname): boolean;
+  /** Alchemy addition: match one path without checking parent directories. */
+  matches(pathname: Pathname): {
+    ignored: boolean;
+    unignored: boolean;
+  };
   test(pathname: Pathname): {
     ignored: boolean;
     unignored: boolean;
