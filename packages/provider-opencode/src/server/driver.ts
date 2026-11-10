@@ -368,10 +368,14 @@ export const OpenCodeDriver: ProviderDriver<
               { concurrency: "unbounded" },
             ),
             Deferred.await(scanned),
-            client.debug.location.list().pipe(
-              Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
-              Effect.orElseSucceed(() => true),
-            ),
+            // Without events no scan can be awaited, so trust the first read as before.
+            stream._tag === "None"
+              ? Effect.succeed(true)
+              : client.debug.location.list().pipe(
+                  Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
+                  Effect.timeout("2 seconds"),
+                  Effect.orElseSucceed(() => true),
+                ),
           );
         }).pipe(Effect.scoped),
       );
