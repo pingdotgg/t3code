@@ -54,6 +54,12 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
+  const rpc = /^\/api\/rpc\/([^/]+)\/([^/]+)$/.exec(path);
+  if (method === "POST" && rpc !== null)
+    return {
+      type: "rpc.call",
+      input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
+    };
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
@@ -308,6 +314,7 @@ export const openCode2ReplayRuntime = (
     readonly external?: boolean;
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
+    readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
@@ -322,7 +329,7 @@ export const openCode2ReplayRuntime = (
       {
         provider: OPENCODE_PROVIDER,
         protocol: OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
+        version: options?.version ?? "2.0.18",
         scenario: "opencode2_adapter",
         entries,
       },
