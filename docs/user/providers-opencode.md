@@ -26,9 +26,7 @@ your OpenCode agents. Subagent-only and hidden agents do not appear in this list
 Agent discovery uses the environment server's working directory; project-local
 agents in other directories may not appear. If an agent refresh fails, T3 Code
 keeps the last known agent choices, reports a warning, and retries in the background.
-
-Plan mode uses OpenCode's `plan` agent. Returning to the default interaction mode
-uses the selected agent, or `build` if none is selected.
+With no agent selected, T3 Code uses `build`.
 
 ## Compaction
 
