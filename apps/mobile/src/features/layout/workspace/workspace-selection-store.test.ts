@@ -54,7 +54,9 @@ vi.mock("../../../connection/catalog", () => ({
   environmentCatalog: { catalogValueAtom: { isReady: false } },
 }));
 vi.mock("../../../state/presentation", () => ({ environmentPresentations: {} }));
-vi.mock("../../../state/atom-registry", () => ({ appAtomRegistry: { get: (atom: unknown) => atom } }));
+vi.mock("../../../state/atom-registry", () => ({
+  appAtomRegistry: { get: (atom: unknown) => atom },
+}));
 vi.mock("../../../state/threads", () => ({
   environmentThreadShells: {},
   startOpeningEnvironmentThread: vi.fn(),
