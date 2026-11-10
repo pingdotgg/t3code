@@ -47,6 +47,8 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const hub = { running: true, spawnFails: false };
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const failedProbes = yield* Ref.make(0);
+  const commands: Array<string> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -92,15 +94,22 @@ const agentFixture = Effect.fn("agentFixture")(function* (
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
-      run: (input) =>
-        input.args.includes("devices")
+      run: (input) => {
+        if (input.args.includes("devices") || input.args.includes("daemon"))
+          commands.push(input.args.slice(1, 3).join(" "));
+        return input.args.includes("devices")
           ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
+          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+      },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Ref.get(daemonHealthy).pipe(
+        Effect.all([
+          Ref.get(daemonHealthy),
+          Ref.getAndUpdate(failedProbes, (remaining) => Math.max(0, remaining - 1)),
+        ]).pipe(
+          Effect.map(([daemonUp, failing]) => daemonUp && failing === 0),
           Effect.map((healthy) =>
             HttpClientResponse.fromWeb(
               request,
@@ -114,15 +123,15 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy };
+  return { host, fs, stateDir, hub, daemonHealthy, failedProbes, commands };
 });
 
 describe("AgentDevice startup", () => {
-  it.effect("restarts a cached daemon that no longer answers its health check", () =>
+  it.live("restarts a cached daemon that no longer answers its health check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, daemonHealthy } = yield* agentFixture((stateDir) =>
+      const { host, daemonHealthy, commands } = yield* agentFixture((stateDir) =>
         Effect.gen(function* () {
           attempts++;
           yield* fs
@@ -143,10 +152,38 @@ describe("AgentDevice startup", () => {
       yield* Ref.set(daemonHealthy, false);
       const restarted = yield* host.ensureAgentReady(() => Effect.void);
       expect(attempts).toBe(2);
+      // The old daemon is stopped while daemon.json still identifies it.
+      expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
       expect(restarted.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps a busy daemon that misses a health probe", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host, failedProbes, commands } = yield* agentFixture((stateDir) =>
+        Effect.gen(function* () {
+          attempts++;
+          yield* fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+            )
+            .pipe(Effect.orDie);
+          return processOutput(0);
+        }),
+      );
+      const first = yield* host.ensureAgentReady(() => Effect.void);
+
+      yield* Ref.set(failedProbes, 1);
+      const again = yield* host.ensureAgentReady(() => Effect.void);
+      expect(again.agentDevice).toEqual(first.agentDevice);
+      expect(attempts).toBe(1);
+      expect(commands).toEqual(["devices --json"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -53,6 +53,8 @@ import {
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
+const DAEMON_HEALTH_TIMEOUT_MS = 3_000;
+const DAEMON_HEALTH_ATTEMPTS = 3;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -551,17 +553,25 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       entryPath: agentTool.entryPath,
     });
     if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
+      const probe = HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.seconds(2)),
+          Effect.timeout(Duration.millis(DAEMON_HEALTH_TIMEOUT_MS)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
+      // A daemon busy with a long command can miss one probe; restarting it then
+      // would race its live lock and wedge every later start.
+      for (let attempt = 1; attempt <= DAEMON_HEALTH_ATTEMPTS; attempt++) {
+        if (yield* probe) return toEndpoint(existing.value);
+        if (attempt < DAEMON_HEALTH_ATTEMPTS) yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
+      }
+      // Stop through agent-device while daemon.json still names the process; once
+      // the file is gone it reports "not-running" and the daemon keeps daemon.lock.
+      yield* stopAgentDeviceDaemon({ entryPath: agentTool.entryPath, nodePath });
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
