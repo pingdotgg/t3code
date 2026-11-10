@@ -21,6 +21,7 @@ import {
   resolveSpawnCommand,
   SpawnExecutableResolution,
 } from "@t3tools/shared/shell";
+import * as NodePath from "node:path";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -640,6 +641,13 @@ function searchRank(agent: AcpRegistryAgent, query: string): number | undefined 
   if (terms.every((term) => authors.includes(term))) return 40;
   if (terms.every((term) => `${id} ${name} ${authors} ${description}`.includes(term))) return 50;
   return undefined;
+}
+
+function absoluteSpawnPath(filePath: string): string {
+  if (NodePath.win32.isAbsolute(filePath) || NodePath.posix.isAbsolute(filePath)) return filePath;
+  // A drive-relative path such as C:dsh.cmd has no slash. Keep it on that drive.
+  if (/^[A-Za-z]:/u.test(filePath)) return NodePath.win32.resolve(filePath);
+  return NodePath.resolve(filePath);
 }
 
 export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(function* (
@@ -1748,16 +1756,22 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   ) => {
     const script = platform === "win32" ? npmShimScript(command) : undefined;
     if (script === undefined) return { command, args };
+    const absoluteCommand = absoluteSpawnPath(command);
+    const separatorIndex = Math.max(
+      absoluteCommand.lastIndexOf("/"),
+      absoluteCommand.lastIndexOf("\\"),
+    );
+    const adjacentNode =
+      separatorIndex >= 0 ? `${absoluteCommand.slice(0, separatorIndex + 1)}node.exe` : "node.exe";
     const node =
-      resolveExecutable(command.replace(/[^\\/]+$/u, "node.exe"), platform, env) ??
-      resolveExecutable("node", platform, env);
+      resolveExecutable(adjacentNode, platform, env) ?? resolveExecutable("node", platform, env);
     if (node === undefined) {
       return new AcpRegistryError({
         reason: "runner_unavailable",
         detail: "Node.js is required to launch this npm ACP command.",
       });
     }
-    return { command: node, args: [script, ...args] };
+    return { command: absoluteSpawnPath(node), args: [absoluteSpawnPath(script), ...args] };
   };
 
   const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistryCatalog.inspect")(

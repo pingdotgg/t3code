@@ -1,3 +1,4 @@
+import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -282,6 +283,84 @@ describe("AcpRegistrySupport", () => {
       ),
     );
   });
+
+  it.effect("anchors a relative Windows npm shim to the server directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-relative-shim-",
+      });
+      const shimDir = path.join(cacheDir, "npm");
+      const scriptPath = path.join(shimDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+      const shimPath = path.join(shimDir, "dsh.cmd");
+      const nodePath = path.join(shimDir, "node.exe");
+      const decoyDir = path.join(cacheDir, "decoy");
+      const decoyNode = path.join(decoyDir, "node.exe");
+      yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
+      yield* fileSystem.makeDirectory(decoyDir, { recursive: true });
+      yield* fileSystem.writeFileString(scriptPath, "");
+      yield* fileSystem.writeFileString(nodePath, "");
+      yield* fileSystem.writeFileString(decoyNode, "");
+      yield* fileSystem.writeFileString(
+        shimPath,
+        [
+          "@ECHO off",
+          "GOTO start",
+          ":find_dp0",
+          "SET dp0=%~dp0",
+          "EXIT /b",
+          ":start",
+          "SETLOCAL",
+          "CALL :find_dp0",
+          'IF EXIST "%dp0%\\node.exe" (',
+          '  SET "_prog=%dp0%\\node.exe"',
+          ") ELSE (",
+          '  SET "_prog=node"',
+          "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+          ")",
+          'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*',
+          "",
+        ].join("\n"),
+      );
+      const relativeShim = NodePath.relative(process.cwd(), shimPath);
+      const environment = { PATH: [decoyDir, shimDir].join(path.delimiter), PATHEXT: ".EXE;.CMD" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, environment),
+      );
+      const resolved = yield* resolver.resolve(
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: relativeShim,
+          commandArgs: ["--profile", "acp"],
+        }),
+        "/workspace",
+        environment,
+      );
+      const spawnCommand = resolved.spawn.command.replaceAll("\\", "/");
+      const scriptArg = String(resolved.spawn.args[0]).replaceAll("\\", "/");
+      expect(
+        NodePath.isAbsolute(resolved.spawn.command) || /^[A-Za-z]:/u.test(resolved.spawn.command),
+      ).toBe(true);
+      expect(spawnCommand.endsWith("/node.exe")).toBe(true);
+      expect(spawnCommand.includes("/decoy/")).toBe(false);
+      expect(scriptArg.endsWith("/node_modules/@deepseek-ai/dsh/lib/bin.js")).toBe(true);
+      expect(
+        NodePath.isAbsolute(String(resolved.spawn.args[0])) ||
+          /^[A-Za-z]:/u.test(String(resolved.spawn.args[0])),
+      ).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver(() => Effect.die("unexpected registry request for a local provider")),
+      ),
+    ),
+  );
 
   it.effect("resolves a local executable path and inherits the host environment", () =>
     Effect.gen(function* () {
