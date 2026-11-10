@@ -77,7 +77,7 @@ Choose **T3 Connect** there to switch back. Environments you linked through your
 relay stay linked to it until you turn T3 Connect off and on again.
 
 A self-hosted relay has no managed tunnels. If the relay sets
-`RELAY_CHANNEL_HOST`, a linked environment with no public address is carried
+`RELAY_CHANNELS=true`, a linked environment with no public address is carried
 through the relay itself, so there is nothing to expose. Otherwise your other
 devices reach it only at an HTTPS address you expose yourself, such as a reverse
 proxy or [Tailscale HTTPS](#tailscale-https): start the host with that address in

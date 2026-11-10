@@ -798,33 +798,32 @@ describe("validateManualEndpoint", () => {
 });
 
 describe("validateConnectEndpoint with relay channels", () => {
-  const link = (hostname: string) =>
-    ({
-      environmentId: "env-connector-test" as never,
-      label: "Channel Environment",
-      endpoint: {
-        httpBaseUrl: `https://${hostname}/`,
-        wsBaseUrl: `wss://${hostname}/ws`,
-        providerKind: "t3_relay",
-      },
-      linkedAt: "2026-05-25T00:00:00.000Z",
-      environmentPublicKey: environmentKeyPair.publicKey,
-    }) satisfies EnvironmentLinks.RelayLinkedEnvironmentRecord;
-  const own = `t3-${"a".repeat(32)}.relay.example.test`;
-  const validate = (hostname: string, channelHostname: string | null) =>
+  const endpoint = (key: string) => ({
+    httpBaseUrl: `https://relay.example.test/env/${key}/`,
+    wsBaseUrl: `wss://relay.example.test/env/${key}/ws`,
+    providerKind: "t3_relay" as const,
+  });
+  const own = endpoint("a".repeat(32));
+  const validate = (linked: ReturnType<typeof endpoint>, channel: typeof own | null) =>
     EnvironmentConnector.validateConnectEndpoint({
-      link: link(hostname),
+      link: {
+        environmentId: "env-connector-test" as never,
+        label: "Channel Environment",
+        endpoint: linked,
+        linkedAt: "2026-05-25T00:00:00.000Z",
+        environmentPublicKey: environmentKeyPair.publicKey,
+      },
       allocation: null,
       baseDomain: undefined,
       manualEndpoints: "off",
-      channelHostname,
+      channelEndpoint: channel,
     });
 
   it.each([
-    ["another environment's channel", `t3-${"b".repeat(32)}.relay.example.test`, own],
+    ["another environment's channel", endpoint("b".repeat(32)), own],
     ["a relay without channels", own, null],
-  ] as const)("rejects %s", (_name, hostname, channelHostname) => {
-    expect(Result.isFailure(validate(hostname, channelHostname))).toBe(true);
+  ] as const)("rejects %s", (_name, linked, channel) => {
+    expect(Result.isFailure(validate(linked, channel))).toBe(true);
   });
 
   it("accepts the environment's own channel", () => {

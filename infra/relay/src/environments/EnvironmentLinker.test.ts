@@ -159,7 +159,7 @@ const makePublishOnlyRequest = Effect.gen(function* () {
 });
 
 function layerTest(input?: {
-  readonly channelHost?: string;
+  readonly channels?: boolean;
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
@@ -168,9 +168,7 @@ function layerTest(input?: {
     Layer.provideMerge(RelayTokens.layer.pipe(Layer.provide(CloudMintSigner.layer))),
     Layer.provide(
       Layer.mergeAll(
-        RelayConfiguration.layer(
-          input?.channelHost ? { ...config, channelHost: input.channelHost } : config,
-        ),
+        RelayConfiguration.layer(input?.channels ? { ...config, channels: true } : config),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),
@@ -271,9 +269,11 @@ describe("EnvironmentLinker", () => {
         const result = yield* linker.link({ userId: "user_123", request });
         expect(result.endpoint).toEqual({
           httpBaseUrl: expect.stringMatching(
-            /^https:\/\/t3-[0-9a-f]{32}\.relay\.example\.test\/$/u,
+            /^https:\/\/relay\.example\.test\/env\/[0-9a-f]{32}\/$/u,
           ),
-          wsBaseUrl: expect.stringMatching(/^wss:\/\/t3-[0-9a-f]{32}\.relay\.example\.test\/ws$/u),
+          wsBaseUrl: expect.stringMatching(
+            /^wss:\/\/relay\.example\.test\/env\/[0-9a-f]{32}\/ws$/u,
+          ),
           providerKind: "t3_relay",
         });
         expect(persistedEndpoint).toBe(result.endpoint.httpBaseUrl);
@@ -285,7 +285,7 @@ describe("EnvironmentLinker", () => {
       }).pipe(
         Effect.provide(
           layerTest({
-            channelHost: "t3-*.relay.example.test",
+            channels: true,
             upsert: (input) =>
               Effect.sync(() => {
                 persistedEndpoint = input.endpoint.httpBaseUrl;

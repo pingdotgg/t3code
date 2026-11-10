@@ -7,6 +7,7 @@ import {
   type ProjectCloneSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { resolveEnvironmentUrl } from "@t3tools/shared/advertisedEndpoint";
 import { mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
@@ -60,7 +61,7 @@ function parseAssetCollectionKey(
 
 export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): string | null {
   try {
-    return new URL(relativeUrl, httpBaseUrl).toString();
+    return resolveEnvironmentUrl(httpBaseUrl, relativeUrl).toString();
   } catch {
     return null;
   }
@@ -284,7 +285,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     const asset = yield* registry
       .run(local.environmentId, mint(local.environmentId, input))
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));
-    return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
+    return {
+      ...asset,
+      relativeUrl: resolveEnvironmentUrl(local.httpBaseUrl, asset.relativeUrl).href,
+    };
   });
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",

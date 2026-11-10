@@ -32,7 +32,7 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER in .env}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE in .env}
       RELAY_MANUAL_ENDPOINTS: ${RELAY_MANUAL_ENDPOINTS:-public}
-      RELAY_CHANNEL_HOST: ${RELAY_CHANNEL_HOST:-}
+      RELAY_CHANNELS: ${RELAY_CHANNELS:-false}
       CLOUD_MINT_PRIVATE_KEY_FILE: /run/secrets/cloud_mint_private_key
       CLOUD_MINT_PUBLIC_KEY_FILE: /run/secrets/cloud_mint_public_key
       # Push notifications need the publisher's APNs and FCM credentials; leave them off here.

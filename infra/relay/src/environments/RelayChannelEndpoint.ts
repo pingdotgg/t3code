@@ -1,10 +1,10 @@
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 
-const CHANNEL_KEY_PATTERN = /^[0-9a-f]{32}$/u;
+const CHANNEL_PATH = /^\/env\/([0-9a-f]{32})(?=[/?]|$)(.*)$/su;
 
 /**
- * Host label for an environment's relay channel. Environment ids are public, so the key also
+ * Path key for an environment's relay channel. Environment ids are public, so the key also
  * covers the environment's public key: only the holder of a credential for that key can serve it.
  */
 export const channelKey = (environmentId: string, environmentPublicKey: string) =>
@@ -21,25 +21,27 @@ export const channelKey = (environmentId: string, environmentPublicKey: string) 
     ),
   );
 
-export function channelHostname(template: string, key: string): string {
-  return template.toLowerCase().replace("*", key);
-}
-
-export function channelEndpoint(hostname: string): RelayManagedEndpoint {
+/** Where clients reach an environment carried by this relay: `<relay>/env/<key>/`. */
+export function channelEndpoint(relayOrigin: string, key: string): RelayManagedEndpoint {
+  const origin = new URL(relayOrigin);
+  const wsProtocol = origin.protocol === "https:" ? "wss:" : "ws:";
   return {
-    httpBaseUrl: `https://${hostname}/`,
-    wsBaseUrl: `wss://${hostname}/ws`,
+    httpBaseUrl: `${origin.origin}/env/${key}/`,
+    wsBaseUrl: `${wsProtocol}//${origin.host}/env/${key}/ws`,
     providerKind: "t3_relay",
   };
 }
 
-/** The channel key a request's `Host` names under `template`, or null when it is not a channel host. */
-export function channelKeyForHost(template: string, host: string): string | null {
-  const [prefix = "", suffix] = template.toLowerCase().split("*");
-  const hostname = host.toLowerCase().replace(/:\d+$/u, "");
-  if (suffix === undefined || !hostname.startsWith(prefix) || !hostname.endsWith(suffix)) {
-    return null;
-  }
-  const key = hostname.slice(prefix.length, hostname.length - suffix.length);
-  return CHANNEL_KEY_PATTERN.test(key) ? key : null;
+/** Splits a request URL under `/env/<key>` into its channel key, that prefix, and the environment path. */
+export function channelPathTarget(
+  url: string,
+): { readonly key: string; readonly prefix: string; readonly path: string } | null {
+  const match = CHANNEL_PATH.exec(url);
+  if (match?.[1] === undefined) return null;
+  const rest = match[2] ?? "";
+  return {
+    key: match[1],
+    prefix: `/env/${match[1]}`,
+    path: rest.startsWith("/") ? rest : `/${rest}`,
+  };
 }

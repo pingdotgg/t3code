@@ -46,7 +46,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { diagnoseEndpointFailure } from "./endpointFailure.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
-import { channelEndpoint, channelHostname, channelKey } from "./RelayChannelEndpoint.ts";
+import { channelEndpoint, channelKey } from "./RelayChannelEndpoint.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
@@ -419,11 +419,11 @@ export function validateConnectEndpoint(input: {
   readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
   readonly baseDomain: string | undefined;
   readonly manualEndpoints: RelayConfiguration.ManualEndpointsMode;
-  /** This environment's relay channel host, or null when the relay carries no channels. */
-  readonly channelHostname?: string | null;
+  /** Where this relay carries this environment, or null when the relay carries no channels. */
+  readonly channelEndpoint?: RelayManagedEndpoint | null;
 }): Result.Result<RelayManagedEndpoint, ManagedEndpointValidationFailure> {
   if (input.link.endpoint.providerKind === "t3_relay") {
-    const expected = input.channelHostname ? channelEndpoint(input.channelHostname) : null;
+    const expected = input.channelEndpoint ?? null;
     return expected !== null &&
       input.link.endpoint.httpBaseUrl === expected.httpBaseUrl &&
       input.link.endpoint.wsBaseUrl === expected.wsBaseUrl
@@ -462,13 +462,13 @@ const make = Effect.gen(function* () {
         allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
         manualEndpoints: settings.manualEndpoints ?? "off",
-        channelHostname:
-          settings.channelHost === undefined
-            ? null
-            : channelHostname(
-                settings.channelHost,
+        channelEndpoint:
+          settings.channels === true
+            ? channelEndpoint(
+                settings.relayIssuer,
                 yield* channelKey(input.link.environmentId, input.link.environmentPublicKey),
-              ),
+              )
+            : null,
       });
       if (Result.isSuccess(result)) {
         return result.success;

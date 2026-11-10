@@ -97,14 +97,13 @@ them to each app's prefix). A configured OpenID Connect provider replaces Clerk 
 
 ## Reach an environment without a tunnel
 
-**Through the relay (no address to expose).** Set `RELAY_CHANNEL_HOST` to a host pattern such as
-`t3-*.example.com`. An environment linked without its own public address then keeps one outbound
-WebSocket open to the relay, and the relay serves it at `https://t3-<key>.example.com`, forwarding
-HTTP and WebSocket traffic over that socket. Nothing to open on the environment's network. Route
-the pattern to the relay at your proxy with a wildcard DNS record and a wildcard certificate (the
-bundled Caddy serves only `RELAY_DOMAIN`; a wildcard certificate needs Caddy's DNS challenge).
-All of that environment's traffic passes through the relay host, and channels live in the relay
-process, so keep a single replica.
+**Through the relay (no address to expose).** Set `RELAY_CHANNELS=true`. An environment linked
+without its own public address then keeps one outbound WebSocket open to the relay, and the relay
+serves it at `RELAY_PUBLIC_ORIGIN/env/<key>/`, forwarding HTTP and WebSocket traffic over that
+socket with the prefix stripped and named in `X-Forwarded-Prefix`. Nothing to open on the
+environment's network and no extra DNS or certificate. All of that environment's traffic passes
+through the relay host, and channels live in the relay process, so keep a single replica. Clients
+need a T3 Code version that keeps an environment's path prefix.
 
 **At an address you expose.** With `RELAY_MANUAL_ENDPOINTS=public` (the default here), an
 environment can publish an HTTPS address you already expose (reverse proxy, port forward) and the
@@ -127,7 +126,7 @@ you control. A published address takes precedence over a relay channel.
 Caddy is the bundled proxy. To use your own (nginx, Traefik, a cloud load balancer), drop the
 `caddy` service, point your proxy at the relay's port 8080, and keep `RELAY_PUBLIC_ORIGIN` at
 the public HTTPS address. The relay builds no URLs from request headers, so `X-Forwarded-*`
-values are ignored. It reads `Host` only to match `RELAY_CHANNEL_HOST`, so pass it through. `OIDC_ISSUER` must equal the issuer your provider reports
+values are ignored. `OIDC_ISSUER` must equal the issuer your provider reports
 publicly, including any path prefix your proxy adds.
 
 ## What this host does not do

@@ -75,3 +75,13 @@ export function createAdvertisedEndpoint(input: CreateAdvertisedEndpointInput): 
     ...(input.description === undefined ? {} : { description: input.description }),
   };
 }
+
+/**
+ * Resolves `target` against an environment's base URL. Root-relative paths stay under the base's
+ * own path, so environments a relay serves at `/env/<key>/` keep that prefix.
+ */
+export function resolveEnvironmentUrl(httpBaseUrl: string, target: string): URL {
+  const base = new URL(httpBaseUrl);
+  if (!target.startsWith("/") || target.startsWith("//")) return new URL(target, base);
+  return new URL(`${base.pathname.replace(/\/+$/u, "")}${target}`, base.origin);
+}

@@ -183,7 +183,7 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
       cloudMintPrivateKey: yield* cloudMintPrivateKey,
       cloudMintPublicKey: yield* cloudMintPublicKey,
       managedEndpointBaseDomain: host.managedEndpointBaseDomain,
-      ...(host.channelHost ? { channelHost: host.channelHost } : {}),
+      ...(host.channels ? { channels: true } : {}),
       managedEndpointNamespace: stage,
       managedEndpointCleanupMode,
       legacyManagedEndpointCleanupMode,

@@ -12,3 +12,20 @@ export const requestUrl = (request: HttpServerRequest.HttpServerRequest): Option
       ? request.modify({ protocol: "https" })
       : request,
   );
+
+const FORWARDED_PREFIX = /^\/(?!\/)[^?#\s]*[^/?#\s]$/u;
+
+/**
+ * The URL the client addressed. A path-routing relay serves this server under a prefix such as
+ * `/env/<key>` and strips it, saying so in `X-Forwarded-Prefix`; proofs sign the full URL.
+ */
+export const publicRequestUrl = (
+  request: HttpServerRequest.HttpServerRequest,
+): Option.Option<URL> =>
+  Option.map(requestUrl(request), (url) => {
+    const prefix = request.headers["x-forwarded-prefix"];
+    if (prefix !== undefined && FORWARDED_PREFIX.test(prefix)) {
+      url.pathname = `${prefix}${url.pathname}`;
+    }
+    return url;
+  });

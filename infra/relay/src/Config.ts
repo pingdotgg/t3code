@@ -87,7 +87,8 @@ export class RelayConfiguration extends Context.Service<
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
     readonly managedEndpointBaseDomain: string | undefined;
-    readonly channelHost?: string;
+    /** Carries publish-only environments over relay channels; self-hosted Node relays only. */
+    readonly channels?: boolean;
     readonly managedEndpointNamespace: string | undefined;
     readonly managedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     readonly legacyManagedEndpointCleanupMode?: ManagedEndpointCleanupMode;

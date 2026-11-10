@@ -1,6 +1,7 @@
 import { RelayChannelFrame } from "@t3tools/contracts/relay";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
@@ -9,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
 
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
-import { channelKey, channelKeyForHost } from "../environments/RelayChannelEndpoint.ts";
+import { channelKey, channelPathTarget } from "../environments/RelayChannelEndpoint.ts";
 
 type HttpResponseFrame = Extract<RelayChannelFrame, { readonly type: "http-response" }>;
 type SocketFrame = Extract<
@@ -23,7 +24,8 @@ interface Channel {
   readonly sockets: Map<number, Queue.Queue<SocketFrame>>;
 }
 
-const CHANNEL_PATH = /^\/v1\/environments\/([^/?]+)\/channel(?:\?.*)?$/u;
+const CREDENTIAL_RECHECK_INTERVAL = "25 seconds";
+const CHANNEL_SOCKET_PATH = /^\/v1\/environments\/([^/?]+)\/channel(?:\?.*)?$/u;
 // Per-connection headers stay on their own side of the relay.
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -62,15 +64,22 @@ function sendableCloseCode(code: number | undefined): number {
     : 1000;
 }
 
+type ChannelTarget = NonNullable<ReturnType<typeof channelPathTarget>>;
+
+/** The client's headers, telling the environment which prefix the relay stripped. */
+function forwardedHeaders(request: HttpServerRequest.HttpServerRequest, target: ChannelTarget) {
+  return { ...withoutHopByHop(request.headers), "x-forwarded-prefix": target.prefix };
+}
+
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
 /**
  * Carries environments with no public address: each one dials `/v1/environments/:id/channel`,
- * and requests to its channel host (`RELAY_CHANNEL_HOST`) are forwarded over that socket.
+ * and requests under its `/env/<key>/` path are forwarded over that socket, prefix stripped.
  * Channels live in this process, so a relay serving them must run as a single replica.
  */
-export const withRelayChannels = (channelHost: string) => {
+export const makeRelayChannels = () => {
   const channels = new Map<string, Channel>();
   let nextId = 0;
 
@@ -104,8 +113,6 @@ export const withRelayChannels = (channelHost: string) => {
       sockets: new Map(),
     };
     channels.set(key, channel);
-    // Tells the environment its channel now receives traffic.
-    yield* channel.send({ type: "ping" });
     yield* Effect.logInfo("Relay channel connected", { environmentId });
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -124,35 +131,33 @@ export const withRelayChannels = (channelHost: string) => {
         yield* Effect.logInfo("Relay channel disconnected", { environmentId });
       }),
     );
-    // The environment pings every 25 seconds; a revoked credential closes its channel.
-    const stillAuthorized = credentials.authenticate(token).pipe(
+    const readFrames = reader.pull.pipe(
+      Effect.flatMap((chunks) =>
+        Effect.forEach(chunks, (chunk) => dispatch(channel, chunk), { discard: true }),
+      ),
+      Effect.forever,
+    );
+    // Revocation ends the channel on the relay's own clock, whatever the environment sends.
+    // A failed lookup keeps the channel: a database hiccup should not drop every environment.
+    const revoked = yield* Effect.sleep(CREDENTIAL_RECHECK_INTERVAL).pipe(
+      Effect.andThen(credentials.authenticate(token)),
       Effect.map((current) =>
         Option.exists(current, (now) => now.credentialId === principal.credentialId),
       ),
       Effect.orElseSucceed(() => true),
+      Effect.repeat({ while: (stillValid) => stillValid }),
+      Effect.forkScoped({ startImmediately: true }),
     );
-    yield* reader.pull.pipe(
-      Effect.flatMap((chunks) =>
-        Effect.forEach(
-          chunks,
-          (chunk) =>
-            Option.getOrNull(parseFrame(chunk))?.type === "ping"
-              ? stillAuthorized.pipe(
-                  Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail("revoked" as const))),
-                )
-              : dispatch(channel, chunk),
-          { discard: true },
-        ),
-      ),
-      Effect.forever,
-      Effect.ignore,
-    );
+    // Tells the environment its channel now receives traffic.
+    yield* channel.send({ type: "ping" });
+    yield* Effect.raceFirst(readFrames, Fiber.join(revoked)).pipe(Effect.ignore);
     return HttpServerResponse.empty();
   }, Effect.scoped);
 
   const forwardHttp = Effect.fn("RelayChannels.forwardHttp")(function* (
     channel: Channel,
     request: HttpServerRequest.HttpServerRequest,
+    target: ChannelTarget,
   ) {
     const id = ++nextId;
     const body = new Uint8Array(yield* request.arrayBuffer);
@@ -162,8 +167,8 @@ export const withRelayChannels = (channelHost: string) => {
       type: "http-request",
       id,
       method: request.method,
-      path: request.url,
-      headers: withoutHopByHop(request.headers),
+      path: target.path,
+      headers: forwardedHeaders(request, target),
       ...(body.byteLength > 0 ? { body: Buffer.from(body).toString("base64") } : {}),
     });
     const result = yield* Deferred.await(response).pipe(
@@ -174,6 +179,10 @@ export const withRelayChannels = (channelHost: string) => {
       return HttpServerResponse.text("The environment did not answer in time.", { status: 504 });
     }
     const { "content-type": contentType, ...headers } = withoutHopByHop(result.value.headers);
+    // A root-relative redirect from the environment stays under its prefix.
+    if (headers.location?.startsWith("/") && !headers.location.startsWith("//")) {
+      headers.location = `${target.prefix}${headers.location}`;
+    }
     return HttpServerResponse.uint8Array(
       result.value.body ? Buffer.from(result.value.body, "base64") : new Uint8Array(),
       { status: result.value.status, headers, ...(contentType ? { contentType } : {}) },
@@ -183,6 +192,7 @@ export const withRelayChannels = (channelHost: string) => {
   const forwardWebSocket = Effect.fn("RelayChannels.forwardWebSocket")(function* (
     channel: Channel,
     request: HttpServerRequest.HttpServerRequest,
+    target: ChannelTarget,
   ) {
     const id = ++nextId;
     const inbox = yield* Queue.unbounded<SocketFrame>();
@@ -191,8 +201,8 @@ export const withRelayChannels = (channelHost: string) => {
     yield* channel.send({
       type: "ws-open",
       id,
-      path: request.url,
-      headers: withoutHopByHop(request.headers),
+      path: target.path,
+      headers: forwardedHeaders(request, target),
     });
     const opened = yield* Queue.take(inbox).pipe(Effect.timeoutOption("15 seconds"));
     if (Option.isNone(opened) || opened.value.type !== "ws-opened") {
@@ -257,7 +267,7 @@ export const withRelayChannels = (channelHost: string) => {
   return <E, R>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const channelPath = CHANNEL_PATH.exec(request.url);
+      const channelPath = CHANNEL_SOCKET_PATH.exec(request.url);
       if (channelPath?.[1] !== undefined && isWebSocketUpgrade(request)) {
         const authorized = yield* authenticateChannel(request, channelPath[1]);
         if (authorized === null) return HttpServerResponse.empty({ status: 401 });
@@ -265,9 +275,9 @@ export const withRelayChannels = (channelHost: string) => {
           Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 400 })),
         );
       }
-      const key = channelKeyForHost(channelHost, request.headers.host ?? "");
-      if (key === null) return yield* handler;
-      const channel = channels.get(key);
+      const target = channelPathTarget(request.url);
+      if (target === null) return yield* handler;
+      const channel = channels.get(target.key);
       if (channel === undefined) {
         return HttpServerResponse.text("This environment is not connected to the relay.", {
           status: 502,
@@ -275,8 +285,8 @@ export const withRelayChannels = (channelHost: string) => {
       }
       return yield* (
         isWebSocketUpgrade(request)
-          ? forwardWebSocket(channel, request)
-          : forwardHttp(channel, request)
+          ? forwardWebSocket(channel, request, target)
+          : forwardHttp(channel, request, target)
       ).pipe(Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 400 })));
     });
 };

@@ -17,7 +17,7 @@ import {
   type ServerAuthInternalError,
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
-import { requestUrl } from "../requestUrl.ts";
+import { publicRequestUrl } from "../requestUrl.ts";
 
 export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
 
@@ -61,7 +61,7 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
   readonly expectedAccessToken?: string;
 }) {
   const proof = input.proof ?? input.request.headers.dpop;
-  const url = requestUrl(input.request);
+  const url = publicRequestUrl(input.request);
   if (Option.isNone(url)) {
     return yield* new ServerAuthInvalidCredentialError({
       diagnostic: "Invalid DPoP request URL.",

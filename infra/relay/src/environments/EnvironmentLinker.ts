@@ -23,7 +23,7 @@ import { validateManualEndpoint } from "./EnvironmentConnector.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
-import { channelEndpoint, channelHostname, channelKey } from "./RelayChannelEndpoint.ts";
+import { channelEndpoint, channelKey } from "./RelayChannelEndpoint.ts";
 import * as RelayConfiguration from "../Config.ts";
 
 export class EnvironmentLinkProofExpired extends Schema.TaggedError<EnvironmentLinkProofExpired>()(
@@ -318,7 +318,7 @@ const make = Effect.gen(function* () {
       // A publish-only link with no address the relay may contact is carried over a relay channel.
       const channel =
         !input.request.managedTunnelsEnabled &&
-        config.channelHost !== undefined &&
+        config.channels === true &&
         Result.isFailure(
           validateManualEndpoint({
             endpoint: verified.endpoint,
@@ -326,10 +326,8 @@ const make = Effect.gen(function* () {
           }),
         )
           ? channelEndpoint(
-              channelHostname(
-                config.channelHost,
-                yield* channelKey(verified.environmentId, verified.environmentPublicKey),
-              ),
+              config.relayIssuer,
+              yield* channelKey(verified.environmentId, verified.environmentPublicKey),
             )
           : null;
       const endpoint = provisioned?.endpoint ?? channel ?? verified.endpoint;

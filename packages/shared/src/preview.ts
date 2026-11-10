@@ -1,6 +1,7 @@
 import type { BrowserSearchEngine } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { resolveEnvironmentUrl } from "./advertisedEndpoint.ts";
 import { isLocalLoopbackHost } from "./hostClassification.ts";
 
 const TAB_ID_PREFIX = "tab_";
@@ -27,7 +28,7 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
-    return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
+    return resolveEnvironmentUrl(baseUrl.href, `${url.pathname}${url.search}${url.hash}`).href;
   } catch {
     return null;
   }

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - fetch forbids the Host header these requests route by.
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - the relay under test is a real Node HTTP server.
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -8,12 +8,11 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
-import { channelHostname, channelKey } from "../environments/RelayChannelEndpoint.ts";
-import { withRelayChannels } from "./RelayChannels.ts";
-
-const CHANNEL_HOST = "t3-*.relay.test";
+import { channelKey } from "../environments/RelayChannelEndpoint.ts";
+import { makeRelayChannels } from "./RelayChannels.ts";
 
 const makeLayer = (credentialValid: () => boolean = () => true) =>
   Layer.mergeAll(
@@ -32,11 +31,13 @@ const makeLayer = (credentialValid: () => boolean = () => true) =>
 
 const serveRelay = Effect.gen(function* () {
   yield* HttpServer.serveEffect(
-    withRelayChannels(CHANNEL_HOST)(Effect.succeed(HttpServerResponse.text("relay api"))),
+    makeRelayChannels()(Effect.succeed(HttpServerResponse.text("relay api"))),
   );
   const { address } = yield* HttpServer.HttpServer;
   return "port" in address ? address.port : 0;
 });
+
+const channelPrefix = Effect.map(channelKey("env-1", "k"), (key) => `/env/${key}`);
 
 /** A fake environment that answers each forwarded request with what it received. */
 const connectEnvironment = (port: number, token: string) =>
@@ -50,13 +51,13 @@ const connectEnvironment = (port: number, token: string) =>
         // The relay pings once the channel is registered.
         if (frame.type === "ping") resume(Effect.succeed(socket));
         if (frame.type === "http-request") {
-          const echo = `${frame.method} ${frame.path} ${frame.headers.host}`;
+          const echo = `${frame.method} ${frame.path} ${frame.headers["x-forwarded-prefix"]}`;
           socket.send(
             JSON.stringify({
               type: "http-response",
               id: frame.id,
-              status: 201,
-              headers: { "content-type": "text/plain", "x-environment": "yes" },
+              status: 302,
+              headers: { "content-type": "text/plain", location: "/next" },
               body: Buffer.from(echo).toString("base64"),
             }),
           );
@@ -67,74 +68,60 @@ const connectEnvironment = (port: number, token: string) =>
     (socket) => Effect.sync(() => socket.close()),
   );
 
-const get = (port: number, host: string, path = "/") =>
-  Effect.callback<{ readonly status: number; readonly body: string; readonly env?: string }>(
-    (resume) => {
-      const request = NodeHttp.request(
-        { host: "127.0.0.1", port, path, headers: { host } },
-        (response) => {
-          let body = "";
-          response.setEncoding("utf8");
-          response.on("data", (chunk: string) => {
-            body += chunk;
-          });
-          response.on("end", () =>
-            resume(
-              Effect.succeed({
-                status: response.statusCode ?? 0,
-                body,
-                ...(typeof response.headers["x-environment"] === "string"
-                  ? { env: response.headers["x-environment"] }
-                  : {}),
-              }),
-            ),
-          );
-        },
-      );
-      request.on("error", (error) => resume(Effect.die(error)));
-      request.end();
-    },
-  );
+const get = (port: number, path: string) =>
+  Effect.promise(async () => {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
+    return {
+      status: response.status,
+      body: await response.text(),
+      location: response.headers.get("location"),
+    };
+  });
 
-describe("withRelayChannels", () => {
-  it.live("forwards a channel host to its environment and leaves other hosts to the relay", () =>
+describe("makeRelayChannels", () => {
+  it.live("forwards /env/<key> to its environment and leaves other paths to the relay", () =>
     Effect.gen(function* () {
       const port = yield* serveRelay;
-      const host = channelHostname(CHANNEL_HOST, yield* channelKey("env-1", "k"));
+      const prefix = yield* channelPrefix;
       yield* connectEnvironment(port, "good");
 
-      expect(yield* get(port, host, "/api/state?x=1")).toEqual({
-        status: 201,
-        body: `GET /api/state?x=1 ${host}`,
-        env: "yes",
+      expect(yield* get(port, `${prefix}/api/state?x=1`)).toEqual({
+        status: 302,
+        body: `GET /api/state?x=1 ${prefix}`,
+        location: `${prefix}/next`,
       });
-      expect(yield* get(port, "relay.test")).toEqual({ status: 200, body: "relay api" });
+      expect(yield* get(port, "/v1/metadata")).toEqual({
+        status: 200,
+        body: "relay api",
+        location: null,
+      });
     }).pipe(Effect.scoped, Effect.provide(makeLayer())),
   );
 
   it.live("answers 502 for an environment that has no channel open", () =>
     Effect.gen(function* () {
       const port = yield* serveRelay;
-      const host = channelHostname(CHANNEL_HOST, yield* channelKey("env-1", "k"));
-      expect((yield* get(port, host)).status).toBe(502);
+      expect((yield* get(port, `${yield* channelPrefix}/`)).status).toBe(502);
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.live("closes a channel once its credential is revoked", () => {
-    let valid = true;
-    return Effect.gen(function* () {
-      const port = yield* serveRelay;
-      const socket = yield* connectEnvironment(port, "good");
-      valid = false;
-      const closed = Effect.callback<void>((resume) =>
-        socket.addEventListener("close", () => resume(Effect.void)),
-      );
-      socket.send(JSON.stringify({ type: "ping" }));
-      yield* closed;
-      const host = channelHostname(CHANNEL_HOST, yield* channelKey("env-1", "k"));
-      expect((yield* get(port, host)).status).toBe(502);
-    }).pipe(Effect.scoped, Effect.provide(makeLayer(() => valid)));
-  });
+  it.effect(
+    "closes a channel once its credential is revoked, whatever the environment sends",
+    () => {
+      let valid = true;
+      return Effect.gen(function* () {
+        const port = yield* serveRelay;
+        const socket = yield* connectEnvironment(port, "good");
+        const closed = Effect.callback<void>((resume) =>
+          socket.addEventListener("close", () => resume(Effect.void)),
+        );
+        valid = false;
+        yield* TestClock.adjust("25 seconds");
+        yield* closed;
+        expect((yield* get(port, `${yield* channelPrefix}/`)).status).toBe(502);
+      }).pipe(Effect.scoped, Effect.provide(makeLayer(() => valid)));
+    },
+  );
 
   it.live("refuses a channel opened with another credential", () =>
     Effect.gen(function* () {

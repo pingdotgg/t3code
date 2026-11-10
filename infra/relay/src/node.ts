@@ -21,7 +21,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import { composeRelay } from "./composition.ts";
 import { makeNodeHost, withPublicOrigin } from "./host/node.ts";
-import { withRelayChannels } from "./host/RelayChannels.ts";
+import { makeRelayChannels } from "./host/RelayChannels.ts";
 
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -29,12 +29,7 @@ const program = Effect.gen(function* () {
     fs.readFileString(path).pipe(Effect.map((text) => text.trim()));
 
   const relayPublicOrigin = yield* Config.String("RELAY_PUBLIC_ORIGIN");
-  const channelHost = Option.getOrUndefined(
-    Option.filter(
-      yield* Config.option(Config.String("RELAY_CHANNEL_HOST")),
-      (value) => value.trim().length > 0,
-    ),
-  )?.trim();
+  const channels = yield* Config.Boolean("RELAY_CHANNELS").pipe(Config.withDefault(false));
   const migrationsFolder = yield* Config.String("RELAY_MIGRATIONS_FOLDER").pipe(
     Config.withDefault("migrations/postgres"),
   );
@@ -61,7 +56,7 @@ const program = Effect.gen(function* () {
   const host = yield* makeNodeHost({
     relayPublicOrigin,
     stage: "selfhost",
-    channelHost,
+    channels,
     mintKeyPair: {
       privateKey: Redacted.make(mintPrivateKey),
       publicKey: mintPublicKey,
@@ -85,12 +80,12 @@ const program = Effect.gen(function* () {
   yield* HttpServer.serveEffect(
     handler.pipe(
       withPublicOrigin(relayPublicOrigin),
-      // Outermost, so channel hosts are matched against the Host the proxy forwarded.
-      channelHost ? withRelayChannels(channelHost) : (effect) => effect,
+      // Outermost, so channel traffic skips the relay API's middleware and tracing.
+      channels ? makeRelayChannels() : (effect) => effect,
       Effect.provideContext(context),
     ),
   );
-  yield* Effect.logInfo("Self-hosted relay is serving", { relayPublicOrigin, channelHost });
+  yield* Effect.logInfo("Self-hosted relay is serving", { relayPublicOrigin, channels });
   // Serving is scoped to this program; keep it alive until the process is stopped.
   return yield* Effect.never;
 });
