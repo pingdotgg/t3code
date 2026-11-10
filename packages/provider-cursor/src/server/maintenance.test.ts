@@ -24,6 +24,7 @@ it.layer(NodeServices.layer)("Cursor maintenance", (it) => {
           lockKey: "cursor-agent",
         },
       });
+      expect(capabilities.lookupLatestVersion).toBeDefined();
       expect(capabilities.compareVersions?.("2026.11.05-a", "2026.11.06-b")).toBeLessThan(0);
     }),
   );
