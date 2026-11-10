@@ -32,7 +32,8 @@ vi.mock("../../state/use-atom-command", async (importOriginal) => ({
 }));
 vi.mock("~/state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/session")>()),
-  readPreparedConnection: () => ({ httpBaseUrl: "http://localhost" }),
+  readPreparedConnection: (environmentId: string) =>
+    environmentId === "disconnected-machine" ? null : { httpBaseUrl: "http://localhost" },
 }));
 
 type ImportInput = Parameters<typeof useComposerContextImport>[0];
@@ -231,48 +232,55 @@ it.each([
 });
 
 // Its chip used to resolve to nothing, or block the send; a dropped one comes in as its transcript.
-it("imports a pasted thread from a machine this one does not link to as its transcript", async () => {
-  const target = DraftId.make("clipboard-unlinked-thread");
-  const store = useComposerDraftStore.getState();
-  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
-  const ref = {
-    environmentId: EnvironmentId.make("unlinked-machine"),
-    threadId: ThreadId.make("remote"),
-  };
-  const record = threadContextRecord(ref, "Remote thread");
-  const importThreadTranscript = vi.fn();
-  let importer!: Importer;
-  await using _screen = await render(
-    <Harness
-      input={{ ...importInput(target, { current: "" }), importThreadTranscript }}
-      ready={(value) => {
-        importer = value;
-      }}
-    />,
-  );
-  const fragment = encodeComposerContextFragment({
-    version: 1,
-    source: { environmentId: ref.environmentId },
-    records: [record],
-  })!;
-  let pasted = "";
-  await act(() => {
-    pasted = importPastedComposerText(
-      {
-        getData: (format) =>
-          format === "text/plain"
-            ? `See ${formatInlineContextReference(threadContextReference(record))}`
-            : format === COMPOSER_CONTEXT_CLIPBOARD_MIME
-              ? fragment
-              : "",
-      },
-      importer.importContextFragment,
+it.each([
+  { machine: "unlinked-machine", transcript: true },
+  // Nothing can load a machine this client is not connected to, so the chip is only its label.
+  { machine: "disconnected-machine", transcript: false },
+])(
+  "pastes a thread from $machine, importing its transcript: $transcript",
+  async ({ machine, transcript }) => {
+    const target = DraftId.make(`clipboard-${machine}-thread`);
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const ref = {
+      environmentId: EnvironmentId.make(machine),
+      threadId: ThreadId.make("remote"),
+    };
+    const record = threadContextRecord(ref, "Remote thread");
+    const importThreadTranscript = vi.fn();
+    let importer!: Importer;
+    await using _screen = await render(
+      <Harness
+        input={{ ...importInput(target, { current: "" }), importThreadTranscript }}
+        ready={(value) => {
+          importer = value;
+        }}
+      />,
     );
-  });
-  expect(pasted).toBe("See Remote thread");
-  expect(importThreadTranscript).toHaveBeenCalledWith(ref, target);
-  expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
-});
+    const fragment = encodeComposerContextFragment({
+      version: 1,
+      source: { environmentId: ref.environmentId },
+      records: [record],
+    })!;
+    let pasted = "";
+    await act(() => {
+      pasted = importPastedComposerText(
+        {
+          getData: (format) =>
+            format === "text/plain"
+              ? `See ${formatInlineContextReference(threadContextReference(record))}`
+              : format === COMPOSER_CONTEXT_CLIPBOARD_MIME
+                ? fragment
+                : "",
+        },
+        importer.importContextFragment,
+      );
+    });
+    expect(pasted).toBe("See Remote thread");
+    expect(importThreadTranscript.mock.calls).toEqual(transcript ? [[ref, target]] : []);
+    expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
+  },
+);
 
 it("points a pasted duplicate at the id the draft holds it under", async () => {
   const target = DraftId.make("clipboard-alias-duplicate");

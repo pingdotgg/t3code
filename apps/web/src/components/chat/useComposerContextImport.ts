@@ -411,11 +411,12 @@ export function useComposerContextImport(input: {
         }
         case "thread": {
           // The agent reads threads on its own server and the machines it links to; any other
-          // machine's comes in as its transcript, as a dropped one does.
+          // machine this client is connected to sends its transcript, as a dropped one does.
           if (
             record.environmentId !== environmentId &&
             !linkedEnvironments.has(record.environmentId)
           ) {
+            if (!readPreparedConnection(record.environmentId)) break;
             importThreadTranscript(
               { environmentId: record.environmentId, threadId: record.threadId },
               threadDraftTarget,
