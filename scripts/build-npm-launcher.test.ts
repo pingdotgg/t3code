@@ -342,7 +342,6 @@ fs.readFileSync = (file, ...rest) => {
         );
       }),
   );
-
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "does not publish an unusable release",
     () =>
@@ -416,11 +415,12 @@ syncBuiltinESMExports();
           version: VERSION,
           outputDir: path.join(root, "out"),
         });
+        const hostPath = (yield* HostProcess.Environment).PATH;
         const installed = path.join(root, "installed");
         yield* fs.makeDirectory(installed);
         const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
           cwd: root,
-          env: { PATH: process.env.PATH },
+          env: { PATH: hostPath },
         });
         assert.equal(unpack.exitCode, 0, unpack.stderr);
 
@@ -440,7 +440,7 @@ syncBuiltinESMExports();
         const launcher = NodeChildProcess.spawn(
           process.execPath,
           [path.join(installed, "package/bin/t3.mjs"), "serve"],
-          { cwd: root, env: { PATH: process.env.PATH, T3CODE_HOME: home }, stdio: "pipe" },
+          { cwd: root, env: { PATH: hostPath, T3CODE_HOME: home }, stdio: "pipe" },
         );
         let runtimePid: number | undefined;
         yield* Effect.addFinalizer(() =>
