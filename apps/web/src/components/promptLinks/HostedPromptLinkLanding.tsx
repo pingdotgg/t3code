@@ -122,6 +122,8 @@ function HostedPromptLinkLanding({
 }) {
   const summary = summarize(appPath);
   const [remember, setRemember] = useState(false);
+  const [openInAppClicked, setOpenInAppClicked] = useState(false);
+  const appOpenAttempted = openInAppRemembered || openInAppClicked;
   const deepLink = promptLinkDeepLink(appPath);
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
@@ -162,9 +164,21 @@ function HostedPromptLinkLanding({
       {details.length > 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       ) : null}
+      {appOpenAttempted ? (
+        <p role="status" className="mt-5 text-sm text-muted-foreground">
+          If T3 Code opened, you can close this tab. If it didn’t, try again or get T3 Code below.
+        </p>
+      ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
-        <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
+        <Button
+          render={<a href={deepLink} />}
+          onClick={() => {
+            autoOpenedRef.current = true;
+            setOpenInAppClicked(true);
+            onChoose("app", remember);
+          }}
+        >
+          {appOpenAttempted ? "Try opening again" : onPhone ? "Open in app" : "Open in desktop app"}
         </Button>
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
