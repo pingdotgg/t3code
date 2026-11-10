@@ -21,19 +21,11 @@ export type StoredValues = Record<string, StoredValue | undefined>;
 
 /** Reveal a collected value only at a validation or I/O boundary. */
 export const storedValueText = (value: StoredValue | undefined) =>
-  value === undefined
-    ? undefined
-    : Redacted.isRedacted(value)
-      ? Redacted.value(value)
-      : value;
+  value === undefined ? undefined : Redacted.isRedacted(value) ? Redacted.value(value) : value;
 
 /** Preserve or introduce redaction for a collected secret. */
 export const storedSecret = (value: StoredValue | undefined) =>
-  value === undefined
-    ? undefined
-    : Redacted.isRedacted(value)
-      ? value
-      : Redacted.make(value);
+  value === undefined ? undefined : Redacted.isRedacted(value) ? value : Redacted.make(value);
 
 /**
  * Everything needed to generate a complete single-method ("stored")
@@ -56,9 +48,7 @@ export interface StoredAuthProviderConfig<Resolved> {
    * an account id with an API call using the entered token. Runs for both
    * the interactive and flag-driven paths, before persistence.
    */
-  readonly complete?: (
-    values: StoredValues,
-  ) => Effect.Effect<StoredValues, AuthError>;
+  readonly complete?: (values: StoredValues) => Effect.Effect<StoredValues, AuthError>;
   /**
    * Map validated stored values to the in-memory resolved credentials.
    * `source` distinguishes profile-stored values from CI env resolution.
@@ -89,13 +79,10 @@ export const validateFieldValues = (
     const known = new Set(fields.map((field) => field.name));
     for (const key of Object.keys(values)) {
       if (!known.has(key)) {
-        return yield* Effect.fail(
-          new AuthError({
-            message:
-              `${provider}: unknown field '${key}'. ` +
-              `Valid fields: ${[...known].join(", ")}.`,
-          }),
-        );
+        return yield* AuthError.make({
+          message:
+            `${provider}: unknown field '${key}'. ` + `Valid fields: ${[...known].join(", ")}.`,
+        });
       }
     }
     const collected: StoredValues = {};
@@ -103,19 +90,15 @@ export const validateFieldValues = (
       const raw = values[field.name] ?? field.defaultValue;
       if (raw === undefined || raw.length === 0) {
         if (field.optional) continue;
-        return yield* Effect.fail(
-          new AuthError({
-            message: `${provider}: missing required field '${field.name}' (${field.label}). Pass it with --set ${field.name}=<value>.`,
-          }),
-        );
+        return yield* AuthError.make({
+          message: `${provider}: missing required field '${field.name}' (${field.label}). Pass it with --set ${field.name}=<value>.`,
+        });
       }
       const invalid = field.validate?.(raw);
       if (invalid !== undefined) {
-        return yield* Effect.fail(
-          new AuthError({
-            message: `${provider}: invalid '${field.name}': ${invalid}`,
-          }),
-        );
+        return yield* AuthError.make({
+          message: `${provider}: invalid '${field.name}': ${invalid}`,
+        });
       }
       collected[field.name] = field.secret ? Redacted.make(raw) : raw;
     }
@@ -181,9 +164,7 @@ export const collectFieldValues = (
  *   });
  * ```
  */
-export const makeStoredAuthProvider = <Resolved>(
-  config: StoredAuthProviderConfig<Resolved>,
-) => {
+export const makeStoredAuthProvider = <Resolved>(config: StoredAuthProviderConfig<Resolved>) => {
   const { provider, fields } = config;
 
   const fieldSchemas = Object.fromEntries(
@@ -207,27 +188,21 @@ export const makeStoredAuthProvider = <Resolved>(
   const layer = AuthProviderLayer<StoredAuthConfig, Resolved>()(
     provider,
     Effect.gen(function* () {
-      const interaction = Interaction.accessors;
       const persist = (_profileName: string, values: StoredValues) =>
         Effect.gen(function* () {
           const complete = config.complete?.(values) ?? Effect.succeed(values);
           const completed = yield* complete;
-          yield* interaction.output.success(`${provider}: credentials saved.`);
+          yield* Interaction.success(`${provider}: credentials saved.`);
           return {
             method: "stored" as const,
             ...Object.fromEntries(
-              Object.entries(completed).map(([key, value]) => [
-                key,
-                storedValueText(value),
-              ]),
+              Object.entries(completed).map(([key, value]) => [key, storedValueText(value)]),
             ),
           };
         });
 
       const configure = (profileName: string) =>
-        collectFieldValues(fields).pipe(
-          Effect.flatMap((values) => persist(profileName, values)),
-        );
+        collectFieldValues(fields).pipe(Effect.flatMap((values) => persist(profileName, values)));
 
       const configureWith = (
         profileName: string,
@@ -238,7 +213,7 @@ export const makeStoredAuthProvider = <Resolved>(
               Effect.flatMap((values) => persist(profileName, values)),
             )
           : Effect.fail(
-              new AuthError({
+              AuthError.make({
                 message: `${provider}: unknown method '${input.method}'. Valid methods: stored.`,
               }),
             );
@@ -246,11 +221,9 @@ export const makeStoredAuthProvider = <Resolved>(
       const read = (_profileName: string, values: StoredAuthConfig) =>
         Effect.succeed(config.toResolved(values, "stored"));
 
-      const login = (_profileName: string, values: StoredAuthConfig) =>
-        Effect.succeed(values);
+      const login = (_profileName: string, values: StoredAuthConfig) => Effect.succeed(values);
 
-      const logout = (_profileName: string, _config: StoredAuthConfig) =>
-        Effect.void;
+      const logout = (_profileName: string, _config: StoredAuthConfig) => Effect.void;
 
       const details = (_profileName: string, values: StoredAuthConfig) =>
         Effect.succeed({
@@ -268,9 +241,7 @@ export const makeStoredAuthProvider = <Resolved>(
           }),
         });
 
-      const configureMethods: ReadonlyArray<ConfigureMethod> = [
-        { method: "stored", fields },
-      ];
+      const configureMethods: ReadonlyArray<ConfigureMethod> = [{ method: "stored", fields }];
 
       return {
         configSchema,
