@@ -39,7 +39,7 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Collapse" }));
 
-    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar-container"]')!;
     await vi.waitFor(() => expect(sidebar.inert).toBe(true));
     const trigger = screen.container.querySelector('[data-slot="sidebar-trigger"]');
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
@@ -70,6 +70,64 @@ describe("Sidebar", () => {
     rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
 
     expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("snaps closed or open in the direction a drag past the minimum width is released", async () => {
+    await page.viewport(1280, 800);
+    const onResize = vi.fn();
+    await using screen = await render(<Harness onResize={onResize} />, {
+      router: false /* no routes involved */,
+    });
+    const container = screen.container.querySelector<HTMLElement>(
+      '[data-slot="sidebar-container"]',
+    )!;
+    const gap = screen.container.querySelector<HTMLElement>('[data-slot="sidebar-gap"]')!;
+    const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientY: 100 };
+    const press = (handle: HTMLElement) =>
+      handle.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: 0 }));
+    // Waits for each move to render, so the drag sees every step and its direction.
+    const move = async (handle: HTMLElement, clientX: number, extent: number) => {
+      handle.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
+      await vi.waitFor(() => expect(gap.style.width).toBe(`${extent}px`));
+    };
+    const release = async (handle: HTMLElement, clientX: number) => {
+      handle.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX }));
+      await vi.waitFor(() => expect(gap.style.width).toBe(""));
+    };
+    const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+    // Tests load no CSS, so read the width each drag starts from instead of assuming one.
+    const startWidth = () => Math.min(600, container.getBoundingClientRect().width);
+
+    let width = startWidth();
+    press(rail);
+    await move(rail, 150 - width, 150);
+    await move(rail, 190 - width, 190);
+    await release(rail, 190 - width);
+    expect(onResize).toHaveBeenLastCalledWith(200);
+    expect(container.inert).toBe(false);
+
+    width = startWidth();
+    press(rail);
+    await move(rail, 150 - width, 150);
+    await release(rail, 150 - width);
+    await vi.waitFor(() => expect(container.inert).toBe(true));
+    expect(onResize).toHaveBeenCalledTimes(1);
+
+    const edge = screen.container.querySelector<HTMLElement>(
+      '[data-slot="sidebar-collapsed-edge"]',
+    )!;
+    const closedWidth = startWidth();
+    press(edge);
+    await move(edge, 60, 60);
+    await move(edge, 40, 40);
+    await release(edge, 40);
+    expect(container.inert).toBe(true);
+
+    press(edge);
+    await move(edge, 30, 30);
+    await release(edge, 30);
+    await vi.waitFor(() => expect(container.inert).toBe(false));
+    expect(onResize).toHaveBeenLastCalledWith(closedWidth);
   });
 });
 

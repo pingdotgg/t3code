@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { PanelLeft, PanelLeftClose } from "lucide";
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input, type InputProps } from "~/components/ui/input";
@@ -31,6 +32,11 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const SIDEBAR_DRAG_SETTLE_MS = 220;
+const SIDEBAR_DRAG_SETTLE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+// A release this soon after moving follows the drag's direction instead of its position.
+const SIDEBAR_DRAG_FLICK_MS = 120;
+const SIDEBAR_DRAG_FLICK_MIN_EXTENT = 24;
 const SIDEBAR_TITLEBAR_CONTROL_SIZE = "max-sm:[--workspace-titlebar-control-size:--spacing(8)]";
 
 type SidebarContextProps = {
@@ -54,7 +60,7 @@ type SidebarResizableOptions = {
   shouldAcceptWidth?: (context: {
     currentWidth: number;
     nextWidth: number;
-    rail: HTMLButtonElement;
+    rail: HTMLElement;
     side: "left" | "right";
     sidebarRoot: HTMLElement;
     wrapper: HTMLElement;
@@ -69,7 +75,7 @@ type SidebarResolvedResizableOptions = {
   shouldAcceptWidth?: (context: {
     currentWidth: number;
     nextWidth: number;
-    rail: HTMLButtonElement;
+    rail: HTMLElement;
     side: "left" | "right";
     sidebarRoot: HTMLElement;
     wrapper: HTMLElement;
@@ -352,7 +358,6 @@ function Sidebar({
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-collapsible-mode={collapsible}
-        inert={offcanvasCollapsed}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
@@ -383,6 +388,7 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar-container"
+          inert={offcanvasCollapsed}
           {...props}
         >
           <div
@@ -393,6 +399,10 @@ function Sidebar({
             {children}
           </div>
         </div>
+        {/* Outside the inert container. A right edge would cover the native scrollbar. */}
+        {offcanvasCollapsed && resolvedResizable && side === "left" ? (
+          <SidebarCollapsedEdge />
+        ) : null}
       </div>
     </SidebarInstanceContext>
   );
@@ -429,6 +439,178 @@ function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptio
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
 }
 
+/**
+ * Drags a sidebar edge. Above the minimum width it resizes; below it the sidebar keeps its left
+ * side in place and narrows with the edge, clipping once rows would get too cramped, and release
+ * snaps to whichever state the drag got a third of the way toward. Starting from a collapsed
+ * sidebar reveals it the same way.
+ */
+function useSidebarEdgeDrag<T extends HTMLElement>() {
+  const { open, setOpen, onCollapse } = useSidebar();
+  const sidebarInstance = React.use(SidebarInstanceContext);
+  const suppressClickRef = React.useRef(false);
+  const settlingRef = React.useRef(false);
+  const resolvedResizable = sidebarInstance?.resizable ?? null;
+  const drag = useResizeDrag<T>((event) => {
+    const options = resolvedResizable;
+    if (!options || settlingRef.current) return null;
+    const handle = event.currentTarget;
+    const wrapper = handle.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
+    const sidebarRoot = handle.closest<HTMLElement>("[data-slot='sidebar']");
+    const sidebarContainer = sidebarRoot?.querySelector<HTMLElement>(
+      "[data-slot='sidebar-container']",
+    );
+    const sidebarGap = sidebarRoot?.querySelector<HTMLElement>("[data-slot='sidebar-gap']");
+    if (!wrapper || !sidebarRoot || !sidebarContainer || !sidebarGap) return null;
+
+    const side = sidebarInstance?.side ?? "left";
+    const startedOpen = open;
+    // A collapsed offcanvas container keeps its width; only its offset hides it.
+    let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
+    let extent = startedOpen ? width : 0;
+    // Narrower than this, the drag no longer resizes, and release can close the sidebar.
+    const clipWidth = startedOpen ? options.minWidth : width;
+    // Rows keep reflowing down to this width; past it the edge clips them.
+    const layoutFloor = clipWidth / 2;
+    let direction = 0;
+    let movedAt = 0;
+    const targets = [sidebarGap, sidebarContainer];
+    const clip = (hidden: number) =>
+      side === "left" ? `inset(0 ${hidden}px 0 0)` : `inset(0 0 0 ${hidden}px)`;
+    // Write geometry only to gap/container during drag; inherited --sidebar-width restyles the
+    // whole app, so update it at commit.
+    const render = (clipped: boolean) => {
+      const layoutWidth = Math.min(width, Math.max(extent, layoutFloor));
+      sidebarContainer.style.setProperty(side, "0px");
+      sidebarContainer.style.setProperty("width", `${layoutWidth}px`);
+      sidebarContainer.style.setProperty(
+        "clip-path",
+        clipped ? clip(layoutWidth - extent) : "none",
+      );
+      sidebarGap.style.setProperty("width", `${extent}px`);
+    };
+    const clearInlineStyles = () => {
+      targets.forEach((element) => {
+        element.style.setProperty("transition", "none");
+        for (const property of ["width", "clip-path", side]) element.style.removeProperty(property);
+      });
+      // Flush the reset so removing `transition` does not animate it.
+      void sidebarContainer.offsetWidth;
+      targets.forEach((element) => element.style.removeProperty("transition"));
+    };
+    targets.forEach((element) => element.style.setProperty("transition", "none"));
+    render(extent < width);
+
+    return {
+      width: extent,
+      edge: side === "left" ? "right" : "left",
+      bounds: { min: 0, max: options.maxWidth },
+      resize(nextExtent) {
+        const nextWidth = Math.max(nextExtent, clipWidth);
+        const accepted =
+          options.shouldAcceptWidth?.({
+            currentWidth: width,
+            nextWidth,
+            rail: handle,
+            side,
+            sidebarRoot,
+            wrapper,
+          }) ?? true;
+        if (accepted) width = nextWidth;
+        const clamped = Math.min(nextExtent, width);
+        if (Math.abs(clamped - extent) >= 1) {
+          direction = Math.sign(clamped - extent);
+          movedAt = performance.now();
+        }
+        extent = clamped;
+        render(extent < width);
+        return extent;
+      },
+      finish(_extent, moved) {
+        suppressClickRef.current = moved;
+        const flick = performance.now() - movedAt < SIDEBAR_DRAG_FLICK_MS ? direction : 0;
+        const shouldOpen =
+          extent >= clipWidth ||
+          (flick === 0
+            ? extent > clipWidth * (startedOpen ? 2 / 3 : 1 / 3)
+            : flick > 0 && extent > SIDEBAR_DRAG_FLICK_MIN_EXTENT);
+        const commit = () => {
+          settlingRef.current = false;
+          // Closing keeps the committed width, so reopening restores it.
+          flushSync(() => {
+            if (shouldOpen) {
+              wrapper.style.setProperty("--sidebar-width", `${width}px`);
+              if (options.storageKey) {
+                try {
+                  setLocalStorageItem(options.storageKey, width, Schema.Finite);
+                } catch (error) {
+                  console.error("Could not persist sidebar width.", error);
+                }
+              }
+              options.onResize?.(width);
+            }
+            if (shouldOpen !== startedOpen) setOpen(shouldOpen);
+          });
+          clearInlineStyles();
+        };
+        const target = shouldOpen ? width : 0;
+        const settleMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? 0
+          : Number.parseFloat(
+              getComputedStyle(wrapper).getPropertyValue("--panel-animation-duration"),
+            ) || SIDEBAR_DRAG_SETTLE_MS;
+        if (target === extent || settleMs === 0) {
+          commit();
+          return;
+        }
+        // The snap runs even with panel animations off, since jumping would skip up to a whole
+        // sidebar width.
+        settlingRef.current = true;
+        targets.forEach((element) => {
+          element.style.setProperty(
+            "transition",
+            `width ${settleMs}ms ${SIDEBAR_DRAG_SETTLE_EASING}, clip-path ${settleMs}ms ${SIDEBAR_DRAG_SETTLE_EASING}`,
+          );
+        });
+        extent = target;
+        render(true);
+        window.setTimeout(commit, settleMs);
+      },
+      cleanup(committed) {
+        if (!committed) clearInlineStyles();
+      },
+    };
+  });
+  // Collapsing mid-drag abandons the drag instead of committing a width to a hidden sidebar.
+  // Created once: a new ref callback would run the old one's cleanup, which ends a live drag.
+  const [handleRef] = React.useState(() => {
+    const { ref: attachDrag, cancel } = drag;
+    return (node: T | null) => {
+      const releaseDrag = attachDrag(node);
+      if (!releaseDrag) return undefined;
+      const stopCancelOnCollapse = onCollapse(cancel);
+      return () => {
+        stopCancelOnCollapse();
+        releaseDrag();
+      };
+    };
+  });
+  return {
+    handleRef,
+    consumeDragClick: () => {
+      const suppressed = suppressClickRef.current;
+      suppressClickRef.current = false;
+      return suppressed;
+    },
+    onLostPointerCapture: drag.onLostPointerCapture,
+    onPointerCancel: drag.onPointerCancel,
+    onPointerDown: drag.onPointerDown,
+    onPointerMove: drag.onPointerMove,
+    onPointerUp: drag.onPointerUp,
+    resolvedResizable,
+  };
+}
+
 function SidebarRail({
   className,
   onClick,
@@ -439,102 +621,17 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar, onCollapse } = useSidebar();
-  const sidebarInstance = React.use(SidebarInstanceContext);
-  const suppressClickRef = React.useRef(false);
-  const resolvedResizable = sidebarInstance?.resizable ?? null;
+  const { open, toggleSidebar } = useSidebar();
+  const { handleRef: railRef, ...resize } = useSidebarEdgeDrag<HTMLButtonElement>();
+  const { resolvedResizable } = resize;
   const canResize = resolvedResizable !== null && open;
   const railLabel = canResize ? "Resize Sidebar" : "Toggle Sidebar";
   const railTitle = canResize ? "Drag to resize sidebar" : "Toggle Sidebar";
-  const resize = useResizeDrag<HTMLButtonElement>((event) => {
-    const options = resolvedResizable;
-    if (!options || !open) return null;
-    const rail = event.currentTarget;
-    const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
-    const sidebarRoot = rail.closest<HTMLElement>("[data-slot='sidebar']");
-    const sidebarContainer = sidebarRoot?.querySelector<HTMLElement>(
-      "[data-slot='sidebar-container']",
-    );
-    if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
-
-    const side = sidebarInstance?.side ?? "left";
-    let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
-    // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
-    // update it at commit.
-    const widthTargets = [
-      sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
-      sidebarContainer,
-    ].filter((element): element is HTMLElement => element !== null);
-    const setTargetWidth = (value: number) => {
-      widthTargets.forEach((element) => {
-        element.style.setProperty("width", `${value}px`);
-      });
-    };
-    widthTargets.forEach((element) => {
-      element.style.setProperty("transition-duration", "0ms");
-    });
-    setTargetWidth(width);
-
-    return {
-      width,
-      edge: side === "left" ? "right" : "left",
-      bounds: { min: options.minWidth, max: options.maxWidth },
-      resize(nextWidth) {
-        const accepted =
-          options.shouldAcceptWidth?.({
-            currentWidth: width,
-            nextWidth,
-            rail,
-            side,
-            sidebarRoot,
-            wrapper,
-          }) ?? true;
-        if (accepted) {
-          setTargetWidth(nextWidth);
-          width = nextWidth;
-        }
-        return width;
-      },
-      finish(finalWidth, moved) {
-        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
-        suppressClickRef.current = moved;
-        if (options.storageKey) {
-          try {
-            setLocalStorageItem(options.storageKey, finalWidth, Schema.Finite);
-          } catch (error) {
-            console.error("Could not persist sidebar width.", error);
-          }
-        }
-        options.onResize?.(finalWidth);
-      },
-      cleanup() {
-        widthTargets.forEach((element) => {
-          element.style.removeProperty("width");
-          element.style.removeProperty("transition-duration");
-        });
-      },
-    };
-  });
-  // Collapsing mid-drag abandons the drag instead of committing a width to a hidden sidebar.
-  // Created once: a new ref callback would run the old one's cleanup, which ends a live drag.
-  const [railRef] = React.useState(() => {
-    const { ref: dragRef, cancel } = resize;
-    return (node: HTMLButtonElement | null) => {
-      const releaseDrag = dragRef(node);
-      if (!releaseDrag) return undefined;
-      const stopCancelOnCollapse = onCollapse(cancel);
-      return () => {
-        stopCancelOnCollapse();
-        releaseDrag();
-      };
-    };
-  });
 
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     onClick?.(event);
     if (event.defaultPrevented) return;
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
+    if (resize.consumeDragClick()) {
       event.preventDefault();
       return;
     }
@@ -575,7 +672,7 @@ function SidebarRail({
             }}
             onPointerDown={(event) => {
               onPointerDown?.(event);
-              if (!event.defaultPrevented) resize.onPointerDown(event);
+              if (!event.defaultPrevented && open) resize.onPointerDown(event);
             }}
             onPointerMove={(event) => {
               onPointerMove?.(event);
@@ -594,6 +691,24 @@ function SidebarRail({
       />
       <TooltipPopup side="right">{railTitle}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** The window edge a collapsed, resizable left sidebar is dragged back out from. */
+function SidebarCollapsedEdge() {
+  const { handleRef: edgeRef, ...drag } = useSidebarEdgeDrag<HTMLDivElement>();
+  return (
+    <div
+      aria-hidden
+      className="fixed inset-y-0 left-0 z-20 w-3 cursor-e-resize [-webkit-app-region:no-drag] after:absolute after:inset-y-0 after:left-0 after:w-[2px] hover:after:bg-sidebar-border"
+      data-slot="sidebar-collapsed-edge"
+      onLostPointerCapture={drag.onLostPointerCapture}
+      onPointerCancel={drag.onPointerCancel}
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      ref={edgeRef}
+    />
   );
 }
 
