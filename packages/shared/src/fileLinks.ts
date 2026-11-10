@@ -7,7 +7,7 @@ import {
 
 const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+)|-(\d+))?$/;
 
-const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
+const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+)|-L?(\d+))?$/i;
 
 /** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
 export function parseFileUrlHref(
@@ -32,6 +32,7 @@ export interface FilePathPosition {
   readonly path: string;
   readonly line?: number;
   readonly column?: number;
+  /** The last line of a range such as `:42-64`. Editors open at `line`. */
   readonly endLine?: number;
 }
 
@@ -47,13 +48,12 @@ export function splitFilePathPosition(path: string, hash = ""): FilePathPosition
     path: suffixMatch ? path.slice(0, -suffixMatch[0].length) : path,
     ...(line > 0 ? { line } : {}),
     ...(column !== undefined && column > 0 ? { column } : {}),
-    ...(line > 0 && endLine !== undefined && endLine >= line ? { endLine } : {}),
+    ...(line > 0 && endLine !== undefined && endLine > line ? { endLine } : {}),
   };
 }
 
 export function formatFilePathPosition(position: FilePathPosition): string {
   if (!position.line) return position.path;
-  if (position.endLine) return `${position.path}:${position.line}-${position.endLine}`;
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
@@ -176,9 +176,7 @@ export function fileLinkLabel(
     fileBasename(file.path),
     suffix,
     file.line
-      ? file.endLine
-        ? `L${file.line}-L${file.endLine}`
-        : `L${file.line}${file.column ? `:C${file.column}` : ""}`
+      ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
       : undefined,
   ]
     .filter(Boolean)

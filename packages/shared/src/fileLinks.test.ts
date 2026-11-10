@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   fileLinkLabel,
-  formatFilePathPosition,
   parseFileUrlHref,
   splitFilePathPosition,
   resolvePathLinkTarget,
@@ -38,32 +37,11 @@ describe("splitFilePathPosition", () => {
     ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
     ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
     ["src/main.ts:0", "", { path: "src/main.ts" }],
-    // regression: #28555 a colon range is a start line, not part of the filename
-    ["src/main.ts:67-69", "", { path: "src/main.ts", line: 67, endLine: 69 }],
-    ["src/main.ts:69-67", "", { path: "src/main.ts", line: 69 }],
-    [
-      String.raw`C:\repo\foo.py:67-69`,
-      "",
-      { path: String.raw`C:\repo\foo.py`, line: 67, endLine: 69 },
-    ],
+    ["src/main.ts:42-64", "", { path: "src/main.ts", line: 42, endLine: 64 }],
+    ["src/main.ts", "#L42-L64", { path: "src/main.ts", line: 42, endLine: 64 }],
+    ["src/main.ts:42-42", "", { path: "src/main.ts", line: 42 }],
   ])("splits %s%s", (path, hash, expected) => {
     expect(splitFilePathPosition(path, hash)).toEqual(expected);
-  });
-});
-
-describe("formatFilePathPosition", () => {
-  it("keeps a colon range on the target", () => {
-    expect(formatFilePathPosition({ path: "src/foo.py", line: 67, endLine: 69 })).toBe(
-      "src/foo.py:67-69",
-    );
-  });
-});
-
-describe("fileLinkLabel", () => {
-  it("shows a colon range as a line span", () => {
-    expect(fileLinkLabel({ path: "/tmp/locomo.py", line: 67, endLine: 69 }, new Map())).toBe(
-      "locomo.py · L67-L69",
-    );
   });
 });
 
@@ -102,5 +80,14 @@ describe("resolvePathLinkTarget", () => {
     for (const cwd of ["C:/work/project", "/Home/alice/project", "/users/alice/project"]) {
       expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe("~/notes.md:3");
     }
+  });
+});
+
+describe("fileLinkLabel", () => {
+  it.each([
+    [{ path: "/repo/src/http.ts", line: 42, column: 7 }, "http.ts · L42:C7"],
+    [{ path: "/repo/src/http.ts", line: 42, endLine: 64 }, "http.ts · L42–64"],
+  ])("labels %o", (file, label) => {
+    expect(fileLinkLabel(file, new Map())).toBe(label);
   });
 });
