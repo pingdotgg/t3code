@@ -108,7 +108,6 @@ it("keeps an unsaved citation comment when a question takes the composer", async
 it("clears the sent prompt when an empty citation comment sends it", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
   await using screen = await render(<Composer question={false} editorRef={editorRef} />);
-  const drafts = () => screen.container.querySelector("output")?.dataset;
 
   const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
   if (!sourceAnchor) throw new Error("Citation source did not resolve");
@@ -126,8 +125,8 @@ it("clears the sent prompt when an empty citation comment sends it", async () =>
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
 
   await expect.element(comment).not.toBeInTheDocument();
-  expect(drafts()?.prompt).toBe("");
   await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
+  await expect.element(screen.getByRole("status")).toHaveAttribute("data-prompt", "");
 });
 
 it.each(["blocked", "refusedLater"] as const)(
