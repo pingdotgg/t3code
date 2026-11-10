@@ -34,20 +34,22 @@ export const Actor = Schema.Struct({
 export interface Actor extends Schema.Struct.Type<typeof Actor.fields> {}
 
 /** A review object for a given pull request. */
-export const PullRequestSummaryRepositoryPullRequestLatestReviewsNodesPullRequestReview = Schema.Struct({
+export const LatestReviewsNodesPullRequestReview = Schema.Struct({
   /** Identifies the current state of the pull request review. */
   state: GraphQL.enumLiterals(Shared.PullRequestReviewState.literals),
+  /** Returns whether or not a comment has been minimized. */
+  isMinimized: Schema.Boolean,
   /** The actor who authored the comment. */
   author: Schema.NullOr(Actor)
 })
-export interface PullRequestSummaryRepositoryPullRequestLatestReviewsNodesPullRequestReview extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestLatestReviewsNodesPullRequestReview.fields> {}
+export interface LatestReviewsNodesPullRequestReview extends Schema.Struct.Type<typeof LatestReviewsNodesPullRequestReview.fields> {}
 
 /** The connection type for PullRequestReview. */
-export const PullRequestSummaryRepositoryPullRequestLatestReviewsPullRequestReviewConnection = Schema.Struct({
+export const LatestReviewsPullRequestReviewConnection = Schema.Struct({
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestSummaryRepositoryPullRequestLatestReviewsNodesPullRequestReview)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(LatestReviewsNodesPullRequestReview)))
 })
-export interface PullRequestSummaryRepositoryPullRequestLatestReviewsPullRequestReviewConnection extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestLatestReviewsPullRequestReviewConnection.fields> {}
+export interface LatestReviewsPullRequestReviewConnection extends Schema.Struct.Type<typeof LatestReviewsPullRequestReviewConnection.fields> {}
 
 /** Represents the rollup for both the check runs and status for a commit. */
 export const PullRequestSummaryRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup = Schema.Struct({
@@ -135,7 +137,7 @@ export const PullRequestSummaryRepositoryPullRequestPullRequest = Schema.Struct(
     ActorOther
   ])),
   /** A list of latest reviews per user associated with the pull request that are not also pending review. */
-  latestReviews: Schema.NullOr(PullRequestSummaryRepositoryPullRequestLatestReviewsPullRequestReviewConnection),
+  latestReviews: Schema.NullOr(LatestReviewsPullRequestReviewConnection),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection,
   /** The stack this Pull Request belongs to, or null if it is not part of a stack */
@@ -162,7 +164,7 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
       { name: "stacks", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft isInMergeQueue mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft isInMergeQueue mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state isMinimized author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
     ],
     fragments: []
   },
@@ -181,24 +183,6 @@ export declare namespace PullRequestSummary {
   export type Variables = typeof PullRequestSummary.variables.Type
   export type Result = typeof PullRequestSummary.result.Type
 }
-
-/** A review object for a given pull request. */
-export const PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsNodesPullRequestReview = Schema.Struct({
-  /** Identifies the current state of the pull request review. */
-  state: GraphQL.enumLiterals(Shared.PullRequestReviewState.literals),
-  /** Returns whether or not a comment has been minimized. */
-  isMinimized: Schema.Boolean,
-  /** The actor who authored the comment. */
-  author: Schema.NullOr(Actor)
-})
-export interface PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsNodesPullRequestReview extends Schema.Struct.Type<typeof PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsNodesPullRequestReview.fields> {}
-
-/** The connection type for PullRequestReview. */
-export const PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsPullRequestReviewConnection = Schema.Struct({
-  /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsNodesPullRequestReview)))
-})
-export interface PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsPullRequestReviewConnection extends Schema.Struct.Type<typeof PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsPullRequestReviewConnection.fields> {}
 
 /** A repository pull request. */
 export const PullRequestSummaryEnterpriseRepositoryPullRequestPullRequest = Schema.Struct({
@@ -238,7 +222,7 @@ export const PullRequestSummaryEnterpriseRepositoryPullRequestPullRequest = Sche
     ActorOther
   ])),
   /** A list of latest reviews per user associated with the pull request that are not also pending review. */
-  latestReviews: Schema.NullOr(PullRequestSummaryEnterpriseRepositoryPullRequestLatestReviewsPullRequestReviewConnection),
+  latestReviews: Schema.NullOr(LatestReviewsPullRequestReviewConnection),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection,
   /** The stack this Pull Request belongs to, or null if it is not part of a stack */
