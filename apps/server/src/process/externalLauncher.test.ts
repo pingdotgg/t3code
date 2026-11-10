@@ -335,62 +335,43 @@ it.effect.skipIf(windowsHost)(
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
       assert.equal(spawned.options.detached, true);
-      assert.equal(spawned.args[spawned.args.length - 2], "-Command");
-      assert.equal(
-        spawned.args[spawned.args.length - 1],
+      assert.deepEqual(spawned.args, [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
         "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,' + [char]34 + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + [char]34) }",
-      );
+      ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 // Antivirus heuristics kill PowerShell started with -EncodedCommand or -ExecutionPolicy Bypass.
-it.effect("launches Windows PowerShell with a plain command and no execution policy bypass", () =>
+it.effect("opens a Windows browser through a plain PowerShell command", () =>
   Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    const systemRoot = path.join(binDir, "Windows");
-    const powershellPath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-    yield* fileSystem.makeDirectory(path.dirname(powershellPath), { recursive: true });
-    yield* fileSystem.writeFileString(powershellPath, "");
-    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
-
-    const spawned: ChildProcess.StandardCommand[] = [];
+    let spawned: ChildProcess.StandardCommand | undefined;
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.launchEditor({
-        editor: "file-manager",
-        cwd: "C:\\Users\\t3\\src\\index.ts",
-        reveal: true,
-      });
       yield* launcher.launchBrowser("http://localhost:3773/pair#token=abc");
     }).pipe(
       Effect.provide(
         layerTest({
           platform: "win32",
-          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: systemRoot },
-          onSpawn: (command) => spawned.push(command),
+          env: { SYSTEMROOT: "C:\\Windows" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
         }),
       ),
     );
 
+    assert.ok(spawned);
     assert.deepEqual(
-      spawned.map((command) => [command.command, ...command.args]),
+      [spawned.command, ...spawned.args],
       [
-        [
-          powershellPath,
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\Users\\t3\\src' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,' + [char]34 + 'C:\\Users\\t3\\src\\index.ts' + [char]34) }",
-        ],
-        [
-          powershellPath,
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ProgressPreference = 'SilentlyContinue'; Start 'http://localhost:3773/pair#token=abc'",
-        ],
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ProgressPreference = 'SilentlyContinue'; Start 'http://localhost:3773/pair#token=abc'",
       ],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
