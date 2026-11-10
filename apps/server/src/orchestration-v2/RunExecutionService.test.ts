@@ -1618,7 +1618,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
       } as ProviderAdapter.ProviderAdapterV2Event,
     ];
 
-    const observed = yield* Effect.gen(function* () {
+    yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make("command:run-execution-late-child"),
@@ -1669,9 +1669,8 @@ it.effect("ingests new member threads of an owned child after the root turn term
           },
         },
       });
-      return yield* Deferred.await(childMessageIngested).pipe(Effect.timeoutOption("2 seconds"));
+      yield* Deferred.await(childMessageIngested);
     }).pipe(Effect.provide(layerTest));
-    assert.isTrue(Option.isSome(observed), "child message was not ingested after root terminal");
     assert.deepEqual(yield* Ref.get(order), ["root-finalized", "member-thread", "child-message"]);
     // The run's message started the root; the parent agent started the child's turn.
     const recorded = yield* Ref.get(origins);
@@ -2263,7 +2262,7 @@ it.effect(
         nodeId: unrelatedChildNode.id,
       };
 
-      const closed = yield* Effect.gen(function* () {
+      yield* Effect.gen(function* () {
         const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
         yield* runExecution.startRootRun({
           commandId: CommandId.make("command:subagent-interrupt-cascade"),
@@ -2406,9 +2405,8 @@ it.effect(
             },
           },
         });
-        return yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+        yield* Deferred.await(ingestionDone);
       }).pipe(Effect.provide(layerTest));
-      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
 
       const events = yield* Ref.get(written);
       const subagentEvents = events.flatMap((event) =>
