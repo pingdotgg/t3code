@@ -79,8 +79,8 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
         // Only the banner touching the composer gets the dark seam shade; stacked ones would band.
         "[&:has(+[data-slot=composer-banner-attachment])]:[--chat-composer-attached-seam:transparent]",
-        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
+        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0 [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
+        "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0 [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
         className,
       )}
       {...props}
@@ -126,16 +126,19 @@ function Root({
   return (
     <Surface
       className={cn(
-        "min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        "min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-corner-top:var(--radius-xl)] [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         // A corner button nests inside the banner's radius only when the padding
         // is tight; spacious padding already leaves the default radius concentric.
+        // Joined cards have a square top, and only detached cards round the bottom.
         density !== "spacious" && [
-          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
-          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl",
-          "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-corner-top)",
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-(--composer-banner-corner-top)",
+          "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-corner-top)",
+          "data-[composer-banner-surface=detached]:[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-ee-xl",
+          "data-[composer-banner-surface=detached]:[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-ee-xl",
         ],
         className,
       )}
