@@ -247,19 +247,21 @@ function Probe(props: {
   readonly projectName?: string;
   readonly cleanup?: boolean;
   readonly showWizard?: boolean;
+  readonly ownerKey?: string;
+  readonly commitDraft?: typeof mocks.committed;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
-    ownerKey: "draft",
+    ownerKey: props.ownerKey ?? "draft",
     draftText: mocks.draft,
     readDraft: () => ({
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },
     }),
-    commitDraft: mocks.committed,
+    commitDraft: props.commitDraft ?? mocks.committed,
   });
   useLayoutEffect(() => {
     mocks.voice = value;
@@ -373,6 +375,21 @@ it("retries a failed transcription on the same chosen environment", async () => 
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("finishes a recording into the thread it started in when the editor moves to another thread", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = ["the login bug"];
+  const commitThreadB = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await screen.rerender(<Probe ownerKey="thread-b" commitDraft={commitThreadB} />);
+  await vi.waitFor(() =>
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("the login bug", expect.anything()),
+  );
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(commitThreadB).not.toHaveBeenCalled();
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
