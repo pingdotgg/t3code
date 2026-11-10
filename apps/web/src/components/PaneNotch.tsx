@@ -14,7 +14,7 @@ import { cn } from "../lib/utils";
  * sits on the pane edge, where the pane clip would cut an outer ring.
  */
 export const PANE_TAB_CLASS =
-  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
+  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control surface-pane-tab px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
 
 export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
 export const PANE_INACTIVE_TAB_TITLE_CLASS = "max-w-40 truncate";
