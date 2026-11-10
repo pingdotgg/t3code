@@ -183,9 +183,18 @@ describe("deriveWorkspacePaneLayout", () => {
       leadingWidth: 72,
       hinge: { x: 372, width: 8 },
       inspectorWidth: 364,
-      maximumWidth: 372,
+      maximumWidth: 364,
       mainEnd: 372,
       gap: 8,
+    },
+    {
+      width: 1200,
+      leadingWidth: 72,
+      hinge: { x: 600, width: 24 },
+      inspectorWidth: 576,
+      maximumWidth: 576,
+      mainEnd: 600,
+      gap: 24,
     },
     {
       width: 1000,
@@ -218,14 +227,24 @@ describe("deriveWorkspacePaneLayout", () => {
         deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
       ).toMatchObject({
         auxiliaryPaneWidth: expect.closeTo(maximumWidth),
-        auxiliaryPaneGap: 0,
+        auxiliaryPaneGap: gap,
       });
-      expect(
-        deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: 320 }),
-      ).toMatchObject({
-        auxiliaryPaneWidth: 320,
-        auxiliaryPaneGap: 0,
+      const resized = deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: 320 });
+      expect(resized).toMatchObject({
+        auxiliaryPaneWidth: gap > 0 ? inspectorWidth : 320,
+        auxiliaryPaneGap: gap,
       });
+      if (gap > 0) {
+        const restored = deriveWorkspacePaneLayout({
+          ...input,
+          auxiliaryPanePreferredWidth: resized.auxiliaryPaneWidth ?? undefined,
+        });
+        expect(restored.auxiliaryPaneWidth).toBe(inspectorWidth);
+        expect(restored.auxiliaryPaneGap).toBe(gap);
+        expect(width - (restored.auxiliaryPaneWidth ?? 0) - (restored.auxiliaryPaneGap ?? 0)).toBe(
+          mainEnd,
+        );
+      }
     },
   );
 

@@ -94,7 +94,7 @@ export function WorkspaceInspectorPane(props: {
 
   return (
     <>
-      {inspectorInteractive ? (
+      {inspectorInteractive && (panes.auxiliaryPaneGap ?? 0) === 0 ? (
         <WorkspacePaneDivider
           accessibilityLabel="Resize detail pane"
           currentWidth={inspectorWidth ?? 0}

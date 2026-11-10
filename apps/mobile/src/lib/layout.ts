@@ -304,11 +304,18 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly inspectorWindow?: InspectorWindow;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
+  const window = input.inspectorWindow;
+  const hinge = window?.hinge;
+  if (input.inspectorSizing === "android" && window && hinge && hinge.width > 0) {
+    const width = window.width - hinge.x - hinge.width;
+    const supported =
+      input.layout.usesSplitView && width >= 320 && hinge.x - window.leadingWidth >= 280;
+    return { supported, gap: supported ? hinge.width : 0, width: supported ? width : null };
+  }
   if (
     input.inspectorSizing === "android" &&
     (input.inspectorWindow?.width ?? viewportWidth) < ANDROID_WIDE_INSPECTOR_MIN_WIDTH
   ) {
-    const window = input.inspectorWindow;
     const gap = input.preferredWidth === undefined ? (window?.hinge?.width ?? 0) : 0;
     const defaultWidth = window
       ? window.width - (window.hinge?.x ?? window.width / 2) - gap
