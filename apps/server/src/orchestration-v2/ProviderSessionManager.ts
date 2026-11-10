@@ -855,6 +855,13 @@ export const layerWithOptions = (
         ReturnType<typeof readReleasedBackgroundTasks>
       >[number];
 
+      const readRecoveryProjection = (threadId: ThreadId) =>
+        projectionStore.getRuntimeRecoveryProjection(threadId).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+          }),
+        );
+
       // A released process can never report how the native subagents running inside it ended.
       const readReleasedNativeSubagents = Effect.fn(
         "ProviderSessionManager.readReleasedNativeSubagents",
@@ -863,7 +870,8 @@ export const layerWithOptions = (
           const providerSessionId = input.entry.runtime.providerSessionId;
           const released = [];
           for (const threadId of threadsLosingBackgroundWork(input)) {
-            const projection = yield* projectionStore.getRuntimeRecoveryProjection(threadId);
+            const projection = yield* readRecoveryProjection(threadId);
+            if (projection === null) continue;
             const sessionProviderThreadIds = new Set(
               projection.providerThreads.flatMap((providerThread) =>
                 providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
@@ -909,13 +917,6 @@ export const layerWithOptions = (
 
       const startedAtMillis = (startedAt: DateTime.Utc | null) =>
         startedAt === null ? null : DateTime.toEpochMillis(startedAt);
-
-      const readRecoveryProjection = (threadId: ThreadId) =>
-        projectionStore.getRuntimeRecoveryProjection(threadId).pipe(
-          Effect.catchTags({
-            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-          }),
-        );
 
       // A replacement process can resume a subagent at any point before this commits; a new start keeps it.
       // Each subagent and its child turns commit together, guarded by the start this release read.
