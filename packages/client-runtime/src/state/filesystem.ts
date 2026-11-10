@@ -121,13 +121,13 @@ export function createBrowseNavigationCoordinator() {
     invalidate: () => {
       generation += 1;
     },
-    run: async (load: () => Promise<void>, commit: () => void) => {
+    run: async <A>(load: () => Promise<A>, commit: (result: A) => void) => {
       const navigationGeneration = ++generation;
-      await load();
+      const result = await load();
       if (navigationGeneration !== generation) {
         return false;
       }
-      commit();
+      commit(result);
       return true;
     },
   };

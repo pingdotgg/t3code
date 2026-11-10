@@ -2270,13 +2270,24 @@ function OpenCommandPaletteDialog(props: {
   const browseDrives = useStableCallback(async (): Promise<void> => {
     if (!browseEnvironmentId || !browseAccess.canReadFiles) return;
     await browseNavigation.run(
-      async () => {
-        await loadBrowseRoots({
+      () =>
+        loadBrowseRoots({
           environmentId: browseEnvironmentId,
           input: { partialPath: "/", mode: "roots" },
-        });
-      },
-      () => {
+        }),
+      (result) => {
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to list drives",
+                description: errorMessage(squashAtomCommandFailure(result)),
+              }),
+            );
+          }
+          return;
+        }
         clearTypedHighlight();
         dispatchSearch({ type: "query", query: "" });
         setIsDriveList(true);
