@@ -540,6 +540,8 @@ type MessagesTimelineRowContent =
       expanded: boolean;
       /** The rows this fold shows only while open, in order. Empty while it is closed. */
       revealedRowIds: readonly string[];
+      /** A closed fold directly above a prompt keeps a full turn gap below it. */
+      precedesPrompt?: boolean;
     }
   | {
       kind: "worktree-setup";
@@ -3266,7 +3268,13 @@ export function applyBackgroundActivityGroups(
     // Expansion returns the original virtual rows, identities, disclosures and actions.
     result.push(...(expanded ? groupRows : keptRows));
   }
-  return result;
+  return result.map((row, index) =>
+    row.kind === "background-activity" &&
+    !row.expanded &&
+    timelineRowIsUserPrompt(result[index + 1])
+      ? { ...row, precedesPrompt: true }
+      : row,
+  );
 }
 
 /**
@@ -3523,6 +3531,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         shallow(a.updates, bg.updates) &&
         a.active === bg.active &&
         a.expanded === bg.expanded &&
+        a.precedesPrompt === bg.precedesPrompt &&
         shallow(a.runIds, bg.runIds)
       );
     }
