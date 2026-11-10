@@ -38,9 +38,11 @@ const credentialScope = (request: SourceControlMediaRequest) => {
   const enterpriseHost = request.host?.trim().toLowerCase();
   if (enterpriseHost && !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost)) {
     const hosts: ReadonlySet<string> = new Set([enterpriseHost, `raw.${enterpriseHost}`]);
-    if (isCredentialedHost(request.url, hosts)) return { account: enterpriseHost, hosts };
+    if (isCredentialedHost(request.url, hosts)) {
+      return { account: enterpriseHost, hosts, enterprise: true };
+    }
   }
-  return { account: "github.com", hosts: GITHUB_CREDENTIALED_MEDIA_HOSTS };
+  return { account: "github.com", hosts: GITHUB_CREDENTIALED_MEDIA_HOSTS, enterprise: false };
 };
 
 const MAX_REDIRECTS = 3;
@@ -161,6 +163,8 @@ export const make = Effect.gen(function* () {
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
     const scope = credentialScope(request);
     const signedIn = yield* credential(scope.account);
+    // The client names an Enterprise host, so only one the user has signed in to is fetched.
+    if (scope.enterprise && signedIn === null) return null;
     const repository = signedIn === null ? undefined : uploadRepository(request);
     const cacheKey =
       signedIn === null || repository === undefined
