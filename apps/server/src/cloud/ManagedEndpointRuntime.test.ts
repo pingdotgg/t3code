@@ -914,18 +914,6 @@ describe("CloudManagedEndpointRuntime", () => {
 
   it.effect("starts the connector without the host's GODEBUG setting", () =>
     Effect.gen(function* () {
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const previous = process.env.GODEBUG;
-          process.env.GODEBUG = "tlskyber=0";
-          return previous;
-        }),
-        (previous) =>
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env.GODEBUG;
-            else process.env.GODEBUG = previous;
-          }),
-      );
       const spawned: Array<ChildProcess.StandardCommand> = [];
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
@@ -938,13 +926,19 @@ describe("CloudManagedEndpointRuntime", () => {
           return handle;
         }),
       );
-      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        { GODEBUG: "tlskyber=0" },
+      );
       yield* runtime.applyConfig(tunnelConfig);
 
       const { env, extendEnv } = spawned[0]!.options;
-      const childEnv = env === undefined || extendEnv ? { ...process.env, ...env } : env;
-      expect(childEnv.GODEBUG).toBeUndefined();
-      expect(childEnv.TUNNEL_TOKEN).toBe(tunnelConfig.connectorToken);
+      expect(extendEnv).not.toBe(true);
+      expect(env?.GODEBUG).toBeUndefined();
+      expect(env?.TUNNEL_TOKEN).toBe(tunnelConfig.connectorToken);
     }),
   );
 
