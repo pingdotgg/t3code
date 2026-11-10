@@ -20,6 +20,8 @@ export class SecretResolver extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<string | undefined>>;
     /** Forgets the given references, or every reference, so the next read asks the provider again. */
     readonly invalidate: (references?: ReadonlyArray<SecretReference>) => Effect.Effect<void>;
+    /** The name the user gave a secret provider, or its id when it has none or is gone. */
+    readonly label: (provider: SecretReference["provider"]) => Effect.Effect<string>;
   }
 >()("@t3tools/secret-provider-core/server/SecretResolver") {}
 
@@ -137,7 +139,16 @@ export const make = Effect.fn("SecretResolver.make")(function* (options: {
       }),
     );
 
-  return SecretResolver.of({ read, invalidate });
+  const label: SecretResolver["Service"]["label"] = (provider) =>
+    options.secretProviders.pipe(
+      Effect.map(
+        (providers) =>
+          (Object.hasOwn(providers, provider) ? providers[provider]?.label.trim() : undefined) ||
+          provider,
+      ),
+    );
+
+  return SecretResolver.of({ read, invalidate, label });
 });
 
 export const layer = (options: Parameters<typeof make>[0]) =>

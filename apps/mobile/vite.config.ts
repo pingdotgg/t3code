@@ -7,10 +7,11 @@ const reactTests = [
   "src/features/browser/preview-accessible-document.test.ts",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
   "src/features/threads/new-task-flow-provider.test.tsx",
-  "src/features/workspace/workspace-tabs-state.test.ts",
+  "src/features/layout/workspace/workspace-tabs-state.test.ts",
   "src/state/use-thread-pr.demand.test.tsx",
   "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",
+  "src/features/files/source-file-document.test.ts",
   "src/features/projects/AddProjectScreen.test.ts",
   "src/lib/useMediaVideoPlayback.test.tsx",
   "src/features/pull-requests/usePullRequestEnvironmentFallback.test.tsx",
@@ -28,23 +29,23 @@ const reactTests = [
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/settings/components/SettingsDragHandle.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",
+  "src/components/ui/FilePreviewSession.test.tsx",
   "src/features/threads/UsageLimitRecoveryCard.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/components/ComposerEditor.ios.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
-  "src/native/useRestingTopOffset.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
-  "src/state/use-selected-thread-git-actions.test.tsx",
   "src/state/use-selected-thread-git-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
-  "src/features/workspace/useSearchScrollRestoration.test.tsx",
+  "src/features/layout/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
+  "src/features/keyboard/keyboardControllerState.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
@@ -56,6 +57,7 @@ const babel: {
   ) => Promise<{ code?: string | null; map?: object | null } | null>;
 } = require("@babel/core");
 const babelConfig = require("./babel.config.js")({ cache: () => {} });
+const testPlatform = process.env.T3_MOBILE_TEST_PLATFORM === "android" ? "android" : "ios";
 
 export default defineConfig({
   test: {
@@ -78,7 +80,7 @@ export default defineConfig({
         extends: true,
         plugins: [
           {
-            name: "mobile-release-react-compiler",
+            name: `mobile-release-react-compiler-${testPlatform}`,
             enforce: "pre",
             async transform(code, id) {
               if (
@@ -102,7 +104,7 @@ export default defineConfig({
                 caller: {
                   name: "metro",
                   bundler: "metro",
-                  platform: "ios",
+                  platform: testPlatform,
                   isDev: false,
                   isServer: false,
                   isNodeModule: false,
