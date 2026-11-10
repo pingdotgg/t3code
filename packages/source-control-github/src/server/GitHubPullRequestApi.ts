@@ -1634,10 +1634,6 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map(([, runs]) => runs));
 
   const simpleActionMutations = {
-    "disable-auto-merge": (pullRequestId: string) =>
-      client
-        .DisablePullRequestAutoMerge({ pullRequestId })
-        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
       client
         .MarkPullRequestReadyForReview({ pullRequestId })
@@ -2638,6 +2634,21 @@ export const make = Effect.gen(function* () {
             Effect.map((result) => result.repository?.pullRequest ?? null),
             Effect.flatMap(found(target)),
           );
+        // A pull request enqueued without auto-merge (`gh pr merge`, GitHub's button) has nothing
+        // to disable; it leaves the queue only by being dequeued.
+        if (action === "disable-auto-merge") {
+          return yield* actionSummary(
+            state.isInMergeQueue
+              ? client
+                  .DequeuePullRequest({ pullRequestId: state.id })
+                  .pipe(
+                    Effect.map((result) => result.dequeuePullRequest?.mergeQueueEntry?.pullRequest),
+                  )
+              : client
+                  .DisablePullRequestAutoMerge({ pullRequestId: state.id })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+          ).pipe(graphql(target));
+        }
         if (action === "update-branch") {
           if (state.baseRef?.compare?.behindBy === 0) return;
           return yield* client

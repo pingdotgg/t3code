@@ -78,6 +78,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         headRef: null,
         author: null,
         autoMergeRequest: null,
+        isInMergeQueue: false,
+        mergeQueueEntry: null,
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
@@ -2095,6 +2097,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           id: "PR_7",
           headRefOid: "abc123",
           isMergeQueueEnabled: false,
+          isInMergeQueue: false,
           mergeStateStatus: "BLOCKED",
           baseRef: { compare: { behindBy: 2 } },
           ...pullRequest,
@@ -2144,6 +2147,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     headRefOid: "response-head",
                     author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
                     autoMergeRequest,
+                    isInMergeQueue: false,
                   },
                 },
               },
@@ -2278,14 +2282,35 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
       const provider = yield* GitHubPullRequestProvider.make;
-      yield* provider.getChangeRequest({
+      const detail = yield* provider.getChangeRequest({
         cwd: "/w",
         repository: "acme/web",
         host: "github.com",
         number: 7,
       });
       expect(queryAt(0)).toMatch(/isInMergeQueue|mergeQueueEntry/);
+      expect(detail).toMatchObject({
+        autoMergeEnabled: true,
+        mergeQueue: { state: "awaiting-checks", position: 1 },
+      });
     }),
+  );
+
+  it.effect.each([
+    { isInMergeQueue: true, field: "dequeuePullRequest" },
+    { isInMergeQueue: false, field: "disablePullRequestAutoMerge" },
+  ] as const)(
+    "turns off auto-merge with $field when isInMergeQueue is $isInMergeQueue",
+    ({ isInMergeQueue, field }) =>
+      Effect.gen(function* () {
+        route(
+          ["query PullRequestActionState", actionState({ isInMergeQueue })],
+          [field + "(", { data: { [field]: null } }],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "disable-auto-merge" });
+        expect(queryAt(1)).toContain(`${field}(input:`);
+      }),
   );
 
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({

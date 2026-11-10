@@ -112,7 +112,9 @@ export function PullRequestMergeControls(props: {
               ? { label: "Resolve conflicts to merge", icon: PullRequestGlyph.conflicting }
               : pr.autoMergeEnabled
                 ? {
-                    label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
+                    label: pr.mergeQueue
+                      ? `Queued (#${pr.mergeQueue.position})`
+                      : `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
                     icon: "clock",
                   }
                 : checkingStack && !busy
@@ -183,7 +185,9 @@ export function PullRequestMergeControls(props: {
           : `${pullRequestActionLabel("merge", terminology)}?`
         : action === "enable-auto-merge"
           ? "Enable auto-merge?"
-          : "Disable auto-merge?";
+          : pr.mergeQueue
+            ? "Remove from queue?"
+            : "Disable auto-merge?";
     const message =
       action === "merge" && scope
         ? `Merge ${scope.layers.map((layer) => `#${layer.number}`).join(" → ")} into ${stack.stack?.base} using ${method}. Layers above #${pr.number} stay open.`
@@ -238,7 +242,11 @@ export function PullRequestMergeControls(props: {
                   ? [
                       {
                         id: autoAction,
-                        title: pr.autoMergeEnabled ? "Disable auto-merge" : "Enable auto-merge",
+                        title: pr.mergeQueue
+                          ? "Remove from queue"
+                          : pr.autoMergeEnabled
+                            ? "Disable auto-merge"
+                            : "Enable auto-merge",
                         image: "clock",
                       },
                     ]

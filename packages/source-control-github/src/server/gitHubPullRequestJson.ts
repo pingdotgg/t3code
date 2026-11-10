@@ -18,6 +18,7 @@ import type {
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueEntry,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -364,6 +365,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly mergeQueue?: PullRequestMergeQueueEntry;
 }
 
 export interface GitHubWorkflowRunApproval {
@@ -487,6 +489,19 @@ function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod
   }
 }
 
+const MERGE_QUEUE_STATES = {
+  QUEUED: "queued",
+  AWAITING_CHECKS: "awaiting-checks",
+  MERGEABLE: "mergeable",
+  UNMERGEABLE: "unmergeable",
+  LOCKED: "locked",
+} as const satisfies Record<GitHubSchema.MergeQueueEntryState, PullRequestMergeQueueEntry["state"]>;
+
+interface MergeQueueEntryFields {
+  readonly state: GitHubSchema.MergeQueueEntryState;
+  readonly position: number;
+}
+
 export function toPullRequestActionSummary(
   raw: PullRequestActionSummary | null | undefined,
 ): ProviderChangeRequestSummary | undefined {
@@ -505,7 +520,8 @@ export function toPullRequestActionSummary(
     closedAt: trimmed(raw.closedAt),
     author: toActor(raw.author),
     headSha: raw.headRefOid,
-    autoMergeEnabled: raw.autoMergeRequest !== null,
+    // `gh pr merge` and GitHub's merge button enqueue a ready pull request without a request.
+    autoMergeEnabled: raw.autoMergeRequest !== null || raw.isInMergeQueue,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
 }
@@ -777,10 +793,16 @@ interface DetailFields extends ListItemFields {
     | { readonly mergeMethod?: string | null | undefined }
     | null
     | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
+  readonly mergeQueueEntry?: MergeQueueEntryFields | null | undefined;
 }
 
 function toDetail(raw: DetailFields): GitHubPullRequestDetail {
   const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  const entry = raw.isInMergeQueue ? raw.mergeQueueEntry : null;
+  const mergeQueue: PullRequestMergeQueueEntry | undefined = entry
+    ? { state: MERGE_QUEUE_STATES[entry.state], position: entry.position }
+    : undefined;
   return {
     ...toListItem(raw),
     ...(typeof raw.isCrossRepository === "boolean"
@@ -795,8 +817,9 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
     checks: toChecks(raw.statusCheckRollup),
     ...(raw.autoMergeRequest === undefined
       ? {}
-      : { autoMergeEnabled: raw.autoMergeRequest !== null }),
+      : { autoMergeEnabled: raw.autoMergeRequest !== null || raw.isInMergeQueue === true }),
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+    ...(mergeQueue === undefined ? {} : { mergeQueue }),
   };
 }
 
