@@ -288,4 +288,53 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       expect(groupExists(pgid)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  // Runs on the test clock, which never advances here: a teardown that sleeps
+  // out its grace instead of watching the group would never finish.
+  it.effect("stops a running server as soon as its group exits", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-stop-" });
+      const binaryPath = path.join(tempDir, "opencode");
+      yield* fs.writeFileString(
+        binaryPath,
+        '#!/bin/sh\necho "opencode server listening on http://127.0.0.1:4096"\nexec sleep 600\n',
+      );
+      yield* fs.chmod(binaryPath, 0o755);
+
+      const tracked = yield* Deferred.make<number>();
+      const layerRuntime = OpenCodeRuntime.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            OpenCodeServerLedger.OpenCodeServerLedger,
+            OpenCodeServerLedger.OpenCodeServerLedger.of({
+              track: (server) => Deferred.succeed(tracked, server.pid).pipe(Effect.as(Effect.void)),
+            }),
+          ),
+        ),
+      );
+
+      const serverScope = yield* Scope.make();
+      const server = yield* OpenCodeRuntime.OpenCodeRuntime.pipe(
+        Effect.flatMap((runtime) =>
+          runtime.startOpenCodeServerProcess({
+            binaryPath,
+            directory: tempDir,
+            port: 4096,
+            verify: () => Effect.succeed("1.0.0"),
+          }),
+        ),
+        Effect.provideService(Scope.Scope, serverScope),
+        Effect.provide(layerRuntime),
+      );
+      const pgid = yield* Deferred.await(tracked);
+      yield* Effect.addFinalizer(() => killGroup(pgid));
+      expect(yield* server.isRunning).toBe(true);
+
+      yield* Scope.close(serverScope, Exit.void);
+
+      expect(groupExists(pgid)).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
