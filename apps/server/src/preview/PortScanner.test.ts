@@ -994,6 +994,13 @@ effectIt.effect.each([
         processOutput("1234 DEMO_SECRET=synthetic HOME=/Users/dev\n"),
       )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
   },
+  {
+    source: "another user's process, whose argv ps cannot read",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 (nginx)\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
   { source: "a failed ps", ps: processProbeFailure },
 ])("keeps lsof's name on macOS for $source", ({ ps }) => {
   const layer = PortScanner.layer.pipe(

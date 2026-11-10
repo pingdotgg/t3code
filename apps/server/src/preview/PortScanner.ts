@@ -386,7 +386,8 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
 /**
  * Reads macOS `ps -o pid=,command=` for argv[0], which a process title rewrites. A path names the
  * executable as lsof does and may hold spaces. An assignment is environment: `ps` skips an argv an
- * empty title zeroed and prints the environment after it in its place.
+ * empty title zeroed and prints the environment after it in its place. `(name)` is the exec-time
+ * name `ps` shows when it cannot read another user's argv.
  */
 const parsePsTitles = (raw: string): ReadonlyMap<number, string | null> => {
   const titles = new Map<number, string | null>();
@@ -396,7 +397,7 @@ const parsePsTitles = (raw: string): ReadonlyMap<number, string | null> => {
     const argv0 = match[2]!.split(" ", 1)[0]!.trim();
     titles.set(
       Number(match[1]),
-      argv0.length > 0 && !argv0.includes("/") && !argv0.includes("=") ? argv0 : null,
+      argv0.length > 0 && !argv0.startsWith("(") && !/[/=]/.test(argv0) ? argv0 : null,
     );
   }
   return titles;
