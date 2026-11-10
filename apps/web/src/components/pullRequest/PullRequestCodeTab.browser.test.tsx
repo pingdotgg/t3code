@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 
 import "~/index.css";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, mixedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -45,13 +45,26 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    mixedDiffAtom: Atom.family((cursor: string) =>
+      Atom.make(() =>
+        AsyncResult.success<PullRequestDiffResult>(
+          cursor === "first"
+            ? { ...firstPage, nextCursor: "raw-page" }
+            : { patch: "The host omitted this patch.", truncated: false, nextCursor: null },
+        ),
+      ),
+    ),
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
+const mocks = vi.hoisted(() => ({
+  paged: false,
+  raw: false,
+  diffCommits: [] as Array<string | undefined>,
+}));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -65,6 +78,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (mocks.raw) return mixedDiffAtom(input.cursor ?? "first");
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
     },
@@ -132,20 +146,22 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, raw = false }: { paged: boolean; raw?: boolean }) {
   mocks.paged = paged;
+  mocks.raw = raw;
   mocks.diffCommits = [];
 }
 
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
+  details: PullRequestDetailView = detail,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
-    detail={detail}
+    detail={details}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -169,12 +185,12 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
 });
 
-function hideFiles(patterns: string) {
+function hideFiles(patterns: string, hidden = true) {
   const key = "t3code.diffHideTestFiles";
   const previousSettings = getClientSettings();
   const previousHidden = getLocalStorageItem(key, Schema.Boolean);
   __setClientSettingsForTests({ ...previousSettings, diffHideFilePatterns: patterns });
-  setLocalStorageItem(key, true, Schema.Boolean);
+  setLocalStorageItem(key, hidden, Schema.Boolean);
   return {
     [Symbol.dispose]() {
       __setClientSettingsForTests(previousSettings);
@@ -184,23 +200,94 @@ function hideFiles(patterns: string) {
   };
 }
 
-it("distinguishes hidden files from no changes and lets the user show them", async () => {
+it.each([false, true])(
+  "keeps conversations when all files are hidden (raw fallback: %s)",
+  async (raw) => {
+    setup({ paged: false, raw });
+    using _settings = hideFiles("^a\\.ts$");
+    const container = document.createElement("div");
+    container.className = "h-[700px] w-[900px]";
+    const details: PullRequestDetailView = {
+      ...detail,
+      reviewThreads: [
+        {
+          id: "thread-1",
+          path: "a.ts",
+          line: 1,
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "comment-1",
+              author: detail.author,
+              body: "Keep this review conversation",
+              createdAt: detail.createdAt,
+              url: null,
+            },
+          ],
+        },
+      ],
+    };
+    await using screen = await render(tab(0, null, details), { container });
+
+    await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
+    await screen.getByRole("button", { name: /Conversations not on the current diff/ }).click();
+    await expect.element(screen.getByText("Keep this review conversation")).toBeVisible();
+    if (raw) await expect.element(screen.getByText("The host omitted this patch.")).toBeVisible();
+    await expect
+      .element(screen.getByText("This pull request has no file changes."))
+      .not.toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "1 matching file hidden" }).click();
+
+    await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("a.ts", { exact: true }).first()).toBeVisible();
+    await expect
+      .element(screen.getByText("All matching files are hidden."))
+      .not.toBeInTheDocument();
+  },
+);
+
+it("keeps an unsaved comment draft visible until it is cancelled", async () => {
   setup({ paged: false });
-  using _settings = hideFiles("^a\\.ts$");
+  using _settings = hideFiles("^a\\.ts$", false);
   const container = document.createElement("div");
-  container.className = "h-[700px] w-[900px]";
-  await using screen = await render(tab(0), { container });
-
-  await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
-  await expect
-    .element(screen.getByText("This pull request has no file changes."))
-    .not.toBeInTheDocument();
-
-  await screen.getByRole("button", { name: "1 matching file hidden" }).click();
-
+  container.className = "flex h-[700px] w-[900px]";
+  const details: PullRequestDetailView = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  await using screen = await render(tab(0, null, details), { container });
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("a.ts", { exact: true }).first()).toBeVisible();
-  await expect.element(screen.getByText("All matching files are hidden.")).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Expand all files" }).click();
+  const line = screen.getByText("1", { exact: true }).last();
+  await expect.element(line).toBeVisible();
+  for (const type of ["pointerdown", "pointerup"]) {
+    line.element().dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        composed: true,
+        pointerType: "mouse",
+        pointerId: 1,
+        button: 0,
+      }),
+    );
+  }
+  const draft = screen.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+  await draft.fill("Keep my unsaved comment");
+
+  await screen.getByRole("button", { name: "Hide matching files" }).click();
+
+  await expect.element(draft).toBeVisible();
+  await expect.element(draft).toHaveValue("Keep my unsaved comment");
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
 });
 
 function pagedContainer() {

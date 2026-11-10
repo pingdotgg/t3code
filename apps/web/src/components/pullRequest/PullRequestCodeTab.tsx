@@ -568,11 +568,11 @@ function PullRequestCodeTab({
   const matchingFileCount = loadedFiles.filter((file) =>
     matchesHiddenFile(resolveFileDiffPath(file)),
   ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
+  // Keep requested files and unsaved comment editors mounted when filtering.
   const files = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !matchesHiddenFile(path);
+        return path === revealRequest?.path || path === draft?.path || !matchesHiddenFile(path);
       })
     : loadedFiles;
   const hiddenFileCount = loadedFiles.length - files.length;
@@ -684,7 +684,7 @@ function PullRequestCodeTab({
       ? parsedSlices.flatMap((parsed) => (parsed?.kind === "raw" ? [parsed] : []))
       : [];
   const rawSlicesView =
-    files.length === 0 && rawSlices.length > 0 ? (
+    loadedFiles.length === 0 && rawSlices.length > 0 ? (
       <div className="space-y-4 px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
@@ -1436,14 +1436,10 @@ function PullRequestCodeTab({
     return withToolbar(rawSlicesView);
   }
 
-  if (items.length === 0 && nextCursor === null) {
+  if (loadedFiles.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {loadedFiles.length > 0
-          ? `All ${fileLabel} files are hidden.`
-          : commit === null
-            ? `This ${term} has no file changes.`
-            : "This commit has no file changes."}
+        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
       </p>,
     );
   }
@@ -1511,6 +1507,9 @@ function PullRequestCodeTab({
             </CollapsiblePanel>
           </Collapsible>
         </div>
+      ) : null}
+      {items.length === 0 && nextCursor === null ? (
+        <p className="px-4 py-5 text-sm text-muted-foreground">All {fileLabel} files are hidden.</p>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
