@@ -32,9 +32,11 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
+  const envs: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
+      envs.push(input.env);
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
@@ -70,7 +72,7 @@ function harness(
       ),
     ),
   );
-  return { layer, calls };
+  return { layer, calls, envs };
 }
 
 describe("GitHubCredentials", () => {
@@ -90,6 +92,19 @@ describe("GitHubCredentials", () => {
       expect(Redacted.value(credential.token)).toBe("from-env");
       expect(credential.source).toBe("env");
       expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps an Enterprise token from reaching gh for a host GH_HOST does not name", () => {
+    vi.stubEnv("GH_ENTERPRISE_TOKEN", "enterprise-token");
+    vi.stubEnv("GH_HOST", "ghe.example.com");
+    const { layer, envs } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const credential = yield* credentials.get("other.example.com");
+      expect(credential.source).toBe("gh");
+      expect(envs).toHaveLength(1);
+      for (const name of TOKEN_VARIABLES) expect(envs[0]?.[name]).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
