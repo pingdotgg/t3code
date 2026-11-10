@@ -100,6 +100,7 @@ export class VoiceInputSession {
   constructor(dependencies: VoiceInputSessionDependencies) {
     this.dependencies = dependencies;
     this.controller = new VoiceInputController({
+      retryFailedRecording: true,
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
       readDraft: () => this.target?.readDraft() ?? null,

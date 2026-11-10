@@ -47,6 +47,7 @@ function createSession(
   const releaseKeepAwake = vi.fn();
   const keepAwake = vi.fn(() => releaseKeepAwake);
   const publishAudioLevels = vi.fn();
+  const deleteRecording = vi.fn();
   const recorder = {
     uri: "file:///voice.m4a",
     prepareToRecordAsync: vi.fn(async () => {}),
@@ -63,17 +64,57 @@ function createSession(
     requestPermission: async () => ({ granted: true, canAskAgain: true }),
     configureRecording: async () => {},
     releaseRecording: vi.fn(async () => {}),
-    deleteRecording: vi.fn(),
+    deleteRecording,
     sampleRecording: () => null,
     publishAudioLevels,
     keepAwake,
     ...overrides,
   });
-  return { session, recorder, prepare, keepAwake, releaseKeepAwake, publishAudioLevels };
+  return {
+    session,
+    recorder,
+    prepare,
+    keepAwake,
+    releaseKeepAwake,
+    publishAudioLevels,
+    deleteRecording,
+  };
 }
 
 describe("global voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it("retries failed batch audio without recording again and deletes it after recovery", async () => {
+    const { session, recorder, prepare, deleteRecording, keepAwake } = createSession();
+    const transcribe = vi
+      .fn<PreparedVoiceTranscription["transcribe"]>()
+      .mockRejectedValueOnce(new Error("Upload failed"))
+      .mockRejectedValueOnce(new Error("Transcription failed"))
+      .mockResolvedValueOnce("recovered text");
+    prepare.mockResolvedValue({ locale: "en-US", transcribe });
+    const commit = vi.fn();
+    await session.start(createTarget("first", () => "draft", commit, { start: 5, end: 5 }));
+    await session.controller.stop();
+    expect(session.controller.currentState.phase).toBe("error");
+    expect(deleteRecording).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+
+    await session.retry();
+    expect(session.controller.currentState.phase).toBe("error");
+    expect(deleteRecording).not.toHaveBeenCalled();
+    await session.retry();
+
+    expect(session.controller.currentState.phase).toBe("idle");
+    expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
+      "file:///voice.m4a",
+      "file:///voice.m4a",
+      "file:///voice.m4a",
+    ]);
+    expect(recorder.record).toHaveBeenCalledOnce();
+    expect(keepAwake).toHaveBeenCalledOnce();
+    expect(commit).toHaveBeenCalledExactlyOnceWith("draft recovered text", { start: 20, end: 20 });
+    expect(deleteRecording).toHaveBeenCalledExactlyOnceWith("file:///voice.m4a");
+  });
 
   it.each(["retry", "takeover"])(
     "handles failed deactivation with %s without notifying a released owner",
