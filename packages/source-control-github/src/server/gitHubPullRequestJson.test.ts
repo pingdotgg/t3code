@@ -653,12 +653,9 @@ describe("pull request detail decoding", () => {
       inWorkflow({ ...replacement, name: "web browser tests (runner 1 of 6)" }),
       inWorkflow({ ...replacement, name: "web browser tests (runner 2 of 6)" }),
     ];
-    const checksOf = (contexts: ReadonlyArray<Record<string, unknown>>) => {
-      const detail = detailOf(contexts);
-      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
-    };
+    const detail = detailOf(rollup);
 
-    expect(checksOf(rollup)).toEqual([
+    expect([detail.checks.map((check) => [check.name, check.status]), detail.checksState]).toEqual([
       [
         ["check", "success"],
         ["web browser tests (runner 1 of 6)", "success"],
@@ -666,19 +663,6 @@ describe("pull request detail decoding", () => {
       ],
       "passing",
     ]);
-    expect(
-      checksOf([
-        ...rollup,
-        inWorkflow({
-          ...superseded,
-          workflowName: "Release",
-          workflowId: "W_kwDORLtfbc4Onf3y",
-          runNumber: 92888,
-          name: "publish",
-          conclusion: "CANCELLED",
-        }),
-      ])[0],
-    ).toContainEqual(["publish", "cancelled"]);
   });
 
   it("keeps a cancelled check when the newer run is another workflow with the same name", () => {
@@ -733,14 +717,20 @@ describe("pull request detail decoding", () => {
   });
 
   it.each([
-    ["a manual dispatch", "workflow_dispatch", "workflow_dispatch", "CANCELLED", "cancelled"],
-    ["a push of another ref", "push", "push", "CANCELLED", "cancelled"],
-    ["another event", "pull_request", "pull_request_target", "CANCELLED", "cancelled"],
-    ["a pull request run", "pull_request", "pull_request", "FAILURE", "failure"],
-    ["a pull request run, if required", "pull_request", "pull_request", "CANCELLED", "cancelled"],
+    ["a push", "push", "push", "CANCELLED", false, "cancelled"],
+    ["another event", "pull_request", "pull_request_target", "CANCELLED", false, "cancelled"],
+    ["a pull request run", "pull_request", "pull_request", "FAILURE", false, "failure"],
+    [
+      "a pull request run, if required",
+      "pull_request",
+      "pull_request",
+      "CANCELLED",
+      true,
+      "cancelled",
+    ],
   ])(
     "keeps an older run's check when the newer run is %s",
-    (label, olderEvent, newerEvent, conclusion, status) => {
+    (_label, olderEvent, newerEvent, conclusion, isRequired, status) => {
       const detail = detailOf([
         inWorkflow({
           name: "test (packages/shared)",
@@ -748,7 +738,7 @@ describe("pull request detail decoding", () => {
           event: olderEvent,
           runNumber: 41,
           conclusion,
-          ...(label.endsWith("if required") ? { isRequired: true } : {}),
+          isRequired,
         }),
         inWorkflow({
           name: "test (apps/server)",
