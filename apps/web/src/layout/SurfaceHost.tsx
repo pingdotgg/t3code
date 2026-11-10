@@ -1051,13 +1051,11 @@ export function LayoutSurfaceHost({
   const paneMotionKey =
     staged || stacked || dragging || narrow ? null : `${workspace.id}:${viewportWidth}`;
   const [ghosts, setGhosts] = useState<ReadonlyMap<string, ClosingTab>>(NO_GHOSTS);
-  const presentTabIds = new Set(
-    shown.workspaces.flatMap((candidate) =>
-      candidate.columns.flatMap((column) =>
-        column.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
-      ),
-    ),
+  const presentPanes = shown.workspaces.flatMap((candidate) =>
+    candidate.columns.flatMap((column) => column.panes),
   );
+  const presentTabIds = new Set(presentPanes.flatMap((pane) => pane.tabs.map((tab) => tab.id)));
+  const presentPaneIds = new Set(presentPanes.map((pane) => pane.id));
   const tabIdsKey = [...presentTabIds].join();
   // The tabs and their places as last drawn; a resize drag leaves them be.
   const [seen, setSeen] = useState({
@@ -1082,8 +1080,8 @@ export function LayoutSurfaceHost({
       motionKey: paneMotionKey,
       framed: paneCount > 1 || maximizedTabId !== null,
     });
-    // A tab closed from the strip leaves a ghost of its pane behind; the
-    // window's lone pane has nothing beside it to slide under, it just goes.
+    // A pane closed from the strip leaves a ghost behind; the window's lone
+    // pane has nothing beside it to slide under, it just goes.
     if (
       seen.key !== tabIdsKey &&
       seen.framed &&
@@ -1092,7 +1090,9 @@ export function LayoutSurfaceHost({
     ) {
       const closed: [string, ClosingTab][] = [];
       for (const [tabId, was] of seen.placed) {
-        if (presentTabIds.has(tabId) || ghosts.has(tabId)) continue;
+        if (presentTabIds.has(tabId) || presentPaneIds.has(was.slot.paneId) || ghosts.has(tabId)) {
+          continue;
+        }
         const placed = { slot: was.slot, style: slotStyle(was.slot, seen.stripPx) };
         const chat = seen.chats.get(tabId);
         const launcher = seen.launchers.get(tabId);
