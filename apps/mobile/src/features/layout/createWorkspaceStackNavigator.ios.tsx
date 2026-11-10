@@ -46,7 +46,7 @@ import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
-import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "./AdaptiveWorkspaceLayout";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 import { WorkspaceEmptyDetail } from "./WorkspaceEmptyDetail";
 import { NativeColumnContent as ColumnContent } from "../../native/NativeColumnContent.ios";
@@ -205,15 +205,14 @@ function WorkspaceColumns(
 ) {
   const {
     layout,
-    panes,
     setPrimarySidebarVisible,
     toggleAuxiliaryPane,
     startNewTask,
     openWorkspaceTab,
-    sidebarByOrientation,
     nativeInspectorWidth,
     setNativeInspectorWidth,
   } = useAdaptiveWorkspaceLayout();
+  const { panes, sidebarByOrientation } = useWorkspacePaneState();
   const deviceType = useDeviceType();
   const inspectorWidth = nativeInspectorWidth;
   const resizeStartWidth = useRef(inspectorWidth);
