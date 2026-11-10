@@ -1,5 +1,5 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
@@ -48,31 +48,44 @@ export function filterProjectScopes(
   );
 }
 
-// Cached configuration reserves the row; connection readiness only gates activation.
+// Any environment that can answer reserves the row so the list never shifts; config and connection only set its status.
 export function resolveNewTaskScratchOption(input: {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
+    readonly isEnabled: boolean;
     readonly connectionState: EnvironmentConnectionPhase;
   }>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "scratchWorkspaceRoot">>;
   readonly selectedEnvironmentId: EnvironmentId | null;
-}) {
-  const offering = input.environments.filter(
-    (environment) =>
-      (input.serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot ?? null) !== null,
+}): {
+  readonly environmentId: EnvironmentId;
+  readonly status: "ready" | "pending" | "unavailable";
+} | null {
+  // Disabled and unsupported environments never receive a config, so they would hold the row pending forever.
+  const answering = input.environments.filter(
+    (environment) => environment.isEnabled && environment.connectionState !== "unsupported",
   );
-  const ready = offering.filter(
-    (environment) =>
-      availableScratchWorkspaceRoot(
-        environment.connectionState,
-        input.serverConfigs.get(environment.environmentId),
-      ) !== null,
+  const rootOf = (environmentId: EnvironmentId) =>
+    input.serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null;
+  const offering = answering.filter((environment) => rootOf(environment.environmentId) !== null);
+  const ready = offering.filter((environment) =>
+    canCreateProjectInEnvironment(environment.connectionState),
   );
-  const candidates = ready.length > 0 ? ready : offering;
+  const candidates = ready.length > 0 ? ready : offering.length > 0 ? offering : answering;
   const environment =
     candidates.find((candidate) => candidate.environmentId === input.selectedEnvironmentId) ??
     candidates[0];
-  return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
+  if (!environment) return null;
+  const knownUnsupported = answering.every(
+    (candidate) =>
+      canCreateProjectInEnvironment(candidate.connectionState) &&
+      input.serverConfigs.has(candidate.environmentId) &&
+      rootOf(candidate.environmentId) === null,
+  );
+  return {
+    environmentId: environment.environmentId,
+    status: ready.length > 0 ? "ready" : knownUnsupported ? "unavailable" : "pending",
+  };
 }
 
 export function resolveEnvironmentProjectMatch(
