@@ -40,7 +40,7 @@ export function useBarOverlap(): number {
 /**
  * The content's top safe area under the AppBar: the height of the iOS bar its column lays content
  * under, glass or solid, and zero on Android, where the bar sits in flow. For manual scroll
- * content insets, where UIKit's automatic one is off.
+ * content insets.
  */
 export function useContentTopInset(): number {
   const insets = useSafeAreaInsets();
