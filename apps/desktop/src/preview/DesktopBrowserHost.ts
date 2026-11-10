@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -26,6 +27,9 @@ const AGENT_INPUT_COMMAND =
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
 const AGENT_INPUT_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
+/** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
+const FIRST_PAGE_TIMEOUT = "5 seconds";
+const ERR_ABORTED = -3;
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -78,6 +82,8 @@ interface AttachedTab {
     sessionId: string,
   ) => void;
   readonly onNewDocument: () => void;
+  /** Stops waiting for the first page; set until the tab is announced. */
+  stopWaiting: (() => void) | null;
 }
 
 export class DesktopBrowserHost extends Context.Service<
@@ -87,6 +93,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly agentActedRecently: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -119,6 +126,9 @@ export const make = Effect.gen(function* () {
   const tabs = new Map<string, AttachedTab>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
+  // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
+  // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
+  const shownTabs = new Map<string, boolean>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
@@ -409,11 +419,13 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    const announced = tab.stopWaiting === null;
+    tab.stopWaiting?.();
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
-    emit({ type: "detached", ...key });
+    if (announced) emit({ type: "detached", ...key });
   };
 
   const attach = (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => {
@@ -451,11 +463,64 @@ export const make = Effect.gen(function* () {
         dropFocusHolds(tab);
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
+      stopWaiting: null,
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
-    emit({ type: "attached", ...key });
+    const announce = () => {
+      emit({ type: "attached", ...key });
+      const shown = shownTabs.get(id);
+      if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    };
+    if (!debuggee.webContents.isLoadingMainFrame()) {
+      announce();
+      return;
+    }
+    // Electron does not pause a guest for the debugger, so Playwright connecting during its first
+    // commit builds its utility world in the discarded document and every wait on it hangs.
+    const { webContents } = debuggee;
+    // ERR_ABORTED is a newer navigation replacing this one, whose commit is still to come.
+    const onFailLoad = (
+      _event: Electron.Event,
+      code: number,
+      _description: string,
+      _url: string,
+      isMainFrame: boolean,
+    ) => {
+      if (isMainFrame && code !== ERR_ABORTED) ready();
+    };
+    const ready = () => {
+      if (tab.stopWaiting === null) return;
+      // The manager's cleanup for a destroyed guest can still be queued behind another tab's attach.
+      if (webContents.isDestroyed()) return detach(key);
+      tab.stopWaiting();
+      announce();
+    };
+    const timeout = runFork(
+      Effect.sleep(FIRST_PAGE_TIMEOUT).pipe(Effect.andThen(Effect.sync(ready))),
+    );
+    tab.stopWaiting = () => {
+      tab.stopWaiting = null;
+      webContents.off("dom-ready", ready);
+      webContents.off("did-stop-loading", ready);
+      webContents.off("did-fail-load", onFailLoad);
+      runFork(Fiber.interrupt(timeout));
+    };
+    webContents.on("dom-ready", ready);
+    webContents.on("did-stop-loading", ready);
+    webContents.on("did-fail-load", onFailLoad);
+  };
+
+  const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
+    const id = keyOf(key);
+    if (shown === undefined) {
+      shownTabs.delete(id);
+      return;
+    }
+    if (shownTabs.get(id) === shown) return;
+    shownTabs.set(id, shown);
+    if (tabs.get(id)?.stopWaiting === null) emit({ type: "shown", ...key, shown });
   };
 
   const handleCommandLine = (line: string) =>
@@ -494,7 +559,16 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
-        return PubSub.publish(outbox, { type: "attached", ...tab.key });
+        // Announced once its first page is up.
+        if (tab.stopWaiting !== null) return Effect.void;
+        const shown = shownTabs.get(keyOf(tab.key));
+        return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
+          Effect.andThen(
+            shown !== undefined
+              ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })
+              : Effect.void,
+          ),
+        );
       },
       { discard: true },
     );
@@ -514,6 +588,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    setShown,
     placeDownload,
     agentActedRecently,
   });
