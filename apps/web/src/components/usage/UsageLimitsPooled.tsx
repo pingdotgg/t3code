@@ -309,8 +309,9 @@ function RedeemableSegment({
     <>
       <SegmentTriggers redeem={redeem} {...props} />
       <ResetCreditDialog
-        choice={redeem.confirming}
-        onCancel={() => redeem.setConfirming(null)}
+        open={redeem.confirming}
+        onOpenChange={redeem.setConfirming}
+        choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
         disabled={!redeem.canManageProviders}
       />

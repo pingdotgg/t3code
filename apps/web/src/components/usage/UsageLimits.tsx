@@ -241,13 +241,14 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
 export function useResetCredit(environmentId: EnvironmentId) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  const [confirming, setConfirming] = useState<ResetCreditChoice | null>(null);
+  // Kept after close so the dialog's text survives its exit animation.
+  const [choice, setChoice] = useState<ResetCreditChoice | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   const redeem = async () => {
-    const choice = confirming;
-    setConfirming(null);
+    setConfirming(false);
     if (!choice || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
@@ -264,33 +265,32 @@ export function useResetCredit(environmentId: EnvironmentId) {
     );
   };
 
-  const confirm = (choice: ResetCreditChoice) => {
-    if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(choice);
+  const confirm = (next: ResetCreditChoice) => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    setChoice(next);
+    setConfirming(true);
   };
 
-  return { canManageProviders, confirming, setConfirming, confirm, busy, status, redeem };
+  return { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem };
 }
 
 /** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
  * dialogs and unmount on close. */
 export function ResetCreditDialog({
+  open,
+  onOpenChange,
   choice,
-  onCancel,
   onConfirm,
   disabled = false,
 }: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
   readonly choice: ResetCreditChoice | null;
-  readonly onCancel: () => void;
   readonly onConfirm: () => void;
   readonly disabled?: boolean;
 }) {
   return (
-    <AlertDialog
-      open={choice !== null}
-      onOpenChange={(open) => {
-        if (!open) onCancel();
-      }}
-    >
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
@@ -318,7 +318,7 @@ export function ResetCredits({
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
-  const { canManageProviders, confirming, setConfirming, confirm, busy, status, redeem } =
+  const { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem } =
     useResetCredit(environmentId);
   if (credits.availableCount === 0 && status === null) return null;
   return (
@@ -340,8 +340,9 @@ export function ResetCredits({
       ))}
       {status ? <span className="text-foreground">{status}</span> : null}
       <ResetCreditDialog
-        choice={confirming}
-        onCancel={() => setConfirming(null)}
+        open={confirming}
+        onOpenChange={setConfirming}
+        choice={choice}
         onConfirm={() => void redeem()}
         disabled={!canManageProviders}
       />

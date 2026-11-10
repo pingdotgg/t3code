@@ -303,8 +303,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
-    // Same rules as Codex: serialised per login and grant, one request id kept
-    // until Claude answers (a cooldown or rate limit is an answer), then a re-probe.
+    // Same rules as Codex: serialised on the config directory that holds the
+    // login, one request id kept until Claude answers (a cooldown or rate
+    // limit is an answer), then a re-probe.
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "ClaudeDriver.consumeResetCredit",
     )(
@@ -320,7 +321,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
-          `${configDir}\0${grantId}`,
+          configDir,
           (requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
               configDir,
