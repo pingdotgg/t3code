@@ -64,14 +64,14 @@ export const messageSearchText = (sql: SqlClient.SqlClient) =>
 
 /**
  * A message's stored text with apostrophes folded, what the index held before
- * migration 77. Migration 69's backfill uses it. `payload` is the message's
+ * migration 81. Migration 69's backfill uses it. `payload` is the message's
  * JSON column.
  */
 export const indexedMessageText = (sql: SqlClient.SqlClient, payload: string) =>
   sql.literal(foldApostrophes(`json_extract(${payload}, '$.text')`));
 
 // What the index stores: a message's readable text with apostrophes folded.
-// Migrations 69 and 74 create the triggers before migration 77 adds
+// Migrations 69 and 74 create the triggers before migration 81 adds
 // search_text, and `t3 doctor` can rebuild a database that has not migrated,
 // so those fall back to the stored text.
 const indexedText = Effect.fn("MessageSearchIndex.indexedText")(function* (
@@ -101,7 +101,7 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
     `;
     // Streaming deltas rewrite the row many times a second; skip them until the
     // message settles. Upserts rewrite every column, so re-index only when what
-    // the index stores changed; migration 77's backfill writes only search_text.
+    // the index stores changed; migration 81's backfill writes only search_text.
     // Deleting a rowid the index never held is a no-op.
     yield* sql`
       CREATE TRIGGER orchestration_v2_message_search_update

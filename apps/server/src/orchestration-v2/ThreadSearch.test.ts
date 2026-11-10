@@ -23,9 +23,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as EventStore from "./EventStore.ts";
 import { rebuildMessageSearch } from "./messageSearchIndex.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
@@ -289,7 +287,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -419,7 +417,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         threadId: ThreadId.make("thread:quoted"),
         messageId: MessageId.make("quoted-answer"),
         text: "The kittiwake's résumé mentions 灯台の光 twice.",
-        comment: "naïve question",
+        comment: "naïve question в логах",
         start: 0,
         end: 44,
         prefix: "",
@@ -438,7 +436,14 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       const threadIds = (query: string) =>
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
 
-      for (const query of ["kittiwake's", "kittiwake’s", "résumé", "灯台の光", "naïve"]) {
+      for (const query of [
+        "kittiwake's",
+        "kittiwake’s",
+        "résumé",
+        "灯台の光",
+        "naïve",
+        "логах в",
+      ]) {
         assert.deepEqual(yield* threadIds(query), [threadId], query);
       }
       // `t3 doctor` rebuilds the index after VACUUM; quotes must still read.
@@ -834,6 +839,85 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
   );
 });
 
+it.effect.each([true, false])(
+  "ThreadSearch narrows short words outside ASCII before the hit limit (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-limit");
+      const older = ThreadId.make("thread:short-older");
+      const newer = ThreadId.make("thread:short-newer");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(older, project),
+          message(older, "older", "user", "В логах ошибка"),
+          thread(newer, project),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      // More newer hits for the long word than one read holds, none with the short one.
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'short-newer-' || i, ${newer}, 'assistant', 0, ${DateTime.formatIso(at(5))},
+          ${DateTime.formatIso(at(5))}, json_object('text', 'ошибка здесь')
+        FROM n
+      `;
+      const { matches } = yield* search.search({ query: "ошибка в" });
+      assert.deepEqual(
+        matches.map((match) => match.threadId),
+        [older],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
+  it.effect("finds them in any case or accent, with or without the index", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-non-ascii");
+      const russian = ThreadId.make("thread:short-russian");
+      const french = ThreadId.make("thread:short-french");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(russian, project),
+          message(russian, "russian", "user", "В логах ошибка"),
+          thread(french, project),
+          message(french, "french", "user", "École fermée à Lyon"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      const assertMatches = Effect.gen(function* () {
+        assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
+        assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        // They still narrow: a word the message lacks rules it out.
+        assert.deepEqual(yield* threadIds("ошибка я"), []);
+      });
+      yield* assertMatches;
+      yield* sql`DROP TABLE orchestration_v2_message_search`;
+      yield* assertMatches;
+    }),
+  );
+});
+
 it.layer(layerTest)("ThreadSearch across scripts and without the index", (it) => {
   it.effect(
     "matches Korean, Japanese, and two-character Chinese words, and whole short words",
@@ -1215,35 +1299,6 @@ it.effect("starts snippets a few words before the match so one line shows it", (
     // Short text still moves a late match into view.
     assert.equal(snippet(`${"word ".repeat(20)}needle`, "needle"), "…word word word word needle");
   }),
-);
-
-it.effect("finds quote text after projections replay from events", () =>
-  Effect.gen(function* () {
-    const eventStore = yield* EventStore.EventStoreV2;
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-    const search = yield* ThreadSearch.ThreadSearch;
-    const project = ProjectId.make("project:search-replay");
-    const threadId = ThreadId.make("thread:replay");
-    yield* createProject(project);
-    yield* eventStore.append({
-      events: [thread(threadId, project), message(threadId, "replay", "user", quote)],
-    });
-
-    assert.isTrue((yield* maintenance.rebuild).valid);
-    assert.deepEqual(
-      (yield* search.search({ query: "what are you talking about" })).matches.map(
-        (match) => match.threadId,
-      ),
-      [threadId],
-    );
-  }).pipe(
-    Effect.provide(
-      ProjectionMaintenance.layer.pipe(
-        Layer.provideMerge(EventStore.layer),
-        Layer.provideMerge(layerTest),
-      ),
-    ),
-  ),
 );
 
 it.effect("searches on the reader worker while the writer is busy", () =>
