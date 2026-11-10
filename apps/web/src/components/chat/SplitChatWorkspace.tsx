@@ -77,6 +77,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     count > 1 && maximizedPaneIndex !== null && maximizedPaneIndex < count
       ? maximizedPaneIndex
       : null;
+  const activeIndex = Math.min(activePaneIndex, count - 1);
+  if (maximized !== null && maximized !== activeIndex) setMaximizedPaneIndex(null);
   const columns = count === 4 && resizeLayout === "columns";
   const x = "var(--split-x)";
   const y = "var(--split-y)";
@@ -107,7 +109,6 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
             ];
 
   const bounds = layoutBounds(count);
-  const activeIndex = Math.min(activePaneIndex, count - 1);
 
   const navigatePrimary = (target: ThreadRouteTarget) => {
     setPendingPrimary({ previousKey: primaryKey, target });
