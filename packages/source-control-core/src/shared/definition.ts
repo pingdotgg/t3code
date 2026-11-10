@@ -258,8 +258,11 @@ export interface SourceControlDefinition {
   readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
-  /** The repository URL when `url` is a page inside one of this host's repositories. */
-  readonly repositoryUrlFromPage?: (url: URL) => string | null;
+  /**
+   * The repository URL when `url` is a page inside one of this host's repositories. `known` is set
+   * when the caller already knows this host serves the URL's repository.
+   */
+  readonly repositoryUrlFromPage?: (url: URL, known: boolean) => string | null;
   /**
    * The change request URL a `reference` autolink might name, such as a GitHub `#123` written
    * through the issue route. Only a candidate: the caller must read it as a change request
@@ -769,12 +772,15 @@ export function makeSourceControlDefinitionRegistry(
       // A recognized host's paths are its own, so another host's any-host route never rewrites them.
       const remote = parseGitRemoteHost(value);
       const owner = remote === null ? undefined : remoteOwner(remote);
-      if (owner) return owner.repositoryUrlFromPage?.(url) ?? null;
-      // On an unrecognized host, only rewrite when every route that matches agrees.
+      if (owner) return owner.repositoryUrlFromPage?.(url, true) ?? null;
+      // On an unrecognized host, only rewrite when every route that matches agrees. A route that
+      // answers with the page itself says it may already be the clone URL.
       const [repositoryUrl, ...others] = new Set(
-        claimOrder.flatMap((definition) => definition.repositoryUrlFromPage?.(url) ?? []),
+        claimOrder.flatMap((definition) => definition.repositoryUrlFromPage?.(url, false) ?? []),
       );
-      return repositoryUrl !== undefined && others.length === 0 ? repositoryUrl : null;
+      return repositoryUrl !== undefined && repositoryUrl !== url.href && others.length === 0
+        ? repositoryUrl
+        : null;
     },
     recognizeRemote: (remoteUrl) => {
       const remote = parseGitRemoteHost(remoteUrl);

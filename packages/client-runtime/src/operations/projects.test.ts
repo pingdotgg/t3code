@@ -69,7 +69,9 @@ describe("add project shared logic", () => {
       "https://gitlab.example.test/acme/tools/src/branch/worker.git",
       "https://gitlab.example.test/acme/tools/src/branch/worker",
       "https://scm.example.test/acme/tools/src/branch/worker.git",
+      "https://scm.example.test/acme/tools/src/branch/worker",
       "https://scm.example.test/team/repo/src/branch/main/-/README.md",
+      "https://code.company.test/team/repo/src/branch/main/docs",
     ]) {
       expect(normalizePastedCloneUrl(gitlabProject)).toBe(gitlabProject);
     }
@@ -83,7 +85,6 @@ describe("add project shared logic", () => {
       ["https://git.cafe/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
       ["https://gitlab.example.test/g/p/-/blob/main/src/branch/x", "/-/", "p"],
       ["https://code.company.test/g/p/-/tree/main", "/-/", "p"],
-      ["https://code.company.test/team/repo/src/branch/main/docs", "/src/", "repo"],
     ] as const) {
       const cloneUrl = normalizePastedCloneUrl(pageUrl);
       expect(cloneUrl).not.toContain(pageRoute);

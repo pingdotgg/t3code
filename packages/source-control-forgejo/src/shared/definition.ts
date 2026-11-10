@@ -89,7 +89,11 @@ export const definition = defineSourceControl({
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
-  repositoryUrlFromPage: (url) => repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH),
+  repositoryUrlFromPage: (url, known) => {
+    const repositoryUrl = repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH);
+    // Elsewhere the same path is a GitLab project nested under groups named `src` and `branch`.
+    return repositoryUrl === null || known ? repositoryUrl : url.href;
+  },
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>

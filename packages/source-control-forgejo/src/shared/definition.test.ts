@@ -106,7 +106,7 @@ describe("Forgejo change request URLs", () => {
 
 describe("Forgejo repository pages", () => {
   it("reads the repository from branch, tag and commit views", () => {
-    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url));
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url), true);
     expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md")).toBe(
       "https://codeberg.org/forgejo/forgejo",
     );
