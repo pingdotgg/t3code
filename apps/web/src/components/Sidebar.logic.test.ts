@@ -56,6 +56,7 @@ import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures
 import {
   completeSidebarRouteReveal,
   pendingSidebarRouteReveal,
+  observeSidebarDraftPromotion,
   resolveSidebarRouteReveal,
 } from "./sidebar/routeReveal";
 
@@ -1525,6 +1526,21 @@ describe("resolveSidebarRouteReveal", () => {
         reveal: { observedKey: hiddenKey, pendingKey: null },
         routeKey: hiddenKey,
         routeKeyInPlace: false,
+        isSearching: false,
+        scopedProjectKeys,
+        delegatedUnderParent: new Set(),
+        findThread,
+      }),
+    ).toEqual({ pendingKey: null, widensScope: false });
+  });
+
+  it("never reveals the thread an open draft became", () => {
+    const reveal = { observedKey: "environment-test:other", pendingKey: null };
+    observeSidebarDraftPromotion(reveal, hiddenKey);
+    expect(
+      resolveSidebarRouteReveal({
+        reveal,
+        routeKey: hiddenKey,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),

@@ -13,6 +13,7 @@ export interface SidebarRouteReveal {
   pendingKey: string | null;
   // A draft's first send names its thread without navigating; the user is not looking for it.
   pendingInPlace?: boolean;
+  quietKey?: string | null;
 }
 
 export function pendingSidebarRouteReveal(
@@ -25,12 +26,24 @@ export function pendingSidebarRouteReveal(
     reveal.observedKey = routeKey;
     reveal.pendingKey = routeKey;
     reveal.pendingInPlace = inPlace;
+    reveal.quietKey = null;
   }
   return reveal.pendingKey;
 }
 
+export function observeSidebarDraftPromotion(
+  reveal: SidebarRouteReveal,
+  routeKey: string | null,
+): void {
+  if (routeKey === null || reveal.observedKey === routeKey) return;
+  reveal.observedKey = routeKey;
+  reveal.pendingKey = null;
+  reveal.quietKey = routeKey;
+}
+
 export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
   reveal.pendingKey = null;
+  reveal.quietKey = null;
 }
 
 const scrollRowIntoView = (row: HTMLElement) => row.scrollIntoView({ block: "nearest" });
