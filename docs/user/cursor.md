@@ -2,6 +2,8 @@
 
 Cursor V2 runs through the official [`@cursor/sdk`](https://cursor.com/docs/api/sdk/typescript)
 TypeScript package. It does not use Cursor's ACP transport for V2 execution.
+Version checks and **Update now** still use the Cursor Agent CLI (`cursor-agent`
+/ `agent about` and `agent update`).
 
 ## Prerequisites
 

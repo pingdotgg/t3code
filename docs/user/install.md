@@ -218,9 +218,12 @@ the CLI's own update command when T3 Code cannot tell. T3 Code runs `mise upgrad
 only for a tool your mise config requests as `latest` when the provider's binary
 path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
 pinned version, or a path into one version's directory, through mise yourself.
-Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
-compare against the version their package manager offers, which can trail the
-npm release; update Claude installed with Chocolatey through Chocolatey.
+Cursor's **Update now** runs `cursor-agent update`. When the Antigravity runtime
+T3 Code installed is older than the release T3 Code ships, its provider card
+shows the update; update it from that provider's **Runtime** settings. Homebrew
+and Chocolatey installs compare against the version their package manager
+offers, which can trail the npm release; update Claude installed with Chocolatey
+through Chocolatey.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom

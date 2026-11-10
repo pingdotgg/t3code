@@ -1,10 +1,11 @@
 import type { SDKModel, SDKUser } from "@cursor/sdk";
-import type {
-  ModelCapabilities,
-  ProviderOptionDescriptor,
-  ServerProviderAuth,
-  ServerProviderModel,
-  ServerProviderState,
+import {
+  ProviderDriverKind,
+  type ModelCapabilities,
+  type ProviderOptionDescriptor,
+  type ServerProviderAuth,
+  type ServerProviderModel,
+  type ServerProviderState,
 } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -22,7 +23,10 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
+import { probeCursorCliAbout } from "./cli.ts";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+const DRIVER_KIND = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   supportsConversationRollback: false,
@@ -42,6 +46,7 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
+      driver: DRIVER_KIND,
       presentation: CURSOR_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -57,6 +62,7 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
   }
 
   return buildServerProvider({
+    driver: DRIVER_KIND,
     presentation: CURSOR_PRESENTATION,
     enabled: true,
     checkedAt,
@@ -66,7 +72,7 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
       version: null,
       status: "warning",
       auth: { status: "unknown" },
-      message: "Checking Cursor SDK availability...",
+      message: "Checking Cursor availability...",
     },
   });
 });
@@ -225,6 +231,7 @@ export function buildCursorProviderSnapshot(input: {
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
+    driver: DRIVER_KIND,
     presentation: CURSOR_PRESENTATION,
     enabled: input.cursorSettings.enabled,
     checkedAt: input.checkedAt,
@@ -248,12 +255,17 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
   authenticationType: "api-key" | "browser" = "api-key",
-): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog.CursorSdkCatalog> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  CursorSdkCatalog.CursorSdkCatalog | ChildProcessSpawner.ChildProcessSpawner
+> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
+      driver: DRIVER_KIND,
       presentation: CURSOR_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -269,15 +281,19 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const sdkApiKey = environment?.CURSOR_API_KEY?.trim();
+  const cliAbout = yield* probeCursorCliAbout(cursorSettings, environment);
+  const cliVersion = cliAbout?.version ?? null;
+
   if (!sdkApiKey) {
     return buildServerProvider({
+      driver: DRIVER_KIND,
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
         installed: true,
-        version: null,
+        version: cliVersion,
         status: "error",
         auth: { status: "unauthenticated" },
         message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
@@ -308,13 +324,14 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
           : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
     }
     return buildServerProvider({
+      driver: DRIVER_KIND,
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
         installed: true,
-        version: null,
+        version: cliVersion,
         status: "error",
         auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
         message,
@@ -324,13 +341,14 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   if (Option.isNone(catalogResult.success)) {
     return buildServerProvider({
+      driver: DRIVER_KIND,
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
         installed: true,
-        version: null,
+        version: cliVersion,
         status: "error",
         auth: { status: "unknown" },
         message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
@@ -344,7 +362,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     checkedAt,
     cursorSettings,
     parsed: {
-      version: null,
+      version: cliVersion,
       status: "ready",
       auth: cursorSdkAuth(snapshot.user, authenticationType),
     },

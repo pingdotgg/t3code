@@ -1,10 +1,25 @@
 import type { SDKModel } from "@cursor/sdk";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
 import type { CursorSettings } from "../settings.ts";
 import { CursorSettings as CursorSettingsSchema } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+
+vi.mock("./cli.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./cli.ts")>();
+  return {
+    ...actual,
+    probeCursorCliAbout: () =>
+      Effect.succeed({
+        version: "2026.11.05-86047df",
+        latestVersion: "2026.11.05-86047df",
+        latestStatus: "up_to_date",
+      }),
+  };
+});
 
 import {
   buildCursorCapabilitiesFromSdkModel,
@@ -154,7 +169,7 @@ describe("Cursor SDK model discovery", () => {
   });
 });
 
-describe("checkCursorProviderStatus", () => {
+it.layer(NodeServices.layer)("checkCursorProviderStatus", (it) => {
   it.effect("uses the SDK catalog when CURSOR_API_KEY is configured", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(
@@ -181,6 +196,10 @@ describe("checkCursorProviderStatus", () => {
 
       expect(provider).toMatchObject({
         status: "ready",
+        version: "2026.11.05-86047df",
+        versionAdvisory: {
+          currentVersion: "2026.11.05-86047df",
+        },
         auth: {
           status: "authenticated",
           type: "api-key",
