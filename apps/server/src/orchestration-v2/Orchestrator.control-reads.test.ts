@@ -1121,6 +1121,52 @@ it.effect("archiving a parent takes its delegated children out of active listing
     });
 
     assert.include(yield* orchestrator.listActiveSubagentThreadIds(), childThreadId);
+
+    const childRun = (yield* projections.getThreadProjection(childThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-archived-child"),
+      parentThreadId: childThreadId,
+      parentRunId: childRun.id,
+      parentNodeId: childRun.rootNodeId!,
+      task: "Check the tests",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const grandchildThreadId = (yield* projections.getThreadProjection(childThreadId)).subagents[0]!
+      .childThreadId!;
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-child"),
+      threadId: childThreadId,
+    });
+    yield* TestClock.adjust("1 second");
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-grandchild"),
+      threadId: grandchildThreadId,
+    });
+    yield* TestClock.adjust("1 second");
+
+    // The child was archived on its own; archiving the parent still reaches the grandchild.
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-parent-again"),
+      threadId: parentThreadId,
+    });
+    assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), grandchildThreadId);
+
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent-again"),
+      threadId: parentThreadId,
+    });
+    const activeSubagents = yield* orchestrator.listActiveSubagentThreadIds();
+    assert.include(activeSubagents, grandchildThreadId);
+    assert.notInclude(activeSubagents, childThreadId);
   }).pipe(Effect.provide(layerTest)),
 );
 

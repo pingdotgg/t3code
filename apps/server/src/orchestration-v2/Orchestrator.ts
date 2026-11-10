@@ -1404,52 +1404,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Subagent threads archive with the thread that started them, parents before children.
-   * Unarchive restores only those archived in the same cascade, so ones archived on their own stay.
+   * The live subagent children of `parentIds`. Archive eligibility is not checked here, so an
+   * archived child still leads to its descendants; dispatch checks it under the locks.
    */
-  const subagentCascadeIds = Effect.fn("Orchestrator.subagentCascadeIds")(
-    function* (threadId: ThreadId, archive: boolean) {
-      const root = yield* projectionStore
-        .getThread(threadId)
-        .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
-      if (root === null || root.deletedAt !== null) return [];
+  const liveSubagentChildIds = Effect.fn("Orchestrator.liveSubagentChildIds")(
+    function* (parentIds: ReadonlyArray<ThreadId>, seen: ReadonlySet<ThreadId>) {
       const ids: Array<ThreadId> = [];
-      const seen = new Set([threadId]);
-      const pending = [threadId];
-      for (let parentId = pending.shift(); parentId !== undefined; parentId = pending.shift()) {
+      for (const parentId of parentIds) {
         const { subagents } = yield* projectionStore.getThreadRecords(parentId, ["subagents"]).pipe(
           Effect.catchTags({
             ProjectionStoreThreadNotFoundError: () => Effect.succeed({ subagents: [] }),
           }),
         );
         for (const { childThreadId } of subagents) {
-          if (childThreadId === null || seen.has(childThreadId)) continue;
-          seen.add(childThreadId);
+          if (childThreadId === null || seen.has(childThreadId) || ids.includes(childThreadId))
+            continue;
           const child = yield* projectionStore
             .getThread(childThreadId)
             .pipe(
               Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
             );
-          if (
-            child === null ||
-            child.lineage.relationshipToParent !== "subagent" ||
-            child.deletedAt !== null ||
-            (archive
-              ? child.archivedAt !== null
-              : child.archivedAt === null ||
-                root.archivedAt === null ||
-                !DateTime.Equivalence(child.archivedAt, root.archivedAt))
-          ) {
-            continue;
-          }
-          ids.push(childThreadId);
-          pending.push(childThreadId);
+          if (child?.lineage.relationshipToParent === "subagent" && child.deletedAt === null)
+            ids.push(childThreadId);
         }
       }
       return ids;
     },
-    (effect, threadId) =>
-      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    (effect, parentIds) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: parentIds[0]!, cause }),
+        ),
+      ),
   );
 
   const getProjectionWithPendingEvents =
@@ -3527,6 +3513,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    // An archive cascade stamps every thread with one time so unarchive can match them.
+    at?: DateTime.Utc,
   ) {
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
@@ -3847,7 +3835,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           })
         : null;
 
-    const now = yield* DateTime.now;
+    const now = at ?? (yield* DateTime.now);
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
       const projection = yield* loadProjectionForCommand(
         command,
@@ -13650,19 +13638,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
-        yield* dispatchThreadMutation(command, events, effects);
-        if (command.type === "thread.archive" || command.type === "thread.unarchive") {
-          for (const threadId of cascadeThreadIds) {
-            yield* dispatchThreadMutation(
-              {
-                type: command.type,
-                commandId: CommandId.make(`${command.commandId}:subagent:${threadId}`),
-                threadId,
-              },
-              events,
-              effects,
-            );
-          }
+        if (command.type !== "thread.archive" && command.type !== "thread.unarchive") {
+          yield* dispatchThreadMutation(command, events, effects);
+          break;
+        }
+        // Subagent threads archive with the thread that started them. Unarchive restores only
+        // those stamped by the same cascade, so ones archived on their own stay archived.
+        const rootArchivedAt = (yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command))).archivedAt;
+        const at = yield* DateTime.now;
+        yield* dispatchThreadMutation(command, events, effects, at);
+        for (const threadId of cascadeThreadIds) {
+          const { archivedAt } = yield* projectionStore
+            .getThread(threadId)
+            .pipe(mapDispatchError(command));
+          if (
+            command.type === "thread.archive"
+              ? archivedAt !== null
+              : archivedAt === null ||
+                rootArchivedAt === null ||
+                !DateTime.Equivalence(archivedAt, rootArchivedAt)
+          )
+            continue;
+          yield* dispatchThreadMutation(
+            {
+              type: command.type,
+              commandId: CommandId.make(`${command.commandId}:subagent:${threadId}`),
+              threadId,
+            },
+            events,
+            effects,
+            at,
+          );
         }
         break;
       case "thread.pull-request-watch.sync":
@@ -14253,19 +14261,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         ),
       );
-    if (command.type === "thread.archive" || command.type === "thread.unarchive")
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      // Each level is read under its parents' locks, which delegation also takes before a child's.
+      const lockSubagents = (
+        parentIds: ReadonlyArray<ThreadId>,
+        lockedIds: ReadonlyArray<ThreadId>,
+      ): Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error> =>
+        liveSubagentChildIds(parentIds, new Set([command.threadId, ...lockedIds])).pipe(
+          Effect.flatMap((childIds) =>
+            childIds.length === 0
+              ? dispatchWithReceiptEffect(command, lockedIds)
+              : childIds.reduceRight(
+                  (locked, childId) => threadDispatch.withLock(childId, locked),
+                  lockSubagents(childIds, [...lockedIds, ...childIds]),
+                ),
+          ),
+        );
       return yield* threadDispatch.withLock(
         command.threadId,
-        subagentCascadeIds(command.threadId, command.type === "thread.archive").pipe(
-          Effect.flatMap((subagentIds) =>
-            // Lock parents before their children, the order delegation takes them in.
-            subagentIds.reduceRight(
-              (locked, subagentId) => threadDispatch.withLock(subagentId, locked),
-              dispatchWithReceiptEffect(command, subagentIds),
-            ),
-          ),
-        ),
+        lockSubagents([command.threadId], []),
       );
+    }
     // Answering a message-mode question can also start a follow-up.
     if (
       command.type !== "runtime-request.respond" &&
