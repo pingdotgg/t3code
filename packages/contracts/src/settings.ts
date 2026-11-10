@@ -837,6 +837,8 @@ export const AntigravityAuthMethod = Schema.Literals(
 );
 export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 
+const ANTIGRAVITY_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d*|(?:[1-9]\d?|100)%|off)$/;
+
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -894,12 +896,24 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
+    autoCompactWindow: TrimmedString.check(
+      Schema.isPattern(ANTIGRAVITY_AUTO_COMPACT_WINDOW_PATTERN),
+    ).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Auto-compact after",
+        description: "Token count, 1–100%, or off. Leave empty to use Antigravity's default.",
+        providerSettingsForm: { placeholder: "e.g. 840000 or 85%", clearWhenEmpty: "omit" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  {
+    order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath", "autoCompactWindow"],
+  },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

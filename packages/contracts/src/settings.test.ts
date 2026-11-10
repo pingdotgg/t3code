@@ -11,6 +11,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  AntigravitySettings,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
@@ -537,4 +538,26 @@ describe("server model preferences", () => {
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
+});
+
+describe("Antigravity auto-compaction window", () => {
+  const decode = Schema.decodeUnknownSync(AntigravitySettings);
+
+  it("keeps the CLI default for existing configurations", () => {
+    expect(decode({}).autoCompactWindow).toBe("");
+  });
+
+  it.each(["840000", "256000", "85%", "100%", "off", " 840000 "])(
+    "accepts the CLI override %s",
+    (value) => {
+      expect(decode({ autoCompactWindow: value }).autoCompactWindow).toBe(value.trim());
+    },
+  );
+
+  it.each(["0", "-1", "0%", "101%", "85.5%", "1e6", "invalid", 840000])(
+    "rejects an invalid override %s",
+    (value) => {
+      expect(() => decode({ autoCompactWindow: value })).toThrow();
+    },
+  );
 });
