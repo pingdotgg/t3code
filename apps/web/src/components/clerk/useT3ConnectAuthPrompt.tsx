@@ -8,5 +8,5 @@ export function useT3ConnectAuthPrompt() {
   const openAuthPrompt = () => {
     clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron));
   };
-  return { authPrompt: null, openAuthPrompt };
+  return { openAuthPrompt };
 }

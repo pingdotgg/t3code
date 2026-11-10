@@ -20,8 +20,10 @@ import type {
   PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type Ref,
   useEffect,
@@ -49,7 +51,6 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
-const ACCESS_RETRY_MS = 10_000;
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -57,6 +58,9 @@ const PROBE_REUSE_MS = 10_000;
 const INPUT_SENTINEL = "\u200b";
 const BACKSPACE = { key: "Backspace", code: "Backspace", keyCode: 8 } as const;
 const DELETE = { key: "Delete", code: "Delete", keyCode: 46 } as const;
+const COPY = { key: "c", code: "KeyC", keyCode: 67 } as const;
+const CUT = { key: "x", code: "KeyX", keyCode: 88 } as const;
+const CTRL = 2;
 const MAX_UNAUTHORIZED_REFUSALS = 3;
 const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
@@ -94,6 +98,10 @@ const buttonOf = (button: number): PreviewStreamMouseButton =>
 
 const pressedButtonOf = (buttons: number): PreviewStreamMouseButton =>
   buttons & 1 ? "left" : buttons & 2 ? "right" : buttons & 4 ? "middle" : "none";
+
+// Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
+const historyDeltaOf = (button: number): -1 | 1 | null =>
+  button === 3 ? -1 : button === 4 ? 1 : null;
 
 /** Browsers may refuse a write that arrives after the key press; a toast button is a fresh gesture. */
 async function copyPageText(text: string) {
@@ -161,7 +169,6 @@ export function ServerBrowserSurface(props: {
     pdfUrl = null,
     ref,
   } = props;
-  const access = usePreviewStreamAccess(environmentId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -189,6 +196,7 @@ export function ServerBrowserSurface(props: {
   };
   const unauthorizedRef = useRef(0);
   const [accessDenied, setAccessDenied] = useState(false);
+  const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
@@ -309,6 +317,7 @@ export function ServerBrowserSurface(props: {
     [pdfUrl, send],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the canvas container's size, sends resizes to the stream and grows the frame cap
   useEffect(() => {
     const element = canvasRef.current?.parentElement;
     if (!element) return;
@@ -354,6 +363,7 @@ export function ServerBrowserSurface(props: {
     };
   }, [followSize]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the preview stream client and paints its frames onto the canvas while visible
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
@@ -458,12 +468,7 @@ export function ServerBrowserSurface(props: {
     visible,
   ]);
 
-  useEffect(() => {
-    if (!visible || accessDenied || access !== null) return;
-    const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
-    return () => clearInterval(timer);
-  }, [access, accessDenied, environmentId, visible]);
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a non-passive wheel listener on the canvas so it can stop the panel scrolling
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -484,6 +489,7 @@ export function ServerBrowserSurface(props: {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [pagePoint, queueWheel]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending input animation frame when the component unmounts
   useEffect(
     () => () => {
       if (inputFrameRef.current !== null) cancelAnimationFrame(inputFrameRef.current);
@@ -493,6 +499,8 @@ export function ServerBrowserSurface(props: {
 
   const handlePointer = (event: PointerEvent<HTMLCanvasElement>) => {
     if (controlRef.current?.controller !== "you") return;
+    // Thumb buttons drive this tab's history in handleMouseUp, never the page.
+    if (historyDeltaOf(event.button) !== null) return;
     const { type, pointerId, clientX, clientY } = event;
     const cancelled = type === "pointercancel";
     const touch = touchRef.current;
@@ -629,15 +637,36 @@ export function ServerBrowserSurface(props: {
     }
   };
 
+  // Chromium runs a thumb button's back/forward on mouseup in this document, which
+  // would move the app's router. Cancel it and send the press to the preview, as
+  // the toolbar does.
+  const handleMouseUp = (event: MouseEvent<HTMLDivElement>) => {
+    const delta = historyDeltaOf(event.button);
+    if (delta === null) return;
+    event.preventDefault();
+    send({ type: "history", delta });
+  };
+
   const resetInput = (textarea: HTMLTextAreaElement) => {
     keySentRef.current = false;
     textarea.value = INPUT_SENTINEL;
     textarea.setSelectionRange(INPUT_SENTINEL.length, INPUT_SENTINEL.length);
   };
 
-  const sendKeyPress = (key: typeof BACKSPACE | typeof DELETE) => {
-    send({ type: "key", action: "down", ...key, modifiers: 0 });
-    send({ type: "key", action: "up", ...key, modifiers: 0 });
+  const sendKeyPress = (
+    key: typeof BACKSPACE | typeof DELETE | typeof COPY | typeof CUT,
+    modifiers = 0,
+  ) => {
+    send({ type: "key", action: "down", ...key, modifiers });
+    send({ type: "key", action: "up", ...key, modifiers });
+  };
+
+  // Edit menu Copy and Cut fire no key, so send the shortcut the server copies on.
+  const handleClipboard = (key: typeof COPY | typeof CUT, event: ClipboardEvent) => {
+    // Keep the sentinel off the clipboard.
+    event.preventDefault();
+    if (controlRef.current?.controller !== "you") return;
+    sendKeyPress(key, CTRL);
   };
 
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -682,6 +711,15 @@ export function ServerBrowserSurface(props: {
       action === "down" &&
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
+    // The key copies or cuts in the page, so stop the browser's own copy or cut repeating it.
+    if (
+      event.ctrlKey !== event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ["c", "x"].includes(event.key.toLowerCase())
+    ) {
+      event.preventDefault();
+    }
     if (shortcut) return;
     event.preventDefault();
     event.stopPropagation();
@@ -706,6 +744,7 @@ export function ServerBrowserSurface(props: {
     <div
       className={cn("relative flex flex-col overflow-hidden", className)}
       data-server-browser-surface={tabId}
+      onMouseUp={handleMouseUp}
     >
       <div
         className={cn(
@@ -775,9 +814,8 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
             resetInput(event.currentTarget);
           }}
-          // Keep the sentinel off the clipboard.
-          onCopy={(event) => event.preventDefault()}
-          onCut={(event) => event.preventDefault()}
+          onCopy={(event) => handleClipboard(COPY, event)}
+          onCut={(event) => handleClipboard(CUT, event)}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData.getData("text/plain");

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
+  queuedRunEditBlockedReason,
   resolveQueuedEditExit,
   type QueuedRunStatus,
 } from "./queuedRunEdit.ts";
@@ -37,6 +38,15 @@ describe("resolveQueuedEditExit", () => {
   it("keeps a changed edit only when the thread draft is empty", () => {
     expect(resolveQueuedEditExit({ editChanged: true, threadDraftEmpty: true })).toBe("kept");
     expect(resolveQueuedEditExit({ editChanged: true, threadDraftEmpty: false })).toBe("discarded");
+  });
+});
+
+describe("queuedRunEditBlockedReason", () => {
+  it("blocks edits only while a question holds the composer", () => {
+    expect(queuedRunEditBlockedReason({ openQuestionCount: 0 })).toBeNull();
+    expect(queuedRunEditBlockedReason({ openQuestionCount: 1 })).toBe(
+      "Answer the question to edit queued messages",
+    );
   });
 });
 
@@ -81,8 +91,17 @@ describe("makeQueuedRunEditStore", () => {
     const finishSave = store.startSave("env:thread");
     registry.set(runs, []);
     expect(exits).toEqual([]);
-    expect(finishSave?.(false)).toBe(true);
+    expect(finishSave?.(false)).toBe(false);
     expect(exits).toHaveLength(1);
+  });
+
+  it("reports the edit still open when a save fails while its run is queued", () => {
+    const { store, exits, begin } = setup();
+    begin();
+    const finishSave = store.startSave("env:thread");
+    expect(finishSave?.(false)).toBe(true);
+    expect(exits).toEqual([]);
+    expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
   });
 
   it("allows one save at a time and ends the edit when it succeeds", () => {
