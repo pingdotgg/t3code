@@ -303,7 +303,7 @@ function ProviderEnvironmentFieldRow(props: {
           {props.field.sensitive === false ? (
             <DraftInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               autoComplete="off"
               value={typeof value === "string" ? value : ""}
@@ -314,7 +314,7 @@ function ProviderEnvironmentFieldRow(props: {
           ) : (
             <SecretSourceInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               value={value}
               onCommit={(next) => props.onCommit(props.field, next)}
@@ -1343,7 +1343,7 @@ export function ProviderInstanceCard({
                 />
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
-                  size="sm"
+                  size="settings"
                   className="min-w-0 flex-1 @min-[26rem]/settings-row:w-50"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}
