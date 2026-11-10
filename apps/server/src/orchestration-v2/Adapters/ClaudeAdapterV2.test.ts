@@ -12524,7 +12524,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps a newer wake latched when a stale continuation request is cleared", () =>
+  it.effect("keeps a newer wake's output when a stale continuation request is cleared", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const SECOND_TASK_ID = "b2ndwake";
@@ -12592,12 +12592,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
         yield* harness.offerAndWait(
-          claudeSdkFrame({ ...wakeAssistant, uuid: "00000000-0000-4000-8000-000000000135" }),
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000135",
+            text: "Second build done.",
+          }),
         );
-        assert.lengthOf(
-          harness.continuationRequests,
-          2,
-          "clearing the first wake's request must not release the second wake's latch",
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000136",
+            result: "Second build done.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        assert.lengthOf(harness.continuationRequests, 2);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-stale-clear-3"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(3);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Second build done.",
+          ),
+          "clearing the first wake's request must not discard the second wake's output",
         );
       }).pipe(
         Effect.provide(
@@ -12978,91 +13007,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["before the real turn", "after its first frame"] as const)(
-    "offers a cancelled wake once when an empty lifecycle result precedes its turn (cancelled %s)",
-    (cancelled) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const SECOND_TASK_ID = "b2ndwake";
-          const SECOND_TOOL_USE_ID = "toolu_second_wake";
-          const harness = yield* makeWakeHarness;
-          const now = yield* DateTime.now;
+  it.effect("offers a cancelled wake once when an empty lifecycle result precedes its turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SECOND_TASK_ID = "b2ndwake";
+        const SECOND_TOOL_USE_ID = "toolu_second_wake";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
 
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-claude-wake-empty-lifecycle"),
-              text: "Run two builds in the background.",
-              attachments: [],
-            }),
-          );
-          yield* harness.offerAndWait(wakeTaskStarted);
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              ...wakeTaskStarted,
-              task_id: SECOND_TASK_ID,
-              tool_use_id: SECOND_TOOL_USE_ID,
-              uuid: "00000000-0000-4000-8000-000000000171",
-            }),
-          );
-          yield* harness.offerAndWait(turnOneResult);
-          yield* harness.awaitTerminal(1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-empty-lifecycle"),
+            text: "Run two builds in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeTaskStarted,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000171",
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
 
-          yield* harness.offerAndWait(wakeNotification);
-          yield* harness.offerAndWait(wakeTurnInit);
-          assert.lengthOf(harness.continuationRequests, 1);
-          yield* harness.offerAndWait(
-            makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000000172",
-              result: "",
-              numTurns: 0,
-              origin: { kind: "task-notification" },
-              terminalReason: null,
-            }),
-          );
-          if (cancelled === "before the real turn") {
-            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
-          }
-          yield* harness.offerAndWait(
-            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000173" }),
-          );
-          yield* harness.offerAndWait(wakeAssistant);
-          if (cancelled === "after its first frame") {
-            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
-          }
-          yield* harness.offerAndWait(wakeResult);
-          assert.lengthOf(
-            harness.continuationRequests,
-            1,
-            "the cancelled wake must not be offered again",
-          );
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000172",
+            result: "",
+            numTurns: 0,
+            origin: { kind: "task-notification" },
+            terminalReason: null,
+          }),
+        );
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000173" }),
+        );
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        assert.lengthOf(
+          harness.continuationRequests,
+          1,
+          "the cancelled wake must not be offered again",
+        );
 
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              ...wakeNotification,
-              task_id: SECOND_TASK_ID,
-              tool_use_id: SECOND_TOOL_USE_ID,
-              output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
-              uuid: "00000000-0000-4000-8000-000000000174",
-            }),
-          );
-          yield* harness.offerAndWait(
-            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000175" }),
-          );
-          assert.lengthOf(harness.continuationRequests, 2, "the next wake must be offered");
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeNotification,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+            uuid: "00000000-0000-4000-8000-000000000174",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000175" }),
+        );
+        assert.lengthOf(harness.continuationRequests, 2, "the next wake must be offered");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
           ),
         ),
       ),
+    ),
   );
 
   it.effect.each([
@@ -13557,6 +13579,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "offers a later wake when a wake a user turn absorbed is cancelled %s that turn ends",
+    (cancelled) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const SECOND_TASK_ID = "b2ndwake";
+          const SECOND_TOOL_USE_ID = "toolu_second_wake";
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-absorbed-cancel-1"),
+              text: "Run two builds in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              ...wakeTaskStarted,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000191",
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeNotification);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(wakeAssistant);
+          yield* harness.awaitContinuation(1);
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-absorbed-cancel-2"),
+              text: "Any update on the pull request?",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === 2);
+          if (cancelled === "before") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000192",
+              result: "Checks passed and the pull request is up to date.",
+            }),
+          );
+          yield* harness.awaitTerminal(2);
+          if (cancelled === "after") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeNotification,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+              uuid: "00000000-0000-4000-8000-000000000193",
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000194" }),
+          );
+          assert.lengthOf(harness.continuationRequests, 2, "the later wake must be offered");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect("ignores a zero-turn task-notification origin result during a normal user turn", () =>
