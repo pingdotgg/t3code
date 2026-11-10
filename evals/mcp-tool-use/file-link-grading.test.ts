@@ -22,6 +22,7 @@ it("grades pills the way chat resolves them against the thread cwd", () => {
     "[`src/ws.ts`](/home/user/app/packages/server/src/ws.ts), [`src/index.ts` boots it](/home/user/app/packages/server/src/ws.ts)",
     "`/usr/bin/node`, `git rebase --onto`",
     "```md\n[example](docs/missing.md) and `src/missing.ts`\n```",
+    "Write links as `[example](docs/missing.md)`.",
   ].join("\n");
   const pills = Object.fromEntries(
     fileLinkPills(text, cwd, files).map((pill) => [pill.source, pill.works]),

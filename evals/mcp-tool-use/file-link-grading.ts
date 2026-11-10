@@ -62,7 +62,8 @@ export const fileLinkPills = (
         : link,
   );
   const sources = [
-    ...extractMarkdownLinkHrefs(prose),
+    // A link written inside inline code renders as code.
+    ...extractMarkdownLinkHrefs(prose.replace(/`[^`\n]+`/g, "")),
     ...extractInlineCodeSpans(withoutFileLabels).flatMap(
       (span) => inlineCodeFilePathCandidate(span) ?? [],
     ),
