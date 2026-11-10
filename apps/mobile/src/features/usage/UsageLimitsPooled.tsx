@@ -208,7 +208,7 @@ function PoolWindowCard({
       className="flex-row gap-1"
       onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
     >
-      {pool.columns.map((member) => {
+      {pool.columns.map((member, index) => {
         if (!member.window)
           return (
             <View
@@ -224,7 +224,7 @@ function PoolWindowCard({
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Account ${limitAccountBadge(account).initials}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
+            accessibilityLabel={`Segment ${index + 1}, account ${limitAccountBadge(account).initials}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
@@ -290,7 +290,7 @@ function PoolWindowCard({
   );
   const legend = (
     <View>
-      {pool.columns.map(({ account, window }) => {
+      {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);
@@ -298,7 +298,7 @@ function PoolWindowCard({
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Account ${limitAccountBadge(account).initials}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+            accessibilityLabel={`Segment ${index + 1}, account ${limitAccountBadge(account).initials}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
