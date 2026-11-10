@@ -1,12 +1,12 @@
-import * as Drizzle from "alchemy/Drizzle/Postgres";
-import * as Railway from "alchemy/Railway";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
+import * as Railway from "@alchemy.run/railway";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Db, Site } from "./shared.ts";
 
 /**
  * HTTP Service. Canvas Functions cap at 96KB and cannot hold
- * Drizzle/pg; this image is built from `main` like {@link Api}.
+ * Drizzle; this image is built from `main` like {@link Api}.
  * Binds the same {@link Db} via {@link Railway.ConnectPostgres}.
  */
 export default class Ping extends Railway.Service<Ping>()(
@@ -15,7 +15,6 @@ export default class Ping extends Railway.Service<Ping>()(
     project: Site,
     main: import.meta.url,
     port: 3000,
-    build: { install: ["pg"] },
     healthcheck: "/",
   },
   Effect.gen(function* () {
@@ -25,10 +24,7 @@ export default class Ping extends Railway.Service<Ping>()(
       fetch: db.execute("select 1 as ok").pipe(
         Effect.flatMap(HttpServerResponse.json),
         Effect.catch((error) =>
-          HttpServerResponse.json(
-            { ok: false, error: String(error) },
-            { status: 500 },
-          ),
+          HttpServerResponse.json({ ok: false, error: String(error) }, { status: 500 }),
         ),
       ),
     };
