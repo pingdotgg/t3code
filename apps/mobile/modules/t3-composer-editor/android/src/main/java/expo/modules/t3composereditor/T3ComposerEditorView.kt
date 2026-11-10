@@ -374,6 +374,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun blurEditor() {
+    // The IME belongs to the window: leave it alone when another text field holds focus.
+    val focused = editor.rootView.findFocus()
+    if (focused != null && focused !== editor && focused.onCheckIsTextEditor()) return
     editor.clearFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.hideSoftInputFromWindow(editor.windowToken, 0)
