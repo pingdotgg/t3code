@@ -1275,6 +1275,42 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scrollNode.scrollTop = scrollNode.scrollHeight - scrollNode.clientHeight;
   });
 
+  const lastUserRowId = timelineEntries.findLast(
+    (row) => row.kind === "message" && row.message.role === "user",
+  )?.id;
+  const revealNewUserMessage = useStableCallback(
+    (previous: { identity: string; rowId: string | undefined }, list: LegendListRef) => {
+      if (previous.identity !== listIdentityKey || !liveFollowEnabled) {
+        previous.identity = listIdentityKey;
+        previous.rowId = lastUserRowId;
+        return;
+      }
+      if (previous.rowId === lastUserRowId || !lastUserRowId) return;
+      const state = list.getState();
+      if (state.data !== rows) return;
+      const index = state.indexByKey(lastUserRowId);
+      const row = index === undefined ? undefined : state.elementAtIndex(index);
+      const element = list.getScrollableNode();
+      if (!row || !element || row.getBoundingClientRect().height === 0) return;
+      previous.rowId = lastUserRowId;
+      const end = Math.max(0, element.scrollHeight - element.clientHeight);
+      const offset = anchoredEndSpace
+        ? Math.max(
+            0,
+            Math.min(
+              end,
+              element.scrollTop +
+                row.getBoundingClientRect().top -
+                element.getBoundingClientRect().top -
+                CHAT_TIMELINE_ANCHOR_OFFSET,
+            ),
+          )
+        : end;
+      element.scrollTop = offset;
+      void list.scrollToOffset({ offset, animated: false });
+    },
+  );
+
   const registerTimeline = useRegisterChatCanvasTimeline();
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
@@ -1290,11 +1326,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
+    const previousUserMessage = { identity: listIdentityKey, rowId: lastUserRowId };
     let contentSizeFrame: number | null = null;
     // LegendList lays rows out from layout effects; the next frame sees them settled.
     let scheduledData: unknown = null;
     const scheduleContentSizeChanged = () => {
       if (!list) return;
+      revealNewUserMessage(previousUserMessage, list);
       const laidOutData = list.getState().data;
       if (contentSizeFrame !== null) {
         if (scheduledData === laidOutData) return;
