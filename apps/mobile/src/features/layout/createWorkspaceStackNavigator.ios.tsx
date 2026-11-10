@@ -527,6 +527,7 @@ function CardStackDock() {
 
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
   const { layout } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const deviceType = useDeviceType();
   const workspace = useWorkspaceTabs()!;
   const compactTabs = useCompactWorkspaceTabs();
@@ -561,6 +562,13 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const cardStackDock =
     !tabsInSidebarColumn &&
     (deviceType === "pad" || compactTabs || (layout.variant === "medium" && workspacePage));
+  // Pre-iPadOS 26 JS split keeps the sidebar beside a covered root, so the dock must stay above
+  // the detail. Non-split stacks use the root-card footer for the interactive back swipe.
+  const dockUnderLeavingCard = cardStackDock && !layout.usesSplitView;
+  const dockAboveStack =
+    cardStackDock &&
+    layout.usesSplitView &&
+    !(deviceType === "pad" && !workspacePage && !panes.primarySidebarVisible);
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -585,19 +593,22 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
             detail={projection.detail}
           />
         ) : (
-          <V5CardStackView
-            {...props}
-            rootFooter={cardStackDock ? <CardStackDock /> : undefined}
-            onRootVisibilityChange={setPrimaryVisible}
-            onNativePopChange={setNativelyPoppingWorkspaceRoute}
-            descriptors={descriptors}
-            state={{
-              ...props.state,
-              routes: [primaryRoute, ...projection.detail],
-              index: projection.detail.length,
-              preloadedRoutes: [],
-            }}
-          />
+          <View style={{ flex: 1 }}>
+            <V5CardStackView
+              {...props}
+              rootFooter={dockUnderLeavingCard ? <CardStackDock /> : undefined}
+              onRootVisibilityChange={setPrimaryVisible}
+              onNativePopChange={setNativelyPoppingWorkspaceRoute}
+              descriptors={descriptors}
+              state={{
+                ...props.state,
+                routes: [primaryRoute, ...projection.detail],
+                index: projection.detail.length,
+                preloadedRoutes: [],
+              }}
+            />
+            {dockAboveStack ? <CardStackDock /> : null}
+          </View>
         )}
       </WorkspaceNativeTabs>
     ),
