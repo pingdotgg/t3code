@@ -67,6 +67,11 @@ const schema = getSchemaByResolvedExtensions(
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
+    stubAtom("composer-model", {
+      instanceId: { default: "" },
+      model: { default: "" },
+      source: { default: "" },
+    }),
     stubAtom("composer-citation", {
       citation: { default: null },
       source: { default: "" },
@@ -187,6 +192,11 @@ const plainSchema = getSchemaByResolvedExtensions(
       skillName: { default: "" },
       skillLabel: { default: "" },
       skillDescription: { default: null },
+    }),
+    stubAtom("composer-model", {
+      instanceId: { default: "" },
+      model: { default: "" },
+      source: { default: "" },
     }),
     stubAtom("composer-citation", {
       citation: { default: null },
@@ -756,17 +766,21 @@ describe("composer rich text document model", () => {
   });
 
   it("keeps a chip's source in a fence as literal text", () => {
-    const value = "```\nsee @b.md and $babysit now\n```\nafter";
+    const value = "```\nsee @b.md and $babysit now model:codex/gpt-6.1 ok\n```\nafter";
     const known = () => ({ label: "Babysit", description: null });
-    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    const anyModel = () => true;
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, known, { isKnownModel: anyModel }),
+    );
     const map = serializeEditorDoc(doc);
     expect(map.value).toBe(value);
     expect(map.runs.filter((run) => run.kind === "token")).toEqual([]);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
       expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
-    // Reconciling against the provider's skills leaves the code alone too.
-    expect(skillChipReplacements(doc, known)).toEqual([]);
+    // Reconciling against the provider's skills and models leaves the code alone too.
+    expect(skillChipReplacements(doc, known, anyModel)).toEqual([]);
   });
 
   it.each([
@@ -837,6 +851,54 @@ describe("pasting into a list item or quote", () => {
     expect(first.content[0]).toMatchObject({ text: "bold", marks: [{ type: "bold" }] });
     expect(JSON.stringify(content[1])).toContain("- item");
     expect(JSON.stringify(content[2])).toContain("> quote");
+  });
+});
+
+describe("model mention chips", () => {
+  const skillLabelFor = (name: string) => ({ label: name, description: null });
+  const isCodexModel = (instanceId: string, model: string) =>
+    instanceId === "codex" && model === "gpt-6.1";
+  const modelAttrs = (doc: ProseMirrorNode) => {
+    const attrs: unknown[] = [];
+    doc.descendants((node) => {
+      if (node.type.name === "composer-model") attrs.push(node.attrs);
+    });
+    return attrs;
+  };
+  const replace = (doc: ProseMirrorNode, isKnownModel?: typeof isCodexModel) => {
+    const transaction = EditorState.create({ doc }).tr;
+    for (const { from, to, node } of skillChipReplacements(doc, skillLabelFor, isKnownModel)) {
+      transaction.replaceWith(from, to, node);
+    }
+    return transaction.doc;
+  };
+  const chip = { instanceId: "codex", model: "gpt-6.1", source: "model:codex/gpt-6.1" };
+
+  it.each([
+    ["Ask model:codex/gpt-6.1 now", [chip]],
+    ["Ask model:openai/gpt-4o now", []],
+    // Still being typed: `gpt-6` must not chip on the way to `gpt-6.1`.
+    ["Ask model:codex/gpt-6.1", []],
+  ])("chips only a known reference followed by whitespace: %s", (value, expected) => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, skillLabelFor, { isKnownModel: isCodexModel }),
+    );
+    doc.check();
+    expect(modelAttrs(doc)).toEqual(expected);
+    expect(serializeEditorDoc(doc).value).toBe(value);
+  });
+
+  it("reconciles references when the environment's models load or change", () => {
+    const value = "Ask model:codex/gpt-6.1 now";
+    const text = ProseMirrorNode.fromJSON(schema, buildDocJson(value, skillLabelFor));
+    expect(modelAttrs(text)).toEqual([]);
+    const loaded = replace(text, isCodexModel);
+    expect(modelAttrs(loaded)).toEqual([chip]);
+    expect(serializeEditorDoc(loaded).value).toBe(value);
+    const removed = replace(loaded);
+    expect(modelAttrs(removed)).toEqual([]);
+    expect(serializeEditorDoc(removed).value).toBe(value);
   });
 });
 
