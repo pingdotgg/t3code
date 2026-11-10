@@ -6053,6 +6053,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
           yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
           assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+          assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
+          assert.equal(
+            (yield* driver.prepareCommitContext(nested).pipe(Effect.flip)).detail,
+            detail,
+          );
           if (encoded) {
             yield* writeReadme("resolved version\n");
             yield* driver.commit(cwd, "Resolve", "", { stage: {} });

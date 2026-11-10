@@ -2448,6 +2448,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ];
     const config = env ? isolatedIndexConfig : [];
     const envOptions = env ? { env } : {};
+    let preserveUnselectedConflicts = false;
     // Status paths are repository-relative, while cwd can be a subdirectory.
     const toPathspec = (file: string) => `:(top,literal)${file}`;
     const pathspecs = (filePaths ?? []).map(toPathspec);
@@ -2685,7 +2686,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "Cannot commit selected files during a merge. Commit all files to finish the merge.",
           });
         }
-        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
+        const remainingConflicts = yield* runGitStdout(
+          "GitVcsDriver.commit.unselectedConflicts",
+          cwd,
+          [
+            "ls-files",
+            "--unmerged",
+            "-z",
+            "--",
+            ":(top)",
+            ...filePaths.map((file) => `:(top,exclude,literal)${file}`),
+          ],
+        );
+        preserveUnselectedConflicts = remainingConflicts.length > 0;
+        // Reset discards conflict stages and attributes needed by the next commit's marker check.
+        if (!preserveUnselectedConflicts) {
+          yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
+        }
       }
       yield* runGit(
         "GitVcsDriver.commit.addSelected",
@@ -2696,6 +2713,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     } else {
       yield* runGit("GitVcsDriver.commit.addAll", cwd, [...config, "add", "-A"], envOptions);
     }
+    return preserveUnselectedConflicts ? pathspecs : [];
   });
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
@@ -2802,13 +2820,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    if (options?.stage !== undefined) {
-      yield* stageCommitChanges(cwd, options.stage.filePaths);
-    }
+    const partialCommitPaths =
+      options?.stage !== undefined ? yield* stageCommitChanges(cwd, options.stage.filePaths) : [];
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
+    }
+    if (partialCommitPaths.length > 0) {
+      args.push("--only", "--", ...partialCommitPaths);
     }
     const progress =
       options?.progress?.onOutputLine === undefined
