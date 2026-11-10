@@ -119,8 +119,12 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
     if (isAcpProcessExitedError(error.value)) {
       const { code, signal } = error.value;
       const reason =
-        signal !== undefined ? ` (${signal})` : code !== undefined ? ` with code ${code}` : "";
-      return `Antigravity exited unexpectedly${reason}. Try again.`;
+        signal !== undefined
+          ? ` after signal ${signal}`
+          : code !== undefined
+            ? ` with code ${code}`
+            : "";
+      return `Antigravity exited unexpectedly${reason}. Start sign-in again.`;
     }
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
