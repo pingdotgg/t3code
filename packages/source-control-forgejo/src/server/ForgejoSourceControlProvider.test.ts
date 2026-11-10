@@ -908,6 +908,85 @@ it.effect("names the web server behind an SSH alias from the login that serves i
   ),
 );
 
+it.effect("finds a branch's pull requests in a bounded number of Forgejo requests", () =>
+  Effect.gen(function* () {
+    const paths: string[] = [];
+    const pull = (number: number, ref: string, state = "open") => ({
+      number,
+      title: `PR ${number}`,
+      html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+      state,
+      merged: state === "closed",
+      base: { ref: "main", sha: "base", repo: null },
+      head: { ref, sha: "head", repo: null },
+    });
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+          TestSourceControlHost.layer({ process: {} }),
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            resolveRepository: () =>
+              Effect.succeed({
+                login: "work",
+                repository: "maria/project",
+                baseUrl: "https://forgejo.test",
+              }),
+            api: (input) => {
+              paths.push(input.path);
+              const page = Number(/[?&]page=(\d+)/.exec(input.path)?.[1] ?? 0);
+              const body = input.path.includes("/pulls?")
+                ? Array.from({ length: page > 60 ? 0 : 50 }, (_, index) =>
+                    pull(page * 100 + index, "other"),
+                  )
+                : input.path === "repos/maria/project"
+                  ? {
+                      full_name: "maria/project",
+                      clone_url: "",
+                      ssh_url: "",
+                      default_branch: "main",
+                    }
+                  : input.path === "repos/maria/project/pulls/main/old-feature"
+                    ? pull(7, "old-feature", "closed")
+                    : undefined;
+              return body === undefined
+                ? Effect.fail(
+                    new ForgejoCli.ForgejoCliError({
+                      command: "tea",
+                      cwd: "/repo",
+                      detail: "not found",
+                      reason: "not-found",
+                    }),
+                  )
+                : encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      ),
+    );
+
+    const none = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "no-pull-request",
+      state: "all",
+    });
+    assert.deepStrictEqual(none, []);
+    assert.strictEqual(paths.length, 6);
+
+    paths.length = 0;
+    const old = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "old-feature",
+      state: "all",
+    });
+    assert.deepStrictEqual(
+      old.map((pr) => [pr.number, pr.state]),
+      [[7, "merged"]],
+    );
+    assert.strictEqual(paths.at(-1), "repos/maria/project/pulls/main/old-feature");
+  }),
+);
+
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;

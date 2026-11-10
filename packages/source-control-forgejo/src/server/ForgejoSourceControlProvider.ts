@@ -265,6 +265,8 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
   url: raw.clone_url,
   sshUrl: raw.ssh_url,
 });
+// 200 most recently updated pull requests per lookup; every page is one request on each poll.
+const MAX_PULL_LIST_PAGES = 4;
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -334,7 +336,20 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
+        const collect = (item: typeof ForgejoPullRequestSchema.Type) => {
+          if (
+            item.head.ref !== branch ||
+            (source?.repository && item.head.repo?.full_name !== source.repository) ||
+            (source?.owner && item.head.repo?.owner.login !== source.owner) ||
+            results.some((known) => known.number === item.number)
+          )
+            return;
+          const normalized = toForgejoChangeRequest(item);
+          if (input.state === "all" || normalized.state === input.state) results.push(normalized);
+        };
+        // Gitea ignores `head`, so this pages through every pull request of the repository.
+        let exhausted = false;
+        for (let page = 1; results.length < limit && page <= MAX_PULL_LIST_PAGES; page++) {
           const items = yield* request(
             {
               ...input,
@@ -342,17 +357,34 @@ export const make = Effect.gen(function* () {
             },
             Schema.Array(ForgejoPullRequestSchema),
           );
-          for (const item of items) {
-            if (
-              item.head.ref !== branch ||
-              (source?.repository && item.head.repo?.full_name !== source.repository) ||
-              (source?.owner && item.head.repo?.owner.login !== source.owner)
-            )
-              continue;
-            const normalized = toForgejoChangeRequest(item);
-            if (input.state === "all" || normalized.state === input.state) results.push(normalized);
+          for (const item of items) collect(item);
+          if (items.length === 0) {
+            exhausted = true;
+            break;
           }
-          if (items.length === 0) break;
+        }
+        // Past the scanned window, still find the branch's latest pull request into the default branch.
+        if (!exhausted && results.length < limit) {
+          const { default_branch } = yield* request(
+            { ...input, path: repositoryPath(repo.repository) },
+            RepositorySchema,
+          );
+          const owner = source?.owner ?? source?.repository?.split("/")[0];
+          const direct =
+            default_branch &&
+            (yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls/${encodeURIComponent(default_branch)}/${encodeURIComponent(owner ? `${owner}:${branch}` : branch)}`,
+              },
+              ForgejoPullRequestSchema,
+            ).pipe(
+              Effect.catchIf(
+                (cause) => isForgejoCliError(cause) && cause.reason === "not-found",
+                () => Effect.succeed(null),
+              ),
+            ));
+          if (direct) collect(direct);
         }
         return results.slice(0, limit);
       },
