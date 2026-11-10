@@ -540,9 +540,37 @@ describe("what the list could not read", () => {
       ],
     ])!;
 
-    expect(pullRequestListNotices(merged, projects, null).map((notice) => notice.text)).toEqual([
+    expect(pullRequestListNotices([merged], projects, null).map((notice) => notice.text)).toEqual([
       "github.com could not be read. No GitHub credential on the server.",
       "service: team/service could not be read.",
+    ]);
+  });
+
+  it("does not let an older answer's host reason mask a newer answer's failure", () => {
+    const baseline = mergePullRequestLists([
+      [
+        ENV_1,
+        answer(
+          [provider("github.com", "No GitHub credential on the server.")],
+          [["p1", "t3code", "pingdotgg/t3code could not be read."]],
+        ),
+      ],
+    ])!;
+    const search = mergePullRequestLists([
+      [
+        ENV_1,
+        answer(
+          [provider("github.com", null)],
+          [["p2", "uploadthing", "pingdotgg/uploadthing search failed."]],
+        ),
+      ],
+    ])!;
+
+    expect(
+      pullRequestListNotices([baseline, search], projects, null).map((notice) => notice.text),
+    ).toEqual([
+      "github.com could not be read. No GitHub credential on the server.",
+      "uploadthing: pingdotgg/uploadthing search failed.",
     ]);
   });
 
@@ -569,9 +597,9 @@ describe("what the list could not read", () => {
     ]) {
       const merged = mergePullRequestLists(answers)!;
 
-      expect(pullRequestListNotices(merged, projects, labels).map((notice) => notice.text)).toEqual(
-        ["Laptop: github.com could not be read. No GitHub credential on the server."],
-      );
+      expect(
+        pullRequestListNotices([merged], projects, labels).map((notice) => notice.text),
+      ).toEqual(["Laptop: github.com could not be read. No GitHub credential on the server."]);
     }
   });
 });

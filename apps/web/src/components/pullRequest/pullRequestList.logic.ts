@@ -1013,9 +1013,12 @@ export function findProjectForRepository<
   return scoped ?? candidates[0];
 }
 
-/** What the answer could not read: one line per unreadable host, else one per project. */
+/**
+ * What the answers could not read: one line per unreadable host, else one per project.
+ * Each answer's errors resolve against its own host reasons, so an older answer cannot mask a newer failure.
+ */
 export function pullRequestListNotices(
-  answer: Pick<MergedPullRequestList, "unreadableHosts" | "errors">,
+  answers: ReadonlyArray<Pick<MergedPullRequestList, "unreadableHosts" | "errors">>,
   projects: ReadonlyArray<{
     readonly id: string;
     readonly environmentId: string;
@@ -1023,7 +1026,7 @@ export function pullRequestListNotices(
   }>,
   environmentLabels: ReadonlyMap<string, string> | null,
 ): ReadonlyArray<{ readonly key: string; readonly text: string }> {
-  if (answer.errors.length === 0) return [];
+  if (answers.every((answer) => answer.errors.length === 0)) return [];
   const identities = new Map(
     projects.map((project) => [
       `${project.environmentId} ${project.id}`,
@@ -1031,27 +1034,29 @@ export function pullRequestListNotices(
     ]),
   );
   const notices = new Map<string, string>();
-  for (const error of answer.errors) {
-    const prefix =
-      environmentLabels === null
-        ? ""
-        : `${environmentLabels.get(error.environmentId) || "Environment"}: `;
-    const identity = identities.get(`${error.environmentId} ${error.projectId}`);
-    const host = identity
-      ? sourceControlClients.changeRequestHost(identity, identity.provider)
-      : undefined;
-    const detail =
-      host === undefined ? undefined : answer.unreadableHosts[`${error.environmentId} ${host}`];
-    if (host !== undefined && detail !== undefined) {
-      notices.set(
-        `host ${error.environmentId} ${host}`,
-        `${prefix}${host} could not be read. ${detail}`,
-      );
-    } else {
-      notices.set(
-        `project ${error.environmentId} ${error.projectId}`,
-        `${prefix}${error.projectTitle}: ${error.message}`,
-      );
+  for (const answer of answers) {
+    for (const error of answer.errors) {
+      const prefix =
+        environmentLabels === null
+          ? ""
+          : `${environmentLabels.get(error.environmentId) || "Environment"}: `;
+      const identity = identities.get(`${error.environmentId} ${error.projectId}`);
+      const host = identity
+        ? sourceControlClients.changeRequestHost(identity, identity.provider)
+        : undefined;
+      const detail =
+        host === undefined ? undefined : answer.unreadableHosts[`${error.environmentId} ${host}`];
+      if (host !== undefined && detail !== undefined) {
+        notices.set(
+          `host ${error.environmentId} ${host}`,
+          `${prefix}${host} could not be read. ${detail}`,
+        );
+      } else {
+        notices.set(
+          `project ${error.environmentId} ${error.projectId}`,
+          `${prefix}${error.projectTitle}: ${error.message}`,
+        );
+      }
     }
   }
   return [...notices].map(([key, text]) => ({ key, text }));
